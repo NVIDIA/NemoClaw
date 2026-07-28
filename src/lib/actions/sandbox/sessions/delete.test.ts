@@ -260,8 +260,13 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/--json.*OpenClaw-only/);
   });
 
-  it("rejects a hermes session id that could be parsed as a flag (#7642)", async () => {
-    await expect(deleteSandboxSession("sb-h", { key: "--yes" })).rejects.toThrow(/process\.exit:1/);
+  it.each([
+    ["a leading dash that could parse as a flag", "--yes"],
+    ["an empty string", ""],
+    ["only whitespace", "   "],
+    ["embedded whitespace", "2026 0727"],
+  ])("rejects an invalid hermes session id (%s) (#7642)", async (_case, key) => {
+    await expect(deleteSandboxSession("sb-h", { key })).rejects.toThrow(/process\.exit:1/);
 
     expect(execSandboxMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/session id/i);
