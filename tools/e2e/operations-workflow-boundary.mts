@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+import ts from "typescript";
 import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 
@@ -48,6 +49,7 @@ const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
   /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
+const NEEDS_INTERPOLATION = /\$\{\{\s*toJSON\s*\(\s*needs\s*\)\s*\}\}/iu;
 
 type WorkflowStep = {
   "continue-on-error"?: boolean;
@@ -122,6 +124,64 @@ function executableSource(job: WorkflowJob): string {
     .join("\n");
 }
 
+function isNeedsEnvironmentAccess(expression: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(expression) || expression.name.text !== "NEEDS_JSON") {
+    return false;
+  }
+  const environment = expression.expression;
+  return (
+    ts.isPropertyAccessExpression(environment) &&
+    environment.name.text === "env" &&
+    ts.isIdentifier(environment.expression) &&
+    environment.expression.text === "process"
+  );
+}
+
+function isNeedsEnvironmentParse(expression: ts.Expression): boolean {
+  if (!ts.isCallExpression(expression) || expression.arguments.length !== 1) {
+    return false;
+  }
+  const parser = expression.expression;
+  const input = expression.arguments[0];
+  return (
+    ts.isPropertyAccessExpression(parser) &&
+    ts.isIdentifier(parser.expression) &&
+    parser.expression.text === "JSON" &&
+    parser.name.text === "parse" &&
+    ts.isBinaryExpression(input) &&
+    input.operatorToken.kind === ts.SyntaxKind.BarBarToken &&
+    isNeedsEnvironmentAccess(input.left) &&
+    ts.isStringLiteral(input.right) &&
+    input.right.text === "{}"
+  );
+}
+
+function assignsNeedsFromEnvironment(script: string): boolean {
+  const source = ts.createSourceFile(
+    "github-script.js",
+    script,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "needs" &&
+      node.initializer !== undefined &&
+      isNeedsEnvironmentParse(node.initializer)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
 function requirePinnedAction(errors: string[], step: WorkflowStep, owner: string): void {
   if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
     errors.push(`${owner} must pin its action to a full SHA`);
@@ -133,6 +193,15 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
   if (step.uses !== GITHUB_SCRIPT_NODE24_ACTION) {
     errors.push(`${owner} must use the pinned Node 24 github-script runtime`);
   }
+}
+
+function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
+  const script = String(step.with?.script ?? "");
+  return (
+    step.env?.NEEDS_JSON === "${{ toJSON(needs) }}" &&
+    !NEEDS_INTERPOLATION.test(script) &&
+    assignsNeedsFromEnvironment(script)
+  );
 }
 
 function validateControllerAuthorization(
@@ -541,6 +610,11 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
       const reportScript = String(report.with?.script ?? "");
+      if (!passesNeedsAsEnvironmentData(report)) {
+        errors.push(
+          "report-to-pr must pass needs as environment data without script interpolation",
+        );
+      }
       const commentCalls = jobSource.match(/github\.rest\.issues\.createComment\s*\(/gu);
       const issueNamespaceReferences = reportScript.match(/github\.rest\.issues\b/gu);
       const prScopedComment =
@@ -653,6 +727,11 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const generate = findStep(job, "Generate E2E scorecard");
   requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
+  if (!passesNeedsAsEnvironmentData(generate)) {
+    errors.push(
+      "scorecard generator must pass needs as environment data without script interpolation",
+    );
+  }
   for (const fragment of [
     "scripts/scorecard/coordinate-scorecard.mts",
     "buildScorecard",

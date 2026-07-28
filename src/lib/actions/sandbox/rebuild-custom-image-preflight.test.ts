@@ -32,6 +32,7 @@ function input(fromDockerfile: string | null) {
     provider: "ollama-local",
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     webSearchConfig: null,
     toolDisclosure: "progressive" as const,
     hermesToolGateways: [],

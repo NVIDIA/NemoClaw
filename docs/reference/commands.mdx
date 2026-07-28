@@ -245,6 +245,8 @@ Each line is one JSON object with the version 1 envelope:
 
 In this mode, human progress remains available on stderr so stdout stays valid JSONL.
 Payloads contain only the existing bounded, redacted machine-event context: credential environment variable names may appear, but credential values and secret-bearing URL components are redacted.
+For a `compatible-endpoint` route that uses `openai-completions`, the context includes `reasoningEffort` as `low`, `medium`, `high`, or `endpoint-default`.
+Other provider and API-family routes omit this field.
 Treat new event `type` values and new payload fields as additive changes.
 A breaking envelope or field-semantics change increments `schemaVersion`.
 
@@ -1282,6 +1284,9 @@ Do not pass a sandbox name to `$$nemoclaw status`; that command is the global al
 NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state.
 If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
+For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`.
+The line is omitted for another provider or API family.
+
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
@@ -1482,6 +1487,9 @@ A live policy that contains the excluded key fails the check and requires policy
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
+For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`.
+The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials.
+Because the check has `info` status, it does not change the command's exit status.
 
 <AgentOnly variant="openclaw">
 
@@ -2672,7 +2680,7 @@ The command backs up workspace state, destroys the old sandbox (including its ho
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
-The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
+The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values.
 Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
 It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
@@ -3182,6 +3190,25 @@ NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit p
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+```bash
+$$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]
+```
+
+`--reasoning-effort` accepts `low`, `medium`, `high`, or `default`.
+An explicit flag or `NEMOCLAW_REASONING_EFFORT` value applies only to a `compatible-endpoint` route that resolves to `openai-completions`.
+NemoClaw validates the explicit value, provider, and API before it changes the OpenShell route, the agent config, or the host registry.
+It rejects an unsupported route for every explicit value, including `default`.
+For a `low`, `medium`, or `high` value on an `openai-completions` route, NemoClaw writes `params.extra_body.reasoning_effort` on the model entry, and OpenClaw merges it into the request body.
+`--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
+When you omit the flag, `$$nemoclaw inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
+When neither is set, the sandbox keeps the recorded effort only while the resulting route uses `compatible-endpoint` and `openai-completions`.
+Without an explicit effort input, switching to another provider or API family removes an inherited `reasoning_effort` field and records the endpoint-default state.
+Pass `default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort and return the endpoint to its own default.
+An ordinary sandbox restart preserves the resulting effort or endpoint-default state; it does not replay the image's original onboarding value.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 
 For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` when you need to change the provider or model.
@@ -3604,6 +3631,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the image's original value. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 

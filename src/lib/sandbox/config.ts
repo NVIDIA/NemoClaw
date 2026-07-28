@@ -35,7 +35,11 @@ const {
   runOpenClawConfigGuard,
   validateOpenClawConfigCandidate,
 }: typeof import("../shields/openclaw-config-lock") = require("../shields/openclaw-config-lock");
-const { isPrivateHostname, isPrivateIp } = require("../private-networks");
+const {
+  isAllowedOpenShellSandboxBridgeUrl,
+  isPrivateHostname,
+  isPrivateIp,
+}: typeof import("../private-networks") = require("../private-networks");
 const {
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
@@ -96,6 +100,11 @@ interface DnsValidatedUrl {
   protocol: "http:" | "https:";
   originalUrl: string;
   pinnedUrl: string;
+}
+
+interface ConfigUrlValidationOptions {
+  allowOpenShellBridge?: boolean;
+  allowOpenShellBridgePath?: (path: readonly string[]) => boolean;
 }
 
 type ManagedGatewayRestart = (sandboxName: string) => { ok: boolean };
@@ -837,21 +846,43 @@ function hostnameForDnsLookup(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
-function validateUrlValue(value: string): void {
+function validateUrlValue(
+  value: string,
+  options: ConfigUrlValidationOptions = {},
+  pathSegments: readonly string[] = [],
+): void {
   const parsed = parseHttpUrl(value);
   if (!parsed) return;
+  if (
+    (options.allowOpenShellBridge || options.allowOpenShellBridgePath?.(pathSegments)) &&
+    isAllowedOpenShellSandboxBridgeUrl(parsed)
+  ) {
+    return;
+  }
   assertPublicHost(parsed.hostname);
 }
 
 async function validateUrlValueWithDnsResult(
   value: string,
   lookup: LookupFn = dnsPromises.lookup as LookupFn,
+  options: ConfigUrlValidationOptions = {},
+  pathSegments: readonly string[] = [],
 ): Promise<DnsValidatedUrl | null> {
   const originalUrl = value.trim();
   const parsed = parseHttpUrl(originalUrl);
   if (!parsed) return null;
 
   const hostname = parsed.hostname;
+  if (
+    (options.allowOpenShellBridge || options.allowOpenShellBridgePath?.(pathSegments)) &&
+    isAllowedOpenShellSandboxBridgeUrl(parsed)
+  ) {
+    return {
+      protocol: parsed.protocol as "http:" | "https:",
+      originalUrl,
+      pinnedUrl: originalUrl,
+    };
+  }
   assertPublicHost(hostname);
   const lookupHostname = hostnameForDnsLookup(hostname);
   if (isIP(lookupHostname)) {
@@ -894,8 +925,9 @@ async function validateUrlValueWithDnsResult(
 async function validateUrlValueWithDns(
   value: string,
   lookup: LookupFn = dnsPromises.lookup as LookupFn,
+  options: ConfigUrlValidationOptions = {},
 ): Promise<void> {
-  await validateUrlValueWithDnsResult(value, lookup);
+  await validateUrlValueWithDnsResult(value, lookup, options);
 }
 
 function redactUrlForLogs(urlValue: string): string {
@@ -934,9 +966,37 @@ function formatConfigValueForLogs(value: ConfigValue | undefined): string {
   return JSON.stringify(redactConfigValueForPreview(value));
 }
 
+function configSetAllowsOpenShellBridge(
+  agentName: string,
+  key: string,
+  relativePath: readonly string[] = [],
+): boolean {
+  const segments = [...key.split("."), ...relativePath];
+  if (segments.some((segment) => UNSAFE_KEY_SEGMENTS.has(segment))) return false;
+
+  if (agentName === "hermes") {
+    return segments.length === 2 && segments[0] === "model" && segments[1] === "base_url";
+  }
+
+  if (agentName === "openclaw") {
+    return (
+      segments.length === 4 &&
+      segments[0] === "models" &&
+      segments[1] === "providers" &&
+      segments[2].length > 0 &&
+      !/^\d+$/.test(segments[2]) &&
+      segments[3] === "baseUrl"
+    );
+  }
+
+  return false;
+}
+
 async function rewriteConfigUrlsWithDnsPinning(
   value: ConfigValue,
   lookup: LookupFn = dnsPromises.lookup as LookupFn,
+  options: ConfigUrlValidationOptions = {},
+  pathSegments: readonly string[] = [],
 ): Promise<ConfigValue> {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -944,7 +1004,7 @@ async function rewriteConfigUrlsWithDnsPinning(
     if (!lower.startsWith("http://") && !lower.startsWith("https://")) return value;
 
     try {
-      const validated = await validateUrlValueWithDnsResult(trimmed, lookup);
+      const validated = await validateUrlValueWithDnsResult(trimmed, lookup, options, pathSegments);
       if (!validated) return value;
       // HTTP has no TLS hostname binding, so persist the DNS-pinned URL to avoid
       // a config-time/public → runtime/private DNS-rebinding window. DNS-backed
@@ -973,13 +1033,20 @@ async function rewriteConfigUrlsWithDnsPinning(
   }
 
   if (Array.isArray(value)) {
-    return Promise.all(value.map((entry) => rewriteConfigUrlsWithDnsPinning(entry, lookup)));
+    return Promise.all(
+      value.map((entry, index) =>
+        rewriteConfigUrlsWithDnsPinning(entry, lookup, options, [...pathSegments, String(index)]),
+      ),
+    );
   }
 
   if (isConfigObject(value)) {
     const rewritten: ConfigObject = {};
     for (const [key, entry] of Object.entries(value)) {
-      rewritten[key] = await rewriteConfigUrlsWithDnsPinning(entry, lookup);
+      rewritten[key] = await rewriteConfigUrlsWithDnsPinning(entry, lookup, options, [
+        ...pathSegments,
+        key,
+      ]);
     }
     return rewritten;
   }
@@ -1082,6 +1149,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       "  Usage: nemoclaw <name> config set --key <dotpath> --value <value>",
     ]);
   }
+  const configKey = opts.key;
 
   if (opts.value === undefined || opts.value === null) {
     configFail([
@@ -1199,7 +1267,10 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   // hostname to private/internal space after config-time validation succeeds.
   let safeValue: ConfigValue;
   try {
-    safeValue = await rewriteConfigUrlsWithDnsPinning(parsedValue);
+    safeValue = await rewriteConfigUrlsWithDnsPinning(parsedValue, dnsPromises.lookup as LookupFn, {
+      allowOpenShellBridgePath: (relativePath) =>
+        configSetAllowsOpenShellBridge(target.agentName, configKey, relativePath),
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const suffix =
@@ -1443,6 +1514,7 @@ export {
   buildConfigSetRestartGuidance,
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
+  configSetAllowsOpenShellBridge,
   composeSandboxConfigBody,
   configGet,
   configRotateToken,
