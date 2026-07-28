@@ -575,7 +575,8 @@ function updateMatchingOnboardSession(
       current.credentialEnv;
     current.preferredInferenceApi = registryMetadata.preferredInferenceApi ?? route.inferenceApi;
     if (reasoningEffort.explicit) {
-      current.compatibleEndpointReasoningEffort = reasoningEffort.effort;
+      current.compatibleEndpointReasoningEffort =
+        provider === "compatible-endpoint" ? reasoningEffort.effort : null;
     }
     current.nimContainer = registryMetadata.nimContainer ?? null;
     return current;
