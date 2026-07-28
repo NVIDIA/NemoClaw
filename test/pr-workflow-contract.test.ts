@@ -1021,6 +1021,8 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
+    expect(parityStep.run).toContain("npx tsx scripts/checks/e2e-mock-parity.mts");
+    expect(parityStep.run).not.toContain("scripts/checks/e2e-mock-parity.ts");
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
       "Detect trusted E2E support sharding",
@@ -1167,7 +1169,7 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  it("keeps trusted coverage actions compatible across the .ts to .mts migration (#6935)", () => {
+  it("requires migrated .mts coverage entrypoints (#6918)", () => {
     const cases = [
       {
         action: sharedActions.cliCoverageShard,
@@ -1197,13 +1199,8 @@ describe("pull request and main workflow contracts", () => {
         expectedStatus: 0,
       },
       {
-        fixtureExtension: "ts",
-        expectedEntrypointExtension: "ts",
-        expectedStatus: 0,
-      },
-      {
         fixtureExtension: "missing",
-        expectedEntrypointExtension: "ts",
+        expectedEntrypointExtension: "mts",
         expectedStatus: 1,
       },
     ] as const;
