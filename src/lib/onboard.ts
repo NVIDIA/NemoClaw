@@ -124,6 +124,7 @@ const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = requir
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const {
   isLinuxDockerDriverGatewayEnabled,
+  resolveCurrentOpenShellComputePlan,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
 const {
   reconcileGatewayGpuReuseForGpuIntent,
@@ -2205,9 +2206,10 @@ async function recoverGatewayRuntime() {
   return true;
 }
 
+const currentOpenShellComputePlan = resolveCurrentOpenShellComputePlan();
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
-    isLinuxDockerDriverGatewayEnabled,
+    openShellComputeDriverName: currentOpenShellComputePlan.driverName,
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
