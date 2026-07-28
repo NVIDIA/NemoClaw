@@ -69,7 +69,7 @@ The completed production images repeat the inventory, package, file, and runtime
 - Confidence: high
 - Failure mode: malformed SSH, SFTP, or public-key data can reach missing bounds or lifetime checks.
 - Disposition: backport, build, test, package, runtime-proof
-- Remaining gate: native amd64 and arm64 image builds for all managed images.
+- Validation: native amd64 and arm64 image builds passed for all managed images.
 
 ### SEC-2: Python 3.13.5 HTMLParser repeatedly rescans incomplete input
 
@@ -78,7 +78,7 @@ The completed production images repeat the inventory, package, file, and runtime
 - Confidence: high
 - Failure mode: repeated small `feed()` calls with an unterminated construct can cause quadratic CPU consumption.
 - Disposition: backport, package, file-hash-proof, behavior-test
-- Remaining gate: native amd64 and arm64 image builds for all managed images.
+- Validation: native amd64 and arm64 image builds passed for all managed images.
 
 ## Removal conditions
 
