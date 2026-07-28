@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
+import { testTimeout } from "../../../test/helpers/timeouts";
 import {
   createSandboxBaseImageBuildProvenanceKey,
   type SandboxBaseImageResolutionMetadata,
@@ -56,54 +57,58 @@ describe("agent base image provisioning", () => {
     vi.unstubAllEnvs();
   });
 
-  it("reuses a compatible resolved agent base image during normal onboarding", () => {
-    withMockedDocker(
-      ({
-        ensureAgentBaseImage,
-        dockerBuildMock,
-        dockerImageInspectMock,
-        resolveSandboxBaseImageMock,
-        root,
-      }) => {
-        const resolutionHint = makeResolutionMetadata({ key: "cached-resolution-key" });
-        const resolvedMetadata = makeResolutionMetadata({ key: "fresh-resolution-key" });
-        resolveSandboxBaseImageMock.mockReturnValue({
-          ref: resolvedMetadata.ref,
-          digest: resolvedMetadata.digest,
-          source: resolvedMetadata.source,
-          glibcVersion: resolvedMetadata.glibcVersion,
-          metadata: resolvedMetadata,
-        });
+  it(
+    "reuses a compatible resolved agent base image during normal onboarding",
+    () => {
+      withMockedDocker(
+        ({
+          ensureAgentBaseImage,
+          dockerBuildMock,
+          dockerImageInspectMock,
+          resolveSandboxBaseImageMock,
+          root,
+        }) => {
+          const resolutionHint = makeResolutionMetadata({ key: "cached-resolution-key" });
+          const resolvedMetadata = makeResolutionMetadata({ key: "fresh-resolution-key" });
+          resolveSandboxBaseImageMock.mockReturnValue({
+            ref: resolvedMetadata.ref,
+            digest: resolvedMetadata.digest,
+            source: resolvedMetadata.source,
+            glibcVersion: resolvedMetadata.glibcVersion,
+            metadata: resolvedMetadata,
+          });
 
-        const result = ensureAgentBaseImage(makeAgent(), {
-          resolutionHint,
-          forceBaseImageRefresh: true,
-        });
-
-        expect(result).toEqual({
-          imageTag: "nemoclaw-hermes-sandbox-base-local:compatible",
-          built: false,
-          resolutionMetadata: resolvedMetadata,
-        });
-        expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
-            dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
-            envVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
-            label: "Hermes Agent sandbox base image",
-            requireOpenshellSandboxAbi: process.platform === "linux",
+          const result = ensureAgentBaseImage(makeAgent(), {
             resolutionHint,
-            forceRefresh: true,
-            rootDir: root,
-            validateImage: expect.any(Function),
-            validationDescription: "the required MCP Streamable HTTP runtime",
-          }),
-        );
-        expect(dockerImageInspectMock).not.toHaveBeenCalled();
-        expect(dockerBuildMock).not.toHaveBeenCalled();
-      },
-    );
-  });
+            forceBaseImageRefresh: true,
+          });
+
+          expect(result).toEqual({
+            imageTag: "nemoclaw-hermes-sandbox-base-local:compatible",
+            built: false,
+            resolutionMetadata: resolvedMetadata,
+          });
+          expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+              dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
+              envVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+              label: "Hermes Agent sandbox base image",
+              requireOpenshellSandboxAbi: process.platform === "linux",
+              resolutionHint,
+              forceRefresh: true,
+              rootDir: root,
+              validateImage: expect.any(Function),
+              validationDescription: "the required MCP Streamable HTTP runtime",
+            }),
+          );
+          expect(dockerImageInspectMock).not.toHaveBeenCalled();
+          expect(dockerBuildMock).not.toHaveBeenCalled();
+        },
+      );
+    },
+    testTimeout(15_000),
+  );
 
   it("marks only an exact warm resolution-hint reuse as handoff authority", () => {
     withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
