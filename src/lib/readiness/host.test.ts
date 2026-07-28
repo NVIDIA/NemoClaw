@@ -6,20 +6,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
   type: "json",
 };
-import type { NvidiaPlatform } from "../inference/nim";
+import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
 
-const { detectNvidiaPlatform } = vi.hoisted(() => ({
+const { detectGpu, detectNvidiaPlatform } = vi.hoisted(() => ({
+  detectGpu: vi.fn<() => GpuDetection | null>(() => null),
   detectNvidiaPlatform: vi.fn<() => NvidiaPlatform>(() => "linux"),
 }));
 
-vi.mock("../inference/nim", () => ({ detectNvidiaPlatform }));
+vi.mock("../inference/nim", () => ({ detectGpu, detectNvidiaPlatform }));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 ajv.addFormat("date-time", { type: "string", validate: () => true });
 const validateReport = ajv.compile(systemReadinessSchema as AnySchema);
+
+function emptyPlatformIdentity() {
+  return {
+    productName: null,
+    nvidiaPlatform: null,
+    stationProfile: null,
+    stationGb300PciGpu: null,
+  };
+}
 
 function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
   return {
@@ -55,14 +65,20 @@ function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
 
 function report(
   overrides: Partial<HostAssessment> = {},
-  collectionOptions: { detectHostGpuPlatform?: () => NvidiaPlatform } = {},
+  collectionOptions: {
+    detectHostGpuPlatform?: () => NvidiaPlatform;
+    platformIdentity?: ReturnType<typeof emptyPlatformIdentity>;
+    wslDockerDesktopGpuProofPassed?: boolean;
+  } = {},
 ) {
   return projectHostReadiness(
     collectHostObservations({
       assess: () => host(overrides),
       architecture: "x64",
       now: () => NOW,
-      ...collectionOptions,
+      collectPlatformIdentity: () => collectionOptions.platformIdentity ?? emptyPlatformIdentity(),
+      detectHostGpuPlatform: collectionOptions.detectHostGpuPlatform,
+      wslDockerDesktopGpuProofPassed: collectionOptions.wslDockerDesktopGpuProofPassed,
     }),
     { nemoclawVersion: "0.1.0", now: () => NOW },
   );
@@ -78,13 +94,19 @@ function findingIds(result: ReturnType<typeof report>) {
 
 describe("host readiness projection (#7408)", () => {
   beforeEach(() => {
+    detectGpu.mockReset();
+    detectGpu.mockReturnValue(null);
     detectNvidiaPlatform.mockReset();
     detectNvidiaPlatform.mockReturnValue("linux");
   });
 
   it("keeps collection dependency-injected and separate from pure evaluation", () => {
     const assess = vi.fn(() => host());
-    const snapshot = collectHostObservations({ assess, now: () => NOW });
+    const snapshot = collectHostObservations({
+      assess,
+      collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => NOW,
+    });
 
     expect(assess).toHaveBeenCalledOnce();
     expect(snapshot.observations).toMatchObject({ platform: "linux", architecture: process.arch });
@@ -145,7 +167,10 @@ describe("host readiness projection (#7408)", () => {
 
   it.each([
     [{ cdiNvidiaGpuSpecMissing: true }, { detectHostGpuPlatform: () => "jetson" as const }],
-    [{ isWsl: true, runtime: "docker-desktop", cdiNvidiaGpuSpecStale: true }, {}],
+    [
+      { isWsl: true, runtime: "docker-desktop", cdiNvidiaGpuSpecStale: true },
+      { wslDockerDesktopGpuProofPassed: true },
+    ],
   ] as const)("preserves CDI enforcement exclusions for %s", (overrides, collectionOptions) => {
     const result = report(overrides, collectionOptions);
 
@@ -163,6 +188,7 @@ describe("host readiness projection (#7408)", () => {
       {
         assess: () => host({ cdiNvidiaGpuSpecMissing: true }),
         architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
       },
     );
 
@@ -170,6 +196,53 @@ describe("host readiness projection (#7408)", () => {
     expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
     expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
     expect(result.status).toBe("supported");
+  });
+
+  it("uses the canonical WSL Docker Desktop GPU proof in the default report creator", () => {
+    detectGpu.mockReturnValue({
+      type: "nvidia",
+      count: 1,
+      totalMemoryMB: 32_768,
+      perGpuMB: 32_768,
+      nimCapable: true,
+      wslDockerDesktopGpuProofPassed: true,
+    });
+
+    const result = createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", now: () => NOW },
+      {
+        assess: () => host({ isWsl: true, runtime: "docker-desktop" }),
+        architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
+      },
+    );
+
+    expect(detectGpu).toHaveBeenCalledOnce();
+    expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("present");
+  });
+
+  it("skips the WSL Docker Desktop GPU proof when Docker is unreachable", () => {
+    const detectGpuProbe = vi.fn(() => ({
+      wslDockerDesktopGpuProofPassed: true,
+    }));
+
+    createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", now: () => NOW },
+      {
+        assess: () =>
+          host({
+            isWsl: true,
+            runtime: "docker-desktop",
+            dockerReachable: false,
+            hasNvidiaGpu: true,
+          }),
+        architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
+        detectGpu: detectGpuProbe,
+      },
+    );
+
+    expect(detectGpuProbe).not.toHaveBeenCalled();
   });
 
   it("supports CPU-only hosts without requiring GPU tooling", () => {
@@ -252,7 +325,11 @@ describe("host readiness projection (#7408)", () => {
   });
 
   it("rejects stale observations unless reuse is explicitly safe", () => {
-    const current = collectHostObservations({ assess: () => host(), now: () => NOW });
+    const current = collectHostObservations({
+      assess: () => host(),
+      collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => NOW,
+    });
     const snapshot = { ...current, observedAt: "2026-06-01T11:00:00Z", reusable: false };
     const result = projectHostReadiness(snapshot, { nemoclawVersion: "0.1.0", now: () => NOW });
 
@@ -267,7 +344,11 @@ describe("host readiness projection (#7408)", () => {
     ["2026-06-01T11:00:00Z", true],
     ["2026-06-01T11:59:30Z", false],
   ] as const)("projects safe snapshot reuse at %s", (observedAt, reusable) => {
-    const current = collectHostObservations({ assess: () => host(), now: () => NOW });
+    const current = collectHostObservations({
+      assess: () => host(),
+      collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => NOW,
+    });
     const result = projectHostReadiness(
       { ...current, observedAt, reusable },
       { nemoclawVersion: "0.1.0", now: () => NOW },

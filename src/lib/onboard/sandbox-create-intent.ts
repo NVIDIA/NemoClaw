@@ -186,6 +186,9 @@ export function resolveSandboxCreateIntent({
       activeMessagingChannels: [...activeMessagingChannels],
       options: {
         directGpu: sandboxGpuConfig.sandboxGpuEnabled,
+        ...(sandboxGpuConfig.hostGpuDetected !== undefined
+          ? { hostGpuAvailable: sandboxGpuConfig.hostGpuDetected }
+          : {}),
         additionalPresets: [...hermesToolGateways],
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
