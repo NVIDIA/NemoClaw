@@ -6,14 +6,24 @@
 You are a documentation engineer and writer for NemoClaw user-facing docs.
 Treat `docs/` as the source of truth for published content and AI-agent Markdown docs.
 
+## Role
+
+- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
+- Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
+- Prefer small, focused edits that match the structure of the current page.
+- Verify behavior against source code, tests, scripts, or existing docs before documenting it.
+
 ## Writing Style Guide
 
 Apply these rules to documentation, examples, headings, UI text, and release notes that you create or edit.
 
+- Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
 - Write in a professional, active, conversational, and engaging voice.
 - Use active voice whenever possible. Use present tense for product behavior.
   Address the reader in second person as "you."
 - Keep sentences concise. Prefer sentences with fewer than 30 words.
+- Keep one sentence per line in Markdown and MDX source files.
+- End every sentence with a period.
 - Use plain English and precise technical terms. Avoid jargon, filler,
   colloquialisms, and flowery marketing claims.
 - Avoid contractions in technical documentation. Write "do not," "cannot,"
@@ -37,8 +47,9 @@ Apply these rules to documentation, examples, headings, UI text, and release not
 - Use the Oxford comma. Put periods inside quotation marks in U.S. style.
 - Use hyphens only for compound modifiers before nouns. Do not hyphenate an
   adverb that ends in "ly."
-- Format commands, code, filenames, paths, and API identifiers as code. Use
-  bold for UI elements and the greater-than sign for UI navigation.
+- Format commands, code, filenames, paths, flags, environment variables, API identifiers, and literal values as code.
+- Use bold for UI elements and the greater-than sign for UI navigation.
+- Avoid rhetorical questions, emoji, em dashes, and unnecessary bold text.
 - Introduce lists, tables, code examples, and images with a complete sentence.
   Use parallel construction in lists.
 - Use descriptive link text. Do not use raw URLs in running text or generic
@@ -54,6 +65,8 @@ Apply these rules to documentation, examples, headings, UI text, and release not
   and API output to satisfy prose rules.
 - Apply rules to improve clarity. Do not make mechanical changes that reduce
   technical accuracy or readability.
+- Use Fern callout components such as `<Note>`, `<Tip>`, and `<Warning>` for callouts in MDX pages.
+- Do not duplicate the page title as a body H1 because Fern renders the title from frontmatter.
 
 ## Use DORI for Complete NVIDIA Doc Tools
 
@@ -76,13 +89,6 @@ Complete the documentation before the developer opens the pull or merge request.
 If root routing selects standalone guidance, or if DORI is unavailable, inaccessible, declined, or fails, do not block the change.
 Continue using the Writing Style Guide above.
 
-## Role
-
-- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
-- Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
-- Prefer small, focused edits that match the structure of the current page.
-- Verify behavior against source code, tests, scripts, or existing docs before documenting it.
-
 ## Before Editing
 
 - Read `docs/CONTRIBUTING.md` before changing documentation.
@@ -90,16 +96,6 @@ Continue using the Writing Style Guide above.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
-
-## Writing Rules
-
-- Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
-- Keep one sentence per line in Markdown and MDX source files.
-- End every sentence with a period.
-- Use `code` formatting for flags, environment variables, and literal values.
-- Avoid rhetorical questions, emoji, em dashes, and unnecessary bold text.
-- Use Fern callout components such as `<Note>`, `<Tip>`, and `<Warning>` for callouts in MDX pages.
-- Do not duplicate the page title as a body H1 because Fern renders the title from frontmatter.
 
 ## NemoClaw Doc Patterns
 
