@@ -74,6 +74,34 @@ function logicalDockerfileInstructions(text: string): LogicalDockerfileInstructi
   return instructions;
 }
 
+function unsupportedDirectCopyForm(instruction: LogicalDockerfileInstruction): never {
+  throw new Error(
+    `Unsupported direct Dockerfile.base COPY form at line ${instruction.lineNumber}: ${instruction.text}`,
+  );
+}
+
+function parseDirectCopyOperands(
+  tokens: string[],
+  instruction: LogicalDockerfileInstruction,
+): string[] | null {
+  let operandIndex = 0;
+  while (operandIndex < tokens.length && tokens[operandIndex]?.startsWith("--")) {
+    const flag = tokens[operandIndex]!;
+    if (/^--from=.+$/i.test(flag)) return null;
+    const reviewedDirectFlag =
+      /^--(?:chown|chmod)=.+$/i.test(flag) ||
+      /^--(?:link|parents)(?:=(?:true|false))?$/i.test(flag);
+    if (!reviewedDirectFlag) unsupportedDirectCopyForm(instruction);
+    operandIndex += 1;
+  }
+
+  const operands = tokens.slice(operandIndex);
+  if (operands.length < 2 || operands.some((operand) => operand.startsWith("--"))) {
+    unsupportedDirectCopyForm(instruction);
+  }
+  return operands;
+}
+
 export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE): string[] {
   const text = fs.readFileSync(dockerfilePath, "utf8");
   const sources: string[] = [];
@@ -84,35 +112,10 @@ export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE
 
     const copyForm = instructionMatch[2].trim();
     const tokens = copyForm.split(/\s+/).filter(Boolean);
-    if (!copyForm || copyForm.startsWith("[")) {
-      throw new Error(
-        `Unsupported direct Dockerfile.base COPY form at line ${instruction.lineNumber}: ${instruction.text}`,
-      );
-    }
+    if (!copyForm || copyForm.startsWith("[")) unsupportedDirectCopyForm(instruction);
 
-    let operandIndex = 0;
-    while (operandIndex < tokens.length && tokens[operandIndex]?.startsWith("--")) {
-      const flag = tokens[operandIndex]!;
-      if (/^--from=.+$/i.test(flag)) break;
-      const reviewedDirectFlag =
-        /^--(?:chown|chmod)=.+$/i.test(flag) ||
-        /^--(?:link|parents)(?:=(?:true|false))?$/i.test(flag);
-      if (!reviewedDirectFlag) {
-        throw new Error(
-          `Unsupported direct Dockerfile.base COPY form at line ${instruction.lineNumber}: ${instruction.text}`,
-        );
-      }
-      operandIndex += 1;
-    }
-
-    if (/^--from=.+$/i.test(tokens[operandIndex] ?? "")) continue;
-
-    const operands = tokens.slice(operandIndex);
-    if (operands.length < 2 || operands.some((operand) => operand.startsWith("--"))) {
-      throw new Error(
-        `Unsupported direct Dockerfile.base COPY form at line ${instruction.lineNumber}: ${instruction.text}`,
-      );
-    }
+    const operands = parseDirectCopyOperands(tokens, instruction);
+    if (operands === null) continue;
 
     for (const source of operands.slice(0, -1)) {
       validateOldBaseContextSource(source);

@@ -83,28 +83,62 @@ describe("rebuild-openclaw old-base build context", () => {
 
   it("rejects malformed direct Dockerfile.base COPY forms instead of omitting sources", () => {
     const unsupportedForms = [
-      'COPY ["scripts/lib/sandbox-rlimits.sh", "/tmp/"]',
-      "COPY <<EOF /tmp/generated",
-      "COPY scripts/lib/sandbox-rlimits.sh",
-      "COPY --from build /tmp/source /tmp/destination",
-      "COPY --exclude=*.md scripts/lib/sandbox-rlimits.sh /tmp/",
-      "COPY scripts/lib/sandbox-rlimits.sh --chmod=755 /tmp/",
-      "COPY scripts/lib/sandbox-rlimits.sh \\",
-      ["RUN <<EOF", "COPY scripts/lib/sandbox-rlimits.sh /tmp/not-an-instruction", "EOF"].join(
-        "\n",
-      ),
+      {
+        dockerfile: 'COPY ["scripts/lib/sandbox-rlimits.sh", "/tmp/"]',
+        expectedError: "Unsupported direct Dockerfile.base COPY form at line 1",
+      },
+      {
+        dockerfile: "COPY <<EOF /tmp/generated",
+        expectedError: "Unsupported Dockerfile.base heredoc instruction at line 1",
+      },
+      {
+        dockerfile: "COPY scripts/lib/sandbox-rlimits.sh",
+        expectedError: "Unsupported direct Dockerfile.base COPY form at line 1",
+      },
+      {
+        dockerfile: "COPY --from build /tmp/source /tmp/destination",
+        expectedError: "Unsupported direct Dockerfile.base COPY form at line 1",
+      },
+      {
+        dockerfile: "COPY --exclude=*.md scripts/lib/sandbox-rlimits.sh /tmp/",
+        expectedError: "Unsupported direct Dockerfile.base COPY form at line 1",
+      },
+      {
+        dockerfile: "COPY scripts/lib/sandbox-rlimits.sh --chmod=755 /tmp/",
+        expectedError: "Unsupported direct Dockerfile.base COPY form at line 1",
+      },
+      {
+        dockerfile: "COPY scripts/lib/sandbox-rlimits.sh \\",
+        expectedError: "Dangling Dockerfile.base continuation at line 1",
+      },
+      {
+        dockerfile: [
+          "RUN <<EOF",
+          "COPY scripts/lib/sandbox-rlimits.sh /tmp/not-an-instruction",
+          "EOF",
+        ].join("\n"),
+        expectedError: "Unsupported Dockerfile.base heredoc instruction at line 1",
+      },
+      {
+        dockerfile: "# escape=`\nFROM base",
+        expectedError: "Unsupported Dockerfile.base escape directive at line 1",
+      },
+      {
+        dockerfile: "COPY scripts/$*?[]\"' /tmp/unsafe",
+        expectedError: "Unsupported direct Dockerfile.base COPY source",
+      },
     ];
 
-    for (const copyForm of unsupportedForms) {
+    for (const { dockerfile, expectedError } of unsupportedForms) {
       const dockerfilePath = path.join(
         fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
         "Dockerfile.base",
       );
       testFiles.push(path.dirname(dockerfilePath));
-      fs.writeFileSync(dockerfilePath, copyForm, "utf8");
+      fs.writeFileSync(dockerfilePath, dockerfile, "utf8");
 
-      expect(() => directDockerfileBaseCopySources(dockerfilePath)).toThrow(
-        /Unsupported direct Dockerfile\.base COPY form|Dangling Dockerfile\.base continuation|Unsupported Dockerfile\.base heredoc instruction/,
+      expect(() => directDockerfileBaseCopySources(dockerfilePath), dockerfile).toThrow(
+        expectedError,
       );
     }
   });
