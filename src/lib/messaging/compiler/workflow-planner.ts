@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MessagingHookRegistry } from "../hooks";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../hydration";
 import type {
   ChannelManifestRegistry,
   MessagingAgentId,
@@ -11,7 +12,6 @@ import type {
   SandboxMessagingPlan,
   SandboxMessagingRuntimeSetupPlan,
 } from "../manifest";
-import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
 import { parseSandboxMessagingPlan } from "../plan-validation";
 import { planHostForward } from "./engines/host-forward-engine";
 import { planRuntimeSetup } from "./engines/runtime-setup-engine";
