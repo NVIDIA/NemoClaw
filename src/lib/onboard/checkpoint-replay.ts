@@ -15,6 +15,27 @@ export interface CheckpointedMachineSession {
   readonly machine: { readonly state: OnboardMachineState };
 }
 
+export function checkpointSandboxIdentityMatches(
+  session:
+    | (CheckpointedMachineSession & {
+        readonly sandboxName?: string | null;
+        readonly sandboxPromptProgress?: { readonly sandboxName?: boolean };
+      })
+    | null
+    | undefined,
+  sandboxName: string,
+): boolean {
+  if (session?.checkpoint) {
+    return (
+      isDecisionSelected(session.checkpoint.sandboxIdentity) &&
+      session.checkpoint.sandboxIdentity.value.name === sandboxName
+    );
+  }
+  return (
+    session?.sandboxPromptProgress?.sandboxName === true && session.sandboxName === sandboxName
+  );
+}
+
 export function checkpointProvesSandboxStepComplete(
   session: CheckpointedMachineSession | null | undefined,
 ): boolean {

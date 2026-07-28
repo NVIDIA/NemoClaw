@@ -15,6 +15,7 @@ import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
+import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
 import { describeIgnoredReasoningEnv } from "../../reasoning-mode";
 import type {
@@ -481,8 +482,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       if (
         (!selectedAgentName || selectedAgentName === "openclaw") &&
         sandboxName &&
-        session?.sandboxPromptProgress?.sandboxName === true &&
-        session.sandboxName === sandboxName
+        checkpointSandboxIdentityMatches(session, sandboxName)
       ) {
         deps.log(`  [resume] Reusing sandbox name: ${sandboxName}.`);
       }

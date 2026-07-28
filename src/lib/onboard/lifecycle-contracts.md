@@ -53,7 +53,7 @@ Every nonterminal state has one production owner or an explicit internal designa
 | `post_verify` | `handlePostVerifyState` in `machine/handlers/finalization.ts` |
 | `complete`, `failed` | Terminal; no handler |
 
-The final flow gives the strict runner ownership from the durable entry state. If a saved session is at `policies`, `finalizing`, or `post_verify`, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return one update-free canonical advance and leave the durable state unchanged. The flow validates but does not apply the returned transition. The repaired context then feeds the strict runner at the saved entry state.
+The initial, core, and final flows give the strict runner ownership from the durable entry state. If a saved session is later than a slice entry, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return a legal, update-free transition chain and leave the durable state unchanged. The flow validates but does not apply the repair transitions. The repaired context then feeds the strict runner at an exact state or the next flow slice.
 
 FSM transitions remain step-granular.
 For OpenClaw onboarding, the sandbox handler additionally checkpoints each completed secret-free prompt group: sandbox name, web search selection, messaging selection and non-secret configuration, and resource profile.
@@ -150,7 +150,7 @@ Rebuild and non-resumed re-onboard remain under #6492.
 
 ## Persisted field ownership
 
-The schema and sanitation authority is `Session` plus `normalizeSession`/`filterSafeUpdates` in `src/lib/state/onboard-session.ts`. `undefined` in an update means “leave unchanged”; accepted `null` means “clear.” On disk, many nullable fields still collapse never selected, explicitly declined, and explicitly cleared into the same `null` representation. `sandboxPromptProgress` records which of the checkpointed sandbox name, web search, messaging, and resource choices completed. The dedicated versioned `checkpoint` field (`src/lib/state/onboard-checkpoint.ts`) resolves the remaining ambiguity for those choices by modelling each as an explicit `unset`/`declined`/`selected` decision (#6228, #6227/#5783); `deriveCheckpointFromSession` reconstructs the same tri-state from legacy sessions using the completion markers. Live decision reads still consult the legacy fields; migrating every consumer onto the checkpoint decisions is a follow-up.
+The schema and sanitation authority is `Session` plus `normalizeSession`/`filterSafeUpdates` in `src/lib/state/onboard-session.ts`. `undefined` in an update means “leave unchanged”; accepted `null` means “clear.” On disk, many nullable fields still collapse never selected, explicitly declined, and explicitly cleared into the same `null` representation. `sandboxPromptProgress` records which of the checkpointed sandbox name, web search, messaging, and resource choices completed. The dedicated versioned `checkpoint` field (`src/lib/state/onboard-checkpoint.ts`) resolves the remaining ambiguity for those choices by modelling each as an explicit `unset`/`declined`/`selected` decision (#6228, #6227/#5783). Live decision reads use the checkpoint when it exists. `deriveCheckpointFromSession` uses legacy fields only to migrate a session that has no checkpoint.
 
 | Field group | Fields | Writer/owner and state meaning |
 |---|---|---|
@@ -199,14 +199,14 @@ PR #5955 moved the rebuild messaging conflict check before destruction.
 
 | Contract | Executable evidence | Uncovered boundary |
 |---|---|---|
-| Fresh, resumed, recreate, successful, and failed machine event order | `machine/transition-traces.test.ts` | None at this boundary. Sandbox-handler replay tests cover effect-group crash recovery. |
+| Fresh, resumed, recreate, successful, and failed machine event order | `machine/transition-traces.test.ts`, `machine/prerequisite-repair.test.ts` | None at this boundary. Sandbox-handler replay tests cover effect-group crash recovery. |
 | Detailed recreate decisions and repair branches | `machine/handlers/sandbox-resume.test.ts`, `machine/handlers/sandbox.test.ts` | Cross-handler effect transaction |
 | Legal edges, result kinds, runtime event shapes, runner sequencing | `machine/transitions.test.ts`, `machine/runtime.test.ts`, `machine/runner*.test.ts` | None at the unit boundary |
 | Create intent/provider ordering and fail-closed credential drift | `sandbox-create-plan.test.ts` | Cross-module pre-delete ordering has no behavioral seam |
 | Messaging conflict validation before recreate | `sandbox-messaging-preflight.test.ts`, rebuild preflight tests | One shared declarative policy across all callers |
 | Resume identity | `checkpoint-replay.test.ts`, `checkpoint-resume-guard.test.ts`, `machine/handlers/sandbox-checkpoint-crash-recovery.test.ts` | Live process-termination E2E with a real OpenShell sandbox |
 | Session sanitation, sandbox prompt checkpoints, and no-secret persistence | `src/lib/state/onboard-session-sandbox-prompts.test.ts`, `src/lib/state/onboard-checkpoint.test.ts`, `machine/handlers/sandbox-create-intent-boundary.test.ts` | Tri-state decisions remain scoped to checkpointed sandbox choices. |
-| Versioned checkpoint schema, tri-state decisions, migration, and unknown-future fail-safe | `src/lib/state/onboard-checkpoint.test.ts`, `src/lib/state/onboard-checkpoint-migrate.test.ts` | Live decision reads still use legacy fields |
+| Versioned checkpoint schema, tri-state decisions, migration, and unknown-future fail-safe | `src/lib/state/onboard-checkpoint.test.ts`, `src/lib/state/onboard-checkpoint-migrate.test.ts`, `checkpoint-replay.test.ts` | Legacy fields remain only as migration input when no checkpoint exists. |
 | Resumable create replay, durable identity, and stale-binding fail-closed | `src/lib/onboard/checkpoint-replay.test.ts`, `src/lib/onboard/checkpoint-resume-guard.test.ts`, `machine/handlers/sandbox-checkpoint-crash-recovery.test.ts` | None at the sandbox-handler boundary. |
 
 When lifecycle behavior changes one of these contracts, update the map and the narrow owning test in that same PR. Do not add source-text scans or production scaffolding solely to preserve current orchestration order.

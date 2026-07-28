@@ -13,13 +13,14 @@ import {
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
+import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
 import {
-  type InvalidatedOnboardStateResultRecorder,
-  runLiveOnboardFlowSlice,
-} from "./live-flow-slice";
-import type { OnboardStateResult } from "./result";
+  type OnboardPrerequisiteRepairEventRecorder,
+  runOnboardPrerequisiteRepair,
+} from "./prerequisite-repair";
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
+import type { OnboardMachineState } from "./types";
 
 export type InitialOnboardFlowContext<
   Agent,
@@ -191,47 +192,64 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
-  recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
+  recordRepairEvent: OnboardPrerequisiteRepairEventRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // The strict runner owns both exact entry states (`init` and `preflight`).
-  // Recompute plan for live resume repair when durable machine snapshots
-  // are already downstream of those entries even though preflight/gateway host
-  // backstops must still re-run. Those ahead-state snapshots can come from
-  // legacy/test step mutation that explicitly opts into `updateMachine === true`
-  // or from repaired-resume replay of persisted sessions. Recomputed transition
-  // results are explicitly applied or invalidated by runLiveOnboardFlowSlice,
-  // so stale phase output cannot update context or silently advance state.
-  // This slice cannot
-  // eliminate that source locally because the host backstop checks are still
-  // modeled as imperative resume work rather than strict FSM recovery states.
-  // The tolerated family is every nonterminal state after the exact
-  // `init`/`preflight` entries: gateway, provider_selection, inference, sandbox,
-  // openclaw/agent_setup, policies, finalizing, and post_verify. Non-resume
-  // compatibility is limited to gateway and provider_selection. Phase tests
-  // cover ahead-state resume and terminal-state rejection; remove this fallback
-  // once those repair/backstop checks are modeled as strict FSM recovery states
-  // and legacy machine step mutation is gone.
-  return runLiveOnboardFlowSlice({
+  const durableEntry = await options.runtime.session();
+  const state = durableEntry.machine.state;
+  const resumeAheadStates: readonly OnboardMachineState[] = [
+    "gateway",
+    "provider_selection",
+    "inference",
+    "sandbox",
+    "openclaw",
+    "agent_setup",
+    "policies",
+    "finalizing",
+    "post_verify",
+  ];
+  const allowedStates: readonly OnboardMachineState[] = options.resume
+    ? ["init", "preflight", ...resumeAheadStates]
+    : ["init", "preflight", "gateway", "provider_selection"];
+  if (!allowedStates.includes(state)) {
+    throw new UnexpectedLiveOnboardFlowSliceStateError(
+      state,
+      ["init", "preflight"],
+      allowedStates.filter((candidate) => candidate !== "init" && candidate !== "preflight"),
+    );
+  }
+  if (state === "init" || state === "preflight") {
+    return runInitialOnboardFlowSequence(options);
+  }
+
+  const preflight = options.phases.find((phase) => phase.state === "preflight");
+  const gateway = options.phases.find((phase) => phase.state === "gateway");
+  if (!preflight || !gateway || options.phases.length !== 2) {
+    throw new Error("Expected one preflight phase and one gateway phase");
+  }
+  const preflightRepair = await runOnboardPrerequisiteRepair({
     context: options.context,
+    durableEntryState: state,
+    phase: preflight,
+    expectedFinalStates: ["gateway"],
+    repair: "initial-flow-prerequisite",
     runtime: options.runtime,
-    phases: options.phases,
-    runWhenState: ["init", "preflight"],
-    compatibilityWhenState: options.resume
-      ? [
-          "gateway",
-          "provider_selection",
-          "inference",
-          "sandbox",
-          "openclaw",
-          "agent_setup",
-          "policies",
-          "finalizing",
-          "post_verify",
-        ]
-      : ["gateway", "provider_selection"],
-    runSlice: runInitialOnboardFlowSequence,
-    recordStateResult: options.recordStateResult,
-    recordInvalidatedStateResult: options.recordInvalidatedStateResult,
+    recordRepairEvent: options.recordRepairEvent,
   });
+  if (state === "gateway") {
+    return runInitialOnboardFlowSequence({
+      context: preflightRepair.context,
+      runtime: options.runtime,
+      phases: options.phases,
+    });
+  }
+  const gatewayRepair = await runOnboardPrerequisiteRepair({
+    context: preflightRepair.context,
+    durableEntryState: state,
+    phase: gateway,
+    expectedFinalStates: ["provider_selection"],
+    repair: "initial-flow-prerequisite",
+    runtime: options.runtime,
+    recordRepairEvent: options.recordRepairEvent,
+  });
+  return { context: gatewayRepair.context, session: await options.runtime.session() };
 }
