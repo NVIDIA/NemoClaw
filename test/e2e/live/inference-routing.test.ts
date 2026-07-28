@@ -516,7 +516,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "the blueprint runner imports the profile, creates and attaches the provider through real OpenShell",
       "apply preserves the already-active provider and model route before attaching identity",
       "OpenShell exchanges the refresh token at a public HTTPS OAuth endpoint",
-      "a sandbox request carries only its opaque revision-scoped placeholder and the protected resource receives the minted bearer",
+      "a sandbox request carries only an opaque placeholder and the protected resource receives the minted bearer",
       "a second refresh uses the rotated refresh token, and a later child launch receives a new placeholder whose request carries the new bearer",
       "status, persisted state, command artifacts, and request ledgers contain no OAuth secret material",
       "rollback detaches and deletes the owned provider while preserving the reused sandbox",
