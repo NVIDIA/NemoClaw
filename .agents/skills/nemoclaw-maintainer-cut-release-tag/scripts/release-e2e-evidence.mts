@@ -46,7 +46,7 @@ export type ReleaseE2ePreflight = {
   };
   exceptionsRequired: string[];
   executions: ReleaseE2eExecution[];
-  qualificationJobId: string;
+  launchableE2eJobId: string;
   requiredExecutionCount: number;
 };
 
@@ -259,7 +259,7 @@ function workflowJobs(workflowPath: string): JsonRecord {
   return record(workflow.jobs, "workflow.jobs");
 }
 
-function isQualificationJob(job: JsonRecord): boolean {
+function isLaunchableE2eJob(job: JsonRecord): boolean {
   const condition = job.if;
   return (
     typeof condition === "string" && condition.includes("inputs.include_staging_brev_launchable")
@@ -285,22 +285,22 @@ export function buildReleaseE2ePreflight(input: {
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const plan = input.plan ?? buildE2eWorkflowPlan();
   const explicitJobs = new Set(inventory.explicitOnlyJobs);
-  const qualificationJobs = inventory.explicitOnlyJobs.filter((jobId) =>
-    isQualificationJob(record(jobs[jobId], `workflow.jobs.${jobId}`)),
+  const launchableE2eJobs = inventory.explicitOnlyJobs.filter((jobId) =>
+    isLaunchableE2eJob(record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
-  if (qualificationJobs.length !== 1) {
+  if (launchableE2eJobs.length !== 1) {
     throw new Error(
-      `expected exactly one explicit qualification job, found ${qualificationJobs.length}`,
+      `expected exactly one explicit Launchable E2E job, found ${launchableE2eJobs.length}`,
     );
   }
-  const qualificationJobId = qualificationJobs[0]!;
+  const launchableE2eJobId = launchableE2eJobs[0]!;
   const conditionalJobs = inventory.explicitOnlyJobs.filter(
     (jobId) =>
-      jobId !== qualificationJobId &&
+      jobId !== launchableE2eJobId &&
       requiresConfirmedJetsonRunner(record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
   const parallelExplicitJobs = inventory.explicitOnlyJobs.filter(
-    (jobId) => jobId !== qualificationJobId && !conditionalJobs.includes(jobId),
+    (jobId) => jobId !== launchableE2eJobId && !conditionalJobs.includes(jobId),
   );
 
   const defaultJobIds = inventory.workflowJobs.filter(
@@ -365,7 +365,7 @@ export function buildReleaseE2ePreflight(input: {
     },
     exceptionsRequired,
     executions,
-    qualificationJobId,
+    launchableE2eJobId,
     requiredExecutionCount: executions.length,
   };
 }

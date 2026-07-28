@@ -39,7 +39,7 @@ function validEvidence() {
         },
       ],
     },
-    qualification: {
+    launchableE2e: {
       boot: {
         provisionSha: candidateSha,
         repoClean: true,
@@ -65,7 +65,7 @@ function validEvidence() {
 }
 
 describe("nemoclaw-maintainer-e2e evidence validation", () => {
-  it("returns exact-candidate job, qualification, and cleanup evidence (#7487)", () => {
+  it("returns exact-candidate job, Launchable E2E, and cleanup evidence (#7487)", () => {
     expect(validateFullE2eEvidence(validEvidence())).toEqual({
       attempt: 2,
       candidateSha,
@@ -80,7 +80,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         includeStagingBrevLaunchable: true,
       },
       jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
-      qualification: {
+      launchableE2e: {
         fullE2e: "passed",
         producerRunId: "99",
         provisionSha: candidateSha,
@@ -100,7 +100,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "run.head_sha",
     ],
     [
-      "a selective qualification dispatch",
+      "a selective Launchable E2E dispatch",
       (evidence: ReturnType<typeof validEvidence>) => {
         evidence.dispatch.defaultSuiteSelected = false;
         evidence.dispatch.includeStagingBrevLaunchable = false;
@@ -109,18 +109,18 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "dispatch.jobs",
     ],
     [
-      "a skipped qualification job",
+      "a skipped Launchable E2E job",
       (evidence: ReturnType<typeof validEvidence>) => {
         evidence.jobs.jobs[0]!.conclusion = "skipped";
       },
       "Exact staging Brev Launchable conclusion",
     ],
     [
-      "a qualification receipt for another SHA",
+      "a Launchable E2E receipt for another SHA",
       (evidence: ReturnType<typeof validEvidence>) => {
-        evidence.qualification.boot.repoSha = "b".repeat(40);
+        evidence.launchableE2e.boot.repoSha = "b".repeat(40);
       },
-      "qualification.boot.repoSha",
+      "launchableE2e.boot.repoSha",
     ],
     [
       "a cleanup receipt without verified absence",
@@ -187,7 +187,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("correlation_id=${CORRELATION_ID}");
     expect(skill).toContain("head_sha");
     expect(skill).toContain("Exact staging Brev Launchable");
-    expect(skill).toContain("qualification.json");
+    expect(skill).toContain("launchable-e2e.json");
     expect(skill).toContain("cleanup.json");
     expect(skill).toContain("dispatch.json");
     expect(skill).toContain("validate-full-e2e-evidence.mts");

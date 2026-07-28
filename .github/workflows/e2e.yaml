@@ -20,7 +20,7 @@ on:
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include Exact staging Brev Launchable qualification in a full E2E run when jobs and targets are empty."
+        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -512,7 +512,7 @@ jobs:
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
             ${{ steps.workspace.outputs.work_dir }}/dispatch.json
-            ${{ steps.workspace.outputs.work_dir }}/qualification.json
+            ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
             ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 

@@ -84,7 +84,7 @@ function runEvidence(
 }
 
 describe("release E2E evidence", () => {
-  it("derives full, concurrent, conditional, and qualification work from the workflow", () => {
+  it("derives full, concurrent, conditional, and Launchable E2E work from the workflow", () => {
     const plan = preflight({ jetsonRunnerOnline: "unknown" });
 
     expect(plan.dispatches.defaultSuite).toEqual({
@@ -106,7 +106,7 @@ describe("release E2E evidence", () => {
     expect(plan.dispatches.conditional).toEqual([
       expect.objectContaining({ allowJetsonRunnerQueue: false, jobs: "jetson-nvmap-gpu" }),
     ]);
-    expect(plan.qualificationJobId).toBe("staging-brev-launchable");
+    expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
     expect(plan.exceptionsRequired).toEqual(["jetson-nvmap-gpu"]);
   });
 

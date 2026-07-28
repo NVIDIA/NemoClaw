@@ -96,7 +96,7 @@ gh workflow run .github/workflows/e2e.yaml \
 
 Do not set `jobs=staging-brev-launchable` for full mode.
 Empty `jobs` and `targets` select the default suite.
-The boolean input adds qualification to that same run.
+The boolean input adds the Launchable E2E job to that same run.
 The protected environment can require approval for Launchable and full runs.
 
 ### Release Coverage Dispatch Group
@@ -210,7 +210,7 @@ For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 For Launchable mode, also require `jobs-latest-$RUN_ID.json` to contain one completed, successful
 `Exact staging Brev Launchable` job. Return the workflow and job URLs.
 
-For full mode, download the qualification evidence:
+For full mode, download the Launchable E2E evidence:
 
 ```bash
 gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
@@ -222,7 +222,7 @@ node --experimental-strip-types --no-warnings \
   --run-json "$EVIDENCE_DIR/run-$RUN_ID.json" \
   --jobs-json "$EVIDENCE_DIR/jobs-latest-$RUN_ID.json" \
   --dispatch-json "$EVIDENCE_DIR/dispatch.json" \
-  --qualification-json "$EVIDENCE_DIR/qualification.json" \
+  --launchable-e2e-json "$EVIDENCE_DIR/launchable-e2e.json" \
   --cleanup-json "$EVIDENCE_DIR/cleanup.json"
 ```
 
@@ -231,12 +231,12 @@ The validator requires:
 - the workflow run to succeed for the selected SHA;
 - `dispatch.json` to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`;
 - `Exact staging Brev Launchable` to conclude `success` in the reported attempt;
-- `qualification.json` to identify the selected SHA in the repository and provision records;
+- `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
 - the booted repository to be unmodified;
 - the in-guest full E2E to pass; and
 - `cleanup.json` to report the same workspace as `ABSENT`.
 
-A skipped, cancelled, queued, or failed qualification job is not evidence.
+A skipped, cancelled, queued, or failed Launchable E2E job is not evidence.
 A Launchable-mode run is not full-mode or pre-tag release evidence.
 A missing, mismatched, or failed cleanup receipt is not evidence.
 
@@ -249,7 +249,7 @@ Return:
 - workflow run URL and conclusion;
 - `Exact staging Brev Launchable` job URL;
 - workflow attempt number;
-- qualification identity; and
+- Launchable E2E identity; and
 - cleanup result.
 
 If the release candidate SHA changes, discard the earlier run group and rerun every required release coverage group for the new SHA.

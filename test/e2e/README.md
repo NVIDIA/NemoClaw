@@ -211,15 +211,15 @@ graph as the live targets:
   runs never receive Slack webhook secrets.
 
 A manual run with `jobs=staging-brev-launchable` runs only the exact staging
-Launchable qualification. Scheduled runs do not select this job.
+Launchable E2E job. Scheduled runs do not select this job.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs the default suite and the Launchable qualification.
+`targets` selectors runs the default suite and the Launchable E2E job.
 This is the full run required for pre-tag evidence. Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The protected `staging-brev-launchable` job
 uses the non-cancelling `staging-brev-launchable-cpu` group with `queue: max`,
-so pending qualifications remain queued instead of replacing one another.
+so pending Launchable E2E runs remain queued instead of replacing one another.
 
 ### Hosted-runner recovery
 

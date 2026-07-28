@@ -109,7 +109,7 @@ export interface FocusedE2eJob {
 }
 
 export interface StagingBrevLaunchableDispatchEvaluation {
-  runQualification: boolean;
+  runLaunchableE2e: boolean;
 }
 
 type CachedFreeStandingJobsInventory = {
@@ -711,7 +711,7 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
   const trustedMain = input.trustedMain !== false;
 
   return {
-    runQualification: requested && trustedMain,
+    runLaunchableE2e: requested && trustedMain,
   };
 }
 
@@ -4130,7 +4130,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
+      "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
     );
   }
   const steps = asSteps(job.steps);
@@ -4180,7 +4180,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     )
   ) {
     errors.push(
-      "staging-brev-launchable must record dispatch identity after preparation and before qualification",
+      "staging-brev-launchable must record dispatch identity after preparation and before the Launchable E2E run",
     );
   }
   const runEnv = asRecord(run?.env);
@@ -4214,7 +4214,7 @@ function validateStagingBrevLaunchableInput(
     !description.includes("full E2E run")
   ) {
     errors.push(
-      "workflow_dispatch include_staging_brev_launchable input must document full-run qualification scope",
+      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable E2E scope",
     );
   }
 }
