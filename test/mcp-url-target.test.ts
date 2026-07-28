@@ -24,6 +24,7 @@ describe("MCP URL target special-use filtering", () => {
     "3fff::1",
     "5f00::1",
     "fec0::1",
+    "100:0:0:1::1",
   ])("blocks non-global special-purpose address %s", (address) => {
     expect(isBlockedMcpUrlTargetHost(address)).toBe(true);
   });
@@ -50,6 +51,7 @@ describe("MCP and private-networks.yaml SSRF denylist parity", () => {
     "3fff::1",
     "5f00::1",
     "fec0::1",
+    "100:0:0:1::1",
     "metadata",
     "foo.metadata",
   ])("blocks MCP-denied target %s in shared private-networks rules", (address) => {

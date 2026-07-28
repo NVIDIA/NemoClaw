@@ -282,7 +282,14 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["100::4000:0:0:0", true, "100::/64 quarter"],
     ["100::c000:0:0:0", true, "100::/64 three-quarter"],
     ["ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "100::/64 before-start"],
-    ["100:0:0:1::", false, "100::/64 after-end"],
+    ["100:0:1::", false, "100::/64 after-end"],
+    // 100:0:0:1::/64 — Dummy IPv6 Prefix. No before-start vector: the
+    // previous hextet is covered by the 100::/64 discard prefix.
+    ["100:0:0:1::", true, "100:0:0:1::/64 start"],
+    ["100:0:0:1:ffff:ffff:ffff:ffff", true, "100:0:0:1::/64 end"],
+    ["100:0:0:1:4000:0:0:0", true, "100:0:0:1::/64 quarter"],
+    ["100:0:0:1:c000:0:0:0", true, "100:0:0:1::/64 three-quarter"],
+    ["100:0:0:2::", false, "100:0:0:1::/64 after-end"],
     // 2001::/23 — IETF protocol assignments (includes Teredo)
     ["2001::", true, "2001::/23 start"],
     ["2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff", true, "2001::/23 end"],
