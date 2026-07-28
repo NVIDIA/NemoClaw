@@ -490,6 +490,10 @@ const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
 }: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
+const {
+  prepareCoreOnboardFlowContext,
+  prepareFinalOnboardFlowContext,
+}: typeof import("./onboard/machine/flow-handoff") = require("./onboard/machine/flow-handoff");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");
@@ -4266,35 +4270,25 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       recordRepairEvent,
     });
 
-    const initialContext = initialFlowResult.context;
-    if (!initialContext.sandboxGpuConfig) {
-      throw new Error("Preflight did not produce a sandbox GPU configuration.");
-    }
-    session = initialFlowResult.session;
-    const sandboxGpuConfig = initialContext.sandboxGpuConfig;
-    const { gpuPassthrough } = initialContext;
-    const gpu = initialContext.gpu ?? null;
-
     // #2753: for an unfinished sandbox, an explicit requested name precedes
     // the checkpointed name from the interrupted session.
-    let sandboxName =
-      recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null;
-    if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
-      console.error(
-        `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
-      );
-      console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
-      process.exit(1);
-    }
-    const coreFlowContext: InitialOnboardFlowContext = {
-      ...initialContext,
-      session,
-      sandboxName,
+    const coreFlowContext = prepareCoreOnboardFlowContext({
+      initial: initialFlowResult,
+      recordedSandboxName,
+      requestedSandboxName,
+      checkpointedSandboxName,
       selectedMessagingChannels,
-      gpu,
-      sandboxGpuConfig,
-      gpuPassthrough,
-    };
+      assertSandboxNameAllowed: (sandboxName) => {
+        if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
+        console.error(
+          `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
+        );
+        console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
+        process.exit(1);
+      },
+    });
+    session = coreFlowContext.session;
+    let { sandboxName } = coreFlowContext;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4452,38 +4446,19 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       recordRepairEvent,
     });
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
-    const coreContext = coreFlowResult.context;
-    session = coreContext.session;
-    sandboxName = coreContext.sandboxName;
-    if (!sandboxName || !coreContext.model || !coreContext.provider) {
-      throw new Error("Onboarding state is incomplete after sandbox setup.");
-    }
-    const model = coreContext.model;
-    const provider = coreContext.provider;
-    const endpointUrl = coreContext.endpointUrl;
-    const credentialEnv = coreContext.credentialEnv;
-    const hermesAuthMethod = coreContext.hermesAuthMethod;
-    const hermesToolGateways = coreContext.hermesToolGateways;
-    const nimContainer = coreContext.nimContainer;
-    let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
-    const webSearchSupported = coreContext.webSearchSupported;
-
-    const finalFlowContext: InitialOnboardFlowContext = {
-      ...coreContext,
-      session,
-      sandboxName,
-      model,
-      provider,
-      endpointUrl,
-      credentialEnv,
-      hermesAuthMethod,
-      hermesToolGateways,
-      nimContainer,
-      webSearchConfig,
-      selectedMessagingChannels: coreContext.selectedMessagingChannels,
-      webSearchSupported,
-    };
-    let liveFinalFlowContext = finalFlowContext;
+    const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
+    session = finalFlowContext.session;
+    sandboxName = finalFlowContext.sandboxName;
+    const model = finalFlowContext.model;
+    const provider = finalFlowContext.provider;
+    const endpointUrl = finalFlowContext.endpointUrl;
+    const credentialEnv = finalFlowContext.credentialEnv;
+    const hermesAuthMethod = finalFlowContext.hermesAuthMethod;
+    const hermesToolGateways = finalFlowContext.hermesToolGateways;
+    const nimContainer = finalFlowContext.nimContainer;
+    let webSearchConfig = finalFlowContext.webSearchConfig as WebSearchConfig | null;
+    const webSearchSupported = finalFlowContext.webSearchSupported;
+    let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
 
     const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
