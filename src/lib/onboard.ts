@@ -251,7 +251,7 @@ const {
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
-const { installVllm, isNemoClawManagedVllmRunning } = require("./inference/vllm");
+const vllmInference = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -1087,8 +1087,8 @@ const {
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleVllmSelection = createSetupNimVllmHandler({
   VLLM_PORT, runCapture, getLocalProviderBaseUrl, getLocalProviderValidationBaseUrl,
-  isSafeModelId, requireValue, validateOpenAiLikeSelection,
-  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning,
+  getManagedVllmProviderBinding: localInference.getManagedDualStationVllmProviderBinding, queryVllmModels: (baseUrl, apiKey) => { const result = localInference.probeVllmModels(baseUrl, apiKey); return result.ok ? result.body : ""; }, isSafeModelId, requireValue, validateOpenAiLikeSelection,
+  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredDualStationVllmRuntimeReceipt: vllmInference.persistConfiguredDualStationVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
@@ -3581,7 +3581,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRunningOllamaSelection,
     handleWindowsHostOllamaSelection,
     handleInstallOllamaSelection,
-    installVllm,
+    installVllm: vllmInference.installVllm,
     handleVllmSelection,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
