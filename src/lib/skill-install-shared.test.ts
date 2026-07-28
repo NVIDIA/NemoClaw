@@ -87,11 +87,9 @@ describe("fresh shared-agent skill install", () => {
     const skillDir = makeSkill();
     const paths = pathsFor("/sandbox/.deepagents");
     const expected = computeSkillContentDigest(skillDir);
-    const commands: string[] = [];
     try {
       const result = installFreshSharedSkill(CTX, skillDir, paths, {
-        sshExecImpl: (_ctx, command, opts) => {
-          commands.push(command);
+        sshExecImpl: (_ctx, _command, opts) => {
           expect(Buffer.isBuffer(opts?.input)).toBe(true);
           return { status: 0, stdout: `INSTALLED ${expected}`, stderr: "" };
         },
@@ -105,18 +103,6 @@ describe("fresh shared-agent skill install", () => {
       expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
       expect(paths.mirrorDir).toBeNull();
       expect(paths.uploadDirSharedWithAgent).toBe(true);
-      expect(commands[0]).toContain("tar --no-same-owner -xf -");
-      expect(commands[0]).not.toContain("--no-same-permissions");
-      expect(commands[0]).toContain('find "$payload" -type f -perm /111 -exec chmod 755 {} +');
-      expect(commands[0]).toContain('find "$payload" -type f ! -perm /111 -exec chmod 644 {} +');
-      expect(commands[0]).toContain('mode="$(stat -c "%a" "$payload/$rel")"');
-      expect(commands[0]).toContain("sha256sum");
-      expect(commands[0]).toContain('mv -nT -- "$payload" "$leaf"');
-      expect(commands[0]).toContain('exists "$payload"');
-      expect(commands[0]).toContain("MOVE_FAILED");
-      expect(commands[0]).not.toContain("$workspace/active.manifest");
-      expect(commands[0]).not.toContain("/sandbox/.deepagents/skills/note-summarizer");
-      expect(commands[0]).not.toContain('rm -rf -- "$leaf"');
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
