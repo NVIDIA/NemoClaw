@@ -58,17 +58,32 @@ const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   CREDENTIAL_PLACEHOLDER,
 ]);
 
-/** High-confidence raw secret shapes used as a value-level backstop. */
+/**
+ * High-confidence raw secret shapes used as a value-level backstop.
+ * Kept aligned with TOKEN_PREFIX / STRUCTURED / SECRET_BLOCK patterns from
+ * src/lib/security/secret-patterns.ts (plugin package cannot import src/lib).
+ */
 const VALUE_SECRET_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/,
+  /nvcf-[A-Za-z0-9_-]{10,}/,
   /ghp_[A-Za-z0-9_-]{10,}/,
+  /(?:github_pat_)[A-Za-z0-9_]{30,}/,
   /sk-proj-[A-Za-z0-9_-]{10,}/,
   /sk-ant-[A-Za-z0-9_-]{10,}/,
   /sk-[A-Za-z0-9_-]{20,}/,
   /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/,
   /A(?:K|S)IA[A-Z0-9]{16}/,
   /hf_[A-Za-z0-9]{10,}/,
+  /glpat-[A-Za-z0-9_-]{10,}/,
+  /gsk_[A-Za-z0-9]{10,}/,
+  /pypi-[A-Za-z0-9_-]{10,}/,
+  /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/,
+  /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/,
+  /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/,
   /tvly-[A-Za-z0-9_-]{10,}/,
+  /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/,
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/,
 ];
 
 function hasPassCredentialSegment(key: string): boolean {
@@ -164,7 +179,10 @@ export function stripCredentials(obj: unknown): unknown {
   const result: UnknownRecord = {};
   for (const [key, value] of Object.entries(obj)) {
     if (isCredentialField(key)) {
-      result[key] = isSafeCredentialPlaceholder(value) ? value : CREDENTIAL_PLACEHOLDER;
+      result[key] =
+        value === null || value === undefined || isSafeCredentialPlaceholder(value)
+          ? value
+          : CREDENTIAL_PLACEHOLDER;
     } else {
       result[key] = scrubConfigValue(value);
     }

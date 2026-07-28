@@ -69,7 +69,19 @@ describe("plugin credential-filter", () => {
     expect(isSafeCredentialPlaceholder("unused")).toBe(true);
     expect(isSafeCredentialPlaceholder("openshell:resolve:env:TOKEN")).toBe(true);
     expect(valueLooksLikeSecret("sk-abcdefghijklmnopqrstuvwxyz")).toBe(true);
+    expect(valueLooksLikeSecret("glpat-abcdefghijklmnopqrst")).toBe(true);
+    expect(valueLooksLikeSecret("nvcf-abcdefghij")).toBe(true);
     expect(valueLooksLikeSecret("not-a-secret")).toBe(false);
+  });
+
+  it("preserves null and undefined under credential field names", () => {
+    const result = stripCredentials({ apiKey: null, token: undefined, model: "keep" }) as Record<
+      string,
+      unknown
+    >;
+    expect(result.apiKey).toBeNull();
+    expect(result.token).toBeUndefined();
+    expect(result.model).toBe("keep");
   });
 
   it("excludes auth state basenames from migration copies", () => {

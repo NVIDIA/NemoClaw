@@ -13,6 +13,7 @@ import {
   sanitizeConfigFile,
   sanitizeEnvFile,
   sanitizeEnvFileContent,
+  sanitizeYamlConfigFile,
   shouldScanSnapshotFileForCredentials,
   stripCredentials,
 } from "./credential-filter.js";
@@ -83,6 +84,13 @@ describe("stripCredentials", () => {
     expect(stripCredentials(undefined)).toBeUndefined();
     expect(stripCredentials("hello")).toBe("hello");
     expect(stripCredentials(42)).toBe(42);
+  });
+
+  it("preserves null and undefined under credential field names", () => {
+    const result = stripCredentials({ apiKey: null, token: undefined, model: "keep" });
+    expect(result.apiKey).toBeNull();
+    expect(result.token).toBeUndefined();
+    expect(result.model).toBe("keep");
   });
 
   it("preserves OpenShell resolve placeholders under credential fields (#5027)", () => {
@@ -230,7 +238,7 @@ describe("sanitizeConfigFile", () => {
       ].join("\n"),
     );
 
-    sanitizeConfigFile(configPath);
+    expect(sanitizeConfigFile(configPath)).toBe(true);
 
     const result = readFileSync(configPath, "utf-8");
     expect(result).toContain("model: hermes");
@@ -241,6 +249,14 @@ describe("sanitizeConfigFile", () => {
     expect(result).not.toContain("xoxb-slack-bot-token-value");
     expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
     expect(result).not.toContain("gateway:");
+  });
+
+  it("fails closed for malformed Hermes YAML", () => {
+    const configPath = join(tmpDir, "broken.yaml");
+    writeFileSync(configPath, "api_key: [unclosed\n");
+    expect(sanitizeYamlConfigFile(configPath)).toBe(false);
+    expect(sanitizeConfigFile(configPath)).toBe(false);
+    expect(readFileSync(configPath, "utf-8")).toContain("api_key:");
   });
 });
 
