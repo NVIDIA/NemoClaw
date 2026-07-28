@@ -1355,6 +1355,8 @@ def _parse_locked_hermes_hash(strict: bytes) -> dict[str, str]:
                     raise ValueError("invalid Hermes MCP state metadata")
                 mcp_state_seen = True
                 continue
+            if mcp_state_seen:
+                raise ValueError("Hermes MCP state metadata must be terminal")
             digest, pathname = line.split(maxsplit=1)
             canonical_path = pathname.strip()
             if canonical_path in records:

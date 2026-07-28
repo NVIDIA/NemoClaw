@@ -44,6 +44,8 @@ def parse(*lines):
 print(json.dumps({
     "legacy": parse(config, environment),
     "current": parse(config, environment, state),
+    "state_first": parse(state, config, environment),
+    "state_between": parse(config, state, environment),
     "malformed_state": parse(config, environment, state + " trailing"),
     "duplicate_state": parse(config, environment, state, state),
     "unknown_comment": parse(config, environment, "# untrusted metadata"),
@@ -1273,6 +1275,8 @@ describe("managed gateway root control", () => {
     expect(JSON.parse(result.stdout)).toEqual({
       legacy: expectedRecords,
       current: expectedRecords,
+      state_first: "GATEWAY_CONFIG_HASH_MISMATCH",
+      state_between: "GATEWAY_CONFIG_HASH_MISMATCH",
       malformed_state: "GATEWAY_CONFIG_HASH_MISMATCH",
       duplicate_state: "GATEWAY_CONFIG_HASH_MISMATCH",
       unknown_comment: "GATEWAY_CONFIG_HASH_MISMATCH",
