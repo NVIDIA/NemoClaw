@@ -279,6 +279,16 @@ describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () =>
     expect(result.stdout).toBe("");
   });
 
+  it("treats a missing revision as a parse failure instead of selecting a release family", () => {
+    const result = runSetupJetson("# R36 (release), GCID: 12345678, BOARD: t186ref");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("Jetson detected but the L4T release could not be parsed");
+    expect(result.stderr).toContain("Skipped Jetson host setup");
+    expect(result.stderr).toContain("Installation continues in an untested configuration.");
+    expect(result.stdout).toBe("");
+  });
+
   it("stays silent on a host that is not a Jetson", () => {
     const result = runSetupJetsonWithoutReleaseFile();
 

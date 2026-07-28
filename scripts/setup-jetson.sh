@@ -73,7 +73,7 @@ get_jetpack_version() {
   revision="$(printf '%s\n' "$release_line" | sed -n 's/^.*REVISION: \([0-9][0-9]*\)\..*$/\1/p')"
   l4t_version="${release}.${revision}"
 
-  if [[ -z "$release" ]]; then
+  if [[ -z "$release" || -z "$revision" ]]; then
     warn "Jetson detected but the L4T release could not be parsed from /etc/nv_tegra_release."
     warn_host_setup_skipped
     return 0
