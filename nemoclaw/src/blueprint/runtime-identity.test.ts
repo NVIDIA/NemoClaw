@@ -199,6 +199,7 @@ describe("runtime identity contract", () => {
     { ...config, provider_name: "../provider" },
     { ...config, credential_key: "lowercase" },
     { ...config, client_id_env: "1INVALID" },
+    { ...config, client_id_env: "OTHER_ID" },
     { ...config, client_id_env: "AWS_SECRET_ACCESS_KEY" },
     { ...config, refresh_token_env: config.client_id_env },
     { ...config, client_secret_env: config.refresh_token_env },

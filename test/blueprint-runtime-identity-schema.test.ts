@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { isRuntimeIdentityConfig } from "../nemoclaw/src/blueprint/runtime-identity.ts";
 import { compileConfigSchema } from "../scripts/validate-configs.mts";
 
 const validate = compileConfigSchema("schemas/blueprint.schema.json");
@@ -40,6 +41,7 @@ describe("blueprint runtime identity schema", () => {
     expect(validate(blueprintWithIdentity(runtimeIdentity)), JSON.stringify(validate.errors)).toBe(
       true,
     );
+    expect(isRuntimeIdentityConfig(runtimeIdentity)).toBe(true);
   });
 
   it("rejects an identity-provider discriminator", () => {
@@ -70,5 +72,14 @@ describe("blueprint runtime identity schema", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("rejects a client ID name that the runner's structural contract rejects", () => {
+    const unsupportedIdentity = {
+      ...runtimeIdentity,
+      client_id_env: "OTHER_ID",
+    };
+    expect(validate(blueprintWithIdentity(unsupportedIdentity))).toBe(false);
+    expect(isRuntimeIdentityConfig(unsupportedIdentity)).toBe(false);
   });
 });
