@@ -62,12 +62,15 @@ export type EnsureHttpsPinRuntimeAdapterFn = (
   options: EnsureHttpsPinRuntimeAdapterOptions,
 ) => Promise<{ baseUrl: string; credentialEnv: string; token: string; routeId: string }>;
 
-export interface HttpsPinProviderBinding {
+export interface InferenceSetProviderBinding {
   baseUrl: string;
   credentialEnv: string;
   token: string;
-  routeId: string;
   providerType: HttpsPinCredentialProviderType;
+}
+
+export interface HttpsPinProviderBinding extends InferenceSetProviderBinding {
+  routeId: string;
 }
 
 type EnsureHttpsPinAdapterRoute = (endpointUrl: string) => Promise<string>;
@@ -416,11 +419,13 @@ export async function finalizeInferenceSetRoute(options: {
   onboardEndpointUrl: string | null;
   getSandboxes: () => SandboxEntry[];
   rewriteUrlWithDnsPinning: RewriteConfigUrlsWithDnsPinning;
+  resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   effectiveInferenceApi?: string | null;
 }): Promise<{
   registryMetadata: RegistryInferenceMetadata;
   explicitPreferredInferenceApi: string | null;
+  directProviderBinding: InferenceSetProviderBinding | null;
   httpsPinProviderBinding: HttpsPinProviderBinding | null;
 }> {
   const { prepared } = options;
@@ -428,14 +433,23 @@ export async function finalizeInferenceSetRoute(options: {
     return {
       registryMetadata: prepared.preliminaryRegistryMetadata,
       explicitPreferredInferenceApi: null,
+      directProviderBinding: null,
       httpsPinProviderBinding: null,
     };
   }
   // Bound once per finalize call: the credential env var name is fixed per
   // provider (normalizeExplicitCredentialEnv already enforced this), and the
-  // real credential value is read directly from the host process environment
-  // at invocation time, never persisted, and never returned to the caller.
+  // real credential value is resolved once at invocation time through the
+  // injected credential resolver. Direct routes return it only in the
+  // invocation-local provider binding consumed below; no registry or sandbox
+  // field receives it.
   const httpsPinCredentialEnv = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[options.provider];
+  const credentialValue = options.resolveCredentialValue(httpsPinCredentialEnv);
+  const providerType: HttpsPinCredentialProviderType =
+    (options.effectiveInferenceApi ??
+      prepared.preliminaryExplicitMetadata.preferredInferenceApi) === "anthropic-messages"
+      ? "anthropic"
+      : "openai";
   // Set only when the adapter route is actually used. The canonical provider
   // credential key stays stable; only its invocation-local value becomes the
   // route-scoped adapter token.
@@ -444,12 +458,6 @@ export async function finalizeInferenceSetRoute(options: {
     // The credential is held only for this invocation and handed directly
     // to the adapter. It is never persisted, returned, or copied to a shared
     // process.env slot.
-    const credentialValue = process.env[httpsPinCredentialEnv] ?? "";
-    const providerType: HttpsPinCredentialProviderType =
-      (options.effectiveInferenceApi ??
-        prepared.preliminaryExplicitMetadata?.preferredInferenceApi) === "anthropic-messages"
-        ? "anthropic"
-        : "openai";
     const adapter = await options.ensureHttpsPinRuntimeAdapter({
       gatewayName: prepared.gatewayName,
       provider: options.provider,
@@ -518,6 +526,14 @@ export async function finalizeInferenceSetRoute(options: {
     endpointUrl,
     endpointSource,
   };
+  const directProviderBinding: InferenceSetProviderBinding | null = httpsPinProviderBinding
+    ? null
+    : {
+        baseUrl: endpointUrl,
+        credentialEnv: httpsPinCredentialEnv,
+        token: credentialValue,
+        providerType,
+      };
   assertGatewayRouteCompatibility({
     gatewayName: prepared.gatewayName,
     sandboxName: options.sandboxName,
@@ -529,6 +545,7 @@ export async function finalizeInferenceSetRoute(options: {
   return {
     registryMetadata,
     explicitPreferredInferenceApi: registryMetadata.preferredInferenceApi ?? null,
+    directProviderBinding,
     httpsPinProviderBinding,
   };
 }
