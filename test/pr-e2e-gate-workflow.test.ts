@@ -702,7 +702,7 @@ describe("PR E2E gate workflow", () => {
     const retargeted = runChildValidation(HEAD_SHA, "d".repeat(40));
     const racedWorkflow = runChildValidation(HEAD_SHA, BASE_SHA, "e".repeat(40));
     const combined = runChildValidation(HEAD_SHA, BASE_SHA, WORKFLOW_SHA, {
-      jobs: "cloud-onboard,credential-sanitization,security-posture",
+      jobs: "cloud-inference,cloud-onboard,security-posture",
       targets: "ubuntu-repo-cloud-langchain-deepagents-code",
     });
     const unapprovedTarget = runChildValidation(HEAD_SHA, BASE_SHA, WORKFLOW_SHA, {

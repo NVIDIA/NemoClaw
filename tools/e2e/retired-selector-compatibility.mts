@@ -29,7 +29,7 @@ const SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/u;
 type RetiredControllerSelectorId = (typeof RETIRED_CONTROLLER_SELECTOR_IDS)[number];
 type ReplacementTest = {
   files: readonly string[];
-  project: "integration" | "installer-integration" | "package-contract";
+  project: "cli" | "integration" | "installer-integration" | "package-contract";
 };
 type Replacement = {
   legacyFile?: string;
@@ -38,6 +38,33 @@ type Replacement = {
 
 const RETIRED_SELECTOR_ID_SET = new Set<string>(RETIRED_CONTROLLER_SELECTOR_IDS);
 const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> = {
+  "credential-migration": {
+    legacyFile: "test/e2e/live/credential-migration.test.ts",
+    tests: [
+      {
+        files: ["test/credential-migration-reconciliation.test.ts"],
+        project: "integration",
+      },
+    ],
+  },
+  "credential-sanitization": {
+    legacyFile: "test/e2e/live/credential-sanitization.test.ts",
+    tests: [
+      {
+        files: ["src/lib/security/credential-filter-secret-patterns.test.ts"],
+        project: "cli",
+      },
+    ],
+  },
+  diagnostics: {
+    legacyFile: "test/e2e/live/diagnostics.test.ts",
+    tests: [
+      {
+        files: ["test/package-contract/cli/debug-cli-command.test.ts"],
+        project: "package-contract",
+      },
+    ],
+  },
   "docs-validation": {
     legacyFile: "test/e2e/live/docs-validation.test.ts",
     tests: [
@@ -125,7 +152,12 @@ function replacementCommands(selected: readonly RetiredControllerSelectorId[]): 
       filesByProject.set(test.project, files);
     }
   }
-  for (const project of ["integration", "installer-integration", "package-contract"] as const) {
+  for (const project of [
+    "cli",
+    "integration",
+    "installer-integration",
+    "package-contract",
+  ] as const) {
     const files = filesByProject.get(project);
     if (!files) continue;
     commands.push({

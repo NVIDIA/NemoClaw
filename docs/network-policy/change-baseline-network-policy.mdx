@@ -4,8 +4,8 @@
 title: "Change the Baseline Network Policy"
 sidebar-title: "Change the Baseline Policy"
 description: "Edit the policy that NemoClaw applies when it creates a sandbox."
-description-agent: "Changes the baseline sandbox network policy. Use when adding durable endpoints to every future sandbox or maintaining blueprint policy additions."
-keywords: ["nemoclaw baseline network policy", "sandbox policy yaml", "blueprint policy additions"]
+description-agent: "Changes the baseline sandbox network policy. Use when adding durable endpoints to every future sandbox."
+keywords: ["nemoclaw baseline network policy", "sandbox policy yaml"]
 content:
   type: "how_to"
 skill:
@@ -31,6 +31,9 @@ Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpo
 </AgentOnly>
 <AgentOnly variant="hermes">
 Open `agents/hermes/policy-additions.yaml` and add or modify endpoint entries.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Open `agents/langchain-deepagents-code/policy-additions.yaml` and add or modify endpoint entries.
 </AgentOnly>
 
 Edit YAML manually when a maintained preset does not cover the required host, such as a reviewed public partner API.

@@ -6,7 +6,7 @@
  * either documented in docs/reference/commands.mdx or explicitly allowlisted
  * in ci/env-var-doc-allowlist.json with a real reason.
  *
- * See #3184. Modeled on scripts/check-direct-credential-env.ts.
+ * See #3184. Modeled on scripts/checks/direct-credential-env.mts.
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
