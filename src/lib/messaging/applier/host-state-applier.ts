@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as registry from "../../state/registry";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../hydration";
 import type { SandboxMessagingPlan, SandboxMessagingRuntimeSetupPlan } from "../manifest";
-import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
 import { parseSandboxMessagingPlan } from "../plan-validation";
 import { MessagingSetupApplier } from "./setup-applier";
 import type { MessagingSetupEnvOptions } from "./types";
