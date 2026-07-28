@@ -4,11 +4,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
-import { REASONING_EFFORT_ENV } from "../../reasoning-mode";
+import { REASONING_EFFORT_ENV, type ReasoningEffort } from "../../reasoning-mode";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, createDeps } from "./provider-inference.test-support";
 
-function recordedSession(compatibleEndpointReasoningEffort: string | null) {
+function recordedSession(compatibleEndpointReasoningEffort: ReasoningEffort | null) {
   return createSession({
     provider: "compatible-endpoint",
     model: "nemotron-3-super",
