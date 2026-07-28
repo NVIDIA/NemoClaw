@@ -341,6 +341,9 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(JSON.stringify(pending?.body)).toContain(
         `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
       );
+      expect(JSON.stringify(pending?.body)).toContain(
+        "[E2E / PR Gate Controller](https://github.com/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml)",
+      );
       expect(JSON.stringify(pending?.body)).toContain("`approve-e2e`");
       expect(JSON.stringify(pending?.body)).toContain("`pr_number=42`");
       expect(JSON.stringify(pending?.body)).toContain(`\`expected_head_sha=${HEAD_SHA}\``);
@@ -536,6 +539,9 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       });
       const summary = JSON.stringify(completion?.body);
       expect(summary).not.toContain("conclusion");
+      expect(summary).toContain(
+        "[E2E / PR Gate Controller](https://github.com/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml)",
+      );
       expect(summary).toContain("`approve-e2e`");
       expect(summary).toContain("`pr_number=42`");
       expect(summary).toContain(`\`expected_head_sha=${HEAD_SHA}\``);

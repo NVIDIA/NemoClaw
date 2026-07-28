@@ -64,7 +64,8 @@ export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliatio
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
-const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
+const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
+const PR_GATE_WORKFLOW_PATH = `.github/workflows/${PR_GATE_WORKFLOW}`;
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
@@ -3105,7 +3106,7 @@ export async function startPrGate(
     });
     assertPullUnchanged(pull, currentPull);
     if (command.headRepository !== repository && selections.length > 0) {
-      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
+      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW}`;
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await markCheckInProgress(
@@ -3135,7 +3136,7 @@ export async function startPrGate(
     }
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
-      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
+      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW}`;
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await markCheckInProgress(
