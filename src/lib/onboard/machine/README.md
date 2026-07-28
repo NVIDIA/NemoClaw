@@ -43,15 +43,12 @@ A state handler may perform many smaller operations, but it should expose only s
 
 ## Session steps versus machine state
 
-The persisted onboarding session still tracks step-level progress for resumability. Step recording is older than the FSM and is currently used as a compatibility bridge.
+The persisted onboarding session tracks step-level progress for resumability.
 
-Long term:
-
-- `OnboardRuntime` should own machine transitions and machine revision increments.
-- Session step helpers should record only step status (`pending`, `in_progress`, `complete`, `failed`, `skipped`).
-- State handlers should return explicit results instead of implicitly moving the machine by calling step helpers.
-
-Until that migration completes, step helpers may still infer machine snapshots for compatibility with older sessions and tests.
+- `OnboardRuntime` owns normal machine transitions, revision increments, terminal state, and machine events.
+- Session step helpers record only step status (`pending`, `in_progress`, `complete`, `failed`, `skipped`) and safe step updates. They cannot change the machine snapshot.
+- State handlers return explicit results. They do not move the machine through step helpers.
+- Explicit session recovery and the process-exit failure backstop are narrow exceptions.
 
 ## Handler contract
 
