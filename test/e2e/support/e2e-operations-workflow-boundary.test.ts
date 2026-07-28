@@ -65,6 +65,57 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("passes needs through the environment without GitHub Script interpolation", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    delete report.env?.NEEDS_JSON;
+    delete scorecard.env?.NEEDS_JSON;
+    report.with!.script = String(report.with!.script).replace(
+      "JSON.parse(process.env.NEEDS_JSON || '{}')",
+      "${{ toJSON(needs) }}",
+    );
+    scorecard.with!.script = String(scorecard.with!.script).replace(
+      "JSON.parse(process.env.NEEDS_JSON || '{}')",
+      "${{ toJSON(needs) }}",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must pass needs as environment data without script interpolation",
+        "scorecard generator must pass needs as environment data without script interpolation",
+      ]),
+    );
+  });
+
+  it("rejects lookalike needs variables and whitespace-obscured script interpolation", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    report.with!.script = String(report.with!.script).replace(
+      "process.env.NEEDS_JSON",
+      "process.env.NEEDS_JSON_BAD",
+    );
+    scorecard.with!.script = `${String(scorecard.with!.script)}
+const interpolatedNeeds = \${{   toJSON ( needs )   }};
+`;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must pass needs as environment data without script interpolation",
+        "scorecard generator must pass needs as environment data without script interpolation",
+      ]),
+    );
+  });
+
   it("pins the scorecard's current-run progress artifact action", () => {
     const workflow = readE2eOperationsWorkflow();
     const download = workflow.jobs.scorecard.steps!.find(
@@ -552,10 +603,7 @@ describe("E2E operations workflow boundary", () => {
   });
 
   it("executes the scorecard workflow body and emits advisory budget warnings", async () => {
-    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
-      "${{ toJSON(needs) }}",
-      JSON.stringify({ "generate-matrix": { result: "success" } }),
-    );
+    const script = workflowScript("scorecard", "Generate E2E scorecard");
     const warning = vi.fn();
     const setOutput = vi.fn();
     const summary = {
@@ -615,6 +663,7 @@ describe("E2E operations workflow boundary", () => {
         EXPLICIT_ONLY_JOBS: "",
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
+        NEEDS_JSON: JSON.stringify({ "generate-matrix": { result: "success" } }),
         RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
         RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",
@@ -675,10 +724,7 @@ describe("E2E operations workflow boundary", () => {
   });
 
   it("keeps scorecard outputs available when a progress artifact is invalid", async () => {
-    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
-      "${{ toJSON(needs) }}",
-      JSON.stringify({ "generate-matrix": { result: "success" } }),
-    );
+    const script = workflowScript("scorecard", "Generate E2E scorecard");
     const warning = vi.fn();
     const setOutput = vi.fn();
     const summary = {
@@ -733,6 +779,7 @@ describe("E2E operations workflow boundary", () => {
         EXPLICIT_ONLY_JOBS: "",
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
+        NEEDS_JSON: JSON.stringify({ "generate-matrix": { result: "success" } }),
         RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
         RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",
