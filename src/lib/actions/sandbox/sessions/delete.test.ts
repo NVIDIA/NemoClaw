@@ -250,7 +250,7 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
   it.each([
     ["json", { json: true }],
     ["verbose", { verbose: true }],
-  ])("rejects the OpenClaw-only --%s result output on a hermes sandbox (#7642)", async (_flag, extra) => {
+  ])("rejects the OpenClaw-only --%s flag on a hermes sandbox (#7642)", async (_flag, extra) => {
     await expect(
       deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", ...extra }),
     ).rejects.toThrow(/process\.exit:1/);

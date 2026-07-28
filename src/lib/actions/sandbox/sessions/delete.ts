@@ -136,9 +136,8 @@ function rejectOpenClawOnlyDeleteOptions(opts: SessionsDeleteOptions): void {
   }
 }
 
-// Accept the native Hermes id as-is but refuse a value that could be parsed as
-// a flag by the in-sandbox command; the id is passed as its own argv element,
-// so a leading dash or embedded whitespace is the only injection surface.
+// Reject a leading dash so Hermes cannot parse the id as a flag. Reject
+// whitespace because native Hermes ids contain none.
 function validateHermesSessionId(rawKey: string): string {
   const sessionId = rawKey.trim();
   if (sessionId === "" || sessionId.startsWith("-") || /\s/.test(sessionId)) {

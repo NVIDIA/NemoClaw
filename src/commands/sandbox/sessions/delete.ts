@@ -10,7 +10,7 @@ import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 export default class SandboxSessionsDeleteCommand extends NemoClawCommand {
   static id = "sandbox:sessions:delete";
   static strict = true;
-  static summary = "Delete an OpenClaw conversation session via the gateway";
+  static summary = "Delete a conversation session from the sandbox";
   static description = [
     "Remove a session entry (and, by default, its transcript) by invoking the",
     "OpenClaw gateway `sessions.delete` RPC from inside the sandbox. The gateway",
