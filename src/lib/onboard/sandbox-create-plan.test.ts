@@ -14,6 +14,7 @@ import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
   sandboxGpuEnabled: true,
   sandboxGpuDevice: "nvidia.com/gpu=0",
+  hostGpuDetected: true,
 };
 
 afterEach(() => {
@@ -200,6 +201,7 @@ describe("resolveSandboxCreateIntent", () => {
       activeMessagingChannels: ["telegram", "discord", "whatsapp"],
       options: {
         directGpu: true,
+        hostGpuAvailable: true,
         additionalPresets: ["github"],
         agentName: "hermes",
         policyTier: "balanced",
@@ -474,6 +476,7 @@ describe("prepareSandboxCreatePlan", () => {
       {
         directGpu: true,
         dockerGpuPatch: false,
+        hostGpuAvailable: true,
         additionalPresets: ["github"],
         agentName: "langchain-deepagents-code",
         policyTier: "restricted",

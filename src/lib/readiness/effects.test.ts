@@ -62,7 +62,16 @@ describe("readiness process effects (#7412)", () => {
       }),
     );
     const options = { nemoclawVersion: "0.1.0", now: () => NOW };
-    const collectionOptions = { assess, now: () => NOW };
+    const collectionOptions = {
+      assess,
+      collectPlatformIdentity: () => ({
+        productName: null,
+        nvidiaPlatform: null,
+        stationProfile: null,
+        stationGb300PciGpu: null,
+      }),
+      now: () => NOW,
+    };
 
     const first = createHostReadinessReport(options, collectionOptions);
     const second = createHostReadinessReport(options, collectionOptions);
@@ -84,6 +93,27 @@ describe("readiness process effects (#7412)", () => {
         .filter(([command]) => command === "docker")
         .every(([, operation]) => operation === "info"),
     ).toBe(true);
+    const mutatingExecutables = [
+      "apt",
+      "apt-get",
+      "dnf",
+      "yum",
+      "pacman",
+      "brew",
+      "groupadd",
+      "usermod",
+      "gpasswd",
+      "reboot",
+      "shutdown",
+    ];
+    expect(
+      commands.every(
+        ([command]) => !mutatingExecutables.includes(String(command).split("/").at(-1) ?? ""),
+      ),
+    ).toBe(true);
+    expect(
+      commands.some(([command, operation]) => command === "nvidia-ctk" && operation === "cdi"),
+    ).toBe(false);
     expect(
       reads.every((path) =>
         [
