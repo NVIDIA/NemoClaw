@@ -11,6 +11,8 @@ import {
   isSafeCredentialPlaceholder,
   isSensitiveFile,
   sanitizeConfigFile,
+  sanitizeEnvFile,
+  sanitizeEnvFileContent,
   shouldScanSnapshotFileForCredentials,
   stripCredentials,
 } from "./credential-filter.js";
@@ -209,6 +211,82 @@ describe("sanitizeConfigFile", () => {
 
     expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({ apiKey: "sk-secret" });
   });
+
+  it("strips Hermes YAML credentials and removes gateway", () => {
+    const configPath = join(tmpDir, "config.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "model: hermes",
+        "api_key: sk-hermes-secret-key-value",
+        "botToken: xoxb-slack-bot-token-value",
+        "publicKey: keep-me",
+        "gateway:",
+        "  authToken: gw-token",
+        "env:",
+        "  GITHUB_TOKEN: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "  NODE_ENV: production",
+        "",
+      ].join("\n"),
+    );
+
+    sanitizeConfigFile(configPath);
+
+    const result = readFileSync(configPath, "utf-8");
+    expect(result).toContain("model: hermes");
+    expect(result).toContain("publicKey: keep-me");
+    expect(result).toContain("NODE_ENV: production");
+    expect(result).toContain("[STRIPPED_BY_MIGRATION]");
+    expect(result).not.toContain("sk-hermes-secret-key-value");
+    expect(result).not.toContain("xoxb-slack-bot-token-value");
+    expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(result).not.toContain("gateway:");
+  });
+});
+
+describe("sanitizeEnvFileContent", () => {
+  it("strips PASS/TOKEN secrets without over-matching KEYBOARD_LAYOUT", () => {
+    const input = [
+      "# comment",
+      "NODE_ENV=production",
+      "KEYBOARD_LAYOUT=us",
+      "DB_PASS=super-secret",
+      "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      "API_KEY=openshell:resolve:env:API_KEY",
+      "PASSPHRASE=raw-passphrase",
+      "",
+    ].join("\n");
+
+    const result = sanitizeEnvFileContent(input);
+    expect(result).toContain("NODE_ENV=production");
+    expect(result).toContain("KEYBOARD_LAYOUT=us");
+    expect(result).toContain("DB_PASS=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("GITHUB_TOKEN=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("API_KEY=openshell:resolve:env:API_KEY");
+    expect(result).toContain("PASSPHRASE=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("# comment");
+  });
+});
+
+describe("sanitizeEnvFile", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "cred-env-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rewrites .env credentials in place", () => {
+    const envPath = join(tmpDir, ".env");
+    writeFileSync(envPath, "DB_PASS=secret\nLOG_LEVEL=info\n");
+    sanitizeEnvFile(envPath);
+    expect(readFileSync(envPath, "utf-8")).toBe(
+      "DB_PASS=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n",
+    );
+  });
 });
 
 describe("isSensitiveFile", () => {
@@ -229,11 +307,13 @@ describe("isSensitiveFile", () => {
 });
 
 describe("shouldScanSnapshotFileForCredentials", () => {
-  it("scans runtime config and env files", () => {
+  it("scans runtime config, env, and Hermes YAML files", () => {
     expect(shouldScanSnapshotFileForCredentials("openclaw.json")).toBe(true);
     expect(shouldScanSnapshotFileForCredentials("config.json")).toBe(true);
     expect(shouldScanSnapshotFileForCredentials(".env")).toBe(true);
     expect(shouldScanSnapshotFileForCredentials("service.env")).toBe(true);
+    expect(shouldScanSnapshotFileForCredentials("config.yaml")).toBe(true);
+    expect(shouldScanSnapshotFileForCredentials("config.yml")).toBe(true);
   });
 
   it("skips dependency lockfiles that can contain non-secret package metadata matches", () => {
@@ -246,5 +326,6 @@ describe("shouldScanSnapshotFileForCredentials", () => {
   it("applies lockfile exclusions to paths by basename", () => {
     expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/package-lock.json")).toBe(false);
     expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/config.json")).toBe(true);
+    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/config.yaml")).toBe(true);
   });
 });

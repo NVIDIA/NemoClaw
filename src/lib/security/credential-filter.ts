@@ -22,6 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
 import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
@@ -358,23 +359,108 @@ function scrubArrayElement(value: ConfigValue, previous: ConfigValue): ConfigVal
 }
 
 /**
- * Strip credential fields from a JSON config file in-place.
+ * Strip credential fields from a KEY=value env file body.
+ * Uses the same field-name rules as JSON scrubbing so `DB_PASS` and
+ * `PASSPHRASE` are stripped while benign names like `KEYBOARD_LAYOUT`
+ * and `NODE_ENV` are preserved.
+ */
+export function sanitizeEnvFileContent(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (trimmed === "" || trimmed.startsWith("#")) return line;
+      const eq = line.indexOf("=");
+      if (eq <= 0) return line;
+      const key = line.slice(0, eq).trim();
+      if (!key || !isCredentialField(key)) return line;
+      const value = line.slice(eq + 1);
+      if (isSafeCredentialPlaceholder(value)) return line;
+      return `${line.slice(0, eq)}=${CREDENTIAL_PLACEHOLDER}`;
+    })
+    .join("\n");
+}
+
+/**
+ * Strip credential lines from a `.env` file in-place.
+ */
+export function sanitizeEnvFile(filePath: string): void {
+  const raw = readRegularFileNoFollow(filePath);
+  if (raw === null) return;
+  writeFileAtomically(filePath, sanitizeEnvFileContent(raw));
+}
+
+function toConfigValue(value: unknown): ConfigValue | undefined {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const items: ConfigValue[] = [];
+    for (const entry of value) {
+      const converted = toConfigValue(entry);
+      if (converted === undefined && entry !== undefined && entry !== null) return undefined;
+      items.push(converted as ConfigValue);
+    }
+    return items;
+  }
+  if (!isObjectRecord(value)) return undefined;
+  const result: ConfigObject = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const converted = toConfigValue(entry);
+    if (converted === undefined && entry !== undefined && entry !== null) return undefined;
+    result[key] = converted as ConfigValue;
+  }
+  return result;
+}
+
+/**
+ * Strip credential fields from a Hermes YAML config file in-place.
+ * Removes the "gateway" section when present (auth tokens — regenerated
+ * at startup), matching JSON sanitization.
+ */
+export function sanitizeYamlConfigFile(configPath: string): void {
+  const rawConfig = readRegularFileNoFollow(configPath);
+  if (rawConfig === null) return;
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(rawConfig);
+  } catch {
+    return;
+  }
+  const configValue = toConfigValue(parsed);
+  if (!isConfigObject(configValue)) return;
+
+  const { gateway: _gateway, ...config } = configValue;
+  const sanitized = stripCredentials(config);
+  writeFileAtomically(configPath, stringifyYaml(sanitized));
+}
+
+/**
+ * Strip credential fields from a JSON or YAML config file in-place.
  * Removes the "gateway" section (contains auth tokens — regenerated at startup).
+ * JSON is preferred when the file parses as JSON; otherwise YAML is tried
+ * so Hermes `config.yaml` secrets are scrubbed from rebuild backups.
  */
 export function sanitizeConfigFile(configPath: string): void {
   const rawConfig = readRegularFileNoFollow(configPath);
   if (rawConfig === null) return;
-  let parsed: ConfigValue;
-  try {
-    parsed = parseJson<ConfigValue>(rawConfig);
-  } catch {
-    return; // Not valid JSON — skip (may be YAML for Hermes)
-  }
-  if (!isConfigObject(parsed)) return;
 
-  const { gateway: _gateway, ...config } = parsed;
-  const sanitized = stripCredentials(config);
-  writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
+  try {
+    const parsed = parseJson<ConfigValue>(rawConfig);
+    if (!isConfigObject(parsed)) return;
+    const { gateway: _gateway, ...config } = parsed;
+    const sanitized = stripCredentials(config);
+    writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
+    return;
+  } catch {
+    // Fall through to YAML for Hermes and other non-JSON configs.
+  }
+
+  const normalized = basename(configPath).toLowerCase();
+  if (normalized.endsWith(".yaml") || normalized.endsWith(".yml")) {
+    sanitizeYamlConfigFile(configPath);
+  }
 }
 
 /**
@@ -394,6 +480,8 @@ export function shouldScanSnapshotFileForCredentials(filename: string): boolean 
   return (
     normalizedBasename === ".env" ||
     normalizedBasename.endsWith(".env") ||
-    normalizedBasename.endsWith(".json")
+    normalizedBasename.endsWith(".json") ||
+    normalizedBasename.endsWith(".yaml") ||
+    normalizedBasename.endsWith(".yml")
   );
 }
