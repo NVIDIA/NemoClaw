@@ -251,13 +251,18 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     ]);
   });
 
-  it("rejects the OpenClaw-only --json result output on a hermes sandbox (#7642)", async () => {
+  it.each([
+    ["json", { json: true }],
+    ["verbose", { verbose: true }],
+  ])("rejects the OpenClaw-only --%s result output on a hermes sandbox (#7642)", async (_flag, extra) => {
     await expect(
-      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", json: true }),
+      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", ...extra }),
     ).rejects.toThrow(/process\.exit:1/);
 
     expect(execSandboxMock).not.toHaveBeenCalled();
-    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/--json.*OpenClaw-only/);
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
+      /--json and --verbose.*OpenClaw-only/,
+    );
   });
 
   it.each([
