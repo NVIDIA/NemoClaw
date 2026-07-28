@@ -487,16 +487,16 @@ function createCustomPluginDockerfile(
   ).toBe(1);
   expect(source.split(builderImageAnchor)).toHaveLength(2);
   expect(source.match(/^FROM \$\{BASE_IMAGE\}$/gm)?.length, "expected one runtime stage").toBe(1);
-  const runtimeOpenClawVersion = source.match(/^ARG OPENCLAW_VERSION=([0-9.]+)$/m)?.[1];
+  const runtimeOpenClawDeclarations = [...source.matchAll(/^ARG OPENCLAW_VERSION=([0-9.]+)$/gm)];
+  expect(runtimeOpenClawDeclarations, "expected one OpenClaw version declaration").toHaveLength(1);
+  const runtimeOpenClawVersion = runtimeOpenClawDeclarations[0]?.[1];
   expect(runtimeOpenClawVersion, "source Dockerfile must declare an OpenClaw version").toMatch(
     /^\d+(?:\.\d+)+$/,
   );
-  if (fixture.source === "release") {
-    expect(
-      runtimeOpenClawVersion,
-      "weather fixture SDK must match the v0.0.71 managed runtime target",
-    ).toBe(WEATHER_OPENCLAW_VERSION);
-  }
+  expect(
+    fixture.source !== "release" || runtimeOpenClawVersion === WEATHER_OPENCLAW_VERSION,
+    "weather fixture SDK must match the v0.0.71 managed runtime target",
+  ).toBe(true);
   expect(
     WEATHER_FIXTURE_PACKAGE.devDependencies?.openclaw,
     "weather fixture devDependency must match its declared OpenClaw build target",
@@ -909,16 +909,14 @@ async function prepareCustomPluginSource(
   cleanup.add(`remove ${fixture.source} custom-plugin source clone`, () =>
     fs.rmSync(context.sourceParentDir, { recursive: true, force: true }),
   );
-  let expectedSourceHead = NEMOCLAW_RELEASE_COMMIT;
-  if (fixture.source === "current") {
-    const currentHead = await host.command("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
-      artifactName: "resolve-current-nemoclaw-plugin-source",
-      env: liveEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(currentHead.exitCode, resultText(currentHead)).toBe(0);
-    expectedSourceHead = currentHead.stdout.trim();
-  }
+  const currentHead = await host.command("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
+    artifactName: "resolve-current-nemoclaw-plugin-source",
+    env: liveEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(currentHead.exitCode, resultText(currentHead)).toBe(0);
+  const expectedSourceHead =
+    fixture.source === "release" ? NEMOCLAW_RELEASE_COMMIT : currentHead.stdout.trim();
   const cloneArgs =
     fixture.source === "release"
       ? [

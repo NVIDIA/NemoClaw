@@ -41,6 +41,7 @@ const SELECTED_TARGET_ID = process.env.TARGET_ID;
 const REGISTRY_TARGET_PHASES = [
   "resolve the target contract and run plan",
   "confirm the target environment is ready",
+  "prepare the target lifecycle prerequisites",
   "onboard the registry-selected sandbox",
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
@@ -112,9 +113,10 @@ for (const target of listTargets()) {
             `SUPPORTED_LIFECYCLES whitelist together.`,
         );
       }
-      if (lifecycleProfile === "post-reboot-recovery") {
-        await lifecycle.preparePostReboot();
-      }
+      progress.phase("prepare the target lifecycle prerequisites");
+      await (lifecycleProfile === "post-reboot-recovery"
+        ? lifecycle.preparePostReboot()
+        : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, { sandboxName: `e2e-${target.id}` });
 
