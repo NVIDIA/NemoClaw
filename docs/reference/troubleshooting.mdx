@@ -911,7 +911,7 @@ Follow these steps to reconnect.
    ```
 
    If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
-   Onboarding does not use the standalone fallback while Homebrew is present.
+   If Homebrew refuses to load the formula and cannot confirm its identity, onboarding warns with Homebrew's reason and continues on the standalone fallback.
 
    On Linux package installs, inspect and restart the upstream service.
 
