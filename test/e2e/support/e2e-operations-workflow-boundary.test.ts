@@ -92,6 +92,30 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("rejects lookalike needs variables and whitespace-obscured script interpolation", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    report.with!.script = String(report.with!.script).replace(
+      "process.env.NEEDS_JSON",
+      "process.env.NEEDS_JSON_BAD",
+    );
+    scorecard.with!.script = `${String(scorecard.with!.script)}
+const interpolatedNeeds = \${{   toJSON ( needs )   }};
+`;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must pass needs as environment data without script interpolation",
+        "scorecard generator must pass needs as environment data without script interpolation",
+      ]),
+    );
+  });
+
   it("pins the scorecard's current-run progress artifact action", () => {
     const workflow = readE2eOperationsWorkflow();
     const download = workflow.jobs.scorecard.steps!.find(

@@ -73,6 +73,11 @@ describe("platform Vitest main workflow", () => {
 
   // source-shape-contract: security -- Sparse immutable helper checkouts must precede candidate code before root-capable WSL execution
   it("loads the WSL helper from trusted revisions before candidate execution (#6958)", () => {
+    expect(
+      (workflow as Workflow & { on?: Record<string, unknown> }).on,
+      "platform main-watch workflow must not execute candidate code on pull requests",
+    ).not.toHaveProperty("pull_request");
+
     const cases = [
       {
         helperRef: "${{ github.workflow_sha }}",
@@ -99,7 +104,10 @@ describe("platform Vitest main workflow", () => {
         "sparse-checkout": `${WSL_HELPER_PATH}\n`,
         "sparse-checkout-cone-mode": false,
       });
-      expect(candidateCheckout?.with?.path).toBe("source");
+      expect(candidateCheckout?.with).toMatchObject({
+        path: "source",
+        "persist-credentials": false,
+      });
       expect(steps.indexOf(trustedCheckout!)).toBeLessThan(steps.indexOf(candidateCheckout!));
 
       for (const entry of steps.filter((candidate) =>

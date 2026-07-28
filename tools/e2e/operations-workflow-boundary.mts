@@ -48,6 +48,9 @@ const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
   /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
+const NEEDS_INTERPOLATION = /\$\{\{\s*toJSON\s*\(\s*needs\s*\)\s*\}\}/iu;
+const NEEDS_ENV_PARSE =
+  /\bJSON\.parse\(\s*process\.env\.NEEDS_JSON\s*\|\|\s*["']\{\}["']\s*\)/u;
 
 type WorkflowStep = {
   "continue-on-error"?: boolean;
@@ -133,6 +136,15 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
   if (step.uses !== GITHUB_SCRIPT_NODE24_ACTION) {
     errors.push(`${owner} must use the pinned Node 24 github-script runtime`);
   }
+}
+
+function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
+  const script = String(step.with?.script ?? "");
+  return (
+    step.env?.NEEDS_JSON === "${{ toJSON(needs) }}" &&
+    !NEEDS_INTERPOLATION.test(script) &&
+    NEEDS_ENV_PARSE.test(script)
+  );
 }
 
 function validateControllerAuthorization(
@@ -541,11 +553,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
       const reportScript = String(report.with?.script ?? "");
-      if (
-        report.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
-        reportScript.includes("${{ toJSON(needs) }}") ||
-        !reportScript.includes("JSON.parse(process.env.NEEDS_JSON")
-      ) {
+      if (!passesNeedsAsEnvironmentData(report)) {
         errors.push(
           "report-to-pr must pass needs as environment data without script interpolation",
         );
@@ -662,11 +670,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const generate = findStep(job, "Generate E2E scorecard");
   requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
-  if (
-    generate.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
-    generateScript.includes("${{ toJSON(needs) }}") ||
-    !generateScript.includes("JSON.parse(process.env.NEEDS_JSON")
-  ) {
+  if (!passesNeedsAsEnvironmentData(generate)) {
     errors.push(
       "scorecard generator must pass needs as environment data without script interpolation",
     );

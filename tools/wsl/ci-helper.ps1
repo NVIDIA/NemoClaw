@@ -122,25 +122,30 @@ function Invoke-WslScript {
     }
 
     $hostPath = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'nemoclaw-wsl-step.sh'
-    Write-WslScriptFile -Path $hostPath -Content $Script
-    $wslPath = ConvertTo-WslPath -WindowsPath $hostPath
-    $commandArguments = New-WslScriptArguments `
-        -Distro $Distro `
-        -ScriptPath $wslPath `
-        -User $User `
-        -ScriptArguments $ScriptArguments
+    try {
+        Write-WslScriptFile -Path $hostPath -Content $Script
+        $wslPath = ConvertTo-WslPath -WindowsPath $hostPath
+        $commandArguments = New-WslScriptArguments `
+            -Distro $Distro `
+            -ScriptPath $wslPath `
+            -User $User `
+            -ScriptArguments $ScriptArguments
 
-    if ($CaptureOutput) {
-        $result = Invoke-WslNativeOutput -ArgumentList $commandArguments
-        if ($result.ExitCode -ne 0) {
-            throw "WSL script exited with code $($result.ExitCode)."
+        if ($CaptureOutput) {
+            $result = Invoke-WslNativeOutput -ArgumentList $commandArguments
+            if ($result.ExitCode -ne 0) {
+                throw "WSL script exited with code $($result.ExitCode)."
+            }
+            return (@($result.Output) -join "`n")
         }
-        return (@($result.Output) -join "`n")
-    }
 
-    $exitCode = Invoke-WslNative -ArgumentList $commandArguments
-    if ($exitCode -ne 0) {
-        throw "WSL script exited with code $exitCode."
+        $exitCode = Invoke-WslNative -ArgumentList $commandArguments
+        if ($exitCode -ne 0) {
+            throw "WSL script exited with code $exitCode."
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $hostPath -Force -ErrorAction SilentlyContinue
     }
 }
 

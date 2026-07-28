@@ -67,6 +67,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
+          persist-credentials: false
 
       - name: Explain deferred trusted WSL helper rollout
         if: steps.helper.outputs.present != 'true'

@@ -188,18 +188,55 @@ $script:calls | ConvertTo-Json -Compress
   );
 
   itPowerShell(
+    "deletes the transferred script after successful execution",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+$env:RUNNER_TEMP = [IO.Path]::GetTempPath()
+$script:removed = @()
+function Write-WslScriptFile { param([string]$Path, [string]$Content) }
+function ConvertTo-WslPath { param([string]$WindowsPath) return '/mnt/c/runner temp/nemoclaw-wsl-step.sh' }
+function Invoke-WslNative { param([string[]]$ArgumentList, [switch]$MergeError) return 0 }
+function Remove-Item {
+  param([string]$LiteralPath, [switch]$Force, [object]$ErrorAction)
+  $script:removed += $LiteralPath
+}
+Invoke-WslScript -Distro Ubuntu -User root -Script 'exit 0'
+[pscustomobject]@{ removed = @($script:removed) } | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim()) as { removed: string[] };
+      expect(parsed.removed).toHaveLength(1);
+      expect(parsed.removed[0].replaceAll("\\", "/")).toMatch(/\/nemoclaw-wsl-step\.sh$/u);
+    },
+  );
+
+  itPowerShell(
     "propagates a nonzero WSL script exit code",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
 $env:RUNNER_TEMP = [IO.Path]::GetTempPath()
+$script:removed = @()
 function Write-WslScriptFile { param([string]$Path, [string]$Content) }
 function ConvertTo-WslPath { param([string]$WindowsPath) return '/mnt/c/runner temp/nemoclaw-wsl-step.sh' }
 function Invoke-WslNative { param([string[]]$ArgumentList, [switch]$MergeError) return 23 }
-Invoke-WslScript -Distro Ubuntu -User root -Script 'exit 23'
+function Remove-Item {
+  param([string]$LiteralPath, [switch]$Force, [object]$ErrorAction)
+  $script:removed += $LiteralPath
+}
+try {
+  Invoke-WslScript -Distro Ubuntu -User root -Script 'exit 23'
+} finally {
+  [pscustomobject]@{ removed = @($script:removed) } | ConvertTo-Json -Compress
+}
 `,
     (result) => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("WSL script exited with code 23");
+      const parsed = JSON.parse(result.stdout.trim()) as { removed: string[] };
+      expect(parsed.removed).toHaveLength(1);
+      expect(parsed.removed[0].replaceAll("\\", "/")).toMatch(/\/nemoclaw-wsl-step\.sh$/u);
     },
   );
 });
