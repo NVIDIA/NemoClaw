@@ -108,6 +108,14 @@ describe("platform Vitest main workflow", () => {
         path: "source",
         "persist-credentials": false,
       });
+      expect(steps.map((entry) => entry.name)).not.toContain("Detect trusted WSL helper");
+      expect(steps.map((entry) => entry.name)).not.toContain(
+        "Explain deferred trusted WSL helper rollout",
+      );
+      expect(
+        steps.some((entry) => (entry.if ?? "").includes("steps.helper.outputs.present")),
+        "missing trusted helper must fail instead of skipping candidate validation",
+      ).toBe(false);
       expect(steps.indexOf(trustedCheckout!)).toBeLessThan(steps.indexOf(candidateCheckout!));
 
       for (const entry of steps.filter((candidate) =>

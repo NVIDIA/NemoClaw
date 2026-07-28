@@ -52,30 +52,13 @@ jobs:
             tools/wsl/ci-helper.ps1
           sparse-checkout-cone-mode: false
 
-      - name: Detect trusted WSL helper
-        id: helper
-        shell: powershell
-        run: |
-          if (Test-Path -LiteralPath $env:TRUSTED_WSL_HELPER) {
-            'present=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          } else {
-            'present=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host 'Trusted base revision does not yet contain the WSL helper; WSL validation begins after the helper lands on the base branch.'
-          }
-
       - name: Check out candidate source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
           persist-credentials: false
 
-      - name: Explain deferred trusted WSL helper rollout
-        if: steps.helper.outputs.present != 'true'
-        shell: powershell
-        run: Write-Host 'Skipping WSL validation until the trusted helper exists on the base revision.'
-
       - name: Resolve workspace paths for WSL
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -87,21 +70,18 @@ jobs:
             -EnvironmentFile $env:GITHUB_ENV
 
       - name: Ensure Ubuntu WSL exists
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           Ensure-WslDistro -Distro $env:WSL_DISTRO
 
       - name: Verify WSL
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           Invoke-WslScript -Distro $env:WSL_DISTRO -Script "uname -a`ncat /etc/os-release"
 
       - name: Install Ubuntu dependencies
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -112,14 +92,12 @@ jobs:
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages
 
       - name: Install Node.js 22 in WSL
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           Install-WslNode -Distro $env:WSL_DISTRO
 
       - name: Copy checkout into WSL ext4 workspace
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -129,7 +107,6 @@ jobs:
             -Workdir $env:WSL_WORKDIR
 
       - name: Install project dependencies and build plugin
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -147,7 +124,6 @@ jobs:
 
       - name: Detect Docker availability in WSL
         id: docker
-        if: steps.helper.outputs.present == 'true'
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -168,7 +144,7 @@ jobs:
           }
 
       - name: Run WSL full E2E
-        if: steps.helper.outputs.present == 'true' && steps.docker.outputs.docker_ok == 'true'
+        if: steps.docker.outputs.docker_ok == 'true'
         shell: powershell
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -194,7 +170,7 @@ jobs:
           Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
 
       - name: Explain skipped full E2E
-        if: steps.helper.outputs.present == 'true' && steps.docker.outputs.docker_ok != 'true'
+        if: steps.docker.outputs.docker_ok != 'true'
         shell: powershell
         run: |
           Write-Host 'Skipping WSL full E2E because Docker is unavailable on this runner.'
