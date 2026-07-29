@@ -113,16 +113,18 @@ describe("preserved environment inventory", () => {
   it("applies restored values before current manifest renders (#7803)", () => {
     const plan = hermesPlan();
     const currentRender = plan.agentRender[0];
-    if (!currentRender || currentRender.kind !== "env-lines") {
-      throw new Error("Hermes fixture requires an env render");
-    }
+    expect(currentRender?.kind).toBe("env-lines");
+    const currentEnvRender = currentRender as SandboxMessagingPlan["agentRender"][number] & {
+      kind: "env-lines";
+      lines: string[];
+    };
     const merged = mergeHermesPreservedEnvIntoMessagingPlan(
       {
         ...plan,
         agentRender: [
           {
-            ...currentRender,
-            lines: [...currentRender.lines, "SLACK_HOME_CHANNEL=CURRENT"],
+            ...currentEnvRender,
+            lines: [...currentEnvRender.lines, "SLACK_HOME_CHANNEL=CURRENT"],
           },
         ],
       },

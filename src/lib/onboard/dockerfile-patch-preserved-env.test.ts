@@ -112,9 +112,9 @@ it("adds preserved Hermes home channels to the image messaging plan (#7803)", ()
     .readFileSync(dockerfilePath, "utf8")
     .split("\n")
     .find((line) => line.startsWith("ARG NEMOCLAW_MESSAGING_PLAN_B64="));
-  if (!planArg) throw new Error("Expected messaging plan build argument");
+  expect(planArg).toBeDefined();
   const patchedPlan = JSON.parse(
-    Buffer.from(planArg.split("=")[1] ?? "", "base64").toString("utf8"),
+    Buffer.from(planArg!.split("=")[1] ?? "", "base64").toString("utf8"),
   ) as {
     agentRender: Array<{ renderId?: string; lines?: string[] }>;
   };
