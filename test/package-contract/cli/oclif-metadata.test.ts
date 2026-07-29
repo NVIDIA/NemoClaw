@@ -26,6 +26,29 @@ describe("oclif metadata lookup", () => {
     );
   });
 
+  it("ships and registers the compiled voice access gateway command", async () => {
+    const commandPath = path.join(
+      process.cwd(),
+      "dist",
+      "commands",
+      "internal",
+      "voice-access",
+      "serve.js",
+    );
+    const config = await OclifConfig.load(process.cwd());
+
+    expect(fs.existsSync(commandPath)).toBe(true);
+    expect(config.commands.some((command) => command.id === "internal:voice-access:serve")).toBe(
+      true,
+    );
+    expect(getRegisteredOclifCommandMetadata("internal:voice-access:serve")).toMatchObject({
+      hidden: true,
+      id: "internal:voice-access:serve",
+      strict: true,
+      summary: "Internal: serve the voice access gateway",
+    });
+  });
+
   it("keeps generated manifest command IDs aligned with oclif Config", async () => {
     const config = await OclifConfig.load(process.cwd());
     const expectedIds = config.commands.map((command) => command.id).sort();

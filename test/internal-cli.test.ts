@@ -60,6 +60,22 @@ describe("internal oclif namespace", () => {
     expect(result.stdout).toContain("nemoclaw internal dev npm-link-or-shim");
   });
 
+  it("exposes the foreground voice access gateway through oclif routing", () => {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "internal", "voice-access", "serve", "--help"],
+      {
+        encoding: "utf-8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Internal: serve the voice access gateway");
+    expect(result.stdout).toContain("nemoclaw internal voice-access serve --token-file <path>");
+    expect(result.stdout).toContain("--listen-port");
+    expect(result.stdout).toContain("--upstream-port");
+  });
+
   it("exposes installer plan commands through oclif routing", () => {
     const help = spawnSync(process.execPath, [CLI, "internal", "installer", "plan", "--help"], {
       encoding: "utf-8",
