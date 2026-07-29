@@ -9,7 +9,7 @@ import {
   MANAGED_STARTUP_AGENTS,
   MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
   type ManagedStartupAgent,
-} from "./profile";
+} from "./profile.ts";
 
 export const MANAGED_STARTUP_ROOT_APPLY_SCHEMA_VERSION = 1 as const;
 
