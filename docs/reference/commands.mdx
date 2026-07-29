@@ -2895,7 +2895,14 @@ The selector accepts any of:
 
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
 When `dst` does not exist, it is auto-created by reusing the source sandbox's container image.
-No re-onboarding is needed.
+When the source passes the clone validations below, no re-onboarding is required.
+For a managed release-image source, NemoClaw validates the durable workload receipt and retains the exact source image digest.
+It reconciles the source's current route and configuration before it creates a destination-specific secret-free startup profile and workload receipt.
+Export the credential variables for every enabled messaging or web-search provider before you clone.
+If the source receipt records an authenticated proxy, export the matching proxy environment variables again.
+Managed Hermes sandboxes with enabled Nous tool gateways cannot be snapshot-cloned because the destination needs a fresh Nous OAuth credential and broker binding.
+Disable those gateways before cloning, or re-onboard the destination.
+NemoClaw completes these validations before it deletes an existing `--force` destination.
 A cross-sandbox restore refuses to clone a source or replace an existing destination whose baseline exclusion transaction needs repair, before it creates or deletes anything.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
