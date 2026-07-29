@@ -3,3 +3,5 @@
 
 /skills/nemoclaw/** linguist-generated=true
 /skills/nemoclaw/**/*.md diff=markdown
+
+.tester/lfs/1785354706652-a4d728.bin filter=lfs diff=lfs merge=lfs -text
