@@ -344,12 +344,15 @@ RUN printf '%s\n' \
 # skip rather than doing a nondeterministic dependency resolve during image
 # build.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
+COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 RUN mkdir -p /opt/hermes \
     && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256
+    && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
+    && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
+    && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 /tmp/hermes-security-dependencies.patch
 
 # Cross-check the pinned release against two independent sources before
 # installing anything from it: the extracted tarball must declare
@@ -397,6 +400,9 @@ RUN set -eu; \
         set -- "$@" --extra "$extra"; \
     done; \
     uv sync --frozen --no-dev "$@" --no-cache \
+    && uv pip check --python /opt/hermes/.venv/bin/python \
+    && /opt/hermes/.venv/bin/python -I -c \
+        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'pillow': '12.3.0', 'starlette': '1.3.1'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && npm ci --prefer-offline --no-audit --no-fund \
     && for ui_dir in ui-tui web; do \
         if [ -f "${ui_dir}/package-lock.json" ]; then \

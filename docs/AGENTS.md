@@ -11,11 +11,16 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 - Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
-- Verify behavior against source code, tests, scripts, or existing docs before documenting it.
+- Verify commands, defaults, and behavior against checked-in source, tests, or scripts.
+- Use existing documentation, issues, and PRs to locate claims and rationale, not as behavior
+  authority.
+- Verify support claims against an accepted issue or accepted design decision.
 
 ## Before Editing
 
 - Read `docs/CONTRIBUTING.md` before changing documentation.
+- Follow the
+  [shared documentation writing and review contract](../.agents/skills/_shared/documentation-writing-review.md).
 - Check `docs/.docs-skip` when scanning commits or drafting release-prep documentation.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
@@ -24,9 +29,14 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 ## Writing Rules
 
 - Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
+- Use the
+  [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md)
+  for project terms and evidence claims.
 - Use active voice, second person, present tense, and direct language.
-- Keep one sentence per line in Markdown and MDX source files.
-- End every sentence with a period.
+- Put one prose sentence per source line where practical.
+- End prose sentences with a period.
+- Exempt frontmatter, headings, navigation labels, diagrams, code, output, UI labels, and compact
+  table fragments from the prose sentence rules.
 - Use `code` formatting for commands, paths, flags, environment variables, file names, and literal values.
 - Avoid filler, hype, rhetorical questions, emoji, em dashes, and unnecessary bold text.
 - Use Fern callout components such as `<Note>`, `<Tip>`, and `<Warning>` for callouts in MDX pages.
