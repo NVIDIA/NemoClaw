@@ -250,8 +250,20 @@ stored device token. Once that credential exists, the patch automatically
 retains CLI identity on ordinary loopback shared-token calls; the upstream
 local-backend omission remains unchanged. This restores device-scope
 enforcement without moving the gateway credential into OpenClaw state. After
-bootstrap, list calls and every `devices approve` remove the gateway URL, port,
-and shared token so the bounded approval flow uses that device credential.
+bootstrap, every `devices approve` removes the gateway URL, port, and shared
+token so the bounded approval flow uses that device credential.
+
+Restored-clone approval adds a separate child-only
+`NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH=1` marker to its JSON list
+subprocess after removing the gateway URL, port, and shared token. The compiled
+CLI honors that marker only when OpenClaw's own pairing state contains exactly
+one unambiguous same-device CLI repair requesting `operator.write` against a
+paired `operator.pairing` baseline. It then performs one live
+`device.pair.list` call with pairing-scoped stored-device authentication,
+bypassing any `gateway.auth.token` in config. The selected path does not retry
+with shared credentials or return local pairing-state output. The host helper
+never reads or writes OpenClaw's pending or paired state; OpenClaw uses that
+state only to select the narrower authentication mode.
 
 ## Gateway Startup Migration Compatibility
 

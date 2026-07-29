@@ -46,6 +46,8 @@ const CLI_APPROVE_MARKER =
 const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope approval";
 const CLI_RETRY_MARKER = "nemoclaw: keep bounded stored device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
+const CLI_STANDALONE_LIST_MARKER =
+  "nemoclaw: select stored device auth for bounded standalone pairing list";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
   "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
@@ -55,6 +57,7 @@ const CLI_APPLIED_MARKERS = [
   CLI_SCOPE_MARKER,
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
+  CLI_STANDALONE_LIST_MARKER,
 ] as const;
 const AUTH_SCOPE_UPGRADE_MARKER =
   "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
@@ -217,6 +220,35 @@ const CLI_HELPER = [
   "\t};",
   "}",
   "",
+  "async function resolveNemoClawStoredDeviceListCallOpts(opts) {",
+  '\tif (process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH !== "1" || opts.json !== true || normalizeOptionalString(opts.url) || normalizeOptionalString(opts.token) || normalizeOptionalString(opts.password)) return;',
+  "\ttry {",
+  "\t\tconst nemoclawLocalList = await listDevicePairing();",
+  "\t\tconst nemoclawLocalPending = Array.isArray(nemoclawLocalList.pending) ? nemoclawLocalList.pending : [];",
+  "\t\tconst nemoclawLocalPaired = Array.isArray(nemoclawLocalList.paired) ? nemoclawLocalList.paired : [];",
+  "\t\tconst nemoclawCandidates = nemoclawLocalPending.filter((request) => {",
+  '\t\t\tif (!request || typeof request !== "object" || Array.isArray(request)) return false;',
+  "\t\t\tconst nemoclawRequestId = normalizeOptionalString(request.requestId);",
+  "\t\t\tconst nemoclawDeviceId = normalizeOptionalString(request.deviceId);",
+  "\t\t\tif (!nemoclawRequestId || !nemoclawDeviceId || request.isRepair !== true) return false;",
+  "\t\t\tif (nemoclawLocalPending.filter((candidate) => normalizeOptionalString(candidate?.requestId) === nemoclawRequestId).length !== 1) return false;",
+  "\t\t\tconst nemoclawRawScopes = request.scopes;",
+  '\t\t\tif (!Array.isArray(nemoclawRawScopes) || !nemoclawRawScopes.some((scope) => normalizeOptionalString(scope) === "operator.write")) return false;',
+  "\t\t\tconst nemoclawPairedMatches = nemoclawLocalPaired.filter((device) => normalizeOptionalString(device?.deviceId) === nemoclawDeviceId);",
+  "\t\t\tif (nemoclawPairedMatches.length !== 1) return false;",
+  "\t\t\treturn resolveNemoClawSelfRepairPairingContext(request, nemoclawPairedMatches[0]).useStoredDeviceAuth;",
+  "\t\t});",
+  "\t\tif (nemoclawCandidates.length !== 1) return;",
+  "\t\treturn {",
+  "\t\t\tscopes: [PAIRING_SCOPE],",
+  "\t\t\tuseStoredDeviceAuth: true,",
+  "\t\t\trequiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
+  "\t\t};",
+  "\t} catch {",
+  "\t\treturn;",
+  "\t}",
+  "}",
+  "",
 ].join("\n");
 
 const CLI_REPLACEMENT = [
@@ -252,6 +284,21 @@ const CLI_LIST_CALL_TARGET =
   '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));';
 const CLI_LIST_CALL_REPLACEMENT =
   '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}, callOpts));';
+const CLI_STANDALONE_LIST_TARGET = [
+  "async function runDevicesListCommand(opts) {",
+  "\tlet list;",
+  "\ttry {",
+  "\t\tlist = await listPairingWithFallback(opts);",
+].join("\n");
+const CLI_STANDALONE_LIST_REPLACEMENT = [
+  "async function runDevicesListCommand(opts) {",
+  "\tconst nemoclawListCallOpts = await resolveNemoClawStoredDeviceListCallOpts(opts);",
+  "\tlet list;",
+  "\ttry {",
+  "\t\tlist = nemoclawListCallOpts",
+  '\t\t\t? parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}, nemoclawListCallOpts)) // nemoclaw: select stored device auth for bounded standalone pairing list (#4462)',
+  "\t\t\t: await listPairingWithFallback(opts);",
+].join("\n");
 
 const CLI_CONTEXT_TARGET = [
   "async function resolveApprovePairingGatewayContext(opts, requestId) {",
@@ -891,6 +938,7 @@ const FILE_SPECS: FileSpec[] = [
     selector(source) {
       return (
         source.includes("async function approvePairingWithFallback(opts, requestId)") &&
+        source.includes("async function runDevicesListCommand(opts)") &&
         source.includes("function resolveApprovePairingScopesForRequest(request, paired)") &&
         source.includes('callGatewayCli("device.pair.approve"') &&
         CLI_SELECTOR_DEPENDENCIES.every((dependency) => source.includes(dependency))
@@ -947,6 +995,14 @@ const FILE_SPECS: FileSpec[] = [
         CLI_LIST_CALL_TARGET,
         CLI_LIST_CALL_REPLACEMENT,
         "devices CLI bounded pairing-list call target",
+        file,
+      );
+      if (result.error) return { source, status: "no-match", error: result.error };
+      result = replaceExactlyOnce(
+        result.source,
+        CLI_STANDALONE_LIST_TARGET,
+        CLI_STANDALONE_LIST_REPLACEMENT,
+        "devices CLI bounded standalone list target",
         file,
       );
       if (result.error) return { source, status: "no-match", error: result.error };

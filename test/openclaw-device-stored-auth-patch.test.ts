@@ -16,6 +16,151 @@ import {
 } from "./helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
+  it("uses pairing-scoped stored auth only for a marked exact repair list", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-marked-list-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        calls: Array<Record<string, unknown>>;
+        output: Array<Record<string, unknown>>;
+        list: (opts: Record<string, unknown>) => Promise<void>;
+        setListFailures: (errors: Error[]) => void;
+        setMarker: (value: boolean) => void;
+        setPairingLists: (local: Record<string, unknown>, live?: Record<string, unknown>) => void;
+      }>(
+        source,
+        `({
+          calls: gatewayCalls,
+          output: runtimeJson,
+          list: runDevicesListCommand,
+          setListFailures,
+          setMarker: setStoredDeviceListMarker,
+          setPairingLists,
+        })`,
+      );
+      const exactList = { pending: [validPending()], paired: [validPaired()] };
+      runtime.setPairingLists(exactList);
+
+      await runtime.list({ json: true });
+      expect(runtime.calls).toHaveLength(1);
+      expect(runtime.calls[0]).not.toHaveProperty("useStoredDeviceAuth");
+      expect(runtime.output).toEqual([exactList]);
+
+      runtime.calls.length = 0;
+      runtime.output.length = 0;
+      runtime.setMarker(true);
+      await runtime.list({ json: true });
+      expect(runtime.calls).toHaveLength(1);
+      expect(runtime.calls[0]).toMatchObject({
+        method: "device.pair.list",
+        scopes: ["operator.pairing"],
+        useStoredDeviceAuth: true,
+        requiredStoredDeviceAuthScopes: ["operator.pairing"],
+      });
+      expect(runtime.output).toEqual([exactList]);
+
+      runtime.calls.length = 0;
+      runtime.output.length = 0;
+      runtime.setListFailures([new Error("stored device list denied")]);
+      await expect(runtime.list({ json: true })).rejects.toThrow("stored device list denied");
+      expect(runtime.calls).toHaveLength(1);
+      expect(runtime.calls[0]).toMatchObject({ useStoredDeviceAuth: true });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed to the ordinary list path when marked local repair evidence is unsafe", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-list-bounds-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        resolve: (opts: Record<string, unknown>) => Promise<Record<string, unknown> | undefined>;
+        setFailure: (value: Error | undefined) => void;
+        setMarker: (value: boolean) => void;
+        setPairingLists: (local: Record<string, unknown>, live?: Record<string, unknown>) => void;
+      }>(
+        source,
+        `({
+          resolve: resolveNemoClawStoredDeviceListCallOpts,
+          setFailure: setLocalPairingFailure,
+          setMarker: setStoredDeviceListMarker,
+          setPairingLists,
+        })`,
+      );
+      const exactList = { pending: [validPending()], paired: [validPaired()] };
+
+      runtime.setPairingLists(exactList);
+      expect(await runtime.resolve({ json: true })).toBeUndefined();
+      runtime.setMarker(true);
+      expect(await runtime.resolve({ json: false })).toBeUndefined();
+      for (const explicit of [
+        { url: "ws://127.0.0.1:18789" },
+        { token: "explicit-token" },
+        { password: "explicit-password" },
+      ]) {
+        expect(await runtime.resolve({ json: true, ...explicit })).toBeUndefined();
+      }
+      expect(await runtime.resolve({ json: true })).toEqual({
+        scopes: ["operator.pairing"],
+        useStoredDeviceAuth: true,
+        requiredStoredDeviceAuthScopes: ["operator.pairing"],
+      });
+
+      const unsafeLists = [
+        { pending: null, paired: null },
+        { pending: [], paired: [validPaired()] },
+        { pending: [validPending({ requestId: " " })], paired: [validPaired()] },
+        { pending: [validPending()], paired: [] },
+        { pending: [validPending({ publicKey: "other-key" })], paired: [validPaired()] },
+        { pending: [validPending({ clientId: "openclaw-control-ui" })], paired: [validPaired()] },
+        { pending: [validPending({ clientMode: "webchat" })], paired: [validPaired()] },
+        { pending: [validPending({ role: "node", roles: ["node"] })], paired: [validPaired()] },
+        {
+          pending: [validPending({ roles: ["operator", "node"] })],
+          paired: [validPaired()],
+        },
+        { pending: [validPending({ scopes: [] })], paired: [validPaired()] },
+        { pending: [validPending({ scopes: ["operator.pairing"] })], paired: [validPaired()] },
+        { pending: [validPending({ scopes: ["operator.admin"] })], paired: [validPaired()] },
+        { pending: [validPending({ scopes: ["operator.unknown"] })], paired: [validPaired()] },
+        {
+          pending: [validPending({ scopes: ["operator.write", "operator.write"] })],
+          paired: [validPaired()],
+        },
+        { pending: [validPending({ isRepair: false })], paired: [validPaired()] },
+        {
+          pending: [validPending(), validPending({ requestId: "request-2" })],
+          paired: [validPaired()],
+        },
+        {
+          pending: [validPending(), validPending({ deviceId: "device-2" })],
+          paired: [validPaired()],
+        },
+        { pending: [validPending()], paired: [validPaired(), validPaired()] },
+      ];
+      for (const unsafeList of unsafeLists) {
+        runtime.setPairingLists(unsafeList);
+        expect(await runtime.resolve({ json: true })).toBeUndefined();
+      }
+
+      runtime.setPairingLists(exactList);
+      runtime.setFailure(new Error("local pairing state unreadable"));
+      expect(await runtime.resolve({ json: true })).toBeUndefined();
+      runtime.setFailure(undefined);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("forwards stored device auth only for exact same-device transitions", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-stored-auth-"));
     const dist = path.join(tmp, "dist");

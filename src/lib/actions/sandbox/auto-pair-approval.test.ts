@@ -41,7 +41,11 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     });
 
     expect(ordinary).not.toContain("local_identity_public_key");
+    expect(ordinary).toContain("env=None");
+    expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH");
     expect(restoredClone).toContain("local_identity_public_key");
+    expect(restoredClone).toContain("env=local_device_list_env(os.environ)");
+    expect(restoredClone).toContain("env['NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH'] = '1'");
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");
     expect(restoredClone).toContain("pending = related_pending");
@@ -98,6 +102,7 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
     try {
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
+      const listEnvFile = path.join(tmpDir, "list-env.log");
       const pending = [
         {
           requestId: "ok-webchat",
@@ -149,6 +154,15 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
 const fs = require("fs");
 const args = process.argv.slice(2);
 if (args[0] === "devices" && args[1] === "list") {
+  fs.appendFileSync(
+    ${JSON.stringify(listEnvFile)},
+    [
+      process.env.OPENCLAW_GATEWAY_URL || "unset",
+      process.env.OPENCLAW_GATEWAY_PORT || "unset",
+      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH || "unset",
+    ].join(":") + "\\n",
+  );
   process.stdout.write(${JSON.stringify(`${listResponse}\n`)});
   process.exit(0);
 }
@@ -160,6 +174,7 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.env.OPENCLAW_GATEWAY_URL || "unset",
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH || "unset",
     ].join(":") + "\\n",
   );
   process.stdout.write("{}\\n");
@@ -188,10 +203,18 @@ process.exit(2);
       const approveEnv = fs.existsSync(approveEnvFile)
         ? fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n").filter(Boolean)
         : [];
+      const listEnv = fs.existsSync(listEnvFile)
+        ? fs.readFileSync(listEnvFile, "utf-8").trim().split("\n").filter(Boolean)
+        : [];
 
       expect(approvals).toEqual(["ok-webchat", "ok-cli", "ok-agent-cli"]);
+      expect(listEnv).toEqual(["ws://127.0.0.1:18789:18789:secret-token:unset"]);
       // Gateway env stripped on the approve subprocess (#4462 workaround).
-      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset", "unset:unset:unset"]);
+      expect(approveEnv).toEqual([
+        "unset:unset:unset:unset",
+        "unset:unset:unset:unset",
+        "unset:unset:unset:unset",
+      ]);
       expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -201,7 +224,7 @@ process.exit(2);
   const pyIt =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
 
-  pyIt("approves only one exact local clone pairing transition on a shared gateway", () => {
+  const approveOnlyOneLocalClonePairing = () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(
@@ -219,6 +242,7 @@ process.exit(2);
       const identityDir = path.join(stateDir, "identity");
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
+      const listEnvFile = path.join(tmpDir, "list-env.log");
       fs.mkdirSync(identityDir, { recursive: true });
       const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
       const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
@@ -236,6 +260,23 @@ process.exit(2);
 const fs = require("fs");
 const args = process.argv.slice(2);
 if (args[0] === "devices" && args[1] === "list") {
+  fs.appendFileSync(
+    ${JSON.stringify(listEnvFile)},
+    [
+      process.env.OPENCLAW_GATEWAY_URL || "unset",
+      process.env.OPENCLAW_GATEWAY_PORT || "unset",
+      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH || "unset",
+    ].join(":") + "\\n",
+  );
+  if (
+    process.env.OPENCLAW_GATEWAY_URL ||
+    process.env.OPENCLAW_GATEWAY_PORT ||
+    process.env.OPENCLAW_GATEWAY_TOKEN
+  ) {
+    process.stderr.write("restored clone list retained shared gateway credentials\\n");
+    process.exit(3);
+  }
   process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
   process.exit(0);
 }
@@ -251,6 +292,7 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.env.OPENCLAW_GATEWAY_URL || "unset",
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH || "unset",
     ].join(":") + "\\n",
   );
   process.stdout.write("{}\\n");
@@ -286,6 +328,7 @@ process.exit(2);
       const resetLogs = () => {
         fs.rmSync(approvalsFile, { force: true });
         fs.rmSync(approveEnvFile, { force: true });
+        fs.rmSync(listEnvFile, { force: true });
       };
       const localRequest = {
         requestId: "clone-pairing",
@@ -309,7 +352,8 @@ process.exit(2);
       expect(initial.stdout).toContain(`${SUMMARY_MARKER}=1`);
       expect(initial.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
       expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+      expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe("unset:unset:unset:1");
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset:unset");
 
       resetLogs();
       const repairRequest = {
@@ -403,7 +447,12 @@ process.exit(2);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
+  };
+  pyIt(
+    "approves only one exact local clone pairing transition on a shared gateway",
+    approveOnlyOneLocalClonePairing,
+    30_000,
+  );
 
   it("leaves a failed compatibility-shaped approval retryable without editing device state", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {

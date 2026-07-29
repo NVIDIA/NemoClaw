@@ -32,8 +32,10 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
   It restores the in-sandbox gateway and host forwards before reporting success, refreshes stale stopped-container evidence, and fails closed when delivery cannot be proven.
   Recovery also unpauses a paused original container before reporting success.
   Resumed onboarding writes a secret-free same-name recreation journal before deletion so an interrupted run can continue or fail closed on ambiguous identity.
-  When the local pairing pass cannot list or approve the clone request, restored snapshot clones retry pairing once only if the authenticated verifier reports a pending scope upgrade.
-  The retry preserves the local-device and single-request bounds.
+  Restored snapshot clones now remove the shared gateway URL, port, and token before listing the clone request, then select pairing-scoped stored-device authentication only after an exact local repair preflight.
+  The selected list path cannot fall back to the shared gateway credential or local pairing-state output.
+  When that local pairing pass cannot list or approve the request, the clone retries pairing once only if the authenticated verifier reports a pending scope upgrade.
+  The credential transition and retry preserve the local-device and single-request bounds.
   Uninstall checks for the `openshell` command after confirmation and before cleanup mutation, while source-checkout installation preserves an absolute `NEMOCLAW_OPENSHELL_BIN` selection during user-local OpenShell discovery.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 - Jetson setup now explains why host preparation was skipped when it encounters an unrecognized or unparseable release.

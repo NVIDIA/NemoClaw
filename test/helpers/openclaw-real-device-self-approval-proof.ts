@@ -227,6 +227,20 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
   requireOrderedMarkers(
     cliSource.source,
     [
+      "async function resolveNemoClawStoredDeviceListCallOpts(opts)",
+      "NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH",
+      "nemoclawCandidates.length !== 1",
+      "useStoredDeviceAuth: true",
+      "async function runDevicesListCommand(opts)",
+      "await resolveNemoClawStoredDeviceListCallOpts(opts)",
+      'callGatewayCli("device.pair.list", opts, {}, nemoclawListCallOpts)',
+      "nemoclaw: select stored device auth for bounded standalone pairing list",
+    ],
+    "devices CLI bounded standalone stored-auth list",
+  );
+  requireOrderedMarkers(
+    cliSource.source,
+    [
       "async function approvePairingWithFallback(opts, requestId)",
       "nemoclawUseStoredDeviceAuth",
       "nemoclaw: select stored device auth for bounded same-device scope approval",
@@ -978,12 +992,14 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     OPENCLAW_SKIP_CHANNELS: "1",
     OPENCLAW_SKIP_PROVIDERS: "1",
     OPENCLAW_STATE_DIR: stateDir,
+    // The child inherits VITEST=true, which otherwise suppresses real CLI JSON.
+    OPENCLAW_TEST_RUNTIME_LOG: "1",
   };
-  const runCli = (args: string[]) =>
+  const runCli = (args: string[], cliEnv: NodeJS.ProcessEnv = env) =>
     spawnSync(options.nodeExecutable, [openclawEntry, ...args], {
       cwd: packageDir,
       encoding: "utf8",
-      env,
+      env: cliEnv,
       timeout: Math.min(options.timeoutMs, 60_000),
     });
 
@@ -1043,7 +1059,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     );
 
     await stopChild(gateway);
-    writeGatewayConfig({ mode: "token" });
+    writeGatewayConfig({ mode: "token", token: gatewayToken });
     gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
     await waitForGatewayReady(gateway, port, options.timeoutMs);
 
@@ -1101,8 +1117,59 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     const configuredGateway = asRecord(configuredBeforeApproval.gateway);
     const configuredAuth = asRecord(configuredGateway?.auth);
     requireLiveProof(
-      configuredAuth?.mode === "token" && configuredAuth.token === undefined,
-      "gateway token auth was not isolated from the stored-device-auth client",
+      configuredAuth?.mode === "token" && configuredAuth.token === gatewayToken,
+      "production-shaped gateway token auth configuration missing",
+    );
+
+    const markedListEnv = {
+      ...env,
+      NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH: "1",
+    };
+    const hiddenDeviceAuthPath = `${deviceAuthPath}.hidden`;
+    fs.renameSync(deviceAuthPath, hiddenDeviceAuthPath);
+    try {
+      const listWithoutStoredAuth = runCli(["devices", "list", "--json"], markedListEnv);
+      requireLiveProof(
+        listWithoutStoredAuth.status !== 0,
+        "marked device list fell back to the configured shared token without stored device auth",
+      );
+    } finally {
+      fs.renameSync(hiddenDeviceAuthPath, deviceAuthPath);
+    }
+
+    const strippedList = runCli(["devices", "list", "--json"], markedListEnv);
+    requireSuccess(
+      strippedList,
+      "list the exact real same-device repair with the stripped post-bootstrap client",
+    );
+    const strippedListValue: unknown = JSON.parse(String(strippedList.stdout));
+    const strippedListObject = asRecord(strippedListValue);
+    requireLiveProof(strippedListObject, "stripped post-bootstrap device list was not an object");
+    requireLiveProof(
+      Array.isArray(strippedListObject.pending) && Array.isArray(strippedListObject.paired),
+      "stripped post-bootstrap device list did not contain pending and paired arrays",
+    );
+    const strippedPending = strippedListObject.pending
+      .map(asRecord)
+      .filter((request) => request !== null);
+    requireLiveProof(
+      strippedPending.length === 1,
+      `stripped post-bootstrap device list returned ${strippedPending.length} pending requests`,
+    );
+    const listedRepair = strippedPending[0] as Record<string, unknown>;
+    requireLiveProof(
+      listedRepair.requestId === repair.requestId &&
+        listedRepair.deviceId === repair.deviceId &&
+        listedRepair.publicKey === repair.publicKey &&
+        listedRepair.clientId === repair.clientId &&
+        listedRepair.clientMode === repair.clientMode &&
+        listedRepair.isRepair === repair.isRepair,
+      "stripped post-bootstrap device list did not return the exact same-device repair",
+    );
+    requireExactScopes(
+      listedRepair.scopes,
+      ["operator.write"],
+      "stripped post-bootstrap same-device repair scopes",
     );
 
     const approval = runCli(["devices", "approve", String(repair.requestId), "--json"]);
@@ -1152,7 +1219,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     const configuredGatewayAfter = asRecord(configuredAfterApproval.gateway);
     const configuredAuthAfter = asRecord(configuredGatewayAfter?.auth);
     requireLiveProof(
-      configuredAuthAfter?.mode === "token" && configuredAuthAfter.token === undefined,
+      configuredAuthAfter?.mode === "token" && configuredAuthAfter.token === gatewayToken,
       "gateway token auth configuration changed during stored-device-auth approval",
     );
   } catch (error) {

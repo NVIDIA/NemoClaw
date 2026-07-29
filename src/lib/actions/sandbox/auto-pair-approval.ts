@@ -26,14 +26,16 @@
  * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
  * `devices approve` for a scope-upgrade can request the upgraded scopes for
  * its own connection and return the pending-scope failure it is trying to
- * resolve. The sourced runtime environment makes the list call inspect the
- * same live gateway through local loopback, while the approval call also
- * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. The reviewed dist
- * patch then forces OpenClaw's existing local-only stored-device-auth path for
- * the exact bounded self-repair shape so a shared token reloaded from config
- * cannot take precedence. Remove this compatibility path when OpenClaw can
- * complete scope upgrades natively through device-token auth using
- * operator.pairing.
+ * resolve. The sourced runtime environment makes an ordinary recovery list
+ * call inspect the same live gateway through local loopback. A restored clone
+ * is already post-bootstrap, so its list call and every approval call strip
+ * OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. A clone-only marker lets
+ * the reviewed dist patch select stored-device auth for the list only after an
+ * exact local repair preflight. The approval command independently forces that
+ * same local-only stored-device-auth path for the exact bounded self-repair
+ * shape, so a shared token reloaded from config cannot take precedence. Remove
+ * this compatibility path when OpenClaw can complete scope upgrades natively
+ * through device-token auth using operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";
@@ -165,6 +167,20 @@ def exit_with_receipt(receipt):
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  // A restored clone already has post-bootstrap device identity. Match the
+  // startup watcher's post-bootstrap list path by dropping the explicit shared
+  // gateway credential triplet, then privately request the patched bounded
+  // stored-device list path. Ordinary connect/doctor recovery keeps its
+  // existing bootstrap-capable list environment.
+  const listEnvPrelude = options.localDeviceOnly
+    ? `
+def local_device_list_env(source_env):
+    env = gateway_approval_env(source_env)
+    env['NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH'] = '1'
+    return env
+`
+    : "";
+  const listEnv = options.localDeviceOnly ? "local_device_list_env(os.environ)" : "None";
   const localDeviceFilter = options.localDeviceOnly
     ? `
 # Snapshot restore shares one gateway across the source sandbox and its clone.
@@ -325,6 +341,7 @@ try:
     gateway_approval_env = policy_globals['gateway_approval_env']
 except Exception:
     ${exitWithReceipt("policy-missing")}
+${listEnvPrelude}
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${maxApprovals}
@@ -332,7 +349,7 @@ MAX_APPROVALS = ${maxApprovals}
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
+        capture_output=True, text=True, timeout=${listTimeoutS}, env=${listEnv},
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     ${exitWithReceipt("list-failed")}
