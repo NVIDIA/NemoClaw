@@ -4396,8 +4396,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
   requireRunContains(errors, controllerMatrix, "matrix='[]'");
-  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
-  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+  const controllerMatrixScript = stringValue(controllerMatrix?.run);
+  const trustedTargetMappings = [
+    '{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}',
+    '{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}',
+  ];
+  if (
+    trustedTargetMappings.some((mapping) => controllerMatrixScript.split(mapping).length - 1 !== 2)
+  ) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
   requireRunContains(

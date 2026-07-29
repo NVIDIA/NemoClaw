@@ -577,6 +577,10 @@ both selector types in one correlated workflow run. Fork revisions whose plans
 select credential-bearing jobs or targets instead require explicit protected
 credentialed-E2E approval. Plans with no selected jobs or targets can complete
 without an E2E run.
+Changes to `src/lib/actions/sandbox/status-snapshot.ts` select the exact
+`ubuntu-repo-docker-post-reboot-recovery` typed target. This keeps status
+delivery-recovery changes bound to the reboot simulation that independently
+probes the restored gateway and host forward.
 An internal revision whose matched control-plane files are drawn only from the
 trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
 `tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
