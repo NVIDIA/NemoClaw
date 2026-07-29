@@ -606,9 +606,14 @@ function stringValue(value: unknown): string {
 
 function shellCaseBranchCommands(script: string, selector: string): string[] | undefined {
   const lines = script.split("\n");
-  const caseStart = lines.findIndex((line) => line.trim() === 'case "${TARGETS}" in');
-  const caseEnd = lines.findIndex((line, index) => index > caseStart && line.trim() === "esac");
-  if (caseStart < 0 || caseEnd < 0) return undefined;
+  const caseStarts = lines.flatMap((line, index) =>
+    line.trim() === 'case "${TARGETS}" in' ? [index] : [],
+  );
+  const caseEnds = lines.flatMap((line, index) => (line.trim() === "esac" ? [index] : []));
+  if (caseStarts.length !== 1 || caseEnds.length !== 1) return undefined;
+  const caseStart = caseStarts[0]!;
+  const caseEnd = caseEnds[0]!;
+  if (caseEnd <= caseStart) return undefined;
   const branchStart = lines.findIndex(
     (line, index) => index > caseStart && index < caseEnd && line.trim() === `${selector})`,
   );
