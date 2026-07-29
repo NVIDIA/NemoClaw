@@ -78,6 +78,7 @@ describe("trusted E2E target routing boundary (#7824)", () => {
 
   it("rejects a matrix override after approved target routing", () => {
     const { controllerMatrix, workflow } = fixture();
+    expect(validateE2eWorkflow(workflow)).not.toContain(EXPECTED_ERROR);
     const output = `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`;
     requireFixture(
       controllerMatrix.run?.includes(output),
