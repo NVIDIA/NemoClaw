@@ -183,6 +183,15 @@ commands = [
         "maxInvocations": 1,
     },
     {
+        "id": "source-race",
+        "argv": [executables["echo"], "source-race"],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
         "id": "unsafe-git-config",
         "argv": [executables["echo"], "unsafe-git-config"],
         "workingDirectory": str(workspace),
@@ -374,6 +383,23 @@ try:
 finally:
     managed.subprocess.Popen = original_popen
 results["raceEscaped"] = (root / "race-escaped").exists()
+def mutate_source_before_spawn(*args, **kwargs):
+    if args[0] == [executables["echo"], "source-race"]:
+        (workspace / "tracked.txt").write_text(
+            "changed after source verification\n", encoding="utf-8"
+        )
+    return original_popen(*args, **kwargs)
+managed.subprocess.Popen = mutate_source_before_spawn
+try:
+    results["sourceRace"] = run(f'{executables["echo"]} source-race')
+finally:
+    managed.subprocess.Popen = original_popen
+subprocess.run(
+    [git_executable, "-C", str(workspace), "checkout", "--", "tracked.txt"],
+    check=True,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
 context = multiprocessing.get_context("fork")
 queue = context.Queue()
 workers = [context.Process(target=run_concurrent, args=(queue,)) for _index in range(2)]
@@ -485,6 +511,7 @@ describe("managed DCode validation-command runtime", () => {
       expect(receipts.successfulAfterPopenFailure.status).toBe("succeeded");
       expect(receipts.descriptorBound.status).toBe("succeeded");
       expect(receipts.raceEscaped).toBe(false);
+      expect(receipts.sourceRace.status).toBe("source_identity_mismatch");
       expect(receipts.concurrent).toEqual(["invocation_limit_exceeded", "succeeded"]);
       expect(receipts.unsafeGitConfig.status).toBe("source_identity_mismatch");
       expect(receipts.filterEscaped).toBe(false);

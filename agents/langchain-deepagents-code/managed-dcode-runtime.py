@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import grp
@@ -1922,6 +1923,81 @@ def _validation_descriptor_root() -> Path:
     raise RuntimeError("validation descriptor execution is unavailable")
 
 
+_VALIDATION_SOURCE_WATCH_MASK = (
+    0x00000002  # IN_MODIFY
+    | 0x00000004  # IN_ATTRIB
+    | 0x00000008  # IN_CLOSE_WRITE
+    | 0x00000040  # IN_MOVED_FROM
+    | 0x00000080  # IN_MOVED_TO
+    | 0x00000100  # IN_CREATE
+    | 0x00000200  # IN_DELETE
+    | 0x00000400  # IN_DELETE_SELF
+    | 0x00000800  # IN_MOVE_SELF
+)
+
+
+class _ValidationSourceWatch:
+    """Record every work-tree mutation from source verification through exit."""
+
+    def __init__(self, descriptor: int) -> None:
+        self.descriptor = descriptor
+
+    @classmethod
+    def open(cls, root: Path) -> _ValidationSourceWatch:
+        libc = ctypes.CDLL(None, use_errno=True)
+        initialize = libc.inotify_init1
+        initialize.argtypes = [ctypes.c_int]
+        initialize.restype = ctypes.c_int
+        add_watch = libc.inotify_add_watch
+        add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+        add_watch.restype = ctypes.c_int
+        descriptor = initialize(os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+        if descriptor < 0:
+            raise RuntimeError("source mutation guard is unavailable")
+        try:
+            for current, directories, _files in os.walk(
+                root, topdown=True, followlinks=False
+            ):
+                current_path = Path(current)
+                current_stat = current_path.lstat()
+                if current_path.is_symlink() or not stat.S_ISDIR(current_stat.st_mode):
+                    raise RuntimeError("source mutation guard found an unsafe directory")
+                if (
+                    add_watch(
+                        descriptor,
+                        os.fsencode(current_path),
+                        _VALIDATION_SOURCE_WATCH_MASK,
+                    )
+                    < 0
+                ):
+                    raise RuntimeError("source mutation guard could not cover the work tree")
+                directories[:] = [
+                    name
+                    for name in directories
+                    if not (current_path / name).is_symlink()
+                ]
+            return cls(descriptor)
+        except Exception:
+            os.close(descriptor)
+            raise
+
+    def changed(self) -> bool:
+        changed = False
+        while True:
+            try:
+                chunk = os.read(self.descriptor, 65_536)
+            except BlockingIOError:
+                return changed
+            except OSError as exc:
+                raise RuntimeError("source mutation guard failed") from exc
+            if not chunk:
+                raise RuntimeError("source mutation guard closed unexpectedly")
+            changed = True
+
+    def close(self) -> None:
+        os.close(self.descriptor)
+
+
 def _run_validation_git(
     working_directory: str,
     arguments: list[str],
@@ -1948,6 +2024,7 @@ def _run_validation_git(
         cwd=working_directory,
         env={
             "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
             "HOME": "/nonexistent",
             "LC_ALL": "C",
@@ -1992,6 +2069,34 @@ def _run_validation_git(
         if process.poll() is None:
             _terminate_validation_process(process)
             process.wait()
+
+
+def _validation_source_root(
+    working_directory: str, pass_descriptors: tuple[int, ...]
+) -> Path:
+    status, raw_root = _run_validation_git(
+        working_directory, ["rev-parse", "--show-toplevel"], pass_descriptors
+    )
+    try:
+        decoded = raw_root.decode("utf-8", errors="strict").strip()
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("source work tree is invalid") from exc
+    if (
+        status != 0
+        or not decoded.startswith("/")
+        or "\x00" in decoded
+        or decoded != os.path.normpath(decoded)
+    ):
+        raise RuntimeError("source work tree is invalid")
+    root = Path(decoded)
+    try:
+        root_stat = root.lstat()
+        root_real = root.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("source work tree is unavailable") from exc
+    if root.is_symlink() or root_real != root or not stat.S_ISDIR(root_stat.st_mode):
+        raise RuntimeError("source work tree is unsafe")
+    return root
 
 
 def _verified_validation_source_identity(
@@ -2309,13 +2414,21 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         return _validation_receipt(profile, command_id, argv, "rejected", started), False
 
     verified_source_identity: str | None = None
+    source_watch: _ValidationSourceWatch | None = None
     invocation_reservation: tuple[int, int, int, int] | None = None
     process: subprocess.Popen[bytes] | None = None
     try:
+        source_root = _validation_source_root(
+            bound_working_directory, (directory_descriptor,)
+        )
+        source_watch = _ValidationSourceWatch.open(source_root)
         verified_source_identity = _verified_validation_source_identity(
             bound_working_directory, (directory_descriptor,)
         )
-        if verified_source_identity != profile["sourceIdentity"]:
+        if (
+            verified_source_identity != profile["sourceIdentity"]
+            or source_watch.changed()
+        ):
             return (
                 _validation_receipt(
                     profile,
@@ -2340,6 +2453,18 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
                 ),
                 False,
             )
+        if source_watch.changed():
+            return (
+                _validation_receipt(
+                    profile,
+                    command_id,
+                    argv,
+                    "source_identity_mismatch",
+                    started,
+                    verified_source_identity=verified_source_identity,
+                ),
+                False,
+            )
         process = subprocess.Popen(
             argv,
             executable=bound_executable,
@@ -2357,10 +2482,91 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         committed_reservation = invocation_reservation
         invocation_reservation = None
         _close_validation_invocation_reservation(committed_reservation)
+
+        output = {"stdout": bytearray(), "stderr": bytearray()}
+        selector = selectors.DefaultSelector()
+        assert process.stdout is not None and process.stderr is not None
+        for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, name)
+        terminal_status: str | None = None
+        deadline = spawned + matched["timeoutSeconds"]
+        maximum_output = matched["maxOutputBytes"]
+        try:
+            while selector.get_map():
+                if source_watch.changed():
+                    terminal_status = "source_identity_mismatch"
+                    _terminate_validation_process(process)
+                if time.monotonic() >= deadline:
+                    terminal_status = terminal_status or "timed_out"
+                    _terminate_validation_process(process)
+                for key, _mask in selector.select(timeout=0.05):
+                    chunk = os.read(key.fileobj.fileno(), 65_536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    target = output[key.data]
+                    remaining = maximum_output + 1 - sum(
+                        len(value) for value in output.values()
+                    )
+                    if remaining > 0:
+                        target.extend(chunk[:remaining])
+                    if sum(len(value) for value in output.values()) > maximum_output:
+                        terminal_status = terminal_status or "output_limit_exceeded"
+                        _terminate_validation_process(process)
+                if terminal_status is not None and process.poll() is not None:
+                    for key in list(selector.get_map().values()):
+                        selector.unregister(key.fileobj)
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                return_code = process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                terminal_status = terminal_status or "timed_out"
+                _terminate_validation_process(process)
+                return_code = process.wait()
+        except Exception:
+            _terminate_validation_process(process)
+            process.wait()
+            terminal_status = terminal_status or "failed"
+            return_code = process.returncode
+        finally:
+            selector.close()
+            process.stdout.close()
+            process.stderr.close()
+        if (
+            source_watch.changed()
+            or _verified_validation_source_identity(
+                bound_working_directory, (directory_descriptor,)
+            )
+            != profile["sourceIdentity"]
+        ):
+            terminal_status = "source_identity_mismatch"
+        if terminal_status is None:
+            terminal_status = "succeeded" if return_code == 0 else "failed"
+        bounded_stdout = bytes(output["stdout"])
+        bounded_stderr = bytes(output["stderr"])
+        overflow = max(0, len(bounded_stdout) + len(bounded_stderr) - maximum_output)
+        if overflow:
+            if overflow <= len(bounded_stderr):
+                bounded_stderr = bounded_stderr[:-overflow]
+            else:
+                overflow -= len(bounded_stderr)
+                bounded_stderr = b""
+                bounded_stdout = bounded_stdout[:-overflow]
+        receipt = _validation_receipt(
+            profile,
+            command_id,
+            argv,
+            terminal_status,
+            started,
+            exit_code=return_code,
+            stdout=bounded_stdout,
+            stderr=bounded_stderr,
+            verified_source_identity=verified_source_identity,
+        )
+        return receipt, terminal_status == "succeeded"
     except (OSError, RuntimeError):
-        if invocation_reservation is not None:
-            _close_validation_invocation_reservation(invocation_reservation)
-        if process is not None:
+        if process is not None and process.poll() is None:
             _terminate_validation_process(process)
             process.wait()
         return (
@@ -2375,78 +2581,12 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
             False,
         )
     finally:
+        if invocation_reservation is not None:
+            _close_validation_invocation_reservation(invocation_reservation)
+        if source_watch is not None:
+            source_watch.close()
         os.close(executable_descriptor)
         os.close(directory_descriptor)
-
-    output = {"stdout": bytearray(), "stderr": bytearray()}
-    selector = selectors.DefaultSelector()
-    assert process.stdout is not None and process.stderr is not None
-    for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
-        os.set_blocking(stream.fileno(), False)
-        selector.register(stream, selectors.EVENT_READ, name)
-    terminal_status: str | None = None
-    deadline = spawned + matched["timeoutSeconds"]
-    maximum_output = matched["maxOutputBytes"]
-    try:
-        while selector.get_map():
-            if time.monotonic() >= deadline:
-                terminal_status = "timed_out"
-                _terminate_validation_process(process)
-            for key, _mask in selector.select(timeout=0.05):
-                chunk = os.read(key.fileobj.fileno(), 65_536)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                target = output[key.data]
-                remaining = maximum_output + 1 - sum(len(value) for value in output.values())
-                if remaining > 0:
-                    target.extend(chunk[:remaining])
-                if sum(len(value) for value in output.values()) > maximum_output:
-                    terminal_status = "output_limit_exceeded"
-                    _terminate_validation_process(process)
-            if terminal_status is not None and process.poll() is not None:
-                for key in list(selector.get_map().values()):
-                    selector.unregister(key.fileobj)
-        remaining = max(0.0, deadline - time.monotonic())
-        try:
-            return_code = process.wait(timeout=remaining)
-        except subprocess.TimeoutExpired:
-            terminal_status = terminal_status or "timed_out"
-            _terminate_validation_process(process)
-            return_code = process.wait()
-    except Exception:
-        _terminate_validation_process(process)
-        process.wait()
-        terminal_status = terminal_status or "failed"
-        return_code = process.returncode
-    finally:
-        selector.close()
-        process.stdout.close()
-        process.stderr.close()
-    if terminal_status is None:
-        terminal_status = "succeeded" if return_code == 0 else "failed"
-    bounded_stdout = bytes(output["stdout"])
-    bounded_stderr = bytes(output["stderr"])
-    overflow = max(0, len(bounded_stdout) + len(bounded_stderr) - maximum_output)
-    if overflow:
-        if overflow <= len(bounded_stderr):
-            bounded_stderr = bounded_stderr[:-overflow]
-        else:
-            overflow -= len(bounded_stderr)
-            bounded_stderr = b""
-            bounded_stdout = bounded_stdout[:-overflow]
-    receipt = _validation_receipt(
-        profile,
-        command_id,
-        argv,
-        terminal_status,
-        started,
-        exit_code=return_code,
-        stdout=bounded_stdout,
-        stderr=bounded_stderr,
-        verified_source_identity=verified_source_identity,
-    )
-    return receipt, terminal_status == "succeeded"
 
 
 def managed_display_provider(adapter_provider: object) -> str:

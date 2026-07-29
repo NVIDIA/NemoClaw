@@ -251,7 +251,10 @@ nemo-deepagents <sandbox-name> rebuild \
 ```
 
 NemoClaw validates the profile before it changes the existing sandbox, bakes the canonical profile into a root-owned image file, and records the same profile in the sandbox registry.
-Before every execution, the managed runtime recomputes `sourceIdentity` from the working directory's Git `HEAD`, rejects tracked changes and untracked files that Git does not ignore, and records the verified identity separately in the receipt.
+Before every execution, the managed runtime starts a fail-closed mutation guard across the Git work tree, recomputes `sourceIdentity` from the working directory's Git `HEAD`, and rejects tracked changes and untracked files that Git does not ignore.
+The guard remains active through process exit.
+Any file creation, write, metadata change, rename, or deletion during verification or execution terminates the command and returns `source_identity_mismatch`; the runtime also recomputes the identity after exit before it can report success.
+The receipt records the initially verified identity separately.
 It also rejects repository-local hooks, filesystem monitors, and external diff, filter, or merge drivers so source verification cannot invoke repository-configured programs.
 It then admits only an exact profiled argument vector and executes the no-follow, descriptor-bound executable from the descriptor-bound working directory directly with `shell=False`.
 Near matches, shell metacharacters, alternate executables, environment assignments, symbolic-link path escapes, excess output, timeouts, and exhausted invocation budgets fail closed.
