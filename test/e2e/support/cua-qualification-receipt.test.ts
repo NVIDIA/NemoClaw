@@ -3,11 +3,30 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  assertCuaQualificationBinding,
   CUA_QUALIFICATION_SCENARIOS,
+  parseCuaQualificationEnvironment,
   parseCuaQualificationReceipt,
 } from "../../../tools/e2e/cua-qualification-receipt.mts";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
+
+function environment(): Record<string, unknown> {
+  return {
+    schemaVersion: "1.0.0",
+    kind: "cua-qualification-environment",
+    launchable: { version: "1.0.0", digest: DIGEST },
+    gpu: {
+      count: 1,
+      model: "GPU",
+      driverVersion: "1",
+      cudaVersion: "1",
+      containerToolkitVersion: "1",
+      probeImageDigest: DIGEST,
+    },
+    nemoclawCommit: "b".repeat(40),
+  };
+}
 
 function receipt(): Record<string, unknown> {
   return {
@@ -54,8 +73,35 @@ function receipt(): Record<string, unknown> {
 }
 
 describe("CUA GPU qualification receipt (#7753)", () => {
+  it("accepts only a bounded environment identity from the image producer", () => {
+    expect(parseCuaQualificationEnvironment(environment())).toEqual(environment());
+
+    const authorityBearing = environment();
+    authorityBearing.workspaceId = "provider-authority";
+    expect(() => parseCuaQualificationEnvironment(authorityBearing)).toThrow(/contain exactly/);
+
+    const mutableProbe = environment();
+    (mutableProbe.gpu as Record<string, unknown>).probeImageDigest = "latest";
+    expect(() => parseCuaQualificationEnvironment(mutableProbe)).toThrow(/sha256 digest/);
+
+    const missingGpu = environment();
+    (missingGpu.gpu as Record<string, unknown>).count = 0;
+    expect(() => parseCuaQualificationEnvironment(missingGpu)).toThrow(/positive integer/);
+  });
+
   it("accepts exact content-free identities and complete scenario claims", () => {
     expect(parseCuaQualificationReceipt(receipt())).toEqual(receipt());
+  });
+
+  it("binds scenario claims to the environment producer identity", () => {
+    const parsedEnvironment = parseCuaQualificationEnvironment(environment());
+    const parsedReceipt = parseCuaQualificationReceipt(receipt());
+    expect(() => assertCuaQualificationBinding(parsedEnvironment, parsedReceipt)).not.toThrow();
+
+    parsedReceipt.gpu.driverVersion = "different";
+    expect(() => assertCuaQualificationBinding(parsedEnvironment, parsedReceipt)).toThrow(
+      /gpu.driverVersion/,
+    );
   });
 
   it("rejects missing modality, failed cleanup, mutable identity, and extra data", () => {

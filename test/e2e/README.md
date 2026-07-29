@@ -25,35 +25,24 @@ before those targets run; local runners must provide it themselves.
 
 ## CUA GPU qualification
 
-`scripts/brev-launchable-cua-gpu.sh` is the versioned startup script for the
-GPU-backed CUA qualification environment. Set `NEMOCLAW_REF` to the exact
-lowercase 40-hex candidate commit and `NEMOCLAW_CUA_GPU_PROBE_IMAGE` to an
-exact `nvidia/cuda@sha256:...` identity in the Launchable configuration. The
-selected GPU image must already provide a working NVIDIA driver and NVIDIA
-Container Toolkit; the script fails before readiness if either is absent.
+NemoClaw owns the fail-closed consumer gate for GPU-backed CUA qualification.
+The image and Launchable producer owns environment provisioning and writes
+`/etc/nemoclaw/cua-qualification-environment.json`. That bounded public
+identity contains only the Launchable version and digest, exact NemoClaw
+candidate commit, GPU count and model, driver, CUDA, container-toolkit, and
+digest-pinned probe-image identities. It must not contain Brev authority,
+workspace or host identity, service endpoints, or credentials.
 
-The script installs that exact candidate, configures Docker GPU access, and
-writes `/var/lib/nemoclaw/cua-launchable-identity.json`. The public identity
-contains schema metadata, the Launchable version and digest, candidate commit,
-GPU count and model, driver, CUDA, and container-toolkit versions, and the GPU
-probe-image digest. It contains no Brev authority, host address, service
-endpoint, or credential.
-
-This change is qualification scaffolding. It does not demonstrate a passing
-CUA qualification and must not close #7753 until a public pinned runtime and
-live evidence are available.
-
-An operator-owned qualification runner must use NemoClaw's public CUA
-lifecycle and independent fixture oracles, then emit a
-`cua-qualification-receipt` accepted by
-`tools/e2e/cua-qualification-receipt.mts`. The parser requires claims for all
-four browser, terminal, computer, and integrated scenarios; exact component
-and inference identities; a repeated run after recreation; the security
-negative suite; and cleanup. The runner's independent oracles provide the
-evidence behind those claims. Screenshots, documents, task content, and
-detailed oracle output remain private. A fixture or runtime that cannot
-produce every required identity and result must fail closed instead of
-publishing a partial receipt.
+An operator-owned scenario runner uses NemoClaw's public CUA lifecycle and
+independent fixture oracles, then writes
+`/var/lib/nemoclaw/cua-qualification-receipt.json`. The receipt parser in
+`tools/e2e/cua-qualification-receipt.mts` requires all four browser, terminal,
+computer, and integrated scenario claims; exact component and inference
+identities; a repeated run after recreation; the security-negative suite; and
+cleanup. The runner's independent oracles provide the evidence behind those
+claims. Screenshots, documents, task content, and detailed oracle output
+remain private. A producer that cannot provide every required identity and
+result must fail closed instead of writing a partial file.
 
 After the operator-owned qualification runner writes the receipt, run the
 public gate on the GPU instance:
@@ -64,12 +53,16 @@ NEMOCLAW_RUN_CUA_GPU_QUALIFICATION=1 \
 npx vitest run --project e2e-live test/e2e/live/cua-gpu-qualification.test.ts
 ```
 
-The gate compares the receipt with the Launchable identity file, the checked
-out candidate commit, and the live GPU count. It validates structure and those
-bindings; it does not independently prove component identities, scenario
-outcomes, recreation, negative tests, cleanup, or evidence. Those proofs
-remain the responsibility of the runner and its independent oracles. An
+The gate validates both public files and compares the receipt with the
+environment identity, checked-out candidate commit, and live GPU count. It
+does not build the image, provision the Launchable, run the scenario, or
+independently prove the detailed evidence behind the receipt. Those
+responsibilities remain with the environment and scenario producers. An
 adapter's or agent's own success claim is not qualification evidence.
+
+This gate does not demonstrate a passing CUA qualification and must not close
+Issue #7753 until a public pinned runtime and complete live evidence are
+available.
 
 ## CI execution shape
 

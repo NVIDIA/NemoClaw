@@ -2,27 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { parseCuaQualificationReceipt } from "../../../tools/e2e/cua-qualification-receipt.mts";
+import {
+  assertCuaQualificationBinding,
+  parseCuaQualificationEnvironment,
+  parseCuaQualificationReceipt,
+} from "../../../tools/e2e/cua-qualification-receipt.mts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 
-const IDENTITY_FILE = "/var/lib/nemoclaw/cua-launchable-identity.json";
+const ENVIRONMENT_FILE = "/etc/nemoclaw/cua-qualification-environment.json";
 const RECEIPT_FILE = "/var/lib/nemoclaw/cua-qualification-receipt.json";
-
-type LaunchableIdentity = {
-  schemaVersion: "1.0.0";
-  kind: "cua-launchable-identity";
-  launchableVersion: string;
-  launchableDigest: string;
-  nemoclawCommit: string;
-  gpu: {
-    count: number;
-    model: string;
-    driverVersion: string;
-    cudaVersion: string;
-    containerToolkitVersion: string;
-    probeImageDigest: string;
-  };
-};
 
 function readJson(filePath: string): unknown {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
@@ -31,22 +19,23 @@ function readJson(filePath: string): unknown {
 const runCuaGpuQualification = test.skipIf(process.env.NEMOCLAW_RUN_CUA_GPU_QUALIFICATION !== "1");
 
 runCuaGpuQualification(
-  "CUA GPU qualification accepts only a receipt bound to this Launchable, candidate, and live GPU count (#7753)",
+  "CUA GPU qualification accepts only a receipt bound to the external environment, candidate, and live GPU count (#7753)",
   {
     timeout: 60_000,
     meta: {
       e2ePhases: [
         "require explicit CUA GPU qualification selection",
-        "read the public Launchable and qualification identities",
+        "read the public environment and qualification identities",
         "verify the checked-out candidate identity",
         "verify the live GPU identity",
       ],
     },
   },
   async ({ host, progress }) => {
-    progress.phase("read the public Launchable and qualification identities");
-    const identity = readJson(IDENTITY_FILE) as LaunchableIdentity;
+    progress.phase("read the public environment and qualification identities");
+    const environment = parseCuaQualificationEnvironment(readJson(ENVIRONMENT_FILE));
     const receipt = parseCuaQualificationReceipt(readJson(RECEIPT_FILE));
+    assertCuaQualificationBinding(environment, receipt);
     progress.phase("verify the checked-out candidate identity");
     const candidate = await host.command("git", ["rev-parse", "HEAD"], {
       artifactName: "cua-qualification-candidate",
@@ -66,14 +55,6 @@ runCuaGpuQualification(
     expect(liveGpus.exitCode).toBe(0);
     const liveGpuCount = Number(liveGpus.stdout.split(/\r?\n/).filter(Boolean).length);
 
-    expect(identity).toEqual({
-      schemaVersion: "1.0.0",
-      kind: "cua-launchable-identity",
-      launchableVersion: receipt.launchable.version,
-      launchableDigest: receipt.launchable.digest,
-      nemoclawCommit: receipt.nemoclawCommit,
-      gpu: receipt.gpu,
-    });
     expect(candidateCommit).toBe(receipt.nemoclawCommit);
     expect(liveGpuCount).toBeGreaterThan(0);
     expect(liveGpuCount).toBe(receipt.gpu.count);

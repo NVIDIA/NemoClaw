@@ -12,22 +12,34 @@ export const CUA_QUALIFICATION_SCENARIOS = [
   "integrated",
 ] as const;
 
+export interface CuaQualificationLaunchable {
+  version: string;
+  digest: string;
+}
+
+export interface CuaQualificationGpu {
+  count: number;
+  model: string;
+  driverVersion: string;
+  cudaVersion: string;
+  containerToolkitVersion: string;
+  probeImageDigest: string;
+}
+
+export interface CuaQualificationEnvironment {
+  schemaVersion: "1.0.0";
+  kind: "cua-qualification-environment";
+  launchable: CuaQualificationLaunchable;
+  gpu: CuaQualificationGpu;
+  nemoclawCommit: string;
+}
+
 export interface CuaQualificationReceipt {
   schemaVersion: "1.0.0";
   kind: "cua-qualification-receipt";
   status: "passed";
-  launchable: {
-    version: string;
-    digest: string;
-  };
-  gpu: {
-    count: number;
-    model: string;
-    driverVersion: string;
-    cudaVersion: string;
-    containerToolkitVersion: string;
-    probeImageDigest: string;
-  };
+  launchable: CuaQualificationLaunchable;
+  gpu: CuaQualificationGpu;
   nemoclawCommit: string;
   inference: {
     provider: string;
@@ -85,6 +97,97 @@ function digest(value: unknown, label: string): string {
   return parsed;
 }
 
+function candidateCommit(value: unknown): string {
+  if (typeof value !== "string" || !COMMIT.test(value)) {
+    throw new Error("nemoclawCommit must be an exact lowercase 40-hex commit");
+  }
+  return value;
+}
+
+function launchableIdentity(value: unknown): CuaQualificationLaunchable {
+  const launchable = object(value, "launchable");
+  exactKeys(launchable, ["version", "digest"], "launchable");
+  const version = string(launchable.version, "launchable.version");
+  if (!VERSION.test(version)) throw new Error("launchable.version must be semver");
+  return {
+    version,
+    digest: digest(launchable.digest, "launchable.digest"),
+  };
+}
+
+function gpuIdentity(value: unknown): CuaQualificationGpu {
+  const gpu = object(value, "gpu");
+  exactKeys(
+    gpu,
+    [
+      "count",
+      "model",
+      "driverVersion",
+      "cudaVersion",
+      "containerToolkitVersion",
+      "probeImageDigest",
+    ],
+    "gpu",
+  );
+  if (!Number.isInteger(gpu.count) || (gpu.count as number) < 1) {
+    throw new Error("gpu.count must be a positive integer");
+  }
+  return {
+    count: gpu.count as number,
+    model: string(gpu.model, "gpu.model"),
+    driverVersion: string(gpu.driverVersion, "gpu.driverVersion"),
+    cudaVersion: string(gpu.cudaVersion, "gpu.cudaVersion"),
+    containerToolkitVersion: string(gpu.containerToolkitVersion, "gpu.containerToolkitVersion"),
+    probeImageDigest: digest(gpu.probeImageDigest, "gpu.probeImageDigest"),
+  };
+}
+
+export function parseCuaQualificationEnvironment(value: unknown): CuaQualificationEnvironment {
+  const environment = object(value, "environment");
+  exactKeys(
+    environment,
+    ["schemaVersion", "kind", "launchable", "gpu", "nemoclawCommit"],
+    "environment",
+  );
+  if (environment.schemaVersion !== "1.0.0") {
+    throw new Error("unsupported environment schema");
+  }
+  if (environment.kind !== "cua-qualification-environment") {
+    throw new Error("unexpected environment kind");
+  }
+  launchableIdentity(environment.launchable);
+  gpuIdentity(environment.gpu);
+  candidateCommit(environment.nemoclawCommit);
+  return structuredClone(value) as CuaQualificationEnvironment;
+}
+
+export function assertCuaQualificationBinding(
+  environment: CuaQualificationEnvironment,
+  receipt: CuaQualificationReceipt,
+): void {
+  if (environment.nemoclawCommit !== receipt.nemoclawCommit) {
+    throw new Error("qualification receipt candidate does not match the environment");
+  }
+  if (
+    environment.launchable.version !== receipt.launchable.version ||
+    environment.launchable.digest !== receipt.launchable.digest
+  ) {
+    throw new Error("qualification receipt Launchable does not match the environment");
+  }
+  for (const field of [
+    "count",
+    "model",
+    "driverVersion",
+    "cudaVersion",
+    "containerToolkitVersion",
+    "probeImageDigest",
+  ] as const) {
+    if (environment.gpu[field] !== receipt.gpu[field]) {
+      throw new Error(`qualification receipt gpu.${field} does not match the environment`);
+    }
+  }
+}
+
 export function parseCuaQualificationReceipt(value: unknown): CuaQualificationReceipt {
   const receipt = object(value, "receipt");
   exactKeys(
@@ -111,36 +214,9 @@ export function parseCuaQualificationReceipt(value: unknown): CuaQualificationRe
   if (receipt.recreated !== true) throw new Error("recreated qualification did not pass");
   if (receipt.negativeTests !== "passed") throw new Error("negative tests did not pass");
   if (receipt.cleanup !== "passed") throw new Error("cleanup did not pass");
-  if (typeof receipt.nemoclawCommit !== "string" || !COMMIT.test(receipt.nemoclawCommit)) {
-    throw new Error("nemoclawCommit must be an exact lowercase 40-hex commit");
-  }
-
-  const launchable = object(receipt.launchable, "launchable");
-  exactKeys(launchable, ["version", "digest"], "launchable");
-  const launchableVersion = string(launchable.version, "launchable.version");
-  if (!VERSION.test(launchableVersion)) throw new Error("launchable.version must be semver");
-  digest(launchable.digest, "launchable.digest");
-
-  const gpu = object(receipt.gpu, "gpu");
-  exactKeys(
-    gpu,
-    [
-      "count",
-      "model",
-      "driverVersion",
-      "cudaVersion",
-      "containerToolkitVersion",
-      "probeImageDigest",
-    ],
-    "gpu",
-  );
-  if (!Number.isInteger(gpu.count) || (gpu.count as number) < 1) {
-    throw new Error("gpu.count must be a positive integer");
-  }
-  for (const key of ["model", "driverVersion", "cudaVersion", "containerToolkitVersion"]) {
-    string(gpu[key], `gpu.${key}`);
-  }
-  digest(gpu.probeImageDigest, "gpu.probeImageDigest");
+  candidateCommit(receipt.nemoclawCommit);
+  launchableIdentity(receipt.launchable);
+  gpuIdentity(receipt.gpu);
 
   const inference = object(receipt.inference, "inference");
   exactKeys(inference, ["provider", "model"], "inference");
