@@ -331,15 +331,9 @@ function copyRegularFileIntoSnapshot(
   const sourcePath = path.join(sourceRoot, relativePath);
   let sourceDescriptor: number | undefined;
   try {
-    const beforeRealPath = fs.realpathSync(sourcePath);
-    if (!isPathInsideRoot(sourceRoot, beforeRealPath, relativePath)) return false;
-
-    const before = fs.lstatSync(sourcePath);
-    if (!before.isFile() || before.isSymbolicLink()) return false;
-
     sourceDescriptor = fs.openSync(sourcePath, fs.constants.O_RDONLY | noFollow | nonblock);
     const opened = fs.fstatSync(sourceDescriptor);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) return false;
+    if (!opened.isFile()) return false;
 
     const content = fs.readFileSync(sourceDescriptor);
     const after = fs.lstatSync(sourcePath);
