@@ -48,7 +48,7 @@ import yaml
 
 CONFIG_PATH = "/sandbox/.hermes/config.yaml"
 HERMES_DIR = "/sandbox/.hermes"
-GATEWAY_PID_PATH = f"{HERMES_DIR}/gateway.pid"
+GATEWAY_PID_PATH = f"{HERMES_DIR}/runtime/gateway.pid"
 STRICT_HASH_PATH = "/etc/nemoclaw/hermes.config-hash"
 GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"

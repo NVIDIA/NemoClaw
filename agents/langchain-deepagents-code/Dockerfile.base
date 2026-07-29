@@ -247,6 +247,9 @@ COPY agents/langchain-deepagents-code/requirements.lock /tmp/deepagents-code-req
 RUN python3 -m venv --copies "$VIRTUAL_ENV" \
     && "$VIRTUAL_ENV/bin/pip3" install --no-cache-dir --require-hashes \
         -r /tmp/deepagents-code-requirements.lock \
+    && "$VIRTUAL_ENV/bin/pip3" check \
+    && "$VIRTUAL_ENV/bin/python3" -I -c \
+        "from importlib.metadata import version; assert version('pillow') == '12.3.0', version('pillow')" \
     && ln -sf "$VIRTUAL_ENV/bin/dcode" /usr/local/bin/dcode \
     && ln -sf "$VIRTUAL_ENV/bin/deepagents-code" /usr/local/bin/deepagents-code \
     && rm -f /tmp/deepagents-code-requirements.lock \

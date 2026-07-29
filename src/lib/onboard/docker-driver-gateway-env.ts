@@ -13,6 +13,7 @@ import {
   WILDCARD_GATEWAY_BIND_ADDRESS,
 } from "../core/gateway-address";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   prepareDockerDriverGatewayConfigEnv,
@@ -256,9 +257,7 @@ function formatEnvironmentFileAssignment(key: string, value: string): string {
 function normalizePackageServiceDockerHost(value: string | undefined): string | undefined {
   const candidate = String(value || "").trim();
   if (!candidate) return undefined;
-  const prefix = "unix://";
-  const socketPath = candidate.startsWith(prefix) ? candidate.slice(prefix.length) : "";
-  if (path.isAbsolute(socketPath) && !/[\0\r\n']/.test(socketPath)) {
+  if (isSupportedGatewayDockerHost(value)) {
     return candidate;
   }
   throw new Error(
