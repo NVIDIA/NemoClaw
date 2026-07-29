@@ -195,10 +195,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("wires the validation invocation budget into the image lifecycle (#7774)", () => {
     const dockerfile = readAgentFile("Dockerfile");
     const policy = readAgentFile("policy-additions.yaml");
+    const managedImport = "from deepagents_code import _nemoclaw_managed as managed";
 
     expect(dockerfile).toContain("initialize_managed_validation_invocation_budget()");
     expect(dockerfile).toContain("validate_managed_validation_invocation_budget_unprivileged()");
     expect(dockerfile).toContain("finalize_managed_validation_invocation_budget()");
+    expect(dockerfile.split(managedImport)).toHaveLength(5);
+    expect(dockerfile).not.toContain("-c 'import _nemoclaw_managed as managed;");
     expect(policy).toContain("- /usr/local/share/nemoclaw/dcode-validation-invocations");
   });
 
