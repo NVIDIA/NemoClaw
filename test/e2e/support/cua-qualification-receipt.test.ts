@@ -54,7 +54,7 @@ function receipt(): Record<string, unknown> {
 }
 
 describe("CUA GPU qualification receipt (#7753)", () => {
-  it("accepts exact content-free identities and independently verified scenarios", () => {
+  it("accepts exact content-free identities and complete scenario claims", () => {
     expect(parseCuaQualificationReceipt(receipt())).toEqual(receipt());
   });
 

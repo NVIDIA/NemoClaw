@@ -31,7 +31,7 @@ function readJson(filePath: string): unknown {
 const runCuaGpuQualification = test.skipIf(process.env.NEMOCLAW_RUN_CUA_GPU_QUALIFICATION !== "1");
 
 runCuaGpuQualification(
-  "CUA GPU qualification accepts only a receipt bound to this Launchable, candidate, and live GPU (#7753)",
+  "CUA GPU qualification accepts only a receipt bound to this Launchable, candidate, and live GPU count (#7753)",
   {
     timeout: 60_000,
     meta: {
