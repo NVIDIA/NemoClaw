@@ -119,9 +119,10 @@ $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
 
-The source sandbox does not have to be running.
-When a sandbox can no longer be recovered, restore its snapshot into a replacement with `--to`: NemoClaw builds the replacement from the image recorded in the source registry entry.
-Restore stops with guidance to run `$$nemoclaw onboard` when the stopped source records no image.
+Cross-sandbox restore from a stopped source is available for Docker- and VM-driver sandboxes.
+For a stopped source, its registry entry must record both the sandbox image and a complete inference route; NemoClaw creates the destination from the recorded image.
+NemoClaw stops before creating or replacing the destination when either record is missing, and directs you to run `$$nemoclaw onboard` when no image is recorded.
+For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
