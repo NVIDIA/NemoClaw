@@ -3369,9 +3369,9 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`.
+On Linux, uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell` or the gateway is externally supervised.
 That directory contains NemoClaw-owned Docker-driver gateway configuration and SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
-`--keep-openshell` preserves it because the retained managed gateway service and process depend on that state.
+Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state.
 Keep a declared external gateway state directory outside that NemoClaw-owned path.
 Uninstall does not otherwise target the declared external directory.
 
@@ -3394,7 +3394,8 @@ The compatibility `--gateway` flag cannot select another instance: when present,
 Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
 For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
 It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
-For an externally supervised authority, uninstall preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
+For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
+It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 
 ##### User-data preservation under `~/.nemoclaw/`
