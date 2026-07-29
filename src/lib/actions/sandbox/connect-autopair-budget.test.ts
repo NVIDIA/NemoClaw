@@ -30,6 +30,10 @@ describe("connect auto-pair budget", () => {
     expect(CONNECT_AUTO_PAIR_TIMEOUT_MS - innerWorstCaseMs).toBeGreaterThanOrEqual(5000);
   });
 
+  it("does not preempt the reviewed OpenClaw device-list deadline", () => {
+    expect(CONNECT_AUTO_PAIR_LIST_TIMEOUT_S).toBeGreaterThan(10);
+  });
+
   it("uses positive, whole-number budgets", () => {
     for (const value of [
       CONNECT_AUTO_PAIR_MAX_APPROVALS,

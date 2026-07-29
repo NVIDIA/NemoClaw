@@ -22,14 +22,31 @@ export type RestoreGatewayPairingDeps = {
   verifyGatewayPairing: (sandboxName: string) => RestoreGatewayPairingVerificationResult;
 };
 
+// Restored-clone approval performs one pairing-scoped credential-convergence
+// list before the ordinary stored-auth list. Add that one bounded list to the
+// connect-time outer cap while preserving its five seconds of startup slack.
+export const RESTORED_CLONE_PAIRING_TIMEOUT_MS =
+  CONNECT_AUTO_PAIR_TIMEOUT_MS + CONNECT_AUTO_PAIR_LIST_TIMEOUT_S * 1000;
+
 const RESTORED_CLONE_PAIRING_BUDGET = {
   maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
   listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
   approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+  timeoutMs: RESTORED_CLONE_PAIRING_TIMEOUT_MS,
 } as const;
 
 const RESTORED_CLONE_PAIRING_ATTEMPTS = 2;
+const RETRYABLE_RESTORED_CLONE_APPROVAL_RECEIPTS = new Set<AutoPairApprovalReceipt>([
+  "credential-list-timeout",
+  "credential-list-failed",
+  "list-timeout",
+  "list-exec-failed",
+  "list-command-failed",
+  "list-empty-output",
+  "list-invalid-output",
+  "list-failed",
+  "approve-failed",
+]);
 
 class RestoreGatewayPairingClassifiedError extends Error {}
 
@@ -97,7 +114,7 @@ export async function establishRestoredSandboxGatewayPairing(
       // independently proves that exact scope-upgrade transition is pending.
       if (
         attempt < RESTORED_CLONE_PAIRING_ATTEMPTS &&
-        (approvalReceipt === "list-failed" || approvalReceipt === "approve-failed") &&
+        RETRYABLE_RESTORED_CLONE_APPROVAL_RECEIPTS.has(approvalReceipt) &&
         verification.failureLayer === "scope-upgrade-pending"
       ) {
         continue;

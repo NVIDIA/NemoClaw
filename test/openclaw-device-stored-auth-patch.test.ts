@@ -181,15 +181,18 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
       const runtime = runFixture<{
         approve: (opts: Record<string, unknown>, requestId: string) => Promise<unknown>;
         calls: Array<Record<string, unknown>>;
+        setMarker: (value: boolean) => void;
         setList: (value: Record<string, unknown>) => void;
       }>(
         source,
         `({
           approve: approvePairingWithFallback,
           calls: gatewayCalls,
+          setMarker: setRequireStoredDeviceApprovalMarker,
           setList: setPairingLists,
         })`,
       );
+      runtime.setMarker(true);
       for (const pending of [validPending(), validPending({ isRepair: false })]) {
         runtime.calls.length = 0;
         runtime.setList({ pending: [pending], paired: [validPaired()] });
@@ -209,6 +212,62 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           });
         }
       }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not downgrade a marked restored-clone approval when local evidence disappears", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-required-auth-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        approve: (opts: Record<string, unknown>, requestId: string) => Promise<unknown>;
+        calls: Array<Record<string, unknown>>;
+        setMarker: (value: boolean) => void;
+        setLists: (local: Record<string, unknown>, live?: Record<string, unknown>) => void;
+      }>(
+        source,
+        `({
+          approve: approvePairingWithFallback,
+          calls: gatewayCalls,
+          setMarker: setRequireStoredDeviceApprovalMarker,
+          setLists: setPairingLists,
+        })`,
+      );
+      runtime.setLists(
+        { pending: [], paired: [] },
+        { pending: [validPending()], paired: [validPaired()] },
+      );
+      runtime.setMarker(true);
+
+      await expect(
+        runtime.approve({ json: true, token: "configured-shared-token" }, "request-1"),
+      ).rejects.toThrow("bounded same-device approval context changed before gateway approval");
+      expect(runtime.calls).toEqual([]);
+
+      runtime.setMarker(false);
+      await expect(
+        runtime.approve({ json: true, token: "configured-shared-token" }, "request-1"),
+      ).resolves.toEqual({ requestId: "request-1", approved: true });
+      expect(runtime.calls).toHaveLength(2);
+      expect(runtime.calls).toEqual([
+        expect.objectContaining({
+          method: "device.pair.list",
+          token: "configured-shared-token",
+        }),
+        expect.objectContaining({
+          method: "device.pair.approve",
+          token: "configured-shared-token",
+        }),
+      ]);
+      expect(runtime.calls).not.toContainEqual(
+        expect.objectContaining({ useStoredDeviceAuth: true }),
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

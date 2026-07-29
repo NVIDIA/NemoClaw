@@ -43,7 +43,14 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(ordinary).not.toContain("local_identity_public_key");
     expect(ordinary).toContain("env=None");
     expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH");
+    expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+    expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL");
     expect(restoredClone).toContain("local_identity_public_key");
+    expect(restoredClone.match(/\[OPENCLAW, 'devices', 'list', '--json'\]/g)).toHaveLength(2);
+    expect(restoredClone).toContain("env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'");
+    expect(restoredClone).toContain(
+      "env['NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL'] = '1'",
+    );
     expect(restoredClone).toContain("env=local_device_list_env(os.environ)");
     expect(restoredClone).toContain("env['NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH'] = '1'");
     expect(restoredClone).toContain("if not related_pending:");
@@ -74,9 +81,20 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
   });
 
   it("accepts exactly one terminal fixed receipt", () => {
-    expect(
-      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=approved-one\n`),
-    ).toBe("approved-one");
+    for (const receipt of [
+      "credential-list-timeout",
+      "credential-list-failed",
+      "list-timeout",
+      "list-exec-failed",
+      "list-command-failed",
+      "list-empty-output",
+      "list-invalid-output",
+      "approved-one",
+    ] as const) {
+      expect(
+        parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
+      ).toBe(receipt);
+    }
     for (const output of [
       `${RECEIPT_MARKER}=approved-one\nlater output\n`,
       `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
@@ -243,6 +261,7 @@ process.exit(2);
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
       const listEnvFile = path.join(tmpDir, "list-env.log");
+      const deviceAuthReadyFile = path.join(tmpDir, "device-auth-ready");
       fs.mkdirSync(identityDir, { recursive: true });
       const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
       const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
@@ -267,8 +286,28 @@ if (args[0] === "devices" && args[1] === "list") {
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
       process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+      process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL || "unset",
     ].join(":") + "\\n",
   );
+  if (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") {
+    if (
+      !process.env.OPENCLAW_GATEWAY_URL ||
+      !process.env.OPENCLAW_GATEWAY_PORT ||
+      !process.env.OPENCLAW_GATEWAY_TOKEN ||
+      process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH
+    ) {
+      process.stderr.write("credential convergence environment was not bounded\\n");
+      process.exit(4);
+    }
+    if (process.env.NEMOCLAW_CREDENTIAL_LIST_FAIL === "1") {
+      process.stderr.write("raw credential list output must stay private\\n");
+      process.exit(5);
+    }
+    fs.writeFileSync(${JSON.stringify(deviceAuthReadyFile)}, "ready");
+    process.stdout.write(process.env.NEMOCLAW_CREDENTIAL_LIST_RESPONSE + "\\n");
+    process.exit(0);
+  }
   if (
     process.env.OPENCLAW_GATEWAY_URL ||
     process.env.OPENCLAW_GATEWAY_PORT ||
@@ -277,10 +316,25 @@ if (args[0] === "devices" && args[1] === "list") {
     process.stderr.write("restored clone list retained shared gateway credentials\\n");
     process.exit(3);
   }
+  if (!fs.existsSync(${JSON.stringify(deviceAuthReadyFile)})) {
+    process.stderr.write("stored device auth did not converge\\n");
+    process.exit(6);
+  }
   process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
   process.exit(0);
 }
 if (args[0] === "devices" && args[1] === "approve") {
+  if (
+    process.env.OPENCLAW_GATEWAY_URL ||
+    process.env.OPENCLAW_GATEWAY_PORT ||
+    process.env.OPENCLAW_GATEWAY_TOKEN ||
+    process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH ||
+    process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING ||
+    process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL !== "1"
+  ) {
+    process.stderr.write("restored clone approval environment was not fail closed\\n");
+    process.exit(7);
+  }
   if (process.env.NEMOCLAW_APPROVE_FAIL === "1") {
     process.stderr.write("raw approval output must stay private\\n");
     process.exit(1);
@@ -293,6 +347,8 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
       process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+      process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL || "unset",
     ].join(":") + "\\n",
   );
   process.stdout.write("{}\\n");
@@ -304,13 +360,20 @@ process.exit(2);
       );
       const run = (
         pending: unknown[],
-        options: { rawListResponse?: string; failApproval?: boolean } = {},
-      ) =>
-        spawnSync("sh", ["-c", script], {
+        options: {
+          rawListResponse?: string;
+          failApproval?: boolean;
+          failCredentialList?: boolean;
+        } = {},
+      ) => {
+        fs.rmSync(deviceAuthReadyFile, { force: true });
+        return spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
             ...process.env,
             PATH: `${tmpDir}:/usr/bin:/bin`,
+            NEMOCLAW_CREDENTIAL_LIST_RESPONSE: JSON.stringify({ pending: [], paired: [] }),
+            NEMOCLAW_CREDENTIAL_LIST_FAIL: options.failCredentialList ? "1" : "0",
             NEMOCLAW_LIST_RESPONSE:
               options.rawListResponse ?? JSON.stringify({ pending, paired: [] }),
             NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
@@ -321,6 +384,7 @@ process.exit(2);
           },
           timeout: 10_000,
         });
+      };
       const readApprovals = () =>
         fs.existsSync(approvalsFile)
           ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
@@ -352,8 +416,13 @@ process.exit(2);
       expect(initial.stdout).toContain(`${SUMMARY_MARKER}=1`);
       expect(initial.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
       expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe("unset:unset:unset:1");
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset:unset");
+      expect(fs.readFileSync(listEnvFile, "utf-8").trim().split("\n")).toEqual([
+        "ws://127.0.0.1:18789:18789:secret-token:unset:1:unset",
+        "unset:unset:unset:1:unset:unset",
+      ]);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
+        "unset:unset:unset:unset:unset:1",
+      );
 
       resetLogs();
       const repairRequest = {
@@ -391,8 +460,15 @@ process.exit(2);
 
       resetLogs();
       const listFailed = run([], { rawListResponse: "raw list output must stay private" });
-      expect(listFailed.stdout).toContain(`${RECEIPT_MARKER}=list-failed`);
+      expect(listFailed.stdout).toContain(`${RECEIPT_MARKER}=list-invalid-output`);
       expect(`${listFailed.stdout}${listFailed.stderr}`).not.toContain("raw list output");
+
+      resetLogs();
+      const credentialListFailed = run([], { failCredentialList: true });
+      expect(credentialListFailed.stdout).toContain(`${RECEIPT_MARKER}=credential-list-failed`);
+      expect(`${credentialListFailed.stdout}${credentialListFailed.stderr}`).not.toContain(
+        "raw credential list output",
+      );
 
       resetLogs();
       const noMatch = run([foreignRequest]);

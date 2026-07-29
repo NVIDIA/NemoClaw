@@ -65,6 +65,10 @@ function setStoredDeviceListMarker(value) {
   if (value) process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH = "1";
   else delete process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH;
 }
+function setRequireStoredDeviceApprovalMarker(value) {
+  if (value) process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL = "1";
+  else delete process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL;
+}
 function setLocalPairingFailure(value) { localPairingFailure = value; }
 function setListFailures(errors) { listFailures = errors; }
 function withProgress(_options, callback) { return callback(); }

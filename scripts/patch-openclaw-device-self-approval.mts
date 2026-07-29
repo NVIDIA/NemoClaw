@@ -48,6 +48,8 @@ const CLI_RETRY_MARKER = "nemoclaw: keep bounded stored device auth fail closed"
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
 const CLI_STANDALONE_LIST_MARKER =
   "nemoclaw: select stored device auth for bounded standalone pairing list";
+const CLI_REQUIRED_APPROVAL_MARKER =
+  "nemoclaw: require stored device auth for restored-clone approval";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
   "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
@@ -58,6 +60,7 @@ const CLI_APPLIED_MARKERS = [
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
   CLI_STANDALONE_LIST_MARKER,
+  CLI_REQUIRED_APPROVAL_MARKER,
 ] as const;
 const AUTH_SCOPE_UPGRADE_MARKER =
   "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
@@ -323,6 +326,7 @@ const CLI_CONTEXT_TARGET = [
 ].join("\n");
 const CLI_CONTEXT_REPLACEMENT = [
   "async function resolveApprovePairingGatewayContext(opts, requestId) {",
+  `\tconst nemoclawRequireStoredDeviceAuth = process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL === "1"; // ${CLI_REQUIRED_APPROVAL_MARKER} (#4462)`,
   "\tlet nemoclawLocalStoredAuthCandidate = false;",
   "\ttry {",
   "\t\tconst nemoclawLocalList = await listDevicePairing();",
@@ -332,6 +336,12 @@ const CLI_CONTEXT_REPLACEMENT = [
   "\t\t\tnemoclawLocalStoredAuthCandidate = resolveNemoClawSelfRepairPairingContext(nemoclawLocalRequest, nemoclawLocalPaired).useStoredDeviceAuth;",
   "\t\t}",
   "\t} catch {}",
+  "\tif (nemoclawRequireStoredDeviceAuth && !nemoclawLocalStoredAuthCandidate) return {",
+  "\t\toriginalRequest: null,",
+  "\t\tscopes: void 0,",
+  "\t\tnemoclawUseStoredDeviceAuth: false,",
+  "\t\tnemoclawRefuseUnsafeApproval: true",
+  "\t};",
   "\ttry {",
   "\t\tconst nemoclawListCallOpts = nemoclawLocalStoredAuthCandidate ? {",
   "\t\t\tscopes: [PAIRING_SCOPE],",
@@ -344,7 +354,7 @@ const CLI_CONTEXT_REPLACEMENT = [
   "\t\t\toriginalRequest: null,",
   "\t\t\tscopes: void 0,",
   "\t\t\tnemoclawUseStoredDeviceAuth: false,",
-  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawLocalStoredAuthCandidate",
+  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawRequireStoredDeviceAuth || nemoclawLocalStoredAuthCandidate",
   "\t\t};",
   "\t\tconst paired = lookupPairedDevice(indexPairedDevices(list.paired), request);",
   "\t\tconst nemoclawSelfRepairContext = resolveNemoClawSelfRepairPairingContext(request, paired);",
@@ -353,14 +363,14 @@ const CLI_CONTEXT_REPLACEMENT = [
   "\t\t\toriginalRequest: request,",
   "\t\t\tscopes: resolveApprovePairingScopesForRequest(request, paired),",
   "\t\t\tnemoclawUseStoredDeviceAuth,",
-  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawLocalStoredAuthCandidate && !nemoclawUseStoredDeviceAuth",
+  "\t\t\tnemoclawRefuseUnsafeApproval: (nemoclawRequireStoredDeviceAuth || nemoclawLocalStoredAuthCandidate) && !nemoclawUseStoredDeviceAuth",
   "\t\t};",
   "\t} catch {",
   "\t\treturn {",
   "\t\t\toriginalRequest: null,",
   "\t\t\tscopes: void 0,",
   "\t\t\tnemoclawUseStoredDeviceAuth: false,",
-  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawLocalStoredAuthCandidate",
+  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawRequireStoredDeviceAuth || nemoclawLocalStoredAuthCandidate",
   "\t\t};",
   "\t}",
   "}",
