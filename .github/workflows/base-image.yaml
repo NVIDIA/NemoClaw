@@ -161,15 +161,20 @@ jobs:
 
       - name: Export platform digest
         env:
+          ARCH: ${{ matrix.arch }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
+            echo "ERROR: unsupported platform architecture: $ARCH" >&2
+            exit 1
+          fi
           if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+          touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
 
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -272,15 +277,20 @@ jobs:
 
       - name: Export platform digest
         env:
+          ARCH: ${{ matrix.arch }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
+            echo "ERROR: unsupported platform architecture: $ARCH" >&2
+            exit 1
+          fi
           if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+          touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
 
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -380,15 +390,20 @@ jobs:
 
       - name: Export platform digest
         env:
+          ARCH: ${{ matrix.arch }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
+            echo "ERROR: unsupported platform architecture: $ARCH" >&2
+            exit 1
+          fi
           if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/digests"
-          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+          touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
 
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -447,15 +462,36 @@ jobs:
             exit 1
           fi
 
+          declare -A seen_arches=()
           sources=()
           for digest_file in "${digest_files[@]}"; do
-            digest="$(basename "$digest_file")"
-            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "ERROR: invalid platform digest artifact: $digest" >&2
+            digest_artifact="$(basename "$digest_file")"
+            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
+              echo "ERROR: invalid platform digest artifact: $digest_artifact" >&2
               exit 1
             fi
-            sources+=("$IMAGE@sha256:$digest")
+            expected_arch="${BASH_REMATCH[1]}"
+            digest="${BASH_REMATCH[2]}"
+            if [ -n "${seen_arches[$expected_arch]:-}" ]; then
+              echo "ERROR: duplicate platform digest for linux/$expected_arch." >&2
+              exit 1
+            fi
+            source="$IMAGE@sha256:$digest"
+            source_platform="$(
+              docker buildx imagetools inspect "$source" \
+                --format '{{.Image.OS}}/{{.Image.Architecture}}'
+            )"
+            if [ "$source_platform" != "linux/$expected_arch" ]; then
+              echo "ERROR: digest for linux/$expected_arch resolves to $source_platform." >&2
+              exit 1
+            fi
+            seen_arches["$expected_arch"]=1
+            sources+=("$source")
           done
+          if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
+            echo "ERROR: expected one validated digest for linux/amd64 and linux/arm64." >&2
+            exit 1
+          fi
 
           mapfile -t tags <<< "$TAGS"
           tag_args=()
@@ -531,15 +567,36 @@ jobs:
             exit 1
           fi
 
+          declare -A seen_arches=()
           sources=()
           for digest_file in "${digest_files[@]}"; do
-            digest="$(basename "$digest_file")"
-            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "ERROR: invalid platform digest artifact: $digest" >&2
+            digest_artifact="$(basename "$digest_file")"
+            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
+              echo "ERROR: invalid platform digest artifact: $digest_artifact" >&2
               exit 1
             fi
-            sources+=("$IMAGE@sha256:$digest")
+            expected_arch="${BASH_REMATCH[1]}"
+            digest="${BASH_REMATCH[2]}"
+            if [ -n "${seen_arches[$expected_arch]:-}" ]; then
+              echo "ERROR: duplicate platform digest for linux/$expected_arch." >&2
+              exit 1
+            fi
+            source="$IMAGE@sha256:$digest"
+            source_platform="$(
+              docker buildx imagetools inspect "$source" \
+                --format '{{.Image.OS}}/{{.Image.Architecture}}'
+            )"
+            if [ "$source_platform" != "linux/$expected_arch" ]; then
+              echo "ERROR: digest for linux/$expected_arch resolves to $source_platform." >&2
+              exit 1
+            fi
+            seen_arches["$expected_arch"]=1
+            sources+=("$source")
           done
+          if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
+            echo "ERROR: expected one validated digest for linux/amd64 and linux/arm64." >&2
+            exit 1
+          fi
 
           mapfile -t tags <<< "$TAGS"
           tag_args=()
@@ -617,15 +674,36 @@ jobs:
             exit 1
           fi
 
+          declare -A seen_arches=()
           sources=()
           for digest_file in "${digest_files[@]}"; do
-            digest="$(basename "$digest_file")"
-            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "ERROR: invalid platform digest artifact: $digest" >&2
+            digest_artifact="$(basename "$digest_file")"
+            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
+              echo "ERROR: invalid platform digest artifact: $digest_artifact" >&2
               exit 1
             fi
-            sources+=("$IMAGE@sha256:$digest")
+            expected_arch="${BASH_REMATCH[1]}"
+            digest="${BASH_REMATCH[2]}"
+            if [ -n "${seen_arches[$expected_arch]:-}" ]; then
+              echo "ERROR: duplicate platform digest for linux/$expected_arch." >&2
+              exit 1
+            fi
+            source="$IMAGE@sha256:$digest"
+            source_platform="$(
+              docker buildx imagetools inspect "$source" \
+                --format '{{.Image.OS}}/{{.Image.Architecture}}'
+            )"
+            if [ "$source_platform" != "linux/$expected_arch" ]; then
+              echo "ERROR: digest for linux/$expected_arch resolves to $source_platform." >&2
+              exit 1
+            fi
+            seen_arches["$expected_arch"]=1
+            sources+=("$source")
           done
+          if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
+            echo "ERROR: expected one validated digest for linux/amd64 and linux/arm64." >&2
+            exit 1
+          fi
 
           mapfile -t tags <<< "$TAGS"
           tag_args=()
