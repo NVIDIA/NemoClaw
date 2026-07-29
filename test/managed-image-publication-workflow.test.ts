@@ -496,6 +496,7 @@ describe("complete managed-image publication workflow", () => {
     const prBuilder = managedPrBuilder(workflow);
     const steps = prBuilder.steps ?? [];
     const build = step(prBuilder, "Build PR managed image locally");
+    const contract = step(prBuilder, "Validate exact PR managed image contract");
     const gate = step(prBuilder, "Exercise real managed-image entrypoint");
     const prPaths = workflow.on?.pull_request?.paths ?? [];
 
@@ -566,6 +567,39 @@ describe("complete managed-image publication workflow", () => {
     });
     expect(build.with?.outputs).toBeUndefined();
     expect(build.with?.["cache-to"]).toBeUndefined();
+    expect(steps.indexOf(build)).toBeLessThan(steps.indexOf(contract));
+    expect(steps.indexOf(contract)).toBeLessThan(steps.indexOf(gate));
+    expect(contract).toMatchObject({
+      id: "contract",
+      env: {
+        AGENT: "${{ matrix.agent }}",
+        IMAGE_REFERENCE: "${{ matrix.image }}:${{ github.sha }}",
+        PLATFORM: "linux/amd64",
+        PUBLICATION_COHORT: "ghrun-${{ github.run_id }}-${{ github.run_attempt }}",
+      },
+    });
+    for (const marker of [
+      'docker image inspect "$IMAGE_REFERENCE"',
+      "expected one local image identity",
+      "^sha256:[0-9a-f]{64}$",
+      "docker image inspect --format '{{.Id}}' \"$image_id\"",
+      '.[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"]',
+      '.[0].Config.Cmd == ["/bin/bash"]',
+      '((.[0].Config.User // "") as $user |',
+      "io.nvidia.nemoclaw.agent",
+      "io.nvidia.nemoclaw.managed-image.contract",
+      "io.nvidia.nemoclaw.managed-image.platform",
+      "io.nvidia.nemoclaw.managed-image.startup-profile",
+      "io.nvidia.nemoclaw.managed-image.capabilities",
+      "io.nvidia.nemoclaw.managed-image.cohort",
+      "org.opencontainers.image.revision",
+      '.[0].Config.Labels["org.opencontainers.image.revision"] == $revision',
+      "printf 'reference=%s\\n' \"$image_id\"",
+    ]) {
+      expect(contract.run).toContain(marker);
+    }
+    expect(gate.env?.IMAGE_REFERENCE).toBe("${{ steps.contract.outputs.reference }}");
+    expect(gate.env?.IMAGE_REFERENCE).not.toContain("matrix.image");
     for (const marker of [
       "generate-managed-startup-profile-fixture.mts",
       "--corporate-ca",
