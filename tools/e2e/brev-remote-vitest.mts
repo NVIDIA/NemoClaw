@@ -12,6 +12,7 @@ export const BREV_REMOTE_WRAPPER_GRACE_MS = 120_000;
 export const BREV_WORKFLOW_OWNERSHIP_ENV = "NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE";
 
 const BREV_SUITES_WITHOUT_HARNESS_SANDBOX = new Set([
+  "cua-gpu",
   "full",
   "gpu",
   "messaging-compatible-endpoint",

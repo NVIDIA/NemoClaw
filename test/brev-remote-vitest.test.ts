@@ -110,6 +110,7 @@ describe("Brev remote Vitest command", () => {
 
   it("does not seed shared harness state for suites that own their sandbox lifecycle", () => {
     expect(brevSuiteNeedsHarnessSandbox("full")).toBe(false);
+    expect(brevSuiteNeedsHarnessSandbox("cua-gpu")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("gpu")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("messaging-compatible-endpoint")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("messaging-providers")).toBe(false);

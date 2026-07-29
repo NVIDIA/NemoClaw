@@ -23,6 +23,44 @@ before those targets run; local runners must provide it themselves.
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
 
+## CUA GPU qualification
+
+`scripts/brev-launchable-cua-gpu.sh` is the versioned startup script for the
+GPU-backed CUA qualification environment. Set `NEMOCLAW_REF` to the exact
+lowercase 40-hex candidate commit in the Launchable configuration. The
+selected GPU image must already provide a working NVIDIA driver and NVIDIA
+Container Toolkit; the script fails before readiness if either is absent.
+
+The script installs that exact candidate, configures Docker GPU access, and
+writes `/var/lib/nemoclaw/cua-launchable-identity.json`. The public identity
+contains only the Launchable version and digest, candidate commit, GPU model,
+driver, CUDA, and container-toolkit versions. It contains no Brev authority,
+host address, service endpoint, or credential.
+
+The qualification runner must emit a
+`cua-qualification-receipt` accepted by
+`tools/e2e/cua-qualification-receipt.mts`. The receipt passes only with all
+four independently verified browser, terminal, computer, and integrated
+scenarios; exact component digests; a repeated run after recreation; the
+security negative suite; and cleanup. Screenshots, documents, task content,
+and detailed oracle output remain private. A fixture or runtime that cannot
+produce every required identity and result must fail closed instead of
+publishing a partial receipt.
+
+After the operator-owned qualification runner writes the receipt, run the
+public gate on the GPU instance:
+
+```bash
+NEMOCLAW_RUN_LIVE_E2E=1 \
+NEMOCLAW_RUN_CUA_GPU_QUALIFICATION=1 \
+npx vitest run --project e2e-live test/e2e/live/cua-gpu-qualification.test.ts
+```
+
+The gate compares the receipt with the Launchable identity file, the checked
+out candidate commit, and the live GPU count. The runner itself must use
+NemoClaw's public CUA lifecycle and independent fixture oracles; an adapter's
+or agent's own success claim is not qualification evidence.
+
 ## CI execution shape
 
 The sandbox image workflow builds the Hermes production image in the dedicated
