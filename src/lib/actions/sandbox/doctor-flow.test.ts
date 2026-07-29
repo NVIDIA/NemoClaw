@@ -13,7 +13,7 @@ type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 const requireDist = createRequire(import.meta.url);
 const doctorModulePath = "./doctor.js";
 
-function createDoctorHarness(): {
+function createDoctorHarness(provider = "ollama-local"): {
   buildToolScopeChecksSpy: MockInstance;
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
@@ -35,7 +35,6 @@ function createDoctorHarness(): {
   resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
 } {
-  const provider = "ollama-local";
   delete require.cache[requireDist.resolve(doctorModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -294,6 +293,38 @@ describe("runSandboxDoctor flow", () => {
       expect(harness.logSpy).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["high", "high"],
+    [null, "endpoint-default"],
+  ] as const)("reports effective reasoning effort in doctor JSON (%s) (#7659)", async (stored, expected) => {
+    const harness = createDoctorHarness("compatible-endpoint");
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "compatible-endpoint",
+      preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoningEffort: stored,
+      openshellDriver: "docker",
+      openshellVersion: "0.0.72",
+      nemoclawVersion: "0.0.83",
+      fromDockerfile: null,
+      dashboardPort: 18789,
+      imageTag: "nemoclaw-openclaw:test",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual({
+      group: "Inference",
+      label: "Reasoning effort",
+      status: "info",
+      detail: expected,
+    });
+  });
 
   it(
     "reports baseline exclusions and flags content drift since approval (#7194)",

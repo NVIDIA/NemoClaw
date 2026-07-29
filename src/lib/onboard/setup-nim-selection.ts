@@ -7,6 +7,7 @@ import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-rout
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+import type { ReasoningEffort } from "./reasoning-mode";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
@@ -32,6 +33,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning?: string | null;
+  compatibleEndpointReasoningEffort?: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
   /** Minimum Ollama daemon context length to request for this agent. */
@@ -192,6 +194,7 @@ type RemoteModelValidatorDeps = {
   getProbeAuthMode: (provider: string) => ProbeAuthMode;
   getProbeExtraHeaders?: (provider: string) => readonly string[];
   configureCompatibleEndpointReasoning?: () => Promise<"true" | "false">;
+  configureCompatibleEndpointReasoningEffort?: () => Promise<ReasoningEffort | null>;
   log?: (message: string) => void;
 };
 
@@ -244,6 +247,8 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         if (reasoning) {
           state.compatibleEndpointReasoning = reasoning;
         }
+        const reasoningEffort = await deps.configureCompatibleEndpointReasoningEffort?.();
+        state.compatibleEndpointReasoningEffort = reasoningEffort ?? null;
         if (reasoning === "true") {
           (deps.log ?? console.log)(
             "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
