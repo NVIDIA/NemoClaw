@@ -83,6 +83,79 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     ]);
   });
 
+  it.each([
+    "-c",
+    "--continue",
+  ])("routes bare %s one-shot invocations to the most recent session (#5254)", (flag) => {
+    const run = runWrapper([flag, "-z", "Repeat the latest turn"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Repeat the latest turn",
+      "--quiet",
+      "--continue",
+    ]);
+  });
+
+  it.each([
+    ["-c", "--continue"],
+    ["--continue", "--continue"],
+    ["-r", "--resume"],
+    ["--resume", "--resume"],
+  ])("coalesces an unquoted multi-word session name after %s (#5254)", (flag, canonical) => {
+    const run = runWrapper([flag, "daily", "check", "-z", "Repeat the latest turn"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Repeat the latest turn",
+      "--quiet",
+      canonical,
+      "daily check",
+    ]);
+  });
+
+  it("uses Hermes' coalescing boundaries rather than treating the new console command as a session-name boundary (#5254)", () => {
+    const run = runWrapper(["--continue", "daily", "console", "-z", "Repeat the latest turn"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Repeat the latest turn",
+      "--quiet",
+      "--continue",
+      "daily console",
+    ]);
+  });
+
+  it.each([
+    [
+      ["-p", "work"],
+      ["--profile", "work"],
+    ],
+    [
+      ["--profile", "work"],
+      ["--profile", "work"],
+    ],
+    [["--profile=work"], ["--profile", "work"]],
+  ])("preserves profile selector %j before translated chat routing (#5254)", (profileArgs, expected) => {
+    const run = runWrapper([...profileArgs, "-c", "-z", "Repeat the latest turn"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      ...expected,
+      "chat",
+      "--query",
+      "Repeat the latest turn",
+      "--quiet",
+      "--continue",
+    ]);
+  });
+
   it("preserves explicit approval flags without adding them to ordinary resumed one-shot invocations (#5254)", () => {
     const run = runWrapper(
       ["--resume", "20260612_050401_aa9d27", "-z", "Repeat it", "--yolo", "--accept-hooks"],
@@ -100,6 +173,71 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
       "--yolo",
       "--accept-hooks",
     ]);
+  });
+
+  it("preserves Hermes 0.19 safety flags on resumed one-shot invocations (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "-z", "Repeat it", "--no-restore-cwd", "--safe-mode"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Repeat it",
+      "--quiet",
+      "--resume",
+      "20260612_050401_aa9d27",
+      "--no-restore-cwd",
+      "--safe-mode",
+    ]);
+  });
+
+  it("refuses a resumed one-shot usage report instead of silently dropping it on the chat translation (#5254)", () => {
+    const run = runWrapper(
+      [
+        "--resume",
+        "20260612_050401_aa9d27",
+        "-z",
+        "Repeat it",
+        "--usage-file",
+        "/tmp/hermes-usage.json",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("[COMPATIBILITY] Refusing resumed one-shot with --usage-file");
+    expect(run.stderr).not.toContain("/tmp/hermes-usage.json");
+  });
+
+  it("refuses equals-form usage reports on translated resumed one-shots (#5254)", () => {
+    const run = runWrapper(
+      [
+        "--resume=20260612_050401_aa9d27",
+        "--oneshot=Repeat it",
+        "--usage-file=/tmp/private-usage.json",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).not.toContain("/tmp/private-usage.json");
+  });
+
+  it("refuses usage reports on bare continued one-shots (#5254)", () => {
+    const run = runWrapper(
+      ["--continue", "-z", "Repeat it", "--usage-file=/tmp/latest-usage.json"],
+      {},
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("[COMPATIBILITY] Refusing resumed one-shot with --usage-file");
+    expect(run.stderr).not.toContain("/tmp/latest-usage.json");
   });
 
   it("keeps translated resumed one-shot turns on the same fake session and reports exec failures (#5254)", () => {
@@ -122,7 +260,11 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
       const invoke = (args: string[]) =>
         spawnSync(path.join(dir, "hermes"), args, {
           encoding: "utf-8",
-          env: { PATH: process.env.PATH ?? "", HOME: dir, NEMOCLAW_FAKE_SESSIONS: statePath },
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: dir,
+            NEMOCLAW_FAKE_SESSIONS: statePath,
+          },
           timeout: 10_000,
         });
 
@@ -231,15 +373,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("--oneshot= --resume 20260612_050401_aa9d27");
-  });
-
-  it("passes --continue without a value through instead of translating a bare selector (#5254)", () => {
-    const run = runWrapper(["--continue", "-z", "Repeat it"], {});
-
-    expect(run.status).toBe(0);
-    expect(run.stderr).toBe("");
-    expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe("--continue -z Repeat it");
   });
 
   it("passes empty --continue values through instead of translating an invalid selector (#5254)", () => {
