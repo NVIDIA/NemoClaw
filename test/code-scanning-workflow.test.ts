@@ -37,7 +37,15 @@ function writeExecutable(file: string, content: string) {
   fs.writeFileSync(file, content, { mode: 0o755 });
 }
 
-function runShellCheckInstall(preinstalledSupportsJson1: boolean) {
+function runShellCheckInstall({
+  aptUpdateSucceeds = true,
+  installedSupportsJson1 = true,
+  preinstalledSupportsJson1,
+}: {
+  aptUpdateSucceeds?: boolean;
+  installedSupportsJson1?: boolean;
+  preinstalledSupportsJson1: boolean;
+}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shellcheck-install-"));
   const bin = path.join(root, "bin");
   const trace = path.join(root, "trace");
@@ -49,7 +57,8 @@ function runShellCheckInstall(preinstalledSupportsJson1: boolean) {
 printf 'shellcheck:%s\\n' "$*" >> "$TRACE"
 case "$*" in
   *--format=json1*)
-    [ "$PREINSTALLED_SUPPORTS_JSON1" = "true" ] || [ -f "$INSTALLED_MARKER" ]
+    [ "$PREINSTALLED_SUPPORTS_JSON1" = "true" ] ||
+      { [ -f "$INSTALLED_MARKER" ] && [ "$INSTALLED_SUPPORTS_JSON1" = "true" ]; }
     ;;
   --version)
     printf 'version: 0.11.0\\n'
@@ -62,7 +71,10 @@ esac
     `#!/bin/sh
 printf 'sudo:%s\\n' "$*" >> "$TRACE"
 case "$*" in
-  "apt-get install -y shellcheck")
+  *" update")
+    [ "$APT_UPDATE_SUCCEEDS" = "true" ]
+    ;;
+  *" install -y shellcheck")
     : > "$INSTALLED_MARKER"
     ;;
 esac
@@ -73,8 +85,10 @@ esac
     encoding: "utf8",
     env: {
       ...process.env,
+      APT_UPDATE_SUCCEEDS: String(aptUpdateSucceeds),
       PATH: `${bin}:${process.env.PATH}`,
       INSTALLED_MARKER: installedMarker,
+      INSTALLED_SUPPORTS_JSON1: String(installedSupportsJson1),
       PREINSTALLED_SUPPORTS_JSON1: String(preinstalledSupportsJson1),
       RUNNER_TEMP: root,
       TRACE: trace,
@@ -151,7 +165,9 @@ describe("ShellCheck SARIF workflow boundary", () => {
     const install = requiredStep("Install ShellCheck");
     expect(install.if).toBe("steps.converter.outputs.present == 'true'");
     expect(install.run).toContain("shellcheck --format=json1");
-    expect(install.run).toContain("sudo apt-get update && sudo apt-get install -y shellcheck");
+    expect(install.run).toContain("Acquire::Retries=3");
+    expect(install.run).toContain("Acquire::http::Timeout=15");
+    expect(install.run).toContain("Acquire::https::Timeout=15");
 
     const collect = requiredStep("Collect shell files");
     expect(collect.if).toBe("steps.converter.outputs.present == 'true'");
@@ -210,7 +226,7 @@ describe("ShellCheck SARIF workflow boundary", () => {
   });
 
   it("keeps a preinstalled ShellCheck only when its json1 formatter works (#7684)", () => {
-    const { calls, result } = runShellCheckInstall(true);
+    const { calls, result } = runShellCheckInstall({ preinstalledSupportsJson1: true });
 
     expect(result.status, result.stderr).toBe(0);
     expect(calls).toEqual([
@@ -220,15 +236,45 @@ describe("ShellCheck SARIF workflow boundary", () => {
   });
 
   it("installs and validates ShellCheck when the preinstalled binary lacks json1 (#7684)", () => {
-    const { calls, result } = runShellCheckInstall(false);
+    const { calls, result } = runShellCheckInstall({ preinstalledSupportsJson1: false });
 
     expect(result.status, result.stderr).toBe(0);
     expect(calls).toEqual([
       expect.stringContaining("shellcheck:--format=json1"),
-      "sudo:apt-get update",
-      "sudo:apt-get install -y shellcheck",
+      "sudo:apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update",
+      "sudo:apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y shellcheck",
       expect.stringContaining("shellcheck:--format=json1"),
       "shellcheck:--version",
+    ]);
+  });
+
+  it("fails clearly when the bounded ShellCheck package-index update fails (#7684)", () => {
+    const { calls, result } = runShellCheckInstall({
+      aptUpdateSucceeds: false,
+      preinstalledSupportsJson1: false,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Failed to update apt package indexes for ShellCheck");
+    expect(calls).toEqual([
+      expect.stringContaining("shellcheck:--format=json1"),
+      "sudo:apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update",
+    ]);
+  });
+
+  it("rejects an installed ShellCheck without json1 support (#7684)", () => {
+    const { calls, result } = runShellCheckInstall({
+      installedSupportsJson1: false,
+      preinstalledSupportsJson1: false,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Installed ShellCheck does not support --format=json1");
+    expect(calls).toEqual([
+      expect.stringContaining("shellcheck:--format=json1"),
+      "sudo:apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update",
+      "sudo:apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y shellcheck",
+      expect.stringContaining("shellcheck:--format=json1"),
     ]);
   });
 });
