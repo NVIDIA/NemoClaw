@@ -136,6 +136,39 @@ assert exit_code == 0
     expect(result.stderr).toContain("suppressed unexpected stdout");
   });
 
+  it("suppresses direct and child-process writes to stdout (#7773)", () => {
+    const result = runDriver(`
+${preamble}
+import os
+import subprocess
+import sys
+
+async def succeed(*args, **kwargs):
+    del args, kwargs
+    os.write(1, b"direct descriptor output")
+    subprocess.run(
+        [sys.executable, "-c", "import os; os.write(1, b'child output')"],
+        check=True,
+    )
+    target._write_text("PONG")
+    return 0
+
+target._run_non_interactive_impl = succeed
+exit_code = asyncio.run(target.run_non_interactive("task", output_format="json"))
+assert exit_code == 0
+`);
+
+    expect(result.status).toBe(0);
+    expect(parseEnvelope(result.stdout).data).toMatchObject({
+      status: "success",
+      exit_code: 0,
+      response: "PONG",
+    });
+    expect(result.stdout).not.toContain("descriptor output");
+    expect(result.stdout).not.toContain("child output");
+    expect(result.stderr).toContain("suppressed unexpected stdout");
+  });
+
   it.each([
     ["agent_failure", "target._run_non_interactive_impl = fail_agent", 1],
     ["process_failure", "target._nemoclaw_original_run_non_interactive = fail_process", 1],

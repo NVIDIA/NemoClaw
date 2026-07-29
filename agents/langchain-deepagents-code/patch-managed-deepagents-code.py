@@ -783,6 +783,7 @@ import os as _nemoclaw_os
 import re as _nemoclaw_re
 import sqlite3 as _nemoclaw_sqlite3
 import sys as _nemoclaw_sys
+import tempfile as _nemoclaw_tempfile
 import time as _nemoclaw_time
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -863,6 +864,29 @@ class _NemoClawUnexpectedStdout(_nemoclaw_io.TextIOBase):
 
     def isatty(self):
         return False
+
+
+@_nemoclaw_contextlib.contextmanager
+def _nemoclaw_capture_process_stdout(run):
+    """Suppress direct and child-process writes to the stdout descriptor."""
+    run.stdout.flush()
+    with _nemoclaw_tempfile.TemporaryFile() as capture:
+        saved_stdout_fd = _nemoclaw_os.dup(1)
+        redirected = False
+        try:
+            _nemoclaw_os.dup2(capture.fileno(), 1)
+            redirected = True
+            yield
+        finally:
+            if redirected:
+                try:
+                    run.stdout.flush()
+                finally:
+                    _nemoclaw_os.dup2(saved_stdout_fd, 1)
+                capture.seek(0, _nemoclaw_os.SEEK_END)
+                if capture.tell() > 0:
+                    run.unexpected_stdout = True
+            _nemoclaw_os.close(saved_stdout_fd)
 
 
 _nemoclaw_json_run = _nemoclaw_contextvars.ContextVar(
@@ -976,42 +1000,45 @@ async def _nemoclaw_run_json_non_interactive(timeout_seconds, *args, **kwargs):
     token = _nemoclaw_json_run.set(run)
     guard = _NemoClawUnexpectedStdout(run)
     try:
-        with _nemoclaw_contextlib.redirect_stdout(guard):
-            try:
-                operation = _nemoclaw_original_run_non_interactive(
-                    *args,
-                    **kwargs,
-                )
-                if timeout_seconds is None:
-                    exit_code = await operation
-                else:
-                    exit_code = await _nemoclaw_asyncio.wait_for(
-                        operation,
-                        timeout=timeout_seconds,
+        with _nemoclaw_capture_process_stdout(run):
+            with _nemoclaw_contextlib.redirect_stdout(guard):
+                try:
+                    operation = _nemoclaw_original_run_non_interactive(
+                        *args,
+                        **kwargs,
                     )
-            except TimeoutError:
-                print(
-                    f"dcode: agent timed out after {timeout_seconds}s.",
-                    file=_nemoclaw_sys.stderr,
-                )
-                status, exit_code = "timeout", 124
-            except _nemoclaw_asyncio.CancelledError:
-                print(
-                    "dcode: managed non-interactive run was cancelled.",
-                    file=_nemoclaw_sys.stderr,
-                )
-                status, exit_code = "cancelled", 130
-            except Exception:
-                print(
-                    "dcode: managed non-interactive execution failed.",
-                    file=_nemoclaw_sys.stderr,
-                )
-                status = (
-                    "agent_failure" if run.phase == "agent" else "process_failure"
-                )
-                exit_code = 1
-            else:
-                status, exit_code = _nemoclaw_json_status(exit_code, run)
+                    if timeout_seconds is None:
+                        exit_code = await operation
+                    else:
+                        exit_code = await _nemoclaw_asyncio.wait_for(
+                            operation,
+                            timeout=timeout_seconds,
+                        )
+                except TimeoutError:
+                    print(
+                        f"dcode: agent timed out after {timeout_seconds}s.",
+                        file=_nemoclaw_sys.stderr,
+                    )
+                    status, exit_code = "timeout", 124
+                except _nemoclaw_asyncio.CancelledError:
+                    print(
+                        "dcode: managed non-interactive run was cancelled.",
+                        file=_nemoclaw_sys.stderr,
+                    )
+                    status, exit_code = "cancelled", 130
+                except _NemoClawOutputLimitError:
+                    status, exit_code = "output_limit", 1
+                except Exception:
+                    print(
+                        "dcode: managed non-interactive execution failed.",
+                        file=_nemoclaw_sys.stderr,
+                    )
+                    status = (
+                        "agent_failure" if run.phase == "agent" else "process_failure"
+                    )
+                    exit_code = 1
+                else:
+                    status, exit_code = _nemoclaw_json_status(exit_code, run)
     finally:
         _nemoclaw_json_run.reset(token)
     if run.unexpected_stdout:
