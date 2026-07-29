@@ -244,6 +244,23 @@ def profile_is_rejected_with_secret(field):
         return True
     return False
 
+def profile_is_rejected_with_process_control_environment(name):
+    unsafe_content = json.loads(json.dumps(content))
+    unsafe_content["commands"][0]["environment"].append(name)
+    unsafe_digest = "sha256:" + hashlib.sha256(
+        json.dumps(
+            unsafe_content, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+    ).hexdigest()
+    unsafe_profile = {**unsafe_content, "contentDigest": unsafe_digest}
+    try:
+        managed._canonical_validation_profile(
+            json.dumps(unsafe_profile, separators=(",", ":")).encode()
+        )
+    except RuntimeError:
+        return True
+    return False
+
 profile_path = root / "profile.json"
 profile_path.write_text(
     json.dumps(profile, sort_keys=True, separators=(",", ":")),
@@ -286,8 +303,41 @@ def run(command):
 def run_concurrent(queue):
     queue.put(run(f'{delayed_executable} concurrent')["status"])
 
+process_control_names = (
+    "LD_PRELOAD",
+    "PYTHONPATH",
+    "NODE_OPTIONS",
+    "GIT_CONFIG_GLOBAL",
+)
+previous_process_control = {
+    name: os.environ.get(name) for name in process_control_names
+}
+for name in process_control_names:
+    os.environ[name] = "hostile-validation-control"
+original_popen = managed.subprocess.Popen
+allowed_child_environment = {}
+def capture_allowed_child_environment(*args, **kwargs):
+    if args[0] == [executables["echo"], "managed"]:
+        allowed_child_environment.update(kwargs["env"])
+    return original_popen(*args, **kwargs)
+managed.subprocess.Popen = capture_allowed_child_environment
+allowed_result = run(f'{executables["echo"]} managed')
+managed.subprocess.Popen = original_popen
+for name, previous in previous_process_control.items():
+    if previous is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = previous
+
 results = {
-    "allowed": run(f'{executables["echo"]} managed'),
+    "allowed": allowed_result,
+    "processControlProfileRejected": {
+        name: profile_is_rejected_with_process_control_environment(name)
+        for name in process_control_names
+    },
+    "processControlEnvironmentExcluded": all(
+        name not in allowed_child_environment for name in process_control_names
+    ),
     "extraArgument": run(f'{executables["echo"]} managed extra'),
     "metacharacter": run(f'{executables["echo"]} managed; touch {root / "escaped"}'),
     "environmentInjection": run(f'LANG=unsafe {executables["echo"]} managed'),
@@ -306,7 +356,6 @@ results["unsafeExecutable"] = run(str(retry_executable))
 retry_executable.chmod(0o755)
 results["successfulAfterRejection"] = run(str(retry_executable))
 results["delayedExit"] = run(str(delayed_executable))
-original_popen = managed.subprocess.Popen
 def fail_target_spawn(*args, **kwargs):
     if args[0][0] == str(popen_retry_executable):
         raise OSError("simulated process creation failure")
@@ -413,6 +462,13 @@ describe("managed DCode validation-command runtime", () => {
         commandId: "echo",
         sourceVerified: true,
       });
+      expect(receipts.processControlProfileRejected).toEqual({
+        GIT_CONFIG_GLOBAL: true,
+        LD_PRELOAD: true,
+        NODE_OPTIONS: true,
+        PYTHONPATH: true,
+      });
+      expect(receipts.processControlEnvironmentExcluded).toBe(true);
       expect(receipts.extraArgument.status).toBe("rejected");
       expect(receipts.metacharacter.status).toBe("rejected");
       expect(receipts.environmentInjection.status).toBe("rejected");

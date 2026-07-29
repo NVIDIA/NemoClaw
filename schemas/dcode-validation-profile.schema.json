@@ -3,7 +3,7 @@
   "$id": "https://github.com/NVIDIA/NemoClaw/schemas/dcode-validation-profile.schema.json",
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "title": "NemoClaw managed DCode validation profile",
-  "description": "An immutable, sandbox-bound list of exact headless validation argv shapes. The contentDigest is the sha256 digest of the canonical JSON object after removing contentDigest and recursively sorting object keys. Runtime semantic validation additionally rejects shell syntax, credential-shaped environment names and values, duplicate identifiers, non-normalized paths, and working directories outside workingDirectoryRoots.",
+  "description": "An immutable, sandbox-bound list of exact headless validation argv shapes. The contentDigest is the sha256 digest of the canonical JSON object after removing contentDigest and recursively sorting object keys. Runtime semantic validation additionally rejects shell syntax, credential-shaped or process-control environment names and values, duplicate identifiers, non-normalized paths, and working directories outside workingDirectoryRoots.",
   "type": "object",
   "additionalProperties": false,
   "required": [

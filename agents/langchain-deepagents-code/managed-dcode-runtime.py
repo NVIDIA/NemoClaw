@@ -81,6 +81,140 @@ _VALIDATION_CREDENTIAL_ENV_NAME = re.compile(
     r"dsn|connectionstring)(?:$|[_-])",
     re.IGNORECASE,
 )
+# SECURITY -- Source boundary: this isolated Python runtime cannot import the
+# canonical policy in src/lib/security/process-control-env.ts. Keep the managed
+# profile validator fail-closed for the same execution-control families. HOME
+# and PATH are safe profile declarations because execution replaces both with
+# fixed managed values instead of inheriting them.
+_VALIDATION_PROCESS_CONTROL_ENV_NAMES = {
+    "ALL_PROXY",
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "AWS_CA_BUNDLE",
+    "BASHOPTS",
+    "BASH_ENV",
+    "CDPATH",
+    "CLASSPATH",
+    "COMSPEC",
+    "CURL_CA_BUNDLE",
+    "CURL_HOME",
+    "DENO_CERT",
+    "DOCKER_CERT_PATH",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "DOCKER_HOST",
+    "DOCKER_TLS_VERIFY",
+    "DOTNET_STARTUP_HOOKS",
+    "ENV",
+    "FTP_PROXY",
+    "GIT_ASKPASS",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_EDITOR",
+    "GIT_EXEC_PATH",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PAGER",
+    "GIT_PROXY_COMMAND",
+    "GIT_PROXY_SSL_CAINFO",
+    "GIT_SEQUENCE_EDITOR",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_SSL_CAINFO",
+    "GIT_SSL_CAPATH",
+    "GIT_SSL_NO_VERIFY",
+    "GLOBIGNORE",
+    "GCONV_PATH",
+    "GLIBC_TUNABLES",
+    "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
+    "GRPC_PROXY",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "IFS",
+    "JAVA_TOOL_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "KUBECONFIG",
+    "LESSCLOSE",
+    "LESSOPEN",
+    "LOCALAPPDATA",
+    "LOCPATH",
+    "MANPAGER",
+    "NODE_EXTRA_CA_CERTS",
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "NODE_USE_ENV_PROXY",
+    "NODE_USE_SYSTEM_CA",
+    "NO_PROXY",
+    "NETRC",
+    "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL",
+    "NEMOCLAW_BOOTSTRAP_PAYLOAD",
+    "NEMOCLAW_INSTALL_REF",
+    "NEMOCLAW_INSTALL_TAG",
+    "NEMOCLAW_INSTALLER_STAGED",
+    "NEMOCLAW_INSTALLER_URL",
+    "NEMOCLAW_OPENSHELL_BIN",
+    "NEMOCLAW_OPENSHELL_CHANNEL",
+    "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+    "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
+    "NEMOCLAW_REPO_ROOT",
+    "NEMOCLAW_SOURCE_ROOT",
+    "NVM_DIR",
+    "OLDPWD",
+    "OPENSSL_CONF",
+    "OPENSSL_CONF_INCLUDE",
+    "OPENSSL_ENGINES",
+    "OPENSSL_MODULES",
+    "PAGER",
+    "PATHEXT",
+    "PERL5LIB",
+    "PERL5OPT",
+    "PS4",
+    "PWD",
+    "PSMODULEPATH",
+    "PROGRAMDATA",
+    "PYTHONHOME",
+    "PYTHONINSPECT",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "PYTHONUSERBASE",
+    "REQUESTS_CA_BUNDLE",
+    "RUBYLIB",
+    "RUBYOPT",
+    "SHELL",
+    "SHELLOPTS",
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    "SSLKEYLOGFILE",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USERPROFILE",
+    "VIRTUAL_ENV",
+    "XDG_CACHE_HOME",
+    "XDG_BIN_HOME",
+    "XDG_CONFIG_DIRS",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_DIRS",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "XDG_STATE_HOME",
+    "ZDOTDIR",
+    "_JAVA_OPTIONS",
+}
+_VALIDATION_PROCESS_CONTROL_ENV_PREFIXES = (
+    "BASH_FUNC_",
+    "LD_",
+    "DYLD_",
+    "GIT_CONFIG_",
+    "GIT_TRACE",
+    "NPM_CONFIG_",
+    "OPENSHELL_",
+    "PIP_",
+)
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
     r"(?:^|[_-])(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL)$",
@@ -1427,6 +1561,16 @@ def _validation_credential_name(name: str) -> bool:
     )
 
 
+def _validation_process_control_name(name: str) -> bool:
+    if name in {"HOME", "PATH"}:
+        return False
+    return (
+        name == "GIT_CONFIG"
+        or name in _VALIDATION_PROCESS_CONTROL_ENV_NAMES
+        or name.startswith(_VALIDATION_PROCESS_CONTROL_ENV_PREFIXES)
+    )
+
+
 def _canonical_validation_profile(raw: bytes) -> dict[str, object]:
     try:
         value = json.loads(
@@ -1539,6 +1683,7 @@ def _canonical_validation_profile(raw: bytes) -> dict[str, object]:
                 not isinstance(name, str)
                 or _VALIDATION_ENV_NAME.fullmatch(name) is None
                 or _validation_credential_name(name)
+                or _validation_process_control_name(name)
             ):
                 raise RuntimeError(
                     f"managed validation profile command {index} environment is invalid"
@@ -2110,6 +2255,10 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
     for name in matched["environment"]:
         if name in {"HOME", "PATH"}:
             continue
+        if _validation_process_control_name(name):
+            return _validation_receipt(
+                profile, command_id, argv, "rejected", started
+            ), False
         value = os.environ.get(name)
         if value is not None:
             if _contains_secret_shape(value) or _validation_credential_name(name):

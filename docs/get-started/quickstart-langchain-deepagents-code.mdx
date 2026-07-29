@@ -233,6 +233,8 @@ The profile applies only to headless `dcode -n` runs and does not change interac
 Create a JSON document that follows `schemas/dcode-validation-profile.schema.json` in the NemoClaw source tree.
 Each command records one exact absolute executable and argument vector, one fixed working directory, allowed environment variable names, a timeout, a combined output limit, and an invocation limit.
 The profile records environment variable names only; the runtime checks inherited values when it executes a command.
+Loader, interpreter, package-manager, Git, OpenShell, network-trust, and other process-control environment names are not allowed.
+`HOME` and `PATH` may appear in the profile for clarity, but the runtime always replaces them with fixed managed values instead of inheriting them.
 The `sandboxName` must match the rebuild target.
 Use a stable task identifier for `taskIdentity`.
 Set `sourceIdentity` to `sha256:` followed by the SHA-256 digest of the ASCII string `git:<object-format>:<full-HEAD-object-id>`.

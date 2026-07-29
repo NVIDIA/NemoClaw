@@ -129,6 +129,19 @@ describe("DCode validation profiles", () => {
     expect(parseDcodeValidationProfile(value).commands[0]?.environment).toEqual([]);
   });
 
+  it.each([
+    "LD_PRELOAD",
+    "PYTHONPATH",
+    "NODE_OPTIONS",
+    "GIT_CONFIG_GLOBAL",
+  ])("rejects process-control environment name %s even with a valid digest (#7774)", (name) => {
+    const value = profile();
+    value.commands[0]!.environment.push(name);
+    const { contentDigest: _contentDigest, ...content } = value;
+    value.contentDigest = dcodeValidationProfileDigest(content);
+    expect(() => parseDcodeValidationProfile(value)).toThrow(/controls child execution/);
+  });
+
   it("loads only a regular non-symlink host file with a matching sandbox binding (#7774)", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-dcode-profile-"));
     try {

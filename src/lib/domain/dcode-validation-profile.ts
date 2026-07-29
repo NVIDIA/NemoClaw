@@ -7,6 +7,7 @@ import { isAbsolute, posix, resolve } from "node:path";
 
 import { shouldStripCredentialEnv } from "../security/credential-env";
 import { valueLooksLikeSecret } from "../security/credential-filter";
+import { isProcessControlEnvName } from "../security/process-control-env";
 
 export const DCODE_VALIDATION_PROFILE_SCHEMA_VERSION =
   "nemoclaw.dcode.validation-profile.v1" as const;
@@ -214,6 +215,9 @@ function parseCommand(
       );
       if (shouldStripCredentialEnv(parsed)) {
         fail(`commands[${index}].environment[${environmentIndex}] is credential-shaped.`);
+      }
+      if (!["HOME", "PATH"].includes(parsed) && isProcessControlEnvName(parsed)) {
+        fail(`commands[${index}].environment[${environmentIndex}] controls child execution.`);
       }
       return parsed;
     },
