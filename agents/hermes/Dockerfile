@@ -21,6 +21,19 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
+FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
+WORKDIR /opt/nemoclaw-managed-startup-build
+COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
+COPY src/lib/messaging/ ./src/lib/messaging/
+COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
+COPY src/lib/security/credential-hash.ts ./src/lib/security/
+COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
+RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
+        src/lib/onboard/managed-startup/image-runtime.ts \
+        --bundle --platform=node --format=cjs --target=node22 \
+        --outfile=/out/managed-startup-image-runtime.cjs \
+    && chmod 0444 /out/managed-startup-image-runtime.cjs
+
 FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
@@ -42,9 +55,11 @@ FROM scratch AS hermes-runtime-payload
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
+COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
@@ -212,7 +227,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
+    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
@@ -392,6 +407,10 @@ ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # API remains exposed separately on port 8642.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_MESSAGING_PLAN_B64=
+# Release-image mode preinstalls every reviewed optional dependency while
+# keeping the generated Hermes platform configuration disabled by default.
+ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 ARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
@@ -422,10 +441,25 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     CHAT_UI_URL=${CHAT_UI_URL} \
+    NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
     NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
+
+RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
+        0) ;; \
+        1) \
+            test -z "$NEMOCLAW_MESSAGING_PLAN_B64" \
+                || { echo "ERROR: managed-image capability union requires an empty messaging plan" >&2; exit 1; }; \
+            test "$NEMOCLAW_WEB_SEARCH_ENABLED" = "0" \
+                || { echo "ERROR: managed-image capability union requires web search disabled in the neutral image" >&2; exit 1; }; \
+            test "$NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER" = "0" \
+                || { echo "ERROR: managed-image capability union requires tool gateways disabled in the neutral image" >&2; exit 1; } \
+            ;; \
+        *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION must be 0 or 1" >&2; exit 1 ;; \
+    esac \
+    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "root"
 
 # Bake reduced messaging runtime metadata for the entrypoint. Hermes runtime
 # config refresh consumes generic manifest-owned aliases from this artifact.
@@ -439,7 +473,11 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # /opt/hermes/.venv before the runtime drops to the sandbox user.
 WORKDIR /opt/hermes
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
+    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
+            --agent hermes --phase managed-image-capability-union; \
+    fi
 
 # Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
 # when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
@@ -479,6 +517,9 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
     && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
+    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); expected=("telegram","discord","weixin","slack","whatsapp","teams"); assert all(config["platforms"].get(name) == {"enabled": False} for name in expected); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.1"'; \
+    fi \
     && rm -rf /sandbox/.cache
 
 # Install NemoClaw plugin into Hermes

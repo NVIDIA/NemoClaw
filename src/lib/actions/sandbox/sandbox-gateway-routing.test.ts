@@ -60,6 +60,10 @@ describe("sandbox gateway routing helpers", () => {
     );
   });
 
+  it("routes Podman through OpenShell metadata instead of a Docker cluster-container probe", () => {
+    expect(routing.usesGatewayMetadataProbe("podman")).toBe(true);
+  });
+
   it("selects the persisted gateway before sandbox-scoped OpenShell commands", () => {
     routing.selectSandboxGatewayIfRegistered("alpha");
 

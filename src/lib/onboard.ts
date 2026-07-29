@@ -49,7 +49,8 @@ const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-conf
 const baseImageResolutionFlow: typeof import("./onboard/base-image-resolution-flow") = require("./onboard/base-image-resolution-flow");
 const sandboxCreateIntentResolution: typeof import("./onboard/sandbox-create-intent-resolution") = require("./onboard/sandbox-create-intent-resolution");
 const sandboxCreatePlanMaterialization: typeof import("./onboard/sandbox-create-plan-materialization") = require("./onboard/sandbox-create-plan-materialization");
-const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
+const managedWorkload: typeof import("./onboard/managed-workload") =
+  require("./onboard/managed-workload");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
@@ -2216,6 +2217,8 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
 
 async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
+  computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
+  managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2239,6 +2242,42 @@ async function createSandboxWithBaseImageResolution(
     "sandbox name",
   );
   preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
+  const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
+  const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
+  const legacyDockerfilePath =
+    effectiveAgent.dockerfilePath ??
+    effectiveAgent.legacyPaths?.dockerfile ??
+    path.join(ROOT, "Dockerfile");
+  const runtimeCapabilities =
+    managedWorkload.resolveSandboxWorkloadRuntimeCapabilities(computePlan);
+  let preparedWorkloadPromise: ReturnType<
+    typeof managedWorkload.prepareSandboxWorkloadSource
+  > | null = null;
+  let workloadFallbackReported = false;
+  const ensurePreparedSandboxWorkload = async () => {
+    preparedWorkloadPromise ??= managedWorkloadRebuild
+      ? Promise.resolve(
+          managedWorkload.prepareSandboxWorkloadSourceFromRebuildHandoff(
+            managedWorkloadRebuild,
+            runtimeCapabilities,
+          ),
+        )
+      : managedWorkload.prepareSandboxWorkloadSource({
+          agentName: requestedAgentName,
+          legacyDockerfilePath,
+          customDockerfilePath:
+            fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null),
+          runtime: runtimeCapabilities,
+          version: managedWorkload.getVersion({ rootDir: ROOT }),
+        });
+    const prepared = await preparedWorkloadPromise;
+    if (prepared.fallbackDiagnostic && !workloadFallbackReported) {
+      workloadFallbackReported = true;
+      note(`  Managed image unavailable; using the trusted Dockerfile recipe.`);
+      note(`  ${prepared.fallbackDiagnostic}`);
+    }
+    return prepared;
+  };
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
@@ -2314,6 +2353,68 @@ async function createSandboxWithBaseImageResolution(
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
+  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const plannedMessagingState =
+    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
+  let preparedManagedStartupProfile: ReturnType<
+    typeof managedWorkload.buildManagedStartupOnboardProfile
+  > | null = null;
+  const ensurePreparedManagedStartupProfile = (
+    workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
+  ) => {
+    if (workload.source.kind !== "managed-image") return null;
+    if (managedWorkloadRebuild) {
+      if (workload.source.reference !== managedWorkloadRebuild.replacement.source.reference) {
+        throw new Error("Managed rebuild workload changed before startup profile preparation.");
+      }
+      return managedWorkloadRebuild.replacementProfile;
+    }
+    const managedInferenceApi =
+      requestedAgentName === "langchain-deepagents-code"
+        ? "openai-completions"
+        : inferenceConfig.resolveAgentInferenceApi(
+            requestedAgentName,
+            provider,
+            preferredInferenceApi,
+          );
+    const managedInference = getSandboxInferenceConfig(model, provider, managedInferenceApi);
+    preparedManagedStartupProfile ??= managedWorkload.buildManagedStartupOnboardProfile({
+      agentName: requestedAgentName,
+      inference: {
+        routeProvider: managedInference.providerKey,
+        upstreamProvider:
+          typeof provider === "string" && provider.trim() ? provider : managedInference.providerKey,
+        model,
+        routedBaseUrl: managedInference.inferenceBaseUrl,
+        upstreamEndpointUrl:
+          requestedAgentName === "langchain-deepagents-code"
+            ? (createIntent?.endpointUrl ?? null)
+            : null,
+        api: managedInference.inferenceApi as
+          | "openai-completions"
+          | "openai-responses"
+          | "anthropic-messages",
+        primaryModelRef:
+          requestedAgentName === "openclaw" ? managedInference.primaryModelRef : null,
+        compatibility:
+          requestedAgentName === "openclaw" ? (managedInference.inferenceCompat ?? {}) : null,
+      },
+      chatUiUrl,
+      effectiveDashboardPort: effectivePort,
+      manageDashboard,
+      dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND,
+      wslExposure: requestedAgentName === "openclaw" && isWsl(),
+      hermesDashboardState,
+      webSearch: webSearchConfig,
+      toolDisclosure: effectiveToolDisclosure,
+      hermesToolGateways,
+      messagingPlan: plannedMessagingState?.plan ?? null,
+      dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode,
+      observabilityEnabled: createIntent?.observabilityEnabled === true,
+      environment: process.env,
+    });
+    return preparedManagedStartupProfile;
+  };
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2331,7 +2432,6 @@ async function createSandboxWithBaseImageResolution(
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
-    const requestedAgentName = getRequestedSandboxAgentName(agent);
     const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
     let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 
@@ -2564,6 +2664,12 @@ async function createSandboxWithBaseImageResolution(
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
+    // Resolve and validate the immutable workload before deleting the live
+    // sandbox. Catalog or contract failures must leave the existing workload
+    // untouched.
+    const replacementWorkload = await ensurePreparedSandboxWorkload();
+    ensurePreparedManagedStartupProfile(replacementWorkload);
+
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     if (noRestorePending && !notReadyRecreateInProgress && !shouldSkipPreRecreateBackup(process.env)) {
@@ -2584,7 +2690,14 @@ async function createSandboxWithBaseImageResolution(
     runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     recreateRuntime.confirmDeleted();
-    if (previousEntry?.imageTag) {
+    const replacementReusesPreviousImage =
+      replacementWorkload.source.kind === "managed-image" &&
+      previousEntry?.imageTag === replacementWorkload.source.reference;
+    if (
+      previousEntry?.imageTag &&
+      previousEntry.workload?.shared !== true &&
+      !replacementReusesPreviousImage
+    ) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       const rmiResult = dockerRmi(previousEntry.imageTag, { ignoreError: true, suppressOutput: true });
       if (rmiResult.status !== 0) {
@@ -2594,33 +2707,45 @@ async function createSandboxWithBaseImageResolution(
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
 
+  const preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
+  ensurePreparedManagedStartupProfile(preparedSandboxWorkload);
+
   applyExtraProviderReconciliation({
     extraProviders: resolvedCreateIntent.extraProviders,
     staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
   });
 
-  // Stage build context — use the custom Dockerfile path when provided,
-  // otherwise use the optimised default that only sends what the build needs.
-  // The build context contains source code, scripts, and potentially API keys
-  // in env args, so it must not persist in /tmp after a failed sandbox create.
-  // run() calls process.exit() on failure (bypassing normal control flow), so
-  // we register a process 'exit' handler to guarantee cleanup in all cases.
-  const { buildCtx, stagedDockerfile, origin, cleanupBuildCtx } =
-    preparedDcodeRebuild.resolveSandboxBuildContext(
-      {
-        preparedBuildContext,
-        agent,
-        fromDockerfile,
-      },
-      {
-        createAgentSandbox: (selectedAgent) =>
-          baseImageResolutionFlow.createAgentSandboxWithResolution(
-            baseImageResolutionContext,
-            selectedAgent,
-            agentOnboard.createAgentSandbox,
-          ),
-      },
-    );
+  // A complete managed image bypasses build-context creation entirely. The
+  // legacy recipe remains the fallback and the explicit custom-image path.
+  // Its context can contain source and environment-derived build inputs, so
+  // retain the existing process-exit cleanup contract only for that branch.
+  const legacyBuildContext =
+    preparedSandboxWorkload.source.kind === "legacy-dockerfile"
+      ? preparedDcodeRebuild.resolveSandboxBuildContext(
+          {
+            preparedBuildContext,
+            agent,
+            fromDockerfile,
+          },
+          {
+            createAgentSandbox: (selectedAgent) =>
+              baseImageResolutionFlow.createAgentSandboxWithResolution(
+                baseImageResolutionContext,
+                selectedAgent,
+                agentOnboard.createAgentSandbox,
+              ),
+          },
+        )
+      : null;
+  let workloadFromRef: string;
+  if (preparedSandboxWorkload.source.kind === "managed-image") {
+    workloadFromRef = preparedSandboxWorkload.source.reference;
+  } else {
+    if (!legacyBuildContext) {
+      throw new Error("Legacy sandbox workload is missing its staged build context.");
+    }
+    workloadFromRef = `${legacyBuildContext.buildCtx}/Dockerfile`;
+  }
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
@@ -2646,7 +2771,7 @@ async function createSandboxWithBaseImageResolution(
     compatibilityPolicyPath,
   } = sandboxCreatePlanMaterialization.materializeSandboxCreatePlan({
     intent: resolvedCreateIntent,
-    buildCtx,
+    fromRef: workloadFromRef,
     messagingTokenDefs: materializationCapabilities.messagingTokenDefs,
     runProviderPreDeleteCleanup: () =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
@@ -2664,19 +2789,66 @@ async function createSandboxWithBaseImageResolution(
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
-  const plannedMessagingState =
-    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const configuredMessagingChannels =
     getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels;
-  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
   const initialGpuRoute = dockerGpuRoute.initialDockerGpuRoute(gpuRoutePlan);
-  const { buildId, dashboardRemoteBindPrepared } =
-    await preparedDcodeRebuild.resolveSandboxBuildPatch({
+  let buildId = String(Date.now());
+  let dashboardRemoteBindPrepared = false;
+  const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
+  const launchInput = {
+    agent,
+    observabilityEnabled: createIntent?.observabilityEnabled === true,
+    chatUiUrl,
+    createArgs: dockerGpuRoute.renderSandboxCreateArgsForGpuRoute(createArgs, initialGpuRoute, {
+      compatibilityPolicyPath,
+    }),
+    sandboxName,
+    env: process.env,
+    extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys,
+    getDashboardForwardPort,
+    hermesDashboardState,
+    manageDashboard,
+    openshellShellCommand,
+    openshellArgv,
+  };
+  let launch: Awaited<ReturnType<typeof managedWorkload.prepareSandboxCreateLaunchWithPrebuild>>;
+  if (preparedSandboxWorkload.source.kind === "managed-image") {
+    await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
+      provider,
+      effectiveSandboxGpuConfig,
+      {
+        dockerDriverGateway,
+        selectedRoute: initialGpuRoute,
+        gatewayPort: GATEWAY_PORT,
+        log: console.log,
+      },
+    );
+    const managedProfile = ensurePreparedManagedStartupProfile(preparedSandboxWorkload);
+    if (!managedProfile) {
+      throw new Error("Managed sandbox workload is missing its startup profile.");
+    }
+    dashboardRemoteBindPrepared =
+      managedProfile.profile.dashboard.agent === "openclaw" &&
+      managedProfile.profile.dashboard.mode === "remote";
+    launch = managedWorkload.prepareSandboxCreateManagedImageLaunch({
+      ...launchInput,
+      managedStartupProfile: {
+        encodedProfile: managedProfile.encodedProfile,
+        ...(managedProfile.corporateCaB64 === undefined
+          ? {}
+          : { corporateCaB64: managedProfile.corporateCaB64 }),
+      },
+    });
+  } else {
+    if (!legacyBuildContext) {
+      throw new Error("Legacy sandbox workload is missing its staged build context.");
+    }
+    sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+    const patch = await preparedDcodeRebuild.resolveSandboxBuildPatch({
       preparedBuildContext,
       agent,
       fromDockerfile,
-      stagedDockerfile,
+      stagedDockerfile: legacyBuildContext.stagedDockerfile,
       model,
       chatUiUrl,
       provider,
@@ -2691,25 +2863,20 @@ async function createSandboxWithBaseImageResolution(
       ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
       gatewayPort: GATEWAY_PORT,
     });
-  const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const { createArgv, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
-    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
-      agent,
-      observabilityEnabled: createIntent?.observabilityEnabled === true,
-      chatUiUrl,
-      createArgs: dockerGpuRoute.renderSandboxCreateArgsForGpuRoute(createArgs, initialGpuRoute, {
-        compatibilityPolicyPath,
-      }),
-      sandboxName,
-      env: process.env,
-      extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys,
-      getDashboardForwardPort,
-      hermesDashboardState,
-      manageDashboard,
-      openshellShellCommand,
-      openshellArgv,
-      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+    buildId = patch.buildId;
+    dashboardRemoteBindPrepared = patch.dashboardRemoteBindPrepared;
+    launch = await managedWorkload.prepareSandboxCreateLaunchWithPrebuild({
+      ...launchInput,
+      prebuild: {
+        buildCtx: legacyBuildContext.buildCtx,
+        buildId,
+        dockerDriverGateway,
+        origin: legacyBuildContext.origin,
+      },
     });
+  }
+  const { createArgv, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
+    launch;
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   recreateRuntime.advance("creating");
@@ -2756,8 +2923,8 @@ async function createSandboxWithBaseImageResolution(
   // Only deregister the 'exit' safety net when inline cleanup succeeded;
   // otherwise leave it armed so a later process.exit() still removes the
   // temp dir (which may hold source and env-arg API keys).
-  if (cleanupBuildCtx()) {
-    process.removeListener("exit", cleanupBuildCtx);
+  if (legacyBuildContext?.cleanupBuildCtx()) {
+    process.removeListener("exit", legacyBuildContext.cleanupBuildCtx);
   }
 
   if (manageDashboard) {
@@ -2803,10 +2970,48 @@ async function createSandboxWithBaseImageResolution(
 
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
+    (preparedSandboxWorkload.source.kind === "managed-image"
+      ? preparedSandboxWorkload.source.reference
+      : null) ??
     registryImageRef ??
     prebuild.imageRef ??
     buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
     resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
+  const finalManagedStartupProfile = ensurePreparedManagedStartupProfile(preparedSandboxWorkload);
+  let workloadReceipt: SandboxEntry["workload"];
+  if (preparedSandboxWorkload.source.kind === "managed-image") {
+    // The managed launch branch above already requires this same prepared
+    // profile before sandbox creation can run.
+    const managedProfile = finalManagedStartupProfile as NonNullable<
+      typeof finalManagedStartupProfile
+    >;
+    const startupProfileSha256 = managedProfile.startupProfileSha256;
+    workloadReceipt = {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: preparedSandboxWorkload.source.reference,
+      release: preparedSandboxWorkload.source.contract.source.release,
+      sourceRevision: preparedSandboxWorkload.source.contract.source.revision,
+      sourceCohort: preparedSandboxWorkload.source.contract.source.cohort,
+      capabilityContractVersion: preparedSandboxWorkload.source.contract.capabilityContractVersion,
+      startupProfileContractVersion:
+        preparedSandboxWorkload.source.contract.startupProfileContractVersion,
+      encodedProfile: managedProfile.encodedProfile,
+      startupProfileSha256,
+      credentialProxyReplayRequired: managedProfile.credentialProxyReplayRequired,
+      ...(managedProfile.corporateCaB64 === undefined
+        ? {}
+        : { corporateCaB64: managedProfile.corporateCaB64 }),
+      shared: true,
+    };
+  } else {
+    workloadReceipt = {
+      schemaVersion: 1,
+      kind: "legacy-dockerfile",
+      reference: resolvedImageTag,
+      shared: false,
+    };
+  }
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   recreateRuntime.recordCreated();
   finalizeCreatedSandbox(
@@ -2842,6 +3047,7 @@ async function createSandboxWithBaseImageResolution(
           agent,
           agentVersionKnown: !fromDockerfile,
           imageTag: resolvedImageTag,
+          workload: workloadReceipt,
           openclawImagePluginInstalls,
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
@@ -2895,13 +3101,21 @@ async function createSandboxWithBaseImageResolution(
 }
 
 type CreateSandboxArgs =
-  Parameters<typeof createSandboxWithBaseImageResolution> extends [unknown, ...infer Args]
+  Parameters<typeof createSandboxWithBaseImageResolution> extends [
+    unknown,
+    unknown,
+    unknown,
+    ...infer Args,
+  ]
     ? Args
     : never;
 
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
+  const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   return createSandboxWithBaseImageResolution(
     baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
+    computePlan,
+    null,
     ...args,
   );
 }
@@ -3973,6 +4187,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     initialHint: opts.baseImageResolutionHint,
     initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
+  const onboardingComputePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
@@ -4435,7 +4650,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           planRegisteredExtraProviders(gatewayName, { runOpenshell }),
         resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
         createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-          createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
+          createSandboxWithBaseImageResolution.bind(
+            null,
+            baseImageResolutionContext,
+            onboardingComputePlan,
+            opts.managedWorkloadRebuild ?? null,
+          ),
         ),
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
         getSandboxAgentRegistryFields,

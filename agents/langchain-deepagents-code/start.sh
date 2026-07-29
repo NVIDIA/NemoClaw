@@ -6,13 +6,74 @@
 
 set -euo pipefail
 unset BASH_ENV ENV
+
+export HOME=/sandbox
+export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# managed-entrypoint-env-wrapper begin
+_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
+if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
+  _DCODE_ENTRYPOINT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="${_DCODE_ENTRYPOINT_SOURCE_DIR}/../../scripts/lib/entrypoint-env-wrapper.sh"
+  unset _DCODE_ENTRYPOINT_SOURCE_DIR
+fi
+if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
+  printf '%s\n' '[SECURITY] Required entrypoint env-wrapper normalizer is missing.' >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/entrypoint-env-wrapper.sh
+source "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER"
+nemoclaw_normalize_entrypoint_env_wrapper "$@"
+if [ "$NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC" -eq 0 ]; then
+  set --
+else
+  set -- "${NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV[@]}"
+fi
+unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
+  _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
+unset -f nemoclaw_normalize_entrypoint_env_wrapper
+# managed-entrypoint-env-wrapper end
+
+# Managed DCode images start as uid 0 only long enough to apply the canonical
+# startup profile and root-owned routing material. OCI --user nonroot is
+# rejected for profile application. After commit, setpriv performs an explicit
+# no-shell privilege drop and re-enters the unchanged legacy sandbox path.
+if [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ]; then
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '%s\n' '[SECURITY] Managed startup profiles require container uid 0.' >&2
+    exit 1
+  fi
+  /usr/local/bin/node \
+    /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
+    --agent langchain-deepagents-code
+  _NEMOCLAW_MANAGED_RUNTIME_ENV="/run/nemoclaw/managed-startup-runtime.env"
+  if [ -L "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
+    || [ ! -f "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
+    || [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MANAGED_RUNTIME_ENV")" != "0:0:400" ]; then
+    printf '%s\n' '[SECURITY] Managed startup runtime environment failed root ownership validation.' >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090 # generated root-owned fixed-path environment
+  . "$_NEMOCLAW_MANAGED_RUNTIME_ENV"
+  unset _NEMOCLAW_MANAGED_RUNTIME_ENV
+  unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64
+  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+    /usr/local/bin/nemoclaw-start "$@"
+fi
+
+# The published managed image uses uid 0 as its OCI entry user so it can accept
+# a future profile. Without one, drop immediately and execute the byte-for-byte
+# legacy sandbox-user path. Ordinary non-managed builds still start as sandbox.
+if [ "$(id -u)" -eq 0 ]; then
+  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+    /usr/local/bin/nemoclaw-start "$@"
+fi
+
 while IFS= read -r _nemoclaw_auto_approval_env; do
   unset "$_nemoclaw_auto_approval_env"
 done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
 unset _nemoclaw_auto_approval_env
 
-export HOME=/sandbox
-export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export LANGGRAPH_NO_VERSION_CHECK=true
 export LANGGRAPH_CLI_NO_ANALYTICS=1
@@ -71,7 +132,12 @@ unset _NEMOCLAW_SANDBOX_RLIMITS
 # or when dcode no longer uses inference.local.
 readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"
 readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"
-readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
+if [ -e /run/nemoclaw/managed-startup-ca-bundle.pem ] \
+  || [ -L /run/nemoclaw/managed-startup-ca-bundle.pem ]; then
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/nemoclaw/managed-startup-ca-bundle.pem"
+else
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
+fi
 readonly MANAGED_PROXY_OWNER_UID=0
 
 managed_proxy_file_metadata() {

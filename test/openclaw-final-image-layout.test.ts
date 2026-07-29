@@ -82,6 +82,7 @@ describe("OpenClaw final image layout", () => {
         stage: "openclaw-runtime-payload",
         copies: [
           "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py",
@@ -97,6 +98,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp",
           "COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts",
           "COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts",
+          "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
           "COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/",

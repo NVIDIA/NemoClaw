@@ -87,7 +87,7 @@ export type ResolveSandboxCreateIntentInput = {
 
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
-  buildCtx: string;
+  fromRef: string;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(

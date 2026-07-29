@@ -4,12 +4,21 @@
 import type { AgentDefinition } from "../agent/defs";
 import { formatEnvAssignment } from "../core/url-utils";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { MAX_CORPORATE_CA_BYTES } from "./corporate-ca-policy";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
+import {
+  decodeManagedStartupProfile,
+  MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
+} from "./managed-startup/profile";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  assertSandboxCreateArgvWithinTransportLimit,
+  SANDBOX_CREATE_MAX_ARGUMENT_BYTES,
+} from "./sandbox-create/transport";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
@@ -18,6 +27,11 @@ import {
 
 type OpenshellShellCommand = (args: string[]) => string;
 type OpenshellArgv = (args: string[]) => string[];
+
+export {
+  assertSandboxCreateArgvWithinTransportLimit,
+  SANDBOX_CREATE_MAX_ARGUMENT_BYTES,
+} from "./sandbox-create/transport";
 
 // These non-secret scheduler controls are intentionally forwarded for bounded
 // live-test and operator tuning. Keep this as an exact allowlist: the host's
@@ -55,6 +69,10 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
+  managedStartupProfile?: {
+    encodedProfile: string;
+    corporateCaB64?: string;
+  };
 }
 
 export interface SandboxCreateLaunch {
@@ -74,6 +92,10 @@ export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunc
 export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
   prebuild: SandboxPrebuildResult;
 }
+
+export type SandboxCreateManagedImageLaunchInput = SandboxCreateLaunchInput & {
+  sandboxName: string;
+};
 
 export function renderSandboxCreateCommand(
   createArgs: readonly string[],
@@ -183,12 +205,36 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     sandboxName: input.sandboxName,
     env,
   });
-
-  const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
-  // Remove host-infrastructure credentials that the generic allowlist
-  // permits for host-side processes but that must not enter the sandbox.
-  delete sandboxEnv.KUBECONFIG;
-  delete sandboxEnv.SSH_AUTH_SOCK;
+  if (input.managedStartupProfile) {
+    const { corporateCaB64, encodedProfile } = input.managedStartupProfile;
+    if (encodedProfile.length > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES) {
+      throw new Error("Managed startup profile transport is too large.");
+    }
+    const profile = decodeManagedStartupProfile(encodedProfile);
+    const expectedAgent = input.agent?.name ?? "openclaw";
+    if (profile.agent !== expectedAgent) {
+      throw new Error(
+        `Managed startup profile agent '${profile.agent}' does not match '${expectedAgent}'.`,
+      );
+    }
+    const expectsCorporateCa = profile.corporateCa.bundleSha256 !== null;
+    if (expectsCorporateCa !== (corporateCaB64 !== undefined)) {
+      throw new Error("Managed corporate CA transport does not match the startup profile.");
+    }
+    envArgs.push(formatEnvAssignment("NEMOCLAW_STARTUP_PROFILE_B64", encodedProfile));
+    if (corporateCaB64 !== undefined) {
+      const decodedCorporateCa = Buffer.from(corporateCaB64, "base64");
+      if (
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(corporateCaB64) ||
+        corporateCaB64.length > 4 * Math.ceil(MAX_CORPORATE_CA_BYTES / 3) ||
+        decodedCorporateCa.length > MAX_CORPORATE_CA_BYTES ||
+        decodedCorporateCa.toString("base64") !== corporateCaB64
+      ) {
+        throw new Error("Managed corporate CA transport is malformed or too large.");
+      }
+      envArgs.push(formatEnvAssignment("NEMOCLAW_CORPORATE_CA_B64", corporateCaB64));
+    }
+  }
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
@@ -204,6 +250,13 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   const createArgv = input.openshellArgv
     ? input.openshellArgv(openshellArgs)
     : ["bash", "-lc", createCommand];
+  assertSandboxCreateArgvWithinTransportLimit(createArgv);
+
+  const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
+  // Remove host-infrastructure credentials that the generic allowlist
+  // permits for host-side processes but that must not enter the sandbox.
+  delete sandboxEnv.KUBECONFIG;
+  delete sandboxEnv.SSH_AUTH_SOCK;
 
   return {
     createCommand,
@@ -227,6 +280,21 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   });
   return {
     ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    prebuild,
+  };
+}
+
+/** Launch an immutable complete image without invoking any Dockerfile build path. */
+export function prepareSandboxCreateManagedImageLaunch(
+  input: SandboxCreateManagedImageLaunchInput,
+): SandboxCreateLaunchWithPrebuild {
+  const prebuild: SandboxPrebuildResult = {
+    createArgs: [...input.createArgs],
+    imageRef: null,
+    imageId: null,
+  };
+  return {
+    ...prepareSandboxCreateLaunch(input),
     prebuild,
   };
 }
