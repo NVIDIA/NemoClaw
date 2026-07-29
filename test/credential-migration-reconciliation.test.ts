@@ -80,7 +80,7 @@ async function finalizeMigration(
       formatVerificationDiagnostics: () => [],
       isDeploymentHealthy: () => true,
       reportDeploymentReadiness: () => undefined,
-      verifyWebSearchInsideSandbox: () => undefined,
+      verifyWebSearchInsideSandbox: () => true,
       printDashboard: () => undefined,
       error: () => undefined,
       log: () => undefined,

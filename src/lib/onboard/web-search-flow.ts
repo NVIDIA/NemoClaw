@@ -483,6 +483,8 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     return verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, {
       runCaptureOpenshell: deps.runCaptureOpenshell,
       cliName: deps.cliName,
+      webSearchEnvFor,
+      webSearchLabelFor,
     });
   }
 

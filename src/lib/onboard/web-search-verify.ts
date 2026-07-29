@@ -3,11 +3,8 @@
 
 import YAML from "yaml";
 import { shellQuote } from "../core/shell-quote";
-import {
-  type WebSearchProvider,
-  webSearchEnvFor,
-  webSearchLabelFor,
-} from "../inference/web-search";
+
+type WebSearchVerifyProvider = "brave" | "tavily";
 
 export type WebSearchVerifyAgent =
   | {
@@ -22,6 +19,8 @@ export type WebSearchVerifyDeps = {
     options: { ignoreError: true; timeout: number },
   ) => string | null;
   cliName: () => string;
+  webSearchEnvFor: (provider: WebSearchVerifyProvider) => string;
+  webSearchLabelFor: (provider: WebSearchVerifyProvider) => string;
   log?: (message?: string) => void;
   warn?: (message?: string) => void;
 };
@@ -80,11 +79,11 @@ export function classifyWebSearchEnvBoundary(
  */
 function checkWebSearchEnvSecretBoundary(
   sandboxName: string,
-  provider: WebSearchProvider,
+  provider: WebSearchVerifyProvider,
   deps: WebSearchVerifyDeps,
   warn: (message?: string) => void,
 ): boolean {
-  const envKey = webSearchEnvFor(provider);
+  const envKey = deps.webSearchEnvFor(provider);
   const probe = deps.runCaptureOpenshell(
     // `sh -c` (not `-lc`): no login profiles run, so their output cannot
     // contaminate the sentinel the host classifies.
@@ -102,7 +101,7 @@ function checkWebSearchEnvSecretBoundary(
   );
   if (classifyWebSearchEnvBoundary(probe) !== "raw-secret") return false;
 
-  const label = webSearchLabelFor(provider);
+  const label = deps.webSearchLabelFor(provider);
   warn("");
   warn(`  ✗ SECURITY: the ${label} credential is exposed in the sandbox environment.`);
   warn(`    ${envKey} holds a raw key inside sandbox '${sandboxName}', so the agent can read and`);

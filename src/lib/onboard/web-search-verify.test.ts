@@ -16,6 +16,12 @@ function deps(output: string | null | Array<string | null>) {
       () => outputs.shift() ?? null,
     ),
     cliName: vi.fn(() => "nemoclaw"),
+    webSearchEnvFor: vi.fn((provider) =>
+      provider === "tavily" ? "TAVILY_API_KEY" : "BRAVE_API_KEY",
+    ),
+    webSearchLabelFor: vi.fn((provider) =>
+      provider === "tavily" ? "Tavily Search" : "Brave Search",
+    ),
     log: vi.fn(),
     warn: vi.fn(),
   } satisfies WebSearchVerifyDeps;

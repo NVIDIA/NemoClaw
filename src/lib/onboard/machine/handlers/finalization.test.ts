@@ -250,9 +250,12 @@ describe("finalization handlers", () => {
     expect(recoveryOrders[1]).toBeGreaterThan(
       calls.autoPairScopeApproval.mock.invocationCallOrder[0],
     );
-    expect(recoveryOrders[1]).toBeGreaterThan(calls.verifyWebSearch.mock.invocationCallOrder[0]);
     expect(refreshOrder).toBeGreaterThan(recoveryOrders[1]);
+    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(refreshOrder);
     expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
+    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.verify.mock.invocationCallOrder[0],
+    );
   });
 
   it("skips dashboard and gateway verification for terminal agents without forwards", async () => {
@@ -363,7 +366,7 @@ describe("finalization handlers", () => {
     });
     const agent = { name: "openclaw" };
 
-    const result = await handleFinalizationState({
+    const result = await runFinalizationHandlers({
       ...baseOptions(deps),
       agent,
       webSearchEnabled: true,

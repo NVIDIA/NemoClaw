@@ -128,7 +128,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   agent,
   stagedLegacyKeys,
   migratedLegacyKeys,
-  webSearchEnabled,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -171,14 +170,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.autoPairScopeApproval(sandboxName);
   }
 
-  // Probe web-search credential isolation and egress now that the final policy
-  // and provider state are live. Egress diagnostics remain best-effort, but a
-  // confirmed raw credential must prevent a successful handoff (#7425).
-  let webSearchCredentialBoundarySafe = true;
-  if (webSearchEnabled && manageDashboard) {
-    webSearchCredentialBoundarySafe = deps.verifyWebSearchInsideSandbox(sandboxName, agent);
-  }
-
   if (manageDashboard) {
     // Scope warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before verification, restarting only when needed.
@@ -202,6 +193,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   agent,
   hermesAuthMethod,
   hermesToolGateways,
+  webSearchEnabled,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -213,6 +205,12 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (manageDashboard) {
+    // Probe web-search credential isolation and egress now that the final
+    // policy, provider, process, and forwarding state are live. Egress
+    // diagnostics remain best-effort, but a confirmed raw credential must
+    // prevent a successful handoff (#7425).
+    const webSearchCredentialBoundarySafe =
+      !webSearchEnabled || deps.verifyWebSearchInsideSandbox(sandboxName, agent);
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
