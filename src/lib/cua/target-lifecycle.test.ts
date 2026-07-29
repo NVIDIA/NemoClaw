@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import type {
   CuaTargetAdapter,
@@ -27,6 +31,7 @@ import {
   type CuaTargetLifecycleDeps,
   detachedCuaTarget,
   executeCuaTargetLifecycle,
+  readCuaTargetManifest,
 } from "./target-lifecycle";
 
 const digest = (value: string): string => `sha256:${value.repeat(64).slice(0, 64)}`;
@@ -201,6 +206,18 @@ function harness(target?: CuaTargetAttachment): {
 }
 
 describe("CUA target lifecycle (#7751)", () => {
+  it("rejects a symlinked target manifest before parsing it", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-target-manifest-"));
+    const target = path.join(directory, "target.json");
+    const link = path.join(directory, "manifest.json");
+    fs.writeFileSync(target, JSON.stringify(manifest));
+    fs.symlinkSync(target, link);
+
+    expect(() => readCuaTargetManifest(link)).toThrow();
+
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
   it("attaches only after immutable identity and all capability checks pass", () => {
     const { registry, deps } = harness();
     const adapter = fakeAdapter(() => attachedTarget());
