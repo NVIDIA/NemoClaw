@@ -66,8 +66,9 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     reportDeploymentReadiness(healthy: boolean): void;
     /**
      * Confirms the live sandbox does not expose a raw web-search credential.
-     * Other web-search diagnostics remain best-effort. Returns false only for
-     * a confirmed exposure so finalization cannot report the sandbox as ready.
+     * Other web-search diagnostics remain best-effort. Returns false for a
+     * confirmed exposure or an unverifiable isolation result so finalization
+     * cannot report the sandbox as ready.
      */
     verifyWebSearchInsideSandbox(
       sandboxName: string,

@@ -73,9 +73,9 @@ export function classifyWebSearchEnvBoundary(
  * expose the web-search provider's raw credential. `openclaw.json` inspection
  * alone misses this — the key leaks through the process environment, not the
  * config file. Classification runs in-sandbox and only a marked sentinel
- * returns, so the raw value never reaches the host. On a raw-secret exposure it
- * surfaces a prominent, actionable alert. Returns true when a raw credential was
- * detected so finalization can refuse a successful handoff.
+ * returns, so the raw value never reaches the host. It surfaces a prominent,
+ * actionable alert for a raw-secret exposure or an unverifiable result. Returns
+ * true for either unsafe state so finalization can refuse a successful handoff.
  */
 function checkWebSearchEnvSecretBoundary(
   sandboxName: string,
@@ -222,8 +222,9 @@ function hasTavilyResult(body: string): boolean {
  * rewriting and egress with a real search request.
  * For OpenClaw: checks the tools.web.search block, then proves provider egress.
  *
- * Ordinary probe failures remain best-effort warnings. A confirmed raw
- * credential returns false so onboarding cannot report the sandbox as ready.
+ * Configuration and egress failures remain best-effort warnings. A confirmed
+ * raw credential or an unverifiable isolation result returns false so onboarding
+ * cannot report the sandbox as ready.
  */
 export function verifyWebSearchInsideSandbox(
   sandboxName: string,
