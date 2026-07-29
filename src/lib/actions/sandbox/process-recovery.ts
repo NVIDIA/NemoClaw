@@ -1021,10 +1021,11 @@ function isHermesAgent(
  * whose OpenClaw processes are not running. Also re-establishes the
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, secretBoundaryRefused?, secretBoundaryReason?, recoveryFailureLayer? }`.
- * `recoveryFailureLayer` carries the classified managed-restart failure so a
- * quiet caller (`recover`, `connect`) can still report why recovery is not
- * retryable instead of printing a generic "check the gateway log".
+ * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, secretBoundaryRefused?, secretBoundaryReason? }`.
+ * `onRecoveryFailureLayer` reports the classified managed-restart failure so a
+ * quiet caller (`recover`, `connect --probe-only`) can still explain why
+ * recovery is not retryable instead of printing a generic "check the gateway
+ * log". The result shape is unchanged so existing callers keep their contract.
  */
 function checkAndRecoverSandboxProcessesWithoutHostLock(
   sandboxName: string,
@@ -1036,6 +1037,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     isWsl: isWslOverride,
+    onRecoveryFailureLayer,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
@@ -1044,6 +1046,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -1287,13 +1290,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           managedRecoveryFailureLayer,
         );
       }
-      return {
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
-        recoveryFailureLayer: managedRecoveryFailureLayer,
-      };
+      onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
     if (relaunch) {
       try {
@@ -1415,13 +1413,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent, managedRecoveryFailureLayer);
   }
 
-  return {
-    checked: true,
-    wasRunning: false,
-    recovered: false,
-    forwardRecovered: false,
-    recoveryFailureLayer: managedRecoveryFailureLayer,
-  };
+  onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+  return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
 }
 
 export function checkAndRecoverSandboxProcesses(
@@ -1434,6 +1427,7 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>

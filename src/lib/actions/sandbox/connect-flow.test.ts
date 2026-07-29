@@ -460,7 +460,10 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha", {
+      quiet: true,
+      onRecoveryFailureLayer: expect.any(Function),
+    });
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
       "openshell",

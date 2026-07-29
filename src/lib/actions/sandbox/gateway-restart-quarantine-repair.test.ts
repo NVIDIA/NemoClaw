@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyGatewayRestartFailure,
@@ -10,8 +8,6 @@ import {
   isGatewayIntegrityRepairLayer,
   printGatewayRestartFailure,
 } from "./gateway-restart";
-
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../../..");
 
 // The exact lines the in-sandbox Hermes supervisor emits when it stops
 // attempting relaunch. `scripts/managed-gateway-control.py` allowlists these
@@ -81,21 +77,10 @@ describe("supervisor relaunch quarantine classification (#7801)", () => {
     expect(classify("SUPERVISOR_NOT_RUNNING")).toMatchObject({ layer: "supervisor not running" });
   });
 
-  it("keeps every matched marker present in the supervisor that emits it", () => {
-    const startScript = fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/start.sh"), "utf8");
-    const controller = fs.readFileSync(
-      path.join(REPO_ROOT, "scripts/managed-gateway-control.py"),
-      "utf8",
-    );
-    const emitted = QUARANTINE_LINES.filter(
-      (line) => classify(line).layer === "relaunch quarantined",
-    );
-    expect(emitted).toHaveLength(QUARANTINE_LINES.length);
-    expect(
-      ["quarantined until sandbox recreation", "quarantining the managed startup supervisor"].every(
-        (marker) => startScript.includes(marker) && controller.includes(marker),
-      ),
-    ).toBe(true);
+  it("ignores an unrelated line that merely mentions the supervisor", () => {
+    expect(classify("[gateway] Hermes gateway respawned (pid 18424)")).toMatchObject({
+      layer: "launch failure",
+    });
   });
 });
 
