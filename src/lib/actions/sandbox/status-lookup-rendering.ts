@@ -47,9 +47,27 @@ export async function printSandboxGatewayLookupStatus(
     case "gateway_missing_after_restart":
       await printGatewayMissingAfterRestartLookupStatus(context);
       return;
+    case "sandbox_recovery_failed":
+      printSandboxRecoveryFailedLookupStatus(context);
+      return;
     default:
       await printUnknownGatewayLookupStatus(context);
   }
+}
+
+function printSandboxRecoveryFailedLookupStatus({
+  sandboxName,
+  lookup,
+}: SandboxGatewayLookupStatusContext): void {
+  console.log("");
+  console.log(
+    `  Sandbox '${sandboxName}' was restored from Docker, but its agent delivery chain could not be recovered safely.`,
+  );
+  if (lookup.output) console.log(lookup.output);
+  console.log(
+    `  Retry \`${CLI_NAME} ${sandboxName} recover\` after addressing the reported layer.`,
+  );
+  process.exit(1);
 }
 
 function printMissingLiveSandboxStatusGuidance(

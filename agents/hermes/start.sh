@@ -675,6 +675,155 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+ensure_hermes_cross_uid_state_dir() {
+  local state_name="${1:?Hermes state directory name required}"
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
+    NEMOCLAW_HERMES_STATE_DIR_NAME="$state_name" \
+    python3 -I - <<'PYCROSSUIDDIR'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+name = os.environ["NEMOCLAW_HERMES_STATE_DIR_NAME"]
+desired_mode = 0o2770
+
+
+def fail(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes cross-UID state repair because {message}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    fail("descriptor-safe directory flags are unavailable")
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+root_fd = -1
+gateway_fd = -1
+try:
+    try:
+        root_fd = os.open(root, open_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (
+        root_before.st_dev,
+        root_before.st_ino,
+    ):
+        fail(f"{root} changed while it was opened")
+
+    try:
+        gateway_fd = os.open(name, open_flags, dir_fd=root_fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, desired_mode, dir_fd=root_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            fail(f"{root}/{name} could not be created: {exc.strerror}")
+        try:
+            gateway_fd = os.open(name, open_flags, dir_fd=root_fd)
+        except OSError as exc:
+            fail(f"{root}/{name} could not be opened after creation: {exc.strerror}")
+    except OSError as exc:
+        try:
+            unsafe = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError:
+            unsafe = None
+        if unsafe is not None and stat.S_ISLNK(unsafe.st_mode):
+            fail(f"{root}/{name} is a symlink")
+        if unsafe is not None and not stat.S_ISDIR(unsafe.st_mode):
+            fail(f"{root}/{name} is not a directory")
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{root}/{name} could not be opened safely: {detail}")
+
+    if os.geteuid() == 0:
+        try:
+            gateway_uid = pwd.getpwnam("gateway").pw_uid
+            sandbox_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            fail(f"gateway/sandbox account lookup failed: {exc}")
+        os.fchown(gateway_fd, gateway_uid, sandbox_gid)
+        os.fchmod(gateway_fd, desired_mode)
+    else:
+        # OpenShell's non-root topology runs the gateway as the current user.
+        # Repair the mode when this user owns the directory. If an ordinary
+        # Linux image still has the root-prepared gateway owner, fchmod is
+        # expected to fail and the exact existing mode is verified below.
+        try:
+            os.fchmod(gateway_fd, desired_mode)
+        except PermissionError:
+            pass
+
+    current = os.fstat(gateway_fd)
+    if not stat.S_ISDIR(current.st_mode):
+        fail(f"{root}/{name} is not a directory")
+    if stat.S_IMODE(current.st_mode) != desired_mode:
+        fail(
+            f"{root}/{name} mode is {stat.S_IMODE(current.st_mode):04o}, "
+            f"expected {desired_mode:04o}"
+        )
+
+    if os.geteuid() == 0:
+        allowed_uids = {gateway_uid}
+        expected_gid = sandbox_gid
+    else:
+        allowed_uids = {os.geteuid()}
+        try:
+            allowed_uids.add(pwd.getpwnam("gateway").pw_uid)
+            expected_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError:
+            # Host-side unit fixtures need not have the image's account pair.
+            # A deployed image always has both accounts; when the gateway
+            # account is absent, current-user ownership and exact mode remain
+            # the complete non-root topology contract.
+            expected_gid = None
+    if current.st_uid not in allowed_uids:
+        fail(f"{root}/{name} has an unexpected owner uid {current.st_uid}")
+    if expected_gid is not None and current.st_gid != expected_gid:
+        fail(
+            f"{root}/{name} has group gid {current.st_gid}, "
+            f"expected sandbox gid {expected_gid}"
+        )
+
+    try:
+        named = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+    except OSError as exc:
+        fail(f"{root}/{name} no longer names the opened directory: {exc.strerror}")
+    if (named.st_dev, named.st_ino) != (current.st_dev, current.st_ino):
+        fail(f"{root}/{name} changed during repair")
+
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        fail(f"{root} disappeared during repair: {exc.strerror}")
+    if (root_after.st_dev, root_after.st_ino) != (
+        root_open.st_dev,
+        root_open.st_ino,
+    ):
+        fail(f"{root} changed during repair")
+finally:
+    if gateway_fd >= 0:
+        os.close(gateway_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PYCROSSUIDDIR
+}
+
 repair_hermes_log_permissions() {
   ensure_hermes_state_dir "${HERMES_DIR}/logs" 2770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 2770 || return 1
@@ -878,11 +1027,19 @@ PYHISTORY
 }
 
 repair_hermes_startup_layout() {
+  # The cron and Discord recovery ledgers are created by gateway and backed
+  # up/restored by sandbox. Maintain their descriptor-verified, group-writable
+  # parents even when the rest of the config root is shields-up locked or was
+  # wiped.
+  ensure_hermes_cross_uid_state_dir gateway || return 1
+  ensure_hermes_cross_uid_state_dir cron || return 1
+
   if hermes_config_root_is_locked; then
-    # The locked-root posture seals config.yaml/.env, not the dir, so we can
-    # still bring a missing prompt_toolkit history file into existence as a
-    # sandbox-owned regular file. Sandboxes built before the precreate landed
-    # would otherwise stay broken until the next `shields down` cycle.
+    # The locked-root posture seals config.yaml/.env, not the dir. The gateway
+    # and cron state parents were maintained above; also bring a missing
+    # prompt_toolkit history file into existence as a sandbox-owned regular
+    # file. Sandboxes built before the precreate landed would otherwise stay
+    # broken until the next `shields down` cycle.
     # Refusal (symlink, non-regular, create failure) is a hard stop: starting
     # the gateway with an unsafe .hermes_history under a locked root would
     # either let the TUI clobber an attacker-pointed path or repeat the
