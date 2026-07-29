@@ -107,7 +107,12 @@ export async function runRebuildPreflightPhase(
   try {
     assertMcpDestroyNotPending(sandboxEntry);
   } catch (error) {
-    bail(error instanceof Error ? error.message : String(error));
+    printRebuildPreflightFailure(
+      "a pending MCP destroy transaction blocks rebuild.",
+      "Resolve the pending MCP state before retrying rebuild.",
+      error instanceof Error ? error.message : String(error),
+      bail,
+    );
     return null;
   }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);

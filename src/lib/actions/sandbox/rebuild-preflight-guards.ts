@@ -263,8 +263,12 @@ export function getRebuildSandboxEntryOrBail(
 ): RebuildSandboxEntry | null {
   const sb = registry.getSandbox(sandboxName) as RebuildSandboxEntry | null;
   if (!sb) {
-    console.error(`  Sandbox '${sandboxName}' not found in registry.`);
-    bail(`Sandbox '${sandboxName}' not found in registry.`);
+    printRebuildPreflightFailure(
+      `sandbox '${sandboxName}' not found in registry.`,
+      "Verify the sandbox name and rerun rebuild.",
+      `Sandbox '${sandboxName}' not found in registry.`,
+      bail,
+    );
     return null;
   }
   return sb;
@@ -280,12 +284,12 @@ export function blockRebuildOnPendingBaselineTransition(
   if (!transition) return false;
 
   const key = transition.exclusion.key;
-  console.error("");
-  console.error(
-    `  Baseline policy ${transition.operation} for '${key}' needs repair before rebuild.`,
+  printRebuildPreflightFailure(
+    `baseline policy ${transition.operation} for '${key}' needs repair before rebuild.`,
+    `Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`,
+    `Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`,
+    bail,
   );
-  console.error(`  Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`);
-  bail(`Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`, 1);
   return true;
 }
 
@@ -294,9 +298,12 @@ export function isSingleAgentRebuildSupported(
   bail: RebuildBail,
 ): boolean {
   if (sb.agents && sb.agents.length > 1) {
-    console.error("  Multi-agent sandbox rebuild is not yet supported.");
-    console.error(`  Back up state manually and recreate with \`${CLI_NAME} onboard\`.`);
-    bail("Multi-agent sandbox rebuild is not yet supported.");
+    printRebuildPreflightFailure(
+      "multi-agent sandbox rebuild is not yet supported.",
+      `Back up state manually and recreate with \`${CLI_NAME} onboard\`.`,
+      "Multi-agent sandbox rebuild is not yet supported.",
+      bail,
+    );
     return false;
   }
   return true;
@@ -307,10 +314,13 @@ export function acquireRebuildOnboardLock(sandboxName: string, bail: RebuildBail
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
   if (!lock.acquired) {
-    console.error(`  Another ${CLI_NAME} onboarding run is already in progress.`);
-    if (lock.holderPid) console.error(`  Lock holder PID: ${lock.holderPid}`);
-    console.error("  Sandbox is untouched — no data was lost.");
-    bail("Could not acquire onboard lock before rebuild");
+    const pidDetail = lock.holderPid ? ` Lock holder PID: ${lock.holderPid}.` : "";
+    printRebuildPreflightFailure(
+      `another ${CLI_NAME} onboarding run is already in progress.`,
+      `Wait for the other run to finish or remove the stale lock.${pidDetail}`,
+      "Could not acquire onboard lock before rebuild",
+      bail,
+    );
   }
   let released = false;
   const release = () => {

@@ -181,7 +181,7 @@ describe("rebuild preflight guards", () => {
     ).toThrow("Multi-agent sandbox rebuild is not yet supported");
 
     const output = error.mock.calls.flat().join("\n");
-    expect(output).toContain("Multi-agent sandbox rebuild is not yet supported");
+    expect(output).toContain("multi-agent sandbox rebuild is not yet supported.");
     expect(output).toContain("Back up state manually");
   });
 
