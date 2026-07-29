@@ -604,22 +604,6 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function shellTargetCaseLines(script: string): string[] | undefined {
-  const lines = script.split("\n");
-  const caseStarts = lines.flatMap((line, index) =>
-    line.trim() === 'case "${TARGETS}" in' ? [index] : [],
-  );
-  const caseEnds = lines.flatMap((line, index) => (line.trim() === "esac" ? [index] : []));
-  if (caseStarts.length !== 1 || caseEnds.length !== 1) return undefined;
-  const caseStart = caseStarts[0]!;
-  const caseEnd = caseEnds[0]!;
-  if (caseEnd <= caseStart) return undefined;
-  return lines
-    .slice(caseStart, caseEnd + 1)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function extractCallArguments(script: string, callStart: number): string {
   const openIndex = script.indexOf("(", callStart);
   if (openIndex < 0) return "";
@@ -4417,7 +4401,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
-  const trustedTargetCase = [
+  const trustedControllerMatrixScript = [
+    "set -euo pipefail",
     'case "${TARGETS}" in',
     '"")',
     "matrix='[]'",
@@ -4436,8 +4421,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "exit 1",
     ";;",
     "esac",
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
   ];
-  if (!isDeepStrictEqual(shellTargetCaseLines(controllerMatrixScript), trustedTargetCase)) {
+  const controllerMatrixLines = controllerMatrixScript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!isDeepStrictEqual(controllerMatrixLines, trustedControllerMatrixScript)) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
   requireRunContains(

@@ -75,4 +75,18 @@ describe("trusted E2E target routing boundary (#7824)", () => {
 
     expect(validateE2eWorkflow(workflow)).toContain(EXPECTED_ERROR);
   });
+
+  it("rejects a matrix override after approved target routing", () => {
+    const { controllerMatrix, workflow } = fixture();
+    const output = `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`;
+    requireFixture(
+      controllerMatrix.run?.includes(output),
+      "trusted target fixture output is missing",
+    );
+    const unsafeOverride =
+      'matrix=\'[{"id":"untrusted","runner":"self-hosted","label":"untrusted"}]\'';
+    controllerMatrix.run = controllerMatrix.run!.replace(output, `${unsafeOverride}\n${output}`);
+
+    expect(validateE2eWorkflow(workflow)).toContain(EXPECTED_ERROR);
+  });
 });
