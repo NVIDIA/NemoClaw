@@ -18,19 +18,19 @@ HOME = Path(__file__).parent / "hermes-home"
 _GATEWAY_LOCK_FILENAME = "gateway.lock"
 _RUNTIME_STATUS_FILE = "gateway_state.json"
 
-def get_hermes_home() -> Path:
+def _get_process_hermes_home() -> Path:
     return HOME
 
 def _get_pid_path() -> Path:
     """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "gateway.pid"
 
 def _get_gateway_lock_path(pid_path: Optional[Path] = None) -> Path:
     """Return the path to the runtime gateway lock file."""
     if pid_path is not None:
         return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / _GATEWAY_LOCK_FILENAME
 
 def _get_runtime_status_path() -> Path:
@@ -95,6 +95,18 @@ describe("Hermes writable gateway runtime metadata", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("gateway runtime metadata source shape changed");
       expect(fs.readFileSync(statusPath, "utf-8")).toBe(drifted);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects the obsolete Hermes 0.18 home selector", () => {
+    const obsolete = UPSTREAM_FIXTURE.replaceAll("_get_process_hermes_home()", "get_hermes_home()");
+    const { result, statusPath, tmp } = runPatcher(obsolete);
+    try {
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("gateway runtime metadata source shape changed");
+      expect(fs.readFileSync(statusPath, "utf-8")).toBe(obsolete);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

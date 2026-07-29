@@ -3,15 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Relocate pinned Hermes gateway metadata below its writable runtime directory.
 
-Hermes v0.18.0 stores ``gateway.pid``, ``gateway.lock``, and
+Hermes v0.19.0 stores ``gateway.pid``, ``gateway.lock``, and
 ``gateway_state.json`` directly below ``HERMES_HOME``. NemoClaw shields-up
-correctly makes that config root root-owned and non-writable, so a managed
-gateway replacement cannot remove the old PID file or atomically refresh
-runtime status. The resulting replacement exits with "PID file race lost".
+correctly makes that config root root-owned and non-writable, so NemoClaw's
+managed stop/start recovery cannot remove the old PID file or atomically
+refresh runtime status. The next managed start exits with "PID file race lost".
 
 NemoClaw already provisions ``HERMES_HOME/runtime`` as the writable lifecycle
-boundary. Patch only Hermes's central path helpers so all of its PID, lock,
-status, health, and CLI readers agree on that directory. The exact source-shape
+boundary. Patch only the central helpers exercised by NemoClaw's managed
+default-gateway lifecycle. Direct upstream ``--replace`` cleanup,
+planned-stop/takeover markers, and named-profile or service readers still use
+top-level paths; that inherited bounded residual is documented in the
+dependency review and is not claimed by this patch. The exact source-shape
 checks fail closed when the pinned Hermes implementation changes.
 
 Remove this patch when the minimum supported Hermes release natively separates
@@ -25,12 +28,12 @@ from pathlib import Path
 
 OLD_PID_HELPER = '''def _get_pid_path() -> Path:
     """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "gateway.pid"
 '''
 NEW_PID_HELPER = '''def _get_pid_path() -> Path:
     """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "runtime" / "gateway.pid"
 '''
 
@@ -38,14 +41,14 @@ OLD_LOCK_HELPER = '''def _get_gateway_lock_path(pid_path: Optional[Path] = None)
     """Return the path to the runtime gateway lock file."""
     if pid_path is not None:
         return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / _GATEWAY_LOCK_FILENAME
 '''
 NEW_LOCK_HELPER = '''def _get_gateway_lock_path(pid_path: Optional[Path] = None) -> Path:
     """Return the path to the runtime gateway lock file."""
     if pid_path is not None:
         return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "runtime" / _GATEWAY_LOCK_FILENAME
 '''
 

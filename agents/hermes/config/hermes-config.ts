@@ -104,7 +104,7 @@ export function buildHermesConfig(
   };
 
   const config: Record<string, unknown> = {
-    _config_version: 32,
+    _config_version: 33,
     _nemoclaw_upstream: upstream,
     model: modelConfig,
     providers: {
@@ -122,6 +122,29 @@ export function buildHermesConfig(
       // verify-on-stop behavior once. Generated configs start at v32, so
       // persist the same migrated value instead of inheriting "auto".
       verify_on_stop: false,
+    },
+    approvals: {
+      // Hermes 0.19 defaults an omitted mode to smart authorization.
+      // Keep automated command authorization behind a separate product decision.
+      mode: "manual",
+    },
+    session_reset: {
+      // Hermes 0.19 changes an omitted gateway reset policy from daily plus
+      // idle expiry to no automatic reset. Preserve the complete prior policy
+      // so later dependency defaults cannot silently change retention or
+      // notification behavior.
+      mode: "both",
+      at_hour: 4,
+      idle_minutes: 1440,
+      notify: true,
+      notify_exclude_platforms: ["api_server", "webhook"],
+      bg_process_max_age_hours: 24,
+    },
+    browser: {
+      // Hermes 0.19 makes the sensitive browser_console JavaScript primitive
+      // denylist opt-in. Preserve the prior fail-closed posture for hostile
+      // pages; a broader evaluation surface requires its own security decision.
+      restrict_evaluate: true,
     },
     tools: {
       tool_search: {
@@ -145,6 +168,19 @@ export function buildHermesConfig(
       compact: false,
       tool_progress: "all",
       interim_assistant_messages: true,
+      // Hermes 0.19 changes this default to true. Keep internal reasoning out
+      // of user-visible channel output unless product policy changes explicitly.
+      show_reasoning: false,
+      // Commentary is a new Hermes 0.19 visible-output channel. Keep the
+      // dependency upgrade from expanding channel disclosure by default.
+      show_commentary: false,
+    },
+    updates: {
+      // Hermes 0.19 changes pre-update backups from off to a state snapshot
+      // and adds an automatic CUA driver refresh. NemoClaw owns image updates
+      // externally, so do not duplicate state or fetch mutable update payloads.
+      pre_update_backup: false,
+      refresh_cua_driver: false,
     },
     curator: {
       enabled: true,

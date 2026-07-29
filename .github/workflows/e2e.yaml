@@ -2054,6 +2054,49 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  dashboard-remote-bind:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',dashboard-remote-bind,') || contains(format(',{0},', inputs.targets), ',dashboard-remote-bind,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "dashboard-remote-bind"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Run dashboard remote-bind live test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dashboard-remote-bind.test.ts
+
+      - name: Upload dashboard remote-bind artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   sessions-agents-cli:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sessions-agents-cli,') || contains(format(',{0},', inputs.targets), ',sessions-agents-cli,') }}
@@ -5809,6 +5852,7 @@ jobs:
         brave-search,
         ollama-auth-proxy,
         cron-preflight-inference-local,
+        dashboard-remote-bind,
         sessions-agents-cli,
         hermes-e2e,
         hermes-gpu-startup,
