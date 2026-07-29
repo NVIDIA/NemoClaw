@@ -64,15 +64,14 @@ export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliatio
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
-const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
-const FORK_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-fork-pr";
+const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
-const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E maintainer authorization required to run E2E";
-const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
+const CONTROL_PLANE_AUTHORIZATION_TITLE = "Maintainer approval required to run E2E";
+const FORK_E2E_AUTHORIZATION_TITLE = "Maintainer approval required to run fork E2E";
 const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
 const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
 const AUTHORIZED_EXECUTION_TITLE_PREFIX = "E2E execution authorized by @";
@@ -106,7 +105,6 @@ const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_REPORTED_WORKFLOW_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
-const MAX_APPROVAL_REVIEWS = 20;
 const MAINTAINER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "requested",
@@ -148,7 +146,7 @@ type ControllerPathSlot = "initial" | "runner-loss-retry";
 
 type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
 
-type ControlPlaneCommandBase = {
+type E2EApprovalCommandBase = {
   prNumber: number;
   headSha: string;
   baseSha: string;
@@ -157,19 +155,13 @@ type ControlPlaneCommandBase = {
   workflowRunAttempt: number;
 } & ControllerPaths;
 
-type ControlPlaneDispatchCommand = ControlPlaneCommandBase & {
-  mode: "start-control-plane";
+type MaintainerApprovalCommand = E2EApprovalCommandBase & {
+  mode: "approve-e2e";
   maintainer: string;
   reason: string;
 };
 
-type ApprovedForkE2EDispatchCommand = ControlPlaneCommandBase & {
-  mode: "start-approved-fork";
-  approvalRunId: number;
-  approvalRunAttempt: number;
-};
-
-type AuthorizedE2ECommand = ControlPlaneCommandBase & {
+type AuthorizedE2ECommand = E2EApprovalCommandBase & {
   maintainer: string;
   reason: string;
 };
@@ -220,8 +212,7 @@ export type ControllerCommand =
       statePath: string;
       retryStatePath: string;
     }
-  | ControlPlaneDispatchCommand
-  | ApprovedForkE2EDispatchCommand;
+  | MaintainerApprovalCommand;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
@@ -572,7 +563,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       retryStatePath: privateControllerPaths(workDir, "runner-loss-retry").statePath,
     };
   }
-  if (args.mode === "start-control-plane") {
+  if (args.mode === "approve-e2e") {
     const maintainer = requiredArgument(args.maintainer, "maintainer");
     if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
     const workflowRunAttempt = parsePositiveId(
@@ -583,7 +574,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       throw new Error("--workflow-run-attempt must be exactly 1");
     }
     return {
-      mode: "start-control-plane",
+      mode: "approve-e2e",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: requiredArgument(args.head, "head"),
       baseSha: requiredArgument(args.base, "base"),
@@ -595,36 +586,8 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
-  if (args.mode === "start-approved-fork") {
-    const workflowRunAttempt = parsePositiveId(
-      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
-      "--workflow-run-attempt",
-    );
-    const approvalRunAttempt = parsePositiveId(
-      requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
-      "--approval-run-attempt",
-    );
-    if (workflowRunAttempt !== 1 || approvalRunAttempt !== 1) {
-      throw new Error("workflow and approval run attempts must be exactly 1");
-    }
-    return {
-      mode: "start-approved-fork",
-      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
-      headSha: requiredArgument(args.head, "head"),
-      baseSha: requiredArgument(args.base, "base"),
-      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
-      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
-      workflowRunAttempt,
-      approvalRunId: parsePositiveId(
-        requiredArgument(args.approvalRunId, "approval-run-id"),
-        "--approval-run-id",
-      ),
-      approvalRunAttempt,
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
-    };
-  }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
+    "--mode must be seed, start, approve-e2e, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
   );
 }
 
@@ -892,11 +855,6 @@ function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) return;
   const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
-    approval_base_sha: (candidate) => SHA_PATTERN.test(candidate),
-    approval_environment: (candidate) => candidate === FORK_E2E_APPROVAL_ENVIRONMENT,
-    approval_head_sha: (candidate) => SHA_PATTERN.test(candidate),
-    approval_mode: (candidate) => candidate === "start-approved-fork",
-    approval_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
     finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
@@ -921,20 +879,6 @@ function appendOutput(name: string, value: string): void {
   } finally {
     fs.closeSync(descriptor);
   }
-}
-
-function emitE2EApprovalOutputs(
-  mode: "start-approved-fork",
-  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT,
-  prNumber: number,
-  headSha: string,
-  baseSha: string,
-): void {
-  appendOutput("approval_mode", mode);
-  appendOutput("approval_environment", environment);
-  appendOutput("approval_pr_number", String(prNumber));
-  appendOutput("approval_head_sha", headSha);
-  appendOutput("approval_base_sha", baseSha);
 }
 
 export function prGateExternalId(prNumber: number, headSha: string, baseSha: string): string {
@@ -3161,6 +3105,7 @@ export async function startPrGate(
     });
     assertPullUnchanged(pull, currentPull);
     if (command.headRepository !== repository && selections.length > 0) {
+      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW}`;
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await markCheckInProgress(
@@ -3176,16 +3121,10 @@ export async function startPrGate(
         [
           `Review scope: PR #${pull.number}; head repository \`${command.headRepository}\`; head SHA \`${command.headSha}\`; base SHA \`${ciIdentity.baseSha}\`; ${selectionSummary}; deterministic plan \`${plan.planHash}\`.`,
           "No selected E2E job or target ran. No repository credential was exposed to fork code.",
-          `An authorized E2E reviewer must review the exact fork code and risk plan. Open ${gateRunLink}, choose Review deployments, and approve the \`${FORK_E2E_APPROVAL_ENVIRONMENT}\` environment. Approval authorizes the selected fork code to run with E2E credentials. GitHub records the reviewer and optional comment.`,
-          "If Review deployments is absent, configure the protected environment. Then, update the PR to create a new PR SHA and run fresh PR CI.",
+          `A repository maintainer must review the exact fork code and risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
+          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and exact reviewed inputs before it dispatches this plan.`,
+          "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
         ].join("\n\n"),
-      );
-      emitE2EApprovalOutputs(
-        "start-approved-fork",
-        FORK_E2E_APPROVAL_ENVIRONMENT,
-        pull.number,
-        command.headSha,
-        ciIdentity.baseSha,
       );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
@@ -3197,7 +3136,9 @@ export async function startPrGate(
     }
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
-      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
+      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW}`;
+      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
+      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await markCheckInProgress(
         {
           repository,
@@ -3211,8 +3152,9 @@ export async function startPrGate(
         [
           `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
           "No selected E2E job or target ran and no repository secret was exposed.",
-          `Any repository maintainer or administrator can authorize this exact plan by dispatching [${WORKFLOW_NAME}](${workflowUrl}) on \`main\` with \`operation=run-control-plane\`, \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The controller verifies the triggering actor's repository role before dispatch.`,
-          "The authorization dispatch is the approval; no separate protected-environment review is required. This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
+          `A repository maintainer must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\` and the risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
+          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and exact reviewed inputs before it dispatches this plan.`,
+          "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
       );
@@ -3265,10 +3207,7 @@ export async function startPrGate(
   }
 }
 
-async function startAuthorizedPrGate(
-  command: AuthorizedE2ECommand,
-  authorizationKind: "internal-control-plane" | "fork",
-): Promise<void> {
+async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
   if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
@@ -3282,8 +3221,7 @@ async function startAuthorizedPrGate(
   }
   const reason = normalizedWaiverReason(command.reason);
   const executionTitle = authorizedExecutionTitle(command.maintainer);
-  const pendingTitle =
-    authorizationKind === "fork" ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
+  let pendingTitle = CONTROL_PLANE_AUTHORIZATION_TITLE;
 
   let checkRunId: number | undefined;
   try {
@@ -3295,12 +3233,7 @@ async function startAuthorizedPrGate(
       baseSha: command.baseSha,
     });
     const isFork = pull.head.repo?.full_name !== repository;
-    if (authorizationKind === "internal-control-plane" && isFork) {
-      throw new Error("control-plane E2E authorization requires an internal pull request");
-    }
-    if (authorizationKind === "fork" && !isFork) {
-      throw new Error("fork E2E authorization requires a fork pull request");
-    }
+    pendingTitle = isFork ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
     const changedFiles = await pullChangedFiles(repository, pull, token);
     const inventory = readFreeStandingJobsInventory();
     const plan = validateRiskPlan(
@@ -3311,10 +3244,7 @@ async function startAuthorizedPrGate(
       }),
       new Set(inventory.allowedJobs),
     );
-    if (
-      authorizationKind === "internal-control-plane" &&
-      !requiresCredentialedE2eAuthorization(plan)
-    ) {
+    if (!isFork && !requiresCredentialedE2eAuthorization(plan)) {
       throw new Error("pull request does not require credentialed E2E authorization");
     }
     const jobs = riskPlanRequiredJobIds(plan);
@@ -3426,9 +3356,7 @@ async function startAuthorizedPrGate(
             pendingTitle,
             [
               `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
-              authorizationKind === "fork"
-                ? "Review the controller error and any linked child run. Then, update the PR to create a new PR SHA and run fresh PR CI."
-                : "Review the controller error and any linked child run. Then, launch a first-attempt `run-control-plane` workflow for the PR/base SHA pair.",
+              "Review the controller error and any linked child run. Then, launch a fresh first-attempt `approve-e2e` workflow for the PR/base SHA pair.",
             ].join("\n\n"),
           );
           appendOutput("finalized", "true");
@@ -3443,71 +3371,15 @@ async function startAuthorizedPrGate(
   }
 }
 
-export async function startControlPlanePrGate(command: ControlPlaneDispatchCommand): Promise<void> {
+export async function approvePrE2E(command: MaintainerApprovalCommand): Promise<void> {
   const { token, repository } = tokenAndRepository();
   await requireMaintainerPermission(
     repository,
     token,
     command.maintainer,
-    "Control-plane E2E authorization",
+    "Credentialed E2E approval",
   );
-  await startAuthorizedPrGate(command, "internal-control-plane");
-}
-
-function approvedE2EReason(comment: string | null): string {
-  const normalizedComment = (comment ?? "")
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\s{2,}/gu, " ")
-    .trim();
-  const baseReason = "Protected environment approval confirmed for this credentialed E2E run.";
-  const commentPrefix = " Reviewer comment: ";
-  const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
-  const boundedComment = normalizedComment.slice(0, maxCommentChars);
-  return normalizedWaiverReason(
-    boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason,
-  );
-}
-
-export async function startApprovedForkPrGate(
-  command: ApprovedForkE2EDispatchCommand,
-): Promise<void> {
-  const { token, repository } = tokenAndRepository();
-  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
-    throw new Error("approval run ID is invalid");
-  }
-  if (command.approvalRunAttempt !== 1 || command.workflowRunAttempt !== 1) {
-    throw new Error("approval and workflow run attempts must be exactly 1");
-  }
-  if (command.gateRunId !== command.approvalRunId) {
-    throw new Error("approval run ID must match the gate run ID");
-  }
-  validateApprovalWorkflowRun(
-    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
-      userAgent: USER_AGENT,
-    }),
-    {
-      repository,
-      runId: command.approvalRunId,
-      runAttempt: command.approvalRunAttempt,
-      workflowSha: command.workflowSha,
-    },
-  );
-  const review = validateApprovalReview(
-    await githubApi<unknown>(
-      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
-      token,
-      { userAgent: USER_AGENT },
-    ),
-    FORK_E2E_APPROVAL_ENVIRONMENT,
-  );
-  await startAuthorizedPrGate(
-    {
-      ...command,
-      maintainer: review.reviewer,
-      reason: approvedE2EReason(review.comment),
-    },
-    "fork",
-  );
+  await startAuthorizedPrGate(command);
 }
 
 export function findSignalFiles(
@@ -3886,95 +3758,6 @@ export async function abandonRunnerLossRetrySource(
   appendOutput("finalized", "true");
 }
 
-function validateApprovalWorkflowRun(
-  value: unknown,
-  options: {
-    repository: string;
-    runId: number;
-    runAttempt: number;
-    workflowSha: string;
-  },
-): string {
-  if (!isObjectRecord(value)) throw new Error("GitHub returned an invalid approval workflow run");
-  const expectedUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
-  const valid =
-    value.id === options.runId &&
-    // The Actions REST API exposes the evaluated `run-name` as `name`, not the
-    // workflow's top-level name. Bind authority to the immutable workflow path
-    // and trusted workflow SHA below instead of mutable display text.
-    value.event === "workflow_run" &&
-    value.path === PR_GATE_WORKFLOW_PATH &&
-    value.head_branch === "main" &&
-    value.head_sha === options.workflowSha &&
-    value.status === "in_progress" &&
-    value.conclusion === null &&
-    options.runAttempt === 1 &&
-    value.run_attempt === options.runAttempt &&
-    value.html_url === expectedUrl;
-  if (!valid) {
-    throw new Error("approval workflow run does not match the trusted first-attempt gate run");
-  }
-  return expectedUrl;
-}
-
-function validateApprovalReview(
-  value: unknown,
-  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT,
-): { reviewer: string; comment: string | null } {
-  if (!Array.isArray(value)) {
-    throw new Error("GitHub returned malformed environment approval history");
-  }
-  if (value.length === 0) {
-    throw new Error(
-      `No required-reviewer approval was recorded for ${environment}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, update the PR to create a new PR SHA, then run fresh PR CI.`,
-    );
-  }
-  if (value.length > MAX_APPROVAL_REVIEWS) {
-    throw new Error(
-      `GitHub returned more than ${MAX_APPROVAL_REVIEWS} environment approval reviews; refusing ambiguous approval history`,
-    );
-  }
-  const reviews = value.map((candidate) => {
-    if (
-      !isObjectRecord(candidate) ||
-      typeof candidate.state !== "string" ||
-      (typeof candidate.comment !== "string" && candidate.comment !== null) ||
-      !Array.isArray(candidate.environments) ||
-      candidate.environments.length < 1 ||
-      candidate.environments.length > MAX_APPROVAL_REVIEWS ||
-      !candidate.environments.every(
-        (environment) => isObjectRecord(environment) && typeof environment.name === "string",
-      ) ||
-      !isObjectRecord(candidate.user) ||
-      typeof candidate.user.login !== "string" ||
-      !MAINTAINER_PATTERN.test(candidate.user.login)
-    ) {
-      throw new Error("GitHub returned malformed environment approval history");
-    }
-    return {
-      state: candidate.state,
-      comment: candidate.comment,
-      environments: candidate.environments as Array<{ name: string }>,
-      reviewer: candidate.user.login,
-    };
-  });
-  const matching = reviews.filter((review) =>
-    review.environments.some((candidate) => candidate.name === environment),
-  );
-  if (matching.length !== 1) {
-    throw new Error("expected exactly one protected-environment approval review");
-  }
-  const review = matching[0]!;
-  if (
-    review.environments.length !== 1 ||
-    review.environments[0]!.name !== environment ||
-    review.state !== "approved"
-  ) {
-    throw new Error(`protected-environment review did not approve only ${environment}`);
-  }
-  return { reviewer: review.reviewer, comment: review.comment };
-}
-
 async function requireMaintainerPermission(
   repository: string,
   token: string,
@@ -4125,12 +3908,8 @@ async function main(): Promise<void> {
     await startPrGate(command);
     return;
   }
-  if (command.mode === "start-control-plane") {
-    await startControlPlanePrGate(command);
-    return;
-  }
-  if (command.mode === "start-approved-fork") {
-    await startApprovedForkPrGate(command);
+  if (command.mode === "approve-e2e") {
+    await approvePrE2E(command);
     return;
   }
   if (command.mode === "retry-runner-loss") {

@@ -1023,7 +1023,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
-    expect(review).toContain("Audit result: `No known vulnerabilities found`");
+    expect(review).toContain("Targeted audit result: `Pillow 12.3.0 has no known vulnerabilities`");
+    expect(review).toContain("Complete-lock audit result: `6 records in 3 unrelated packages`");
+    expect(requirementsLock).toContain("pillow==12.3.0");
+    expect(readAgentFile("Dockerfile.base")).toContain("assert version('pillow') == '12.3.0'");
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
