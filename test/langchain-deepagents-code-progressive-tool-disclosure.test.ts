@@ -35,6 +35,7 @@ if __name__ == "__main__":
   "main.py": `from __future__ import annotations
 
 import os
+import asyncio
 from types import SimpleNamespace
 
 class Parser:
@@ -51,7 +52,22 @@ def parse_args():
     return args
 
 def cli_main():
-    return parse_args()
+    args = parse_args()
+    output_format = getattr(args, "output_format", "text")
+    if getattr(args, "non_interactive_message", None):
+        from deepagents_code.client.non_interactive import run_non_interactive
+
+        timeout = getattr(args, "timeout", None)
+        exit_code = asyncio.run(
+            asyncio.wait_for(
+                run_non_interactive(
+                            message=args.non_interactive_message,
+                ),
+                        timeout=timeout,
+            )
+        )
+        raise SystemExit(exit_code)
+    return args
 `,
   "app.py": fs
     .readFileSync(

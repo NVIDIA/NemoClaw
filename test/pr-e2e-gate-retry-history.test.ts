@@ -247,7 +247,7 @@ describe("PR E2E controller retry history", () => {
       expect(completion?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "E2E reviewer authorization required to run E2E",
+          title: "Maintainer approval required to run E2E",
           summary: expect.stringContaining(
             "No selected E2E job or target ran and no repository secret was exposed",
           ),
@@ -260,16 +260,14 @@ describe("PR E2E controller retry history", () => {
         status: "in_progress",
         conclusion: null,
         output: {
-          title: "E2E reviewer authorization required to run E2E",
+          title: "Maintainer approval required to run E2E",
           summary: expect.stringContaining(
             "No selected E2E job or target ran and no repository secret was exposed",
           ),
         },
       });
-      expect(JSON.stringify(completion?.body)).toContain("Review deployments");
-      expect(fs.readFileSync(outputPath, "utf8")).toContain(
-        "approval_mode=start-approved-control-plane",
-      );
+      expect(JSON.stringify(completion?.body)).toContain("`approve-e2e`");
+      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("approval_");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("check_id=18");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
