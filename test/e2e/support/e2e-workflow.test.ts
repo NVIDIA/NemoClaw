@@ -195,6 +195,29 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("keeps dashboard remote-bind in unified E2E with scoped credentials (#7490)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, string>;
+          steps: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["dashboard-remote-bind"]!;
+    job.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND = "0";
+    const run = job.steps.find((step) => step.name === "Run dashboard remote-bind live test")!;
+    delete run.env!.NVIDIA_INFERENCE_API_KEY;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "dashboard-remote-bind job must set NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1",
+        "dashboard-remote-bind step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+      ]),
+    );
+  });
+
   it("keeps the retained network-policy live probes isolated with cleanup reserve (#7617)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
