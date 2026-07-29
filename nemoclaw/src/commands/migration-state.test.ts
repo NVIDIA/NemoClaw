@@ -6,24 +6,18 @@ import type { PluginLogger } from "../index.js";
 import { setConfigValue } from "./migration-state.js";
 
 // fs mock — thin in-memory store keyed by absolute path
-
-interface FsEntry {
-  type: "file" | "dir" | "symlink";
-  content?: string;
-}
+type FsEntry = { type: "file" | "dir" | "symlink"; content?: string };
 const store = new Map<string, FsEntry>();
 const descriptors = new Map<number, string>();
-let nextDescriptor = 100;
-function addDir(p: string): void {
-  store.set(p, { type: "dir" });
-}
-
-function addFile(p: string, content: string): void {
-  store.set(p, { type: "file", content });
-}
-
-function addSymlink(p: string): void {
-  store.set(p, { type: "symlink" });
+const addDir = (p: string): void => void store.set(p, { type: "dir" });
+const addFile = (p: string, content: string): void => void store.set(p, { type: "file", content });
+const addSymlink = (p: string): void => void store.set(p, { type: "symlink" });
+function fileAt(p: string | number): FsEntry {
+  const resolvedPath = typeof p === "number" ? descriptors.get(p) : p;
+  if (!resolvedPath) throw new Error(`EBADF: ${String(p)}`);
+  const entry = store.get(resolvedPath);
+  if (entry?.type !== "file") throw new Error(`ENOENT: ${resolvedPath}`);
+  return entry;
 }
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -35,24 +29,14 @@ vi.mock("node:fs", async (importOriginal) => {
       addDir(p);
     }),
     chmodSync: vi.fn(),
-    readFileSync: (p: string | number) => {
-      const resolvedPath = typeof p === "number" ? descriptors.get(p) : p;
-      if (!resolvedPath) throw new Error(`EBADF: ${String(p)}`);
-      const entry = store.get(resolvedPath);
-      if (entry?.type !== "file") throw new Error(`ENOENT: ${resolvedPath}`);
-      return entry.content ?? "";
-    },
+    readFileSync: (p: string | number) => fileAt(p).content ?? "",
     openSync: (p: string) => {
-      const entry = store.get(p);
-      if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
-      const fd = nextDescriptor++;
+      fileAt(p);
+      const fd = Math.max(99, ...descriptors.keys()) + 1;
       descriptors.set(fd, p);
       return fd;
     },
-    fstatSync: (fd: number) => {
-      const entry = store.get(descriptors.get(fd) ?? "");
-      return { isFile: () => entry?.type === "file" };
-    },
+    fstatSync: (fd: number) => ({ isFile: () => fileAt(fd).type === "file" }),
     closeSync: (fd: number) => descriptors.delete(fd),
     writeFileSync: vi.fn((p: string, data: string) => {
       store.set(p, { type: "file", content: data });
