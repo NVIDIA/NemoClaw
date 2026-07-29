@@ -54,26 +54,22 @@ function createDockerHarness(overrides: Partial<DockerState> = {}) {
   };
   const exitListeners = new Set<() => void>();
   const runDocker = vi.fn((args: readonly string[], _options: SpawnSyncOptions = {}) => {
-    if (args.join(" ") === "context show") {
-      return dockerResult(state.context, state.contextStatus);
+    switch (args.join(" ")) {
+      case "context show":
+        return dockerResult(state.context, state.contextStatus);
+      case "info --format {{.ID}}":
+        return dockerResult(state.engineId, state.infoStatus);
+      case `image inspect --format {{.Id}} ${IMAGE_REF}`:
+        return dockerResult(state.tagImageId);
+      case `image inspect --format {{.Id}} ${IMAGE_ID}`:
+        return dockerResult(state.directImageId);
+      case `image inspect --format {{.Id}} ${OTHER_IMAGE_ID}`:
+        return dockerResult(OTHER_IMAGE_ID);
+      case `rmi ${IMAGE_ID}`:
+        return dockerResult("", state.rmiStatus);
+      default:
+        throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
     }
-    if (args.join(" ") === "info --format {{.ID}}") {
-      return dockerResult(state.engineId, state.infoStatus);
-    }
-    if (
-      args[0] === "image" &&
-      args[1] === "inspect" &&
-      args[2] === "--format" &&
-      args[3] === "{{.Id}}"
-    ) {
-      const selector = args[4];
-      if (selector === IMAGE_REF) return dockerResult(state.tagImageId);
-      if (selector === IMAGE_ID) return dockerResult(state.directImageId);
-      if (selector === OTHER_IMAGE_ID) return dockerResult(OTHER_IMAGE_ID);
-      return dockerResult("", 1);
-    }
-    if (args[0] === "rmi") return dockerResult("", state.rmiStatus);
-    throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
   });
   const deps: OpenClawLegacyDockerBindingDeps = {
     cwd: CANONICAL_CWD,
@@ -157,8 +153,7 @@ describe("OpenClaw legacy-image Docker binding", () => {
 
   it("keeps a relative Docker config on canonical engine A for identity and cleanup", () => {
     const harness = createDockerHarness();
-    const runEngineA = harness.runDocker.getMockImplementation();
-    if (!runEngineA) throw new Error("engine A Docker harness is missing");
+    const runEngineA = harness.runDocker.getMockImplementation()!;
     const engineBCalls: string[][] = [];
     harness.deps.buildDockerEnv = () => ({
       DOCKER_CONFIG: "relative/docker-config",
@@ -166,13 +161,23 @@ describe("OpenClaw legacy-image Docker binding", () => {
     });
     harness.runDocker.mockImplementation(
       (args: readonly string[], options: SpawnSyncOptions = {}) => {
-        if (options.cwd === CANONICAL_CWD) return runEngineA(args, options);
-        engineBCalls.push([...args]);
-        if (args.join(" ") === "context show") return dockerResult("ambient-context");
-        if (args.join(" ") === "info --format {{.ID}}") return dockerResult("engine-b");
-        if (args[0] === "image" && args[1] === "inspect") return dockerResult(OTHER_IMAGE_ID);
-        if (args[0] === "rmi") return dockerResult("");
-        throw new Error(`Unexpected engine B Docker command: ${args.join(" ")}`);
+        const runEngineB = () => {
+          engineBCalls.push([...args]);
+          switch (args.join(" ")) {
+            case "context show":
+              return dockerResult("ambient-context");
+            case "info --format {{.ID}}":
+              return dockerResult("engine-b");
+            case `image inspect --format {{.Id}} ${IMAGE_REF}`:
+            case `image inspect --format {{.Id}} ${IMAGE_ID}`:
+              return dockerResult(OTHER_IMAGE_ID);
+            case `rmi ${IMAGE_ID}`:
+              return dockerResult("");
+            default:
+              throw new Error(`Unexpected engine B Docker command: ${args.join(" ")}`);
+          }
+        };
+        return options.cwd === CANONICAL_CWD ? runEngineA(args, options) : runEngineB();
       },
     );
 

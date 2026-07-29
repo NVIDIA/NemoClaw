@@ -280,11 +280,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       vi.spyOn(dockerAdapters, "dockerStart").mockImplementation(failOnEngineB),
       vi.spyOn(dockerAdapters, "dockerStop").mockImplementation(failOnEngineB),
     ];
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      if (args[0] === "ps") return "old-container-id\n";
-      if (args[0] === "inspect") return JSON.stringify([createDockerGpuInspectFixture()]);
-      return "";
-    });
+    const dockerCaptureOutput: Readonly<Record<string, string>> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([createDockerGpuInspectFixture()]),
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => dockerCaptureOutput[args[0] ?? ""] ?? "",
+    );
     const dockerRun = vi.fn(() => ({ status: 0, stdout: "engine-a-probe\n" }));
     const dockerRunDetached = vi.fn(() => ({
       status: 1,

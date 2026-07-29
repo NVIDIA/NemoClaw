@@ -381,9 +381,9 @@ describe("rebuild destroy phase", () => {
       return { ok: true as const };
     });
     const log = vi.fn((message: string) => {
-      if (message.startsWith("Running: openshell sandbox delete")) {
-        deleteEdgeEvents.push("log");
-      }
+      deleteEdgeEvents.push(
+        ...(message.startsWith("Running: openshell sandbox delete") ? ["log"] : []),
+      );
     });
     mocks.runOpenshell.mockImplementation((args: string[]) => {
       deleteEdgeEvents.push(args[1] ?? "unknown");

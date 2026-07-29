@@ -494,13 +494,18 @@ describe("preflightRebuildImage", () => {
 
       expect(result).toEqual({ ok: false, detail: diagnostic });
       expect(buildImage).toHaveBeenCalledOnce();
-      expect(captureLegacyDockerBinding).toHaveBeenCalledTimes(testCase.capturesBinding ? 1 : 0);
-      if (testCase.capturesBinding) {
-        expect(captureLegacyDockerBinding).toHaveBeenCalledWith({
-          buildDockerEnv: expect.any(Function),
-          cwd: ROOT,
-        });
-      }
+      expect(captureLegacyDockerBinding.mock.calls).toEqual(
+        testCase.capturesBinding
+          ? [
+              [
+                {
+                  buildDockerEnv: expect.any(Function),
+                  cwd: ROOT,
+                },
+              ],
+            ]
+          : [],
+      );
       expect(buildxAvailable).toHaveBeenCalledTimes(testCase.capturesBinding ? 1 : 0);
       expect(cleanupBuildCtx).toHaveBeenCalledOnce();
     } finally {

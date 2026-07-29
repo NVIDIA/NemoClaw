@@ -84,12 +84,16 @@ describe("retained OpenClaw Docker runtime", () => {
     const calls: Array<{ args: string[]; options: SpawnSyncOptions }> = [];
     const runDocker = vi.fn((args: readonly string[], options: SpawnSyncOptions = {}) => {
       calls.push({ args: [...args], options });
-      if (args.join(" ") === "info --format {{json .OperatingSystem}}") {
-        return dockerResult('"Docker Desktop"\n');
+      switch (true) {
+        case args.join(" ") === "info --format {{json .OperatingSystem}}":
+          return dockerResult('"Docker Desktop"\n');
+        case args[0] === "image" && args[1] === "inspect":
+          return dockerResult("[]\n");
+        case args[0] === "logs":
+          return dockerResult("engine-a logs\n");
+        default:
+          return dockerResult("engine-a-result\n");
       }
-      if (args[0] === "image" && args[1] === "inspect") return dockerResult("[]\n");
-      if (args[0] === "logs") return dockerResult("engine-a logs\n");
-      return dockerResult("engine-a-result\n");
     });
     const runtime = createRetainedOpenClawDockerRuntime(image, {
       runDocker: runDocker as typeof dockerSpawnSync,

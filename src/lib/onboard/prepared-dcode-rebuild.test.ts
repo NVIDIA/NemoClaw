@@ -220,24 +220,35 @@ describe("prepared DCode rebuild adapter", () => {
   });
 
   it.each([
-    "custom origin",
-    "custom Dockerfile",
-    "Hermes agent",
-  ])("rejects a retained OpenClaw image for a %s", (unsupportedTarget) => {
+    [
+      "custom origin",
+      (options: ReturnType<typeof createPreparedOpenClawImageOptions>) => {
+        options.preparedImageRebuild!.buildContext.origin = "custom";
+      },
+    ],
+    [
+      "custom Dockerfile",
+      (options: ReturnType<typeof createPreparedOpenClawImageOptions>) => {
+        options.fromDockerfile = "/tmp/custom/Dockerfile";
+        options.preparedImageRebuild!.buildContext.rebuildTarget = {
+          agentName: null,
+          fromDockerfile: "/tmp/custom/Dockerfile",
+        };
+      },
+    ],
+    [
+      "Hermes agent",
+      (options: ReturnType<typeof createPreparedOpenClawImageOptions>) => {
+        options.agent = "hermes";
+        options.preparedImageRebuild!.buildContext.rebuildTarget = {
+          agentName: "hermes",
+          fromDockerfile: null,
+        };
+      },
+    ],
+  ] as const)("rejects a retained OpenClaw image for a %s", (_unsupportedTarget, mutate) => {
     const options = createPreparedOpenClawImageOptions();
-    const buildContext = options.preparedImageRebuild!.buildContext;
-    if (unsupportedTarget === "custom origin") {
-      buildContext.origin = "custom";
-    } else if (unsupportedTarget === "custom Dockerfile") {
-      options.fromDockerfile = "/tmp/custom/Dockerfile";
-      buildContext.rebuildTarget = {
-        agentName: null,
-        fromDockerfile: "/tmp/custom/Dockerfile",
-      };
-    } else {
-      options.agent = "hermes";
-      buildContext.rebuildTarget = { agentName: "hermes", fromDockerfile: null };
-    }
+    mutate(options);
 
     expect(() => createPreparedDcodeRebuildRuntime(options, "nemoclaw")).toThrow(
       /retained legacy image can only be used for a generated OpenClaw rebuild/,
