@@ -128,7 +128,6 @@ describe("inventory commands", () => {
           agent: "openclaw",
           isDefault: true,
           activeSessionCount: 1,
-          connected: true,
         },
       ],
     });
@@ -1090,7 +1089,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("      Inference: live-provider / live-model");
   });
 
-  it("emits a Connected line per sandbox when getActiveSessionCount is provided (#2604)", () => {
+  it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1106,11 +1105,11 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Connected: yes (2 sessions)");
-    expect(lines).toContain("      Connected: no");
+    expect(lines).toContain("      SSH sessions: 2");
+    expect(lines).toContain("      SSH sessions: none");
   });
 
-  it("renders `1 session` (singular) when the active count is exactly one (#2604)", () => {
+  it("renders the exact active count when exactly one session (#2604)", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1123,10 +1122,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Connected: yes (1 session)");
+    expect(lines).toContain("      SSH sessions: 1");
   });
 
-  it("omits the Connected line when getActiveSessionCount returns null (probe unavailable)", () => {
+  it("omits the SSH sessions line when getActiveSessionCount returns null (probe unavailable)", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1139,10 +1138,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines.some((l) => l.includes("Connected:"))).toBe(false);
+    expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
   });
 
-  it("omits the Connected line when the dep is not wired", () => {
+  it("omits the SSH sessions line when the dep is not wired", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1154,7 +1153,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines.some((l) => l.includes("Connected:"))).toBe(false);
+    expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
   });
 
   it("emits a gateway-down diagnostic and sets process.exitCode when the gateway is unhealthy (#3386)", () => {

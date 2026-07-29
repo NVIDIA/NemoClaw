@@ -247,7 +247,6 @@ describe("CLI dispatch", () => {
           agent: "openclaw",
           isDefault: true,
           activeSessionCount: 1,
-          connected: true,
           hostGpuDetected: false,
           sandboxGpuEnabled: true,
           sandboxGpuMode: null,

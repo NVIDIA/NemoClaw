@@ -1369,7 +1369,7 @@ When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the las
 It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access.
 Failed proofs include remediation guidance for the detected platform.
 
-A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
+An `SSH sessions` line reports how many active SSH sessions the sandbox has, or `none`.
 <AgentOnly variant="openclaw,hermes">
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
 </AgentOnly>
@@ -3081,7 +3081,7 @@ For gateway-based messaging agents, it also reports messaging overlap warnings.
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
-For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
+For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
