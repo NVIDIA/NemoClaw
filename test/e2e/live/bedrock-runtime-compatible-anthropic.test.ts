@@ -941,6 +941,9 @@ async function assertHermesConfig(sandbox: SandboxClient, home: string): Promise
   if (/^models:\s*\n(?:[ \t].*\n)*?[ \t]+providers:/m.test(config.stdout)) {
     errors.push("OpenClaw-style models.providers block present");
   }
+  if (Object.hasOwn(model, "reasoning_effort")) {
+    errors.push("model.reasoning_effort must remain absent for compatible endpoints");
+  }
   if (config.stdout.includes("openshell:")) errors.push("OpenShell provider placeholder present");
   expect(errors).toEqual([]);
 }

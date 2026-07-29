@@ -26,7 +26,7 @@ import { type McpBridgeShard, resolveMcpBridgeShard } from "./mcp-bridge-agent-s
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
-  assertHermesManagedAddSurvivesLockedGatewayRestart,
+  assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
@@ -1238,7 +1238,7 @@ mcpBridgeShardTest("hermes")(
     await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
     progress.phase("restore Hermes shields, restart, and prove rollback");
-    await assertHermesManagedAddSurvivesLockedGatewayRestart(
+    await assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
       host,
       sandbox,
       HERMES_SANDBOX_NAME,
