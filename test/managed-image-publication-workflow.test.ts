@@ -657,7 +657,8 @@ describe("complete managed-image publication workflow", () => {
       'expected_http_proxy="http://upper-http:upper-secret@upper-http.example.test:18080"',
     );
 
-    expect(dependencies.run).toBe("npm ci --ignore-scripts");
+    expect(dependencies.run).toContain("npm ci --ignore-scripts");
+    expect(dependencies.run).toContain("npm run build:policy-boundary");
     expect(install.env).toMatchObject({
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85",
