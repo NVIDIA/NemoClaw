@@ -6,6 +6,7 @@ import type {
   MessagingHookOutputMap,
   MessagingHookRunResult,
 } from "../hooks";
+import { isMessagingHookConflictError, MessagingHookConflictError } from "../hooks/errors";
 import type {
   ChannelHookPhase,
   MessagingSerializableValue,
@@ -79,6 +80,12 @@ export async function applyMessagingHooksForPhase(
         skippedChannelIds.add(requestWithInputs.channelId);
         skippedHooks.push(formatHookKey(requestWithInputs));
         continue;
+      }
+      if (isMessagingHookConflictError(error)) {
+        throw new MessagingHookConflictError(error.message, {
+          channelId: requestWithInputs.channelId,
+          onFailure: requestWithInputs.onFailure ?? "abort",
+        });
       }
       throw error;
     }

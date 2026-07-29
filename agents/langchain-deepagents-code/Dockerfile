@@ -237,6 +237,8 @@ RUN set -eu; \
         "jq=1.8.2-1" \
         "vim-common=2:9.2.0782-1" \
         "vim-tiny=2:9.2.0782-1" \
+        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         | cmp -s - "$security_inventory"; \
     test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
@@ -244,10 +246,18 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
+    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
     python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION"; \
+    printf '%s  %s\n' \
+        "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
+        /usr/lib/python3.13/html/parser.py \
+        | sha256sum -c -; \
+    python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')"; \
+    python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.

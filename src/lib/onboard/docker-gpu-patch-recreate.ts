@@ -16,8 +16,8 @@ import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
-  getDockerGpuCloneFallbackDns,
   dockerContainerName,
+  getDockerGpuCloneFallbackDns,
   parseDockerInspectJson,
   sameContainerId,
   validateRequiredDockerUlimits,
@@ -36,10 +36,10 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
-import { isFatalContainerDnsProbeFailure, probeContainerDns } from "./preflight";
 import { waitForOpenShellSupervisorReconnect } from "./docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
+import { isFatalContainerDnsProbeFailure, probeContainerDns } from "./preflight";
 
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
@@ -267,9 +267,9 @@ export function recreateOpenShellDockerSandboxContainer(
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
         console.log(
-          `  ✓ Granting sandbox user access to Jetson Tegra GPU device nodes via --group-add ${tegraGroupGids.join(
+          `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
             ", ",
-          )} (so CUDA can open /dev/nvmap)`,
+          )} (so CUDA can initialize as a non-root user)`,
         );
       } else {
         console.warn(

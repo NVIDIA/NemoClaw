@@ -56,6 +56,28 @@ ARG PERL_VERSION=5.44.0
 ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
 ARG PERL_PACKAGE_REVISION=1nemoclaw1
 
+# Debian trixie has not published libssh2 or Python packages containing the
+# reviewed upstream fixes. Build native packages once and install the same
+# artifacts into the managed OpenClaw image.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS native-security-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential=12.12 \
+        ca-certificates=20250419 \
+        curl=8.14.1-2+deb13u4 \
+        git=1:2.47.3-0+deb13u1 \
+        libssl-dev=3.5.6-1~deb13u2 \
+        openssh-server=1:10.0p1-7+deb13u4 \
+        xz-utils=5.8.1-1+deb13u1 \
+        zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh
+COPY scripts/security/patches/libssh2-1.11.1-cve-2026.patch /scripts/security/patches/libssh2-1.11.1-cve-2026.patch
+COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch
+
+RUN bash /scripts/security/build-native-security-packages.sh /out
+
 # Debian trixie has not published a Perl package containing the upstream
 # fixes for CVE-2026-12087, CVE-2026-13221, and CVE-2026-57433. Build the
 # fixed upstream release as native Debian packages so dpkg dependencies and
@@ -65,6 +87,8 @@ FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea5
 ARG PERL_VERSION
 ARG PERL_SHA256
 ARG PERL_PACKAGE_REVISION
+
+COPY --from=native-security-builder /out /tmp/security-packages
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
@@ -157,10 +181,14 @@ RUN package_version="${PERL_VERSION}-${PERL_PACKAGE_REVISION}" \
         'Maintainer: NVIDIA NemoClaw Maintainers' \
         'Description: Perl 5 language interpreter metapackage for the NemoClaw sandbox' \
         > /tmp/perl-meta/DEBIAN/control \
-    && dpkg-deb --build --root-owner-group /tmp/perl-root /tmp/perl-base.deb \
-    && dpkg-deb --build --root-owner-group /tmp/perl-meta /tmp/perl.deb
+    && dpkg-deb --build --root-owner-group \
+        /tmp/perl-root /tmp/security-packages/perl-base.deb \
+    && dpkg-deb --build --root-owner-group \
+        /tmp/perl-meta /tmp/security-packages/perl.deb
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+
+COPY --from=perl-builder /tmp/security-packages /tmp/nemoclaw-native-security
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
 # credential chains from attempting an impossible metadata discovery path.
@@ -254,17 +282,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "$security_deb_dir/jq.deb" \
         "$security_deb_dir/vim-common.deb" \
         "$security_deb_dir/vim-tiny.deb" \
+        /tmp/nemoclaw-native-security/libssh2-1t64.deb \
+        /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
     && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1" \
     && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1" \
+    && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
     && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
+    && printf '%s  %s\n' \
+        "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
+        /usr/lib/python3.13/html/parser.py \
+        | sha256sum -c - \
+    && python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')" \
+    && python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')" \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
     && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' \
@@ -275,6 +313,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "jq=1.8.2-1" \
         "vim-common=2:9.2.0782-1" \
         "vim-tiny=2:9.2.0782-1" \
+        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
     && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
@@ -282,11 +322,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
 
-COPY --from=perl-builder /tmp/perl-base.deb /tmp/perl.deb /tmp/
-
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends /tmp/perl-base.deb /tmp/perl.deb \
-    && rm -f /tmp/perl-base.deb /tmp/perl.deb \
+    && apt-get install -y --no-install-recommends \
+        /tmp/nemoclaw-native-security/perl-base.deb \
+        /tmp/nemoclaw-native-security/perl.deb \
+    && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf /var/lib/apt/lists/* \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
