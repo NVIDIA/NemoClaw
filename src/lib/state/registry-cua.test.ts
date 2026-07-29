@@ -12,6 +12,7 @@ import {
   CUA_TARGET_OPERATIONS,
   type CuaRuntimeReadiness,
   type CuaTargetAttachment,
+  type CuaTaskResult,
 } from "../cua/contract";
 
 const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-registry-cua-"));
@@ -63,6 +64,35 @@ const attachment: CuaTargetAttachment = {
   activeTask: null,
 };
 
+const completedResult: CuaTaskResult = {
+  schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+  kind: "task-result",
+  taskId: "task-1",
+  status: "succeeded",
+  targetIdentityDigest: digest("5"),
+  components: {
+    runtime: readiness.components.runtime,
+    sandboxImage: readiness.components.sandboxImage,
+    targetImage: attachment.target!.image,
+    serviceBundle: attachment.target!.serviceBundle,
+    policy: readiness.components.policy,
+    taskProtocol: readiness.components.taskProtocol,
+  },
+  inference: readiness.inference,
+  capabilities: CUA_CAPABILITIES.map((id) => ({ id, protocolVersion: "1.0.0" })),
+  agentResult: { status: "succeeded", resultDigest: digest("8") },
+  verification: {
+    status: "passed",
+    checkIds: ["fixture-check"],
+    evidenceDigests: [digest("9")],
+  },
+  receipts: [{ capability: "browser", status: "completed", evidenceDigests: [digest("9")] }],
+  evidence: [
+    { digest: digest("8"), classification: "private", mediaType: "application/json" },
+    { digest: digest("9"), classification: "private", mediaType: "image/png" },
+  ],
+};
+
 beforeEach(() => {
   registry.clearAll();
 });
@@ -100,5 +130,30 @@ describe("CUA canonical registry state (#7751)", () => {
     fs.writeFileSync(registry.REGISTRY_FILE, JSON.stringify(disk));
 
     expect(() => registry.load()).toThrow("CUA lifecycle record does not match its schema");
+    fs.rmSync(registry.REGISTRY_FILE);
+  });
+});
+
+describe("CUA completed-task registry state (#7752)", () => {
+  it("round-trips bounded secret-free task results for reconnect", () => {
+    const completedResults = Array.from({ length: 17 }, (_, index) => ({
+      ...completedResult,
+      taskId: `task-${String(index + 1)}`,
+    }));
+    registry.registerSandbox({
+      name: "alpha",
+      cuaRuntimeReadiness: readiness,
+      cuaTarget: attachment,
+      cuaTaskResults: completedResults,
+    });
+
+    expect(registry.getSandbox("alpha")?.cuaTaskResults).toHaveLength(16);
+    expect(registry.getSandbox("alpha")?.cuaTaskResults?.[0].taskId).toBe("task-2");
+    const disk = JSON.parse(fs.readFileSync(registry.REGISTRY_FILE, "utf8"));
+    expect(disk.sandboxes.alpha.cuaTaskResults).toHaveLength(16);
+    expect(disk.sandboxes.alpha.cuaTaskResults[15].taskId).toBe("task-17");
+    expect(JSON.stringify(disk.sandboxes.alpha.cuaTaskResults)).not.toMatch(
+      /credential|password|secret|token|endpoint|hostName|ssh|vnc|path|url/i,
+    );
   });
 });

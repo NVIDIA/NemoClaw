@@ -19,6 +19,7 @@ import {
   type CuaLifecycleRecord,
   type CuaRuntimeReadiness,
   type CuaTargetAttachment,
+  type CuaTaskEvidenceIndex,
   type CuaTaskResult,
   checkCuaLifecycleSchemaVersion,
   getCuaLifecycleSemanticErrors,
@@ -151,6 +152,24 @@ function taskResult(): CuaTaskResult {
   };
 }
 
+function taskEvidenceIndex(): CuaTaskEvidenceIndex {
+  return {
+    schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+    kind: "task-evidence-index",
+    taskId: "task-1",
+    category: "events",
+    targetIdentityDigest: secondDigest,
+    evidence: [
+      {
+        digest,
+        classification: "private",
+        mediaType: "application/json",
+        sizeBytes: 256,
+      },
+    ],
+  };
+}
+
 function createValidator() {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   return ajv.compile(cuaLifecycleSchema as AnySchema);
@@ -166,6 +185,7 @@ describe("first-class CUA contract", () => {
     const records: CuaLifecycleRecord[] = [
       runtimeReadiness(),
       targetAttachment(),
+      taskEvidenceIndex(),
       taskResult(),
       {
         schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,

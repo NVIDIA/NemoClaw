@@ -136,6 +136,15 @@ export interface CuaCapabilityReceipt {
   evidenceDigests: readonly string[];
 }
 
+export interface CuaTaskEvidenceIndex {
+  schemaVersion: string;
+  kind: "task-evidence-index";
+  taskId: string;
+  category: "events" | "logs" | "plans";
+  targetIdentityDigest: string;
+  evidence: readonly CuaEvidenceReference[];
+}
+
 export interface CuaTaskResult {
   schemaVersion: string;
   kind: "task-result";
@@ -177,6 +186,7 @@ export interface CuaFailure {
 export type CuaLifecycleRecord =
   | CuaRuntimeReadiness
   | CuaTargetAttachment
+  | CuaTaskEvidenceIndex
   | CuaTaskResult
   | CuaFailure;
 
@@ -376,6 +386,13 @@ export function getCuaLifecycleSemanticErrors(record: CuaLifecycleRecord): strin
     }
     if ((record.status === "cancelled") !== (record.agentResult.status === "cancelled")) {
       errors.push("task and agent result cancellation status must match");
+    }
+  }
+
+  if (record.kind === "task-evidence-index") {
+    const duplicateEvidence = duplicateValues(record.evidence.map((entry) => entry.digest));
+    if (duplicateEvidence.length > 0) {
+      errors.push(`evidence contains duplicate digests: ${duplicateEvidence.join(", ")}`);
     }
   }
 

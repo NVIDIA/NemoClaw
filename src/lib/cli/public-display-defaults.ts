@@ -292,6 +292,87 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "--adapter <absolute-path> [--json]",
     },
   ],
+  "sandbox:cua:task:start": [
+    {
+      group: "Sandbox Management",
+      order: 6.7,
+      description: "Start one CUA task against the attached target",
+      flags:
+        "--adapter <absolute-path> --task-id <id> --mode interactive|headless --input-file <path> [--json]",
+    },
+  ],
+  "sandbox:cua:task:status": [
+    {
+      group: "Sandbox Management",
+      order: 6.8,
+      description: "Show active or completed CUA task state",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:result": [
+    {
+      group: "Sandbox Management",
+      order: 6.9,
+      description: "Retrieve a versioned CUA task result",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:events": [
+    {
+      group: "Sandbox Management",
+      order: 7,
+      description: "Retrieve private CUA event evidence references",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:logs": [
+    {
+      group: "Sandbox Management",
+      order: 7.1,
+      description: "Retrieve private CUA log evidence references",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:plans": [
+    {
+      group: "Sandbox Management",
+      order: 7.2,
+      description: "Retrieve private CUA plan evidence references",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:pause": [
+    {
+      group: "Sandbox Management",
+      order: 7.3,
+      description: "Pause an active CUA task when supported",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:cancel": [
+    {
+      group: "Sandbox Management",
+      order: 7.4,
+      description: "Cancel an active CUA task and wait for a terminal result",
+      flags: "--adapter <absolute-path> --task-id <id> [--json]",
+    },
+  ],
+  "sandbox:cua:task:guide": [
+    {
+      group: "Sandbox Management",
+      order: 7.5,
+      description: "Inject private guidance into an active CUA task when supported",
+      flags: "--adapter <absolute-path> --task-id <id> --input-file <path> [--json]",
+    },
+  ],
+  "sandbox:cua:task:respond": [
+    {
+      group: "Sandbox Management",
+      order: 7.6,
+      description: "Respond to recoverable CUA input-required state when supported",
+      flags: "--adapter <absolute-path> --task-id <id> --input-file <path> [--json]",
+    },
+  ],
   "sandbox:destroy": [
     {
       group: "Sandbox Management",

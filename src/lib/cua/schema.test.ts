@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 import { CUA_LIFECYCLE_SCHEMA_VERSION } from "./contract";
-import { parseCuaTargetManifest } from "./schema";
+import {
+  parseCuaLifecycleRecord,
+  parseCuaTargetManifest,
+  parseCuaTaskEvidenceIndex,
+} from "./schema";
 
 const digest = (value: string): string => `sha256:${value.repeat(64).slice(0, 64)}`;
 
@@ -57,5 +61,53 @@ describe("CUA target manifest schema (#7751)", () => {
     expect(() => parseCuaTargetManifest(duplicate)).toThrow(
       "must declare browser, computer, and terminal once",
     );
+  });
+});
+
+describe("CUA task evidence schema (#7752)", () => {
+  it("accepts only bounded private references in a task evidence index", () => {
+    const record = parseCuaTaskEvidenceIndex({
+      schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+      kind: "task-evidence-index",
+      taskId: "task-1",
+      category: "logs",
+      targetIdentityDigest: digest("4"),
+      evidence: [
+        {
+          digest: digest("5"),
+          classification: "private",
+          mediaType: "application/json",
+          sizeBytes: 42,
+        },
+      ],
+    });
+
+    expect(record.kind).toBe("task-evidence-index");
+    expect(record.evidence[0]).not.toHaveProperty("path");
+  });
+
+  it("rejects duplicate or authority-bearing task evidence", () => {
+    const evidenceDigest = digest("5");
+    const duplicate = {
+      schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+      kind: "task-evidence-index",
+      taskId: "task-1",
+      category: "events",
+      targetIdentityDigest: digest("4"),
+      evidence: [
+        { digest: evidenceDigest, classification: "private" },
+        { digest: evidenceDigest, classification: "private" },
+      ],
+    };
+
+    expect(() => parseCuaLifecycleRecord(duplicate)).toThrow("evidence contains duplicate digests");
+    expect(() =>
+      parseCuaLifecycleRecord({
+        ...duplicate,
+        evidence: [
+          { digest: evidenceDigest, classification: "private", path: "/private/evidence" },
+        ],
+      }),
+    ).toThrow("does not match its schema");
   });
 });

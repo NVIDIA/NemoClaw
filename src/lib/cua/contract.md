@@ -106,6 +106,11 @@ Public command names, arguments, output envelopes, and exit codes are owned by
 the target and task implementation issues. They must produce records that
 conform to this contract without reading runtime-private files.
 
+Active task commands return the target attachment with its bounded
+`activeTask` projection. Terminal commands return `task-result`.
+`task.events`, `task.logs`, and `task.plans` return a
+`task-evidence-index` containing only content-addressed private references.
+
 ## Compatibility identities
 
 Every component identity contains:
@@ -205,6 +210,10 @@ and private evidence references as separate fields.
 succeeded task requires both a succeeded agent result and passed independent
 verification. A failed task cannot contain both of those success conditions.
 The task and agent result must agree on cancellation.
+
+NemoClaw retains at most the 16 most recent validated terminal results for
+normal CLI reconnect inspection. It never persists task input. A task ID in
+that retained set cannot be reused.
 
 The security issue owns artifact access controls, retention, redaction,
 cleanup, target credential delivery, and the deny-default network policy.

@@ -4,7 +4,11 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
-import { parseCuaRuntimeReadiness, parseCuaTargetAttachment } from "../../cua/schema";
+import {
+  parseCuaRuntimeReadiness,
+  parseCuaTargetAttachment,
+  parseCuaTaskResult,
+} from "../../cua/schema";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
 import { normalizeSandboxMcpState, serializeSandboxMcpStateForDisk } from "../registry-mcp";
@@ -95,6 +99,10 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
       : parseCuaRuntimeReadiness(entry.cuaRuntimeReadiness);
   const cuaTarget =
     entry.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(entry.cuaTarget);
+  const cuaTaskResults =
+    entry.cuaTaskResults === undefined
+      ? undefined
+      : entry.cuaTaskResults.slice(-16).map(parseCuaTaskResult);
   const {
     messaging: _messaging,
     mcp: _mcp,
@@ -102,6 +110,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     baselineExclusionTransition: _baselineExclusionTransition,
     cuaRuntimeReadiness: _cuaRuntimeReadiness,
     cuaTarget: _cuaTarget,
+    cuaTaskResults: _cuaTaskResults,
     ...rest
   } = entry;
   return {
@@ -112,6 +121,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
     ...(cuaTarget ? { cuaTarget } : {}),
+    ...(cuaTaskResults ? { cuaTaskResults } : {}),
   };
 }
 
@@ -147,6 +157,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
       : parseCuaRuntimeReadiness(durable.cuaRuntimeReadiness);
   const cuaTarget =
     durable.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(durable.cuaTarget);
+  const cuaTaskResults =
+    durable.cuaTaskResults === undefined
+      ? undefined
+      : durable.cuaTaskResults.slice(-16).map(parseCuaTaskResult);
   const {
     messaging: _messaging,
     mcp: _mcp,
@@ -154,6 +168,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     baselineExclusionTransition: _baselineExclusionTransition,
     cuaRuntimeReadiness: _cuaRuntimeReadiness,
     cuaTarget: _cuaTarget,
+    cuaTaskResults: _cuaTaskResults,
     ...rest
   } = durable;
   return {
@@ -165,5 +180,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
     ...(cuaTarget ? { cuaTarget } : {}),
+    ...(cuaTaskResults ? { cuaTaskResults } : {}),
   };
 }

@@ -11,6 +11,8 @@ import {
   type CuaLifecycleRecord,
   type CuaRuntimeReadiness,
   type CuaTargetAttachment,
+  type CuaTaskEvidenceIndex,
+  type CuaTaskResult,
   getCuaLifecycleSemanticErrors,
 } from "./contract";
 
@@ -65,6 +67,22 @@ export function parseCuaTargetAttachment(value: unknown): CuaTargetAttachment {
   const record = parseCuaLifecycleRecord(value);
   if (record.kind !== "target-attachment") {
     throw new Error("CUA target state must be a target-attachment record");
+  }
+  return record;
+}
+
+export function parseCuaTaskEvidenceIndex(value: unknown): CuaTaskEvidenceIndex {
+  const record = parseCuaLifecycleRecord(value);
+  if (record.kind !== "task-evidence-index") {
+    throw new Error("CUA task evidence state must be a task-evidence-index record");
+  }
+  return record;
+}
+
+export function parseCuaTaskResult(value: unknown): CuaTaskResult {
+  const record = parseCuaLifecycleRecord(value);
+  if (record.kind !== "task-result") {
+    throw new Error("CUA task result state must be a task-result record");
   }
   return record;
 }
