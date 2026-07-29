@@ -147,7 +147,11 @@ async def succeed(*args, **kwargs):
     del args, kwargs
     os.write(1, b"direct descriptor output")
     subprocess.run(
-        [sys.executable, "-c", "import os; os.write(1, b'child output')"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(b'child output' * 200000)",
+        ],
         check=True,
     )
     target._write_text("PONG")

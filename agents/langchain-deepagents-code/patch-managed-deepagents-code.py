@@ -783,7 +783,7 @@ import os as _nemoclaw_os
 import re as _nemoclaw_re
 import sqlite3 as _nemoclaw_sqlite3
 import sys as _nemoclaw_sys
-import tempfile as _nemoclaw_tempfile
+import threading as _nemoclaw_threading
 import time as _nemoclaw_time
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -870,23 +870,57 @@ class _NemoClawUnexpectedStdout(_nemoclaw_io.TextIOBase):
 def _nemoclaw_capture_process_stdout(run):
     """Suppress direct and child-process writes to the stdout descriptor."""
     run.stdout.flush()
-    with _nemoclaw_tempfile.TemporaryFile() as capture:
-        saved_stdout_fd = _nemoclaw_os.dup(1)
-        redirected = False
+    read_fd, write_fd = _nemoclaw_os.pipe()
+    _nemoclaw_os.set_blocking(read_fd, False)
+    stop_drain = _nemoclaw_threading.Event()
+
+    def drain_stdout():
         try:
-            _nemoclaw_os.dup2(capture.fileno(), 1)
-            redirected = True
-            yield
-        finally:
-            if redirected:
+            while not stop_drain.is_set():
                 try:
-                    run.stdout.flush()
-                finally:
-                    _nemoclaw_os.dup2(saved_stdout_fd, 1)
-                capture.seek(0, _nemoclaw_os.SEEK_END)
-                if capture.tell() > 0:
+                    chunk = _nemoclaw_os.read(read_fd, 65_536)
+                except BlockingIOError:
+                    stop_drain.wait(0.01)
+                    continue
+                if not chunk:
+                    return
+                run.unexpected_stdout = True
+            try:
+                if _nemoclaw_os.read(read_fd, 65_536):
                     run.unexpected_stdout = True
-            _nemoclaw_os.close(saved_stdout_fd)
+            except BlockingIOError:
+                pass
+        finally:
+            _nemoclaw_os.close(read_fd)
+
+    drain_thread = _nemoclaw_threading.Thread(
+        target=drain_stdout,
+        name="nemoclaw-json-stdout-drain",
+        daemon=True,
+    )
+    saved_stdout_fd = _nemoclaw_os.dup(1)
+    redirected = False
+    try:
+        _nemoclaw_os.dup2(write_fd, 1)
+        redirected = True
+        _nemoclaw_os.close(write_fd)
+        write_fd = None
+        drain_thread.start()
+        yield
+    finally:
+        if redirected:
+            try:
+                run.stdout.flush()
+            finally:
+                _nemoclaw_os.dup2(saved_stdout_fd, 1)
+        _nemoclaw_os.close(saved_stdout_fd)
+        if write_fd is not None:
+            _nemoclaw_os.close(write_fd)
+        stop_drain.set()
+        if drain_thread.ident is not None:
+            drain_thread.join(timeout=1)
+        else:
+            _nemoclaw_os.close(read_fd)
 
 
 _nemoclaw_json_run = _nemoclaw_contextvars.ContextVar(
