@@ -13,9 +13,9 @@ Move a sandbox to another provider family while keeping the OpenShell route, age
 Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
-## Find a Registered Provider
-
 <AgentOnly variant="openclaw,hermes">
+
+## Find a Registered Provider
 
 List the configured provider credentials when you need the exact provider ID.
 
@@ -32,9 +32,9 @@ For a compatible custom endpoint, pass the complete route metadata described bel
 
 </AgentOnly>
 
-## Switch the Provider at Runtime
-
 <AgentOnly variant="openclaw,hermes">
+
+## Switch the Provider at Runtime
 
 Pass the target provider and model together.
 Target a non-default sandbox by name.
@@ -77,9 +77,9 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 </AgentOnly>
 
-## Handle Compatible Endpoints
-
 <AgentOnly variant="openclaw,hermes">
+
+## Handle Compatible Endpoints
 
 When moving from another provider family to `compatible-endpoint` or `compatible-anthropic-endpoint`, provide the trusted endpoint URL and enough API metadata to record the complete route identity.
 Export the canonical credential environment variable for the target provider.
