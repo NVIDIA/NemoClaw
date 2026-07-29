@@ -29,6 +29,8 @@ const RESTORED_CLONE_PAIRING_BUDGET = {
   timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } as const;
 
+const RESTORED_CLONE_APPROVE_FAILURE_ATTEMPTS = 2;
+
 class RestoreGatewayPairingClassifiedError extends Error {}
 
 type RestoredSandboxGatewayRestartDeps = {
@@ -78,17 +80,28 @@ export async function establishRestoredSandboxGatewayPairing(
   targetSandbox: string,
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
-  // Deliberately do not retry this authorization sequence internally. A fixed
-  // failure lets the caller retry the restore command as a new bounded attempt.
   try {
-    deps.restartRestoredSandboxGateway(targetSandbox);
-    deps.warmupScopeUpgrade(targetSandbox);
-    const approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
-    // Publish the clone's approved pairing transition before the one ordinary
-    // authenticated verifier. The verifier alone decides success.
-    deps.restartRestoredSandboxGateway(targetSandbox);
-    const verification = deps.verifyGatewayPairing(targetSandbox);
-    if (!verification.ok) {
+    for (let attempt = 1; attempt <= RESTORED_CLONE_APPROVE_FAILURE_ATTEMPTS; attempt += 1) {
+      deps.restartRestoredSandboxGateway(targetSandbox);
+      deps.warmupScopeUpgrade(targetSandbox);
+      const approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
+      // Publish the clone's approved pairing transition before the ordinary
+      // authenticated verifier. The verifier alone decides success.
+      deps.restartRestoredSandboxGateway(targetSandbox);
+      const verification = deps.verifyGatewayPairing(targetSandbox);
+      if (verification.ok) {
+        return;
+      }
+      // The canonical approval command can create its own local scope-upgrade
+      // request and report approve-failed. Retry that exact pending transition
+      // once with the same local-device and one-request bounds.
+      if (
+        attempt < RESTORED_CLONE_APPROVE_FAILURE_ATTEMPTS &&
+        approvalReceipt === "approve-failed" &&
+        verification.failureLayer === "scope-upgrade-pending"
+      ) {
+        continue;
+      }
       throw new RestoreGatewayPairingClassifiedError(
         `the authenticated gateway verification run failed (${verification.failureLayer}; approval=${approvalReceipt})`,
       );

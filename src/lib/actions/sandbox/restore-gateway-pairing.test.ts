@@ -171,7 +171,60 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
   });
 
-  it("fails after one ordinary verifier without retrying the handshake (#7431)", async () => {
+  it("retries one failed clone approval when verification reports a pending scope upgrade (#7431)", async () => {
+    const order: string[] = [];
+    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
+    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
+    const approveRestoredClonePairing = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        order.push("approve:failed");
+        return "approve-failed" as const;
+      })
+      .mockImplementationOnce(() => {
+        order.push("approve:succeeded");
+        return "approved-one" as const;
+      });
+    const verifyGatewayPairing = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        order.push("verify:pending");
+        return {
+          ok: false as const,
+          failureLayer: "scope-upgrade-pending" as const,
+        };
+      })
+      .mockImplementationOnce(() => {
+        order.push("verify:authenticated");
+        return { ok: true as const };
+      });
+
+    await establishRestoredSandboxGatewayPairing("beta", {
+      restartRestoredSandboxGateway,
+      warmupScopeUpgrade,
+      approveRestoredClonePairing,
+      verifyGatewayPairing,
+    });
+
+    expect(order).toEqual([
+      "restart",
+      "warmup",
+      "approve:failed",
+      "restart",
+      "verify:pending",
+      "restart",
+      "warmup",
+      "approve:succeeded",
+      "restart",
+      "verify:authenticated",
+    ]);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
+    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
+    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails after the bounded clone approval retry cannot authenticate pairing (#7431)", async () => {
     const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
     const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
@@ -189,6 +242,56 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       }),
     ).rejects.toThrow(
       "authenticated gateway verification run failed (scope-upgrade-pending; approval=approve-failed)",
+    );
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
+    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
+    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a failed clone approval for an unrelated verifier failure (#7431)", async () => {
+    const restartRestoredSandboxGateway = vi.fn();
+    const warmupScopeUpgrade = vi.fn();
+    const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
+    const verifyGatewayPairing = vi.fn(() => ({
+      ok: false as const,
+      failureLayer: "gateway-connect-failure" as const,
+    }));
+
+    await expect(
+      establishRestoredSandboxGatewayPairing("beta", {
+        restartRestoredSandboxGateway,
+        warmupScopeUpgrade,
+        approveRestoredClonePairing,
+        verifyGatewayPairing,
+      }),
+    ).rejects.toThrow(
+      "authenticated gateway verification run failed (gateway-connect-failure; approval=approve-failed)",
+    );
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
+    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry a completed clone approval when verification remains pending (#7431)", async () => {
+    const restartRestoredSandboxGateway = vi.fn();
+    const warmupScopeUpgrade = vi.fn();
+    const approveRestoredClonePairing = vi.fn(() => "approved-one" as const);
+    const verifyGatewayPairing = vi.fn(() => ({
+      ok: false as const,
+      failureLayer: "scope-upgrade-pending" as const,
+    }));
+
+    await expect(
+      establishRestoredSandboxGatewayPairing("beta", {
+        restartRestoredSandboxGateway,
+        warmupScopeUpgrade,
+        approveRestoredClonePairing,
+        verifyGatewayPairing,
+      }),
+    ).rejects.toThrow(
+      "authenticated gateway verification run failed (scope-upgrade-pending; approval=approved-one)",
     );
     expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
     expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
