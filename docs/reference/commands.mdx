@@ -2334,7 +2334,9 @@ $$nemoclaw my-assistant mcp remove github [--force]
 ### `$$nemoclaw <name> skill install <path>`
 
 Deploy a skill directory to a running sandbox.
-The command validates the `SKILL.md` frontmatter (a `name` field is required), uploads all non-dot files preserving subdirectory structure, and performs agent-specific post-install steps.
+The command validates the `SKILL.md` frontmatter, which requires a `name` field.
+It uploads selected non-dot regular files while preserving their subdirectory structure.
+It then performs agent-specific post-install steps.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2362,13 +2364,16 @@ Hermes plugins are different from NemoClaw skills.
 <AgentOnly variant="deepagents">
 
 For Deep Agents, the command installs a fresh skill directly into `/sandbox/.deepagents/agent/skills/<name>`, the directory Deep Agents Code loads at session start.
-The command creates an archive from the selected regular files and records their paths and hashes.
+Before upload, NemoClaw copies each selected regular file into a private host snapshot and rejects a path that changes identity during the copy.
+It creates the archive from that snapshot and records each path, normalized mode, and SHA-256 digest.
 It rejects symlinks and special files.
-Inside the sandbox, it stages the archive and verifies the same path-and-byte manifest.
+Inside the sandbox, it stages the archive and verifies that its paths, normalized modes, and SHA-256 digests match the host snapshot.
 It then moves the staged directory into place only if the destination is still absent.
-Because Deep Agents and its built-in skill creator also own this directory, the command refuses any name whose file, directory, or symlink already exists.
+Deep Agents Code and its built-in skill creator also write to this directory.
+The command therefore refuses any name whose file, directory, or symlink already exists.
 Updates are not automatic.
-Inspect the existing skill and use the agent's native or manual lifecycle after confirming ownership.
+Use `$$nemoclaw <name> connect` to inspect the existing directory.
+Update it manually only after confirming ownership.
 The legacy `/sandbox/.deepagents/skills/<name>` path is not written or treated as ownership proof.
 The managed `dcode` launchers discover newly installed skills on the next session without accepting executable hook configuration.
 Installation does not enable project hooks or unmanaged MCP files.
@@ -2388,7 +2393,7 @@ Follow the agent-specific activation guidance above after installation.
 
 ### `$$nemoclaw <name> skill remove <skill>`
 
-Remove an installed skill from a running sandbox by skill name.
+Remove an installed skill from a running sandbox by skill name when the selected agent supports automatic removal.
 The command validates the skill name before it applies the agent-specific removal behavior below.
 
 <AgentOnly variant="openclaw">
@@ -2405,7 +2410,8 @@ Run `$$nemoclaw <name> gateway restart` if prompted so the removal takes effect.
 
 For Deep Agents, automatic removal is refused before any sandbox files change.
 The active `/sandbox/.deepagents/agent/skills/<name>` directory is shared with agent-authored content, so its presence alone cannot prove NemoClaw owns it.
-Inspect the skill and use the agent's native or manual lifecycle after confirming ownership.
+Use `$$nemoclaw <name> connect` to inspect the existing directory.
+Remove it manually only after confirming ownership.
 
 </AgentOnly>
 
