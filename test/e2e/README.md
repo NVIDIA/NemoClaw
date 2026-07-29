@@ -34,9 +34,10 @@ Container Toolkit; the script fails before readiness if either is absent.
 
 The script installs that exact candidate, configures Docker GPU access, and
 writes `/var/lib/nemoclaw/cua-launchable-identity.json`. The public identity
-contains only the Launchable version and digest, candidate commit, GPU model,
-driver, CUDA, and container-toolkit versions. It contains no Brev authority,
-host address, service endpoint, or credential.
+contains schema metadata, the Launchable version and digest, candidate commit,
+GPU count and model, driver, CUDA, and container-toolkit versions, and the GPU
+probe-image digest. It contains no Brev authority, host address, service
+endpoint, or credential.
 
 This change is qualification scaffolding. It does not demonstrate a passing
 CUA qualification and must not close #7753 until a public pinned runtime and
