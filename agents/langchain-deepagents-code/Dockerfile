@@ -181,10 +181,10 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
         exit 1; \
     fi \
     && rm -f "$empty_prompt_log" \
-    && /usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true \
-    && /usr/local/bin/dcode --version \
-    && /usr/local/bin/dcode.real --version \
-    && /usr/local/bin/deepagents-code --version
+    && env -i /usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true \
+    && env -i /usr/local/bin/dcode --version \
+    && env -i /usr/local/bin/dcode.real --version \
+    && env -i /usr/local/bin/deepagents-code --version
 
 ENV HOME=/sandbox \
     VIRTUAL_ENV=/opt/venv \
