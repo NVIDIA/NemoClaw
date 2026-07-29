@@ -37,7 +37,32 @@ describe("sandbox status DCode auto-approval (#6478)", () => {
     });
 
     expect(legacyDcode.dcodeAutoApprovalMode).toBe("disabled");
+    expect(legacyDcode.dcodeValidationProfile).toBeNull();
     expect(openclaw.dcodeAutoApprovalMode).toBeNull();
+    expect(openclaw.dcodeValidationProfile).toBeNull();
+  });
+
+  it("projects the effective digest-bound DCode validation profile into JSON (#7774)", async () => {
+    const validationProfile = {
+      schemaVersion: "nemoclaw.dcode.validation-profile.v1",
+      contentDigest: `sha256:${"a".repeat(64)}`,
+      sandboxName: "dcode",
+      taskIdentity: "issue-7774",
+      sourceIdentity: `sha256:${"b".repeat(64)}`,
+      workingDirectoryRoots: ["/sandbox/workspace"],
+      commands: [],
+    };
+    const report = await getSandboxStatusReport("dcode", {
+      getSandbox: () =>
+        ({
+          name: "dcode",
+          agent: "langchain-deepagents-code",
+          dcodeValidationProfile: validationProfile,
+        }) as never,
+      reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+    });
+
+    expect(report.dcodeValidationProfile).toEqual(validationProfile);
   });
 
   it("reports the recorded DCode mode and omits it for other agents", () => {

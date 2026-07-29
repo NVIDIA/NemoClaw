@@ -4,6 +4,7 @@
 import type { InferenceSelection } from "../../inference/selection";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import type { DcodeValidationProfile } from "../../onboard/dcode/validation-profile";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
@@ -103,6 +104,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   observabilityEnabled?: boolean;
   /** Image-baked permission to expose DCode's per-thread auto-approval opt-in. */
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+  /** Immutable headless validation-command capability baked into a managed DCode image. */
+  dcodeValidationProfile?: DcodeValidationProfile;
   /** Durable provider identity for enabled managed web search. */
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;

@@ -388,6 +388,7 @@ describe("prepareSandboxDockerfilePatch", () => {
 
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "rewrite",
+      dcodeValidationProfileB64: "disabled",
       toolDisclosure: "progressive",
       trustedManagedDockerfile: true,
       requireToolDisclosureContract: false,

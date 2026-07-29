@@ -185,6 +185,57 @@ It has no approval UI and automatically approves non-shell tool requests, includ
 The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote async subagents, and alternate model routes.
 Use the interactive TUI when you need to inspect each destructive tool request before it runs.
 
+#### Configure a Headless Validation Profile
+
+Arbitrary shell execution remains disabled whether or not a validation profile is installed.
+Without a profile, headless `dcode -n` has no command executor.
+An operator can install one immutable profile with up to 32 exact validation commands during a transactional rebuild.
+The profile applies only to headless `dcode -n` runs and does not change interactive approval behavior.
+
+Create a JSON document that follows `schemas/dcode-validation-profile.schema.json` in the NemoClaw source tree.
+Each command records one exact absolute executable and argument vector, one fixed working directory, allowed environment variable names, a timeout, a combined output limit, and an invocation limit.
+The profile records environment variable names only; the runtime checks inherited values when it executes a command.
+The `sandboxName` must match the rebuild target.
+Use a stable task identifier for `taskIdentity` and a `sha256:` source identifier for `sourceIdentity`.
+Set `contentDigest` to the SHA-256 digest of the compact JSON object after removing `contentDigest` and recursively sorting object keys.
+
+Install the profile from a normalized absolute host path.
+The host file must be regular, must not be a symbolic link, and must be no larger than 64 KiB.
+
+```bash
+nemo-deepagents <sandbox-name> rebuild \
+  --dcode-validation-profile /absolute/path/validation-profile.json \
+  --yes
+```
+
+NemoClaw validates the profile before it changes the existing sandbox, bakes the canonical profile into a root-owned image file, and records the same profile in the sandbox registry.
+The managed runtime admits only an exact profiled argument vector and executes it directly with `shell=False`.
+Near matches, shell metacharacters, alternate executables, environment assignments, symbolic-link path escapes, excess output, timeouts, and exhausted invocation budgets fail closed.
+Executable paths must identify root-owned regular files that are not symbolic links or writable by group or other users.
+Working directories must exist without symbolic-link resolution and remain inside a declared root.
+The child receives only the named non-credential environment values plus fixed `HOME` and `PATH` values.
+OpenShell network, filesystem, process, and credential policies continue to apply.
+
+The tool result is a bounded JSON receipt, not command output, with:
+
+- Profile, source, argument, stdout, and stderr digests.
+- The non-secret task identity, command identifier, and working directory from the validated profile.
+- Terminal status, duration, byte counts, and exit code.
+
+It never includes stdout, stderr, credentials, or environment values.
+Use the host status command before execution to inspect the effective profile and digest in machine-readable form.
+
+```bash
+nemo-deepagents <sandbox-name> status --json
+```
+
+Later rebuilds retain the recorded profile.
+Remove the capability explicitly with another transactional rebuild.
+
+```bash
+nemo-deepagents <sandbox-name> rebuild --dcode-validation-profile disabled --yes
+```
+
 #### Configure Thread Auto-Approval
 
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.

@@ -31,6 +31,7 @@ export function createRebuildCommandContext(
   log: RebuildLog;
   requestedToolDisclosure: ToolDisclosure | undefined;
   requestedDcodeAutoApprovalMode: DcodeAutoApprovalMode | undefined;
+  requestedDcodeValidationProfile: string | undefined;
   requestedObservabilityEnabled: boolean | undefined;
   skipConfirm: boolean;
 } {
@@ -43,6 +44,7 @@ export function createRebuildCommandContext(
       : () => {},
     requestedToolDisclosure: normalized.toolDisclosure,
     requestedDcodeAutoApprovalMode: normalized.dcodeAutoApprovalMode,
+    requestedDcodeValidationProfile: normalized.dcodeValidationProfile,
     requestedObservabilityEnabled: normalized.observabilityEnabled,
     skipConfirm: normalized.yes === true || normalized.force === true,
     bail: opts.throwOnError

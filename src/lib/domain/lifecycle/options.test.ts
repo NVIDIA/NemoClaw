@@ -164,6 +164,14 @@ describe("lifecycle option normalization", () => {
     expect(
       normalizeRebuildSandboxOptions(["--dcode-auto-approval=disabled"]).dcodeAutoApprovalMode,
     ).toBe("disabled");
+    expect(
+      normalizeRebuildSandboxOptions(["--dcode-validation-profile", "/tmp/validation-profile.json"])
+        .dcodeValidationProfile,
+    ).toBe("/tmp/validation-profile.json");
+    expect(
+      normalizeRebuildSandboxOptions(["--dcode-validation-profile=disabled"])
+        .dcodeValidationProfile,
+    ).toBe("disabled");
     expect(normalizeRebuildSandboxOptions(["--observability"]).observabilityEnabled).toBe(true);
     expect(normalizeRebuildSandboxOptions(["--no-observability"]).observabilityEnabled).toBe(false);
     expect(
@@ -191,6 +199,12 @@ describe("lifecycle option normalization", () => {
     );
     expect(() => normalizeRebuildSandboxOptions(["--dcode-auto-approval="])).toThrow(
       /disabled, thread-opt-in/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--dcode-validation-profile"])).toThrow(
+      /requires an absolute JSON path/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--dcode-validation-profile="])).toThrow(
+      /requires an absolute JSON path/,
     );
   });
 

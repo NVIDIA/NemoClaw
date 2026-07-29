@@ -30,13 +30,13 @@ import {
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
 import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
-import { normalizeReasoningEffort, REASONING_EFFORT_ENV } from "./reasoning-mode";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
   validateToolDisclosureDockerfileContract,
 } from "./dockerfile-tool-disclosure-contract";
+import { normalizeReasoningEffort, REASONING_EFFORT_ENV } from "./reasoning-mode";
 
 export { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 
@@ -93,6 +93,7 @@ export interface PatchStagedDockerfileOptions {
   trustedManagedDockerfile?: boolean;
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+  dcodeValidationProfileB64?: string;
   upstreamEndpointUrl?: string | null;
   wslDashboardExposure?: boolean;
 }
@@ -112,6 +113,27 @@ export function patchDcodeAutoApprovalDockerArg(
     );
   }
   return dockerfile.replace(instruction, `ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=${mode}`);
+}
+
+export function patchDcodeValidationProfileDockerArg(
+  dockerfile: string,
+  encodedProfile: string,
+): string {
+  if (
+    encodedProfile !== "disabled" &&
+    (!/^[A-Za-z0-9+/]+={0,2}$/.test(encodedProfile) || encodedProfile.length > 90_000)
+  ) {
+    throw new Error("Invalid DCode validation profile encoding; refusing to patch the Dockerfile.");
+  }
+  const buildArg = "NEMOCLAW_DCODE_VALIDATION_PROFILE_B64";
+  const instruction = new RegExp(`^ARG ${buildArg}=[^\\r\\n]*$`, "gm");
+  const matches = dockerfile.match(instruction) ?? [];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Dockerfile must contain exactly one ARG ${buildArg}=... instruction; found ${matches.length}.`,
+    );
+  }
+  return dockerfile.replace(instruction, `ARG ${buildArg}=${encodedProfile}`);
 }
 
 export function isValidProxyHost(value: string): boolean {
@@ -166,6 +188,12 @@ export function patchStagedDockerfile(
   }
   if (options.dcodeAutoApprovalMode !== undefined) {
     dockerfile = patchDcodeAutoApprovalDockerArg(dockerfile, options.dcodeAutoApprovalMode);
+  }
+  if (options.dcodeValidationProfileB64 !== undefined) {
+    dockerfile = patchDcodeValidationProfileDockerArg(
+      dockerfile,
+      options.dcodeValidationProfileB64,
+    );
   }
   // Pin the base image to a specific digest when available (#1904).
   // The ref must come from pullAndResolveBaseImageDigest() — never from

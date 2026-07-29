@@ -234,6 +234,14 @@ function printAgentHarness(context: SandboxStatusTextContext): number | null {
   if (dcodeAutoApprovalMode) {
     console.log(`    DCode auto-approval capability: ${dcodeAutoApprovalMode}`);
   }
+  if (sb?.agent === "langchain-deepagents-code") {
+    const profile = sb.dcodeValidationProfile;
+    console.log(
+      profile
+        ? `    DCode validation profile: ${profile.contentDigest} (${profile.commands.length} command${profile.commands.length === 1 ? "" : "s"})`
+        : "    DCode validation profile: disabled",
+    );
+  }
   if (statusAgent.agentLoadError) {
     console.log(`    Agent load error: ${statusAgent.agentLoadError}`);
   }

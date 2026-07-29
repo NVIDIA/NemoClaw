@@ -147,6 +147,8 @@ export interface SandboxStatusReport {
   agentDisplayName: string;
   agentRuntime: "gateway" | "terminal" | "unknown";
   dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  /** Effective immutable headless validation profile, including its content digest. */
+  dcodeValidationProfile: NonNullable<registry.SandboxEntry["dcodeValidationProfile"]> | null;
   agentLoadError?: string;
   model: string;
   provider: string;
@@ -501,6 +503,8 @@ async function buildSandboxStatusReport(
     agentDisplayName: agent.agentDisplayName,
     agentRuntime: agent.agentRuntime,
     dcodeAutoApprovalMode: resolveSandboxStatusDcodeAutoApprovalMode(sb),
+    dcodeValidationProfile:
+      sb?.agent === "langchain-deepagents-code" ? (sb.dcodeValidationProfile ?? null) : null,
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
     // Keep schema v1's established live-first fields for existing consumers.
     // The explicit route fields separate durable sandbox intent from the one

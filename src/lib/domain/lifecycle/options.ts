@@ -39,6 +39,7 @@ function readCleanupGatewayEnv(): boolean | undefined {
 
 export interface RebuildSandboxOptions {
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+  dcodeValidationProfile?: string;
   force?: boolean;
   observabilityEnabled?: boolean;
   toolDisclosure?: ToolDisclosure;
@@ -89,6 +90,20 @@ export function normalizeRebuildSandboxOptions(
   let rawDcodeAutoApprovalMode: unknown;
   let rawToolDisclosure: unknown;
   if (Array.isArray(options)) {
+    const dcodeValidationProfileSplitIndex = options.lastIndexOf("--dcode-validation-profile");
+    const dcodeValidationProfileInline = [...options]
+      .reverse()
+      .find((value) => value.startsWith("--dcode-validation-profile="));
+    const dcodeValidationProfile =
+      dcodeValidationProfileSplitIndex >= 0
+        ? options[dcodeValidationProfileSplitIndex + 1]
+        : dcodeValidationProfileInline?.slice("--dcode-validation-profile=".length);
+    if (
+      (dcodeValidationProfileSplitIndex >= 0 || dcodeValidationProfileInline !== undefined) &&
+      !dcodeValidationProfile
+    ) {
+      throw new Error("--dcode-validation-profile requires an absolute JSON path or 'disabled'.");
+    }
     const observabilityIndex = options.lastIndexOf("--observability");
     const noObservabilityIndex = options.lastIndexOf("--no-observability");
     const observabilityEnabled =
@@ -124,6 +139,7 @@ export function normalizeRebuildSandboxOptions(
     }
     return {
       ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
+      ...(dcodeValidationProfile ? { dcodeValidationProfile } : {}),
       force: options.includes("--force"),
       ...(observabilityEnabled === undefined ? {} : { observabilityEnabled }),
       ...(toolDisclosure ? { toolDisclosure } : {}),

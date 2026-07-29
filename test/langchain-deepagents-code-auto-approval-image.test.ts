@@ -52,6 +52,25 @@ describe("LangChain Deep Agents Code auto-approval image contracts", () => {
     expect(runtime).toContain("def managed_auto_approval_enabled() -> bool:");
   });
 
+  it("bakes the validation profile as root-owned data without runtime env trust (#7774)", () => {
+    const dockerfile = readAgentFile("Dockerfile");
+    const runtime = readAgentFile("managed-dcode-runtime.py");
+    const patcher = readAgentFile("patch-managed-deepagents-code.py");
+
+    expect(dockerfile).toContain("ARG NEMOCLAW_DCODE_VALIDATION_PROFILE_B64=disabled");
+    expect(dockerfile).toContain("/usr/local/share/nemoclaw/dcode-validation-profile.json");
+    expect(dockerfile).toContain("managed.validate_managed_validation_profile_file()");
+    const envBlock = dockerfile.slice(dockerfile.indexOf("ENV HOME="));
+    expect(envBlock).not.toContain("NEMOCLAW_DCODE_VALIDATION_PROFILE_B64");
+    expect(runtime).toContain("def execute_managed_validation_command(");
+    expect(runtime).toContain("shell=False");
+    expect(runtime).toContain("start_new_session=True");
+    expect(patcher).toContain("class _NemoClawValidationProfileMiddleware");
+    expect(patcher).toContain(
+      'if request.tool_call["name"] != "execute":\n            return handler(request)\n        return self._result(request)',
+    );
+  });
+
   it("strips ambient hints without serializing them into shell state (#6478)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-env-"));
     try {

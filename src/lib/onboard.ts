@@ -2259,6 +2259,14 @@ async function createSandboxWithBaseImageResolution(
   );
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
   const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
+  const managedDcodeValidationProfile =
+    sandboxRegistration.dcodeValidationProfileFromEnv(sandboxName);
+  if (managedDcodeValidationProfile && !isManagedDcodeAgent) {
+    console.error(
+      "  DCode validation profiles are supported only for managed LangChain Deep Agents Code sandboxes.",
+    );
+    process.exit(1);
+  }
   let effectivePort = 0,
     chatUiUrl = "";
   if (manageDashboard) {
@@ -2847,6 +2855,9 @@ async function createSandboxWithBaseImageResolution(
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
           ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
+          ...(managedDcodeValidationProfile
+            ? { dcodeValidationProfile: managedDcodeValidationProfile }
+            : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared, resolvedCreateIntent.policy.options.baselineExclusions),

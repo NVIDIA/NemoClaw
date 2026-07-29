@@ -576,6 +576,9 @@ AGENT_PATCH = r'''
 # NemoClaw-managed progressive tool disclosure.
 # NemoClaw-managed backend-neutral observability.
 from contextvars import ContextVar as _NemoClawContextVar
+from langchain.agents.middleware.types import (
+    AgentMiddleware as _NemoClawAgentMiddleware,
+)
 
 _nemoclaw_original_create_cli_agent = create_cli_agent
 _nemoclaw_original_create_deep_agent = globals().get("create_deep_agent")
@@ -585,6 +588,46 @@ _nemoclaw_progressive_disclosure_active = _NemoClawContextVar(
 _nemoclaw_observability_active = _NemoClawContextVar(
     "nemoclaw_observability_active", default=False
 )
+_nemoclaw_validation_profile_active = _NemoClawContextVar(
+    "nemoclaw_validation_profile_active", default=False
+)
+
+
+class _NemoClawValidationProfileMiddleware(_NemoClawAgentMiddleware):
+    """Replace the headless execute tool with the managed argv executor."""
+
+    @staticmethod
+    def _result(request):
+        import json
+
+        from langchain_core.messages import ToolMessage
+
+        from deepagents_code._nemoclaw_managed import (
+            execute_managed_validation_command,
+        )
+
+        args = request.tool_call.get("args") or {}
+        receipt, succeeded = execute_managed_validation_command(args.get("command"))
+        return ToolMessage(
+            content=json.dumps(
+                receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ),
+            name="execute",
+            tool_call_id=request.tool_call["id"],
+            status="success" if succeeded else "error",
+        )
+
+    def wrap_tool_call(self, request, handler):
+        if request.tool_call["name"] != "execute":
+            return handler(request)
+        return self._result(request)
+
+    async def awrap_tool_call(self, request, handler):
+        if request.tool_call["name"] != "execute":
+            return await handler(request)
+        import asyncio
+
+        return await asyncio.to_thread(self._result, request)
 
 
 def _nemoclaw_create_deep_agent(*args, **kwargs):
@@ -593,7 +636,8 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
         raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
     progressive_active = _nemoclaw_progressive_disclosure_active.get()
     observability_active = _nemoclaw_observability_active.get()
-    if not progressive_active and not observability_active:
+    validation_profile_active = _nemoclaw_validation_profile_active.get()
+    if not progressive_active and not observability_active and not validation_profile_active:
         return _nemoclaw_original_create_deep_agent(*args, **kwargs)
 
     middleware = list(kwargs.get("middleware") or ())
@@ -607,6 +651,8 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
         from deepagents_code.nemoclaw_observability import new_relay_middleware
 
         middleware.append(new_relay_middleware())
+    if validation_profile_active:
+        middleware.append(_NemoClawValidationProfileMiddleware())
     kwargs["middleware"] = middleware
 
     subagents = kwargs.get("subagents")
@@ -619,6 +665,10 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
                     subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
                 if observability_active:
                     subagent_middleware.append(new_relay_middleware())
+                if validation_profile_active:
+                    subagent_middleware.append(
+                        _NemoClawValidationProfileMiddleware()
+                    )
                 subagent = {**subagent, "middleware": subagent_middleware}
             patched_subagents.append(subagent)
         kwargs["subagents"] = patched_subagents
@@ -634,6 +684,21 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     """Keep managed graph posture, disclosure, and observability boundaries."""
     kwargs["rubric_model"] = None
     kwargs["async_subagents"] = None
+    from deepagents_code._nemoclaw_managed import (
+        managed_validation_profile_enabled,
+    )
+
+    validation_profile_active = (
+        kwargs.get("interactive", True) is False
+        and managed_validation_profile_enabled()
+    )
+    if validation_profile_active:
+        # The upstream backend supplies the execute tool, but the managed
+        # middleware never calls its shell handler.
+        kwargs["enable_shell"] = True
+        kwargs["auto_approve"] = True
+        kwargs["interrupt_shell_only"] = False
+        kwargs["shell_allow_list"] = None
     from deepagents_code.progressive_tool_disclosure import (
         assert_unique_callable_tool_names,
     )
@@ -666,11 +731,15 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         progressive_active
     )
     observability_token = _nemoclaw_observability_active.set(observability_active)
+    validation_profile_token = _nemoclaw_validation_profile_active.set(
+        validation_profile_active
+    )
     try:
         result = _nemoclaw_original_create_cli_agent(
             model, assistant_id, *args, **kwargs
         )
     finally:
+        _nemoclaw_validation_profile_active.reset(validation_profile_token)
         _nemoclaw_observability_active.reset(observability_token)
         _nemoclaw_progressive_disclosure_active.reset(progressive_token)
     if not observability_active:
@@ -849,7 +918,13 @@ _nemoclaw_original_run_non_interactive = run_non_interactive
 
 async def run_non_interactive(*args, **kwargs):
     """Enforce the managed headless boundary at the final Python call site."""
-    settings.shell_allow_list = None
+    from deepagents_code._nemoclaw_managed import managed_validation_profile_enabled
+
+    settings.shell_allow_list = (
+        ["nemoclaw-managed-validation-profile"]
+        if managed_validation_profile_enabled()
+        else None
+    )
     kwargs["startup_cmd"] = None
     from deepagents_code.config import CLI_MAX_RETRIES_KEY
 

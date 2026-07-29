@@ -32,6 +32,7 @@ export {
 } from "./registry-entry-view";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
+import { cloneDcodeValidationProfile } from "../onboard/dcode/validation-profile";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
@@ -137,6 +138,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       dcodeAutoApprovalMode: isDcodeAutoApprovalMode(entry.dcodeAutoApprovalMode)
         ? entry.dcodeAutoApprovalMode
         : undefined,
+      dcodeValidationProfile: cloneDcodeValidationProfile(entry.dcodeValidationProfile, entry.name),
       webSearchProvider:
         entry.webSearchEnabled === true &&
         (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")

@@ -111,6 +111,7 @@
     "nemoclaw/package.json",
     "nemoclaw-blueprint/",
     "schemas/network-policy.schema.json",
+    "schemas/dcode-validation-profile.schema.json",
     "schemas/sandbox-policy.schema.json",
     "scripts/",
     "docs/resources/local-credential-form.html",

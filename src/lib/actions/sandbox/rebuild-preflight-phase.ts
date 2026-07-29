@@ -4,10 +4,16 @@
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import {
+  DCODE_VALIDATION_PROFILE_ENV,
+  type DcodeValidationProfile,
+  encodeDcodeValidationProfile,
+} from "../../onboard/dcode/validation-profile";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import type { RebuildManifest } from "../../state/sandbox";
 import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
+import { resolveDcodeValidationProfileForRebuild } from "./rebuild/validation-profile";
 import {
   preflightRebuildCredentials,
   type RebuildBail,
@@ -88,6 +94,7 @@ export async function runRebuildPreflightPhase(
     bail,
     requestedToolDisclosure,
     requestedDcodeAutoApprovalMode,
+    requestedDcodeValidationProfile,
     requestedObservabilityEnabled,
     skipConfirm,
   } = createRebuildCommandContext(options, opts);
@@ -121,6 +128,23 @@ export async function runRebuildPreflightPhase(
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
+  let dcodeValidationProfile: DcodeValidationProfile | null;
+  try {
+    dcodeValidationProfile = resolveDcodeValidationProfileForRebuild(
+      sandboxName,
+      requestedDcodeValidationProfile,
+      sandboxEntry,
+    );
+  } catch (error) {
+    printRebuildPreflightFailure(
+      "the DCode validation profile could not be accepted.",
+      error instanceof Error ? error.message : String(error),
+      "Invalid DCode validation profile",
+      bail,
+    );
+    return null;
+  }
+  process.env[DCODE_VALIDATION_PROFILE_ENV] = encodeDcodeValidationProfile(dcodeValidationProfile);
   const dcodeAutoApprovalIssue = managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
     agent: rebuildAgent,
     requested: requestedDcodeAutoApprovalMode,

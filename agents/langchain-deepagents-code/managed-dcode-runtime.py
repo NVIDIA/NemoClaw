@@ -12,8 +12,13 @@ import ipaddress
 import json
 import os
 import re
+import selectors
+import shlex
+import signal
 import stat
+import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +46,30 @@ _AUTO_APPROVAL_CONTENTS = {
     b"disabled\n": _AUTO_APPROVAL_DISABLED,
     b"thread-opt-in\n": _AUTO_APPROVAL_THREAD_OPT_IN,
 }
+_VALIDATION_PROFILE_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-validation-profile.json"
+)
+_VALIDATION_PROFILE_SCHEMA = "nemoclaw.dcode.validation-profile.v1"
+_VALIDATION_RECEIPT_SCHEMA = "nemoclaw.dcode.validation-receipt.v1"
+_VALIDATION_MAX_PROFILE_BYTES = 65_536
+_VALIDATION_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_VALIDATION_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
+_VALIDATION_COMMAND_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_VALIDATION_ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,127}")
+_VALIDATION_SHELL_SYNTAX = re.compile(r"[\x00-\x1f\x7f;&|><`$(){}[\]*?!~]")
+_VALIDATION_FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+_VALIDATION_EXECUTABLE_OWNER_UID = 0
+_VALIDATION_INVOCATIONS: dict[tuple[str, str], int] = {}
+_VALIDATION_CREDENTIAL_ENV_NAME = re.compile(
+    r"(?:^|[_-])(?:api[_-]?key|access[_-]?key|secret[_-]?key|"
+    r"auth[_-]?token|refresh[_-]?token|access[_-]?token|client[_-]?secret|"
+    r"private[_-]?key|pass[_-]?code|personal[_-]?access[_-]?token|"
+    r"connection[_-]?string|webhook(?:[_-]?url)?|key|secret|token|password|"
+    r"passwd|passcode|auth|authorization|credential|credentials|bearer|"
+    r"bearer[_-]?token|cookie|cookies|pat|private|privatekey|pin|webhookurl|"
+    r"dsn|connectionstring)(?:$|[_-])",
+    re.IGNORECASE,
+)
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
     r"(?:^|[_-])(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL)$",
@@ -1309,6 +1338,495 @@ def managed_auto_approval_enabled() -> bool:
     return managed_auto_approval_mode() == _AUTO_APPROVAL_THREAD_OPT_IN
 
 
+def _read_managed_validation_profile() -> bytes | None:
+    """Read the optional root-owned image profile without following links."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(_VALIDATION_PROFILE_FILE, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeError("managed validation profile is unreadable or unsafe") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_uid != _MANAGED_FILE_OWNER_UID
+            or stat.S_IMODE(before.st_mode) != 0o444
+            or before.st_size < 2
+            or before.st_size > _VALIDATION_MAX_PROFILE_BYTES
+        ):
+            raise RuntimeError("managed validation profile metadata is unsafe")
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if (
+            len(raw) != before.st_size
+            or len(raw) > _VALIDATION_MAX_PROFILE_BYTES
+            or any(
+                getattr(before, field) != getattr(after, field)
+                for field in (
+                    "st_dev",
+                    "st_ino",
+                    "st_mode",
+                    "st_nlink",
+                    "st_uid",
+                    "st_gid",
+                    "st_size",
+                    "st_mtime_ns",
+                    "st_ctime_ns",
+                )
+            )
+        ):
+            raise RuntimeError("managed validation profile changed while reading")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def _validation_absolute_path(value: object, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.startswith("/")
+        or len(value) > 4096
+        or value != os.path.normpath(value)
+        or "\\" in value
+        or ".." in value.split("/")
+        or _contains_secret_shape(value)
+    ):
+        raise RuntimeError(f"managed validation profile {label} is invalid")
+    return value
+
+
+def _validation_positive_integer(
+    value: object, label: str, maximum: int
+) -> int:
+    if type(value) is not int or value < 1 or value > maximum:
+        raise RuntimeError(f"managed validation profile {label} is invalid")
+    return value
+
+
+def _validation_credential_name(name: str) -> bool:
+    return bool(
+        _VALIDATION_CREDENTIAL_ENV_NAME.search(name)
+        or _CREDENTIAL_NAME.search(name)
+        or _CREDENTIAL_CAMEL_NAME.search(name)
+        or name.upper() in _CREDENTIAL_ENV_NAMES
+    )
+
+
+def _canonical_validation_profile(raw: bytes) -> dict[str, object]:
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_non_json_constant,
+        )
+    except Exception as exc:
+        if isinstance(exc, RuntimeError):
+            raise
+        raise RuntimeError("managed validation profile is malformed") from exc
+    fields = {
+        "schemaVersion",
+        "contentDigest",
+        "sandboxName",
+        "taskIdentity",
+        "sourceIdentity",
+        "workingDirectoryRoots",
+        "commands",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise RuntimeError("managed validation profile has an invalid shape")
+    if value["schemaVersion"] != _VALIDATION_PROFILE_SCHEMA:
+        raise RuntimeError("managed validation profile schema is unsupported")
+    for name in ("sandboxName", "taskIdentity"):
+        item = value[name]
+        if (
+            not isinstance(item, str)
+            or _VALIDATION_IDENTITY.fullmatch(item) is None
+            or _contains_secret_shape(item)
+        ):
+            raise RuntimeError(f"managed validation profile {name} is invalid")
+    source_identity = value["sourceIdentity"]
+    if (
+        not isinstance(source_identity, str)
+        or _VALIDATION_DIGEST.fullmatch(source_identity) is None
+    ):
+        raise RuntimeError("managed validation profile sourceIdentity is invalid")
+    roots = value["workingDirectoryRoots"]
+    if not isinstance(roots, list) or not 1 <= len(roots) <= 16:
+        raise RuntimeError("managed validation profile roots are invalid")
+    canonical_roots = [
+        _validation_absolute_path(root, f"workingDirectoryRoots[{index}]")
+        for index, root in enumerate(roots)
+    ]
+    if len(set(canonical_roots)) != len(canonical_roots):
+        raise RuntimeError("managed validation profile roots are duplicated")
+    commands = value["commands"]
+    if not isinstance(commands, list) or not 1 <= len(commands) <= 32:
+        raise RuntimeError("managed validation profile commands are invalid")
+    canonical_commands: list[dict[str, object]] = []
+    for index, command in enumerate(commands):
+        command_fields = {
+            "id",
+            "argv",
+            "workingDirectory",
+            "environment",
+            "timeoutSeconds",
+            "maxOutputBytes",
+            "maxInvocations",
+        }
+        if not isinstance(command, dict) or set(command) != command_fields:
+            raise RuntimeError(f"managed validation profile command {index} is invalid")
+        command_id = command["id"]
+        if (
+            not isinstance(command_id, str)
+            or _VALIDATION_COMMAND_ID.fullmatch(command_id) is None
+            or _contains_secret_shape(command_id)
+        ):
+            raise RuntimeError(f"managed validation profile command {index} id is invalid")
+        argv = command["argv"]
+        if not isinstance(argv, list) or not 1 <= len(argv) <= 64:
+            raise RuntimeError(f"managed validation profile command {index} argv is invalid")
+        canonical_argv: list[str] = []
+        for argument in argv:
+            if (
+                not isinstance(argument, str)
+                or not argument
+                or len(argument) > 4096
+                or _VALIDATION_SHELL_SYNTAX.search(argument)
+                or _contains_secret_shape(argument)
+            ):
+                raise RuntimeError(
+                    f"managed validation profile command {index} argv is invalid"
+                )
+            canonical_argv.append(argument)
+        if not canonical_argv[0].startswith("/"):
+            raise RuntimeError(
+                f"managed validation profile command {index} executable is invalid"
+            )
+        working_directory = _validation_absolute_path(
+            command["workingDirectory"], f"command {index} workingDirectory"
+        )
+        if not any(
+            working_directory == root
+            or working_directory.startswith(root.rstrip("/") + "/")
+            for root in canonical_roots
+        ):
+            raise RuntimeError(
+                f"managed validation profile command {index} workingDirectory is outside its roots"
+            )
+        environment = command["environment"]
+        if not isinstance(environment, list) or len(environment) > 64:
+            raise RuntimeError(
+                f"managed validation profile command {index} environment is invalid"
+            )
+        canonical_environment: list[str] = []
+        for name in environment:
+            if (
+                not isinstance(name, str)
+                or _VALIDATION_ENV_NAME.fullmatch(name) is None
+                or _validation_credential_name(name)
+            ):
+                raise RuntimeError(
+                    f"managed validation profile command {index} environment is invalid"
+                )
+            canonical_environment.append(name)
+        if len(set(canonical_environment)) != len(canonical_environment):
+            raise RuntimeError(
+                f"managed validation profile command {index} environment is duplicated"
+            )
+        canonical_commands.append(
+            {
+                "id": command_id,
+                "argv": canonical_argv,
+                "workingDirectory": working_directory,
+                "environment": canonical_environment,
+                "timeoutSeconds": _validation_positive_integer(
+                    command["timeoutSeconds"], f"command {index} timeoutSeconds", 3600
+                ),
+                "maxOutputBytes": _validation_positive_integer(
+                    command["maxOutputBytes"],
+                    f"command {index} maxOutputBytes",
+                    16 * 1024 * 1024,
+                ),
+                "maxInvocations": _validation_positive_integer(
+                    command["maxInvocations"], f"command {index} maxInvocations", 1000
+                ),
+            }
+        )
+    if len({command["id"] for command in canonical_commands}) != len(canonical_commands):
+        raise RuntimeError("managed validation profile command ids are duplicated")
+    content = {
+        "schemaVersion": _VALIDATION_PROFILE_SCHEMA,
+        "sandboxName": value["sandboxName"],
+        "taskIdentity": value["taskIdentity"],
+        "sourceIdentity": source_identity,
+        "workingDirectoryRoots": canonical_roots,
+        "commands": canonical_commands,
+    }
+    expected_digest = "sha256:" + hashlib.sha256(
+        json.dumps(
+            content, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    ).hexdigest()
+    if value["contentDigest"] != expected_digest:
+        raise RuntimeError("managed validation profile contentDigest is invalid")
+    return {**content, "contentDigest": expected_digest}
+
+
+def managed_validation_profile() -> dict[str, object] | None:
+    """Return the validated immutable headless-command profile, if installed."""
+    raw = _read_managed_validation_profile()
+    return None if raw is None else _canonical_validation_profile(raw)
+
+
+def validate_managed_validation_profile_file() -> None:
+    """Fail an image build when an installed validation profile is invalid."""
+    if managed_validation_profile() is None:
+        raise RuntimeError("managed validation profile is unavailable")
+
+
+def managed_validation_profile_enabled() -> bool:
+    """Return whether the immutable image contains a valid command profile."""
+    return managed_validation_profile() is not None
+
+
+def _validation_receipt(
+    profile: dict[str, object],
+    command_id: str | None,
+    argv: list[str],
+    status_name: str,
+    started: float,
+    *,
+    exit_code: int | None = None,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> dict[str, object]:
+    return {
+        "schemaVersion": _VALIDATION_RECEIPT_SCHEMA,
+        "profileDigest": profile["contentDigest"],
+        "sandboxName": profile["sandboxName"],
+        "taskIdentity": profile["taskIdentity"],
+        "sourceIdentity": profile["sourceIdentity"],
+        "commandId": command_id,
+        "argvDigest": "sha256:"
+        + hashlib.sha256(
+            json.dumps(argv, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest(),
+        "workingDirectory": next(
+            (
+                command["workingDirectory"]
+                for command in profile["commands"]
+                if command["id"] == command_id
+            ),
+            None,
+        ),
+        "terminalStatus": status_name,
+        "exitCode": exit_code,
+        "durationMs": max(0, round((time.monotonic() - started) * 1000)),
+        "stdoutSha256": hashlib.sha256(stdout).hexdigest(),
+        "stderrSha256": hashlib.sha256(stderr).hexdigest(),
+        "stdoutBytes": len(stdout),
+        "stderrBytes": len(stderr),
+    }
+
+
+def _terminate_validation_process(process: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except (OSError, ProcessLookupError):
+            pass
+
+
+def execute_managed_validation_command(command_text: object) -> tuple[dict[str, object], bool]:
+    """Execute one exact profiled argv without invoking a shell."""
+    started = time.monotonic()
+    profile = managed_validation_profile()
+    if profile is None:
+        raise RuntimeError("managed validation profile is disabled")
+    argv: list[str] = []
+    if (
+        isinstance(command_text, str)
+        and command_text
+        and _VALIDATION_SHELL_SYNTAX.search(command_text) is None
+    ):
+        try:
+            argv = shlex.split(command_text, posix=True)
+        except ValueError:
+            argv = []
+    matched = next(
+        (entry for entry in profile["commands"] if entry["argv"] == argv),
+        None,
+    )
+    if matched is None:
+        return _validation_receipt(profile, None, argv, "rejected", started), False
+    command_id = matched["id"]
+    invocation_key = (profile["contentDigest"], command_id)
+    used = _VALIDATION_INVOCATIONS.get(invocation_key, 0)
+    if used >= matched["maxInvocations"]:
+        return (
+            _validation_receipt(
+                profile, command_id, argv, "invocation_limit_exceeded", started
+            ),
+            False,
+        )
+    _VALIDATION_INVOCATIONS[invocation_key] = used + 1
+
+    executable = Path(argv[0])
+    working_directory = Path(matched["workingDirectory"])
+    directory_descriptor: int | None = None
+    try:
+        executable_stat = executable.lstat()
+        directory_stat = working_directory.lstat()
+        executable_real = executable.resolve(strict=True)
+        directory_real = working_directory.resolve(strict=True)
+        roots_real = [Path(root).resolve(strict=True) for root in profile["workingDirectoryRoots"]]
+    except (OSError, RuntimeError):
+        return _validation_receipt(profile, command_id, argv, "rejected", started), False
+    if (
+        executable.is_symlink()
+        or executable_real != executable
+        or not stat.S_ISREG(executable_stat.st_mode)
+        or executable_stat.st_uid != _VALIDATION_EXECUTABLE_OWNER_UID
+        or executable_stat.st_mode & 0o022
+        or executable_stat.st_mode & 0o111 == 0
+        or working_directory.is_symlink()
+        or directory_real != working_directory
+        or not stat.S_ISDIR(directory_stat.st_mode)
+        or not any(
+            directory_real == root or directory_real.is_relative_to(root)
+            for root in roots_real
+        )
+    ):
+        return _validation_receipt(profile, command_id, argv, "rejected", started), False
+    try:
+        directory_descriptor = os.open(
+            working_directory,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        bound_directory_stat = os.fstat(directory_descriptor)
+        if (
+            bound_directory_stat.st_dev != directory_stat.st_dev
+            or bound_directory_stat.st_ino != directory_stat.st_ino
+        ):
+            raise RuntimeError("working directory changed before execution")
+        linux_descriptor_root = Path("/proc/self/fd")
+        bound_working_directory = (
+            f"{linux_descriptor_root}/{directory_descriptor}"
+            if linux_descriptor_root.is_dir()
+            else str(working_directory)
+        )
+        pass_directory_descriptor = (
+            (directory_descriptor,) if linux_descriptor_root.is_dir() else ()
+        )
+    except (OSError, RuntimeError):
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+        return _validation_receipt(profile, command_id, argv, "rejected", started), False
+
+    child_environment = {
+        "HOME": "/sandbox",
+        "PATH": _VALIDATION_FIXED_PATH,
+    }
+    for name in matched["environment"]:
+        if name in {"HOME", "PATH"}:
+            continue
+        value = os.environ.get(name)
+        if value is not None:
+            if _contains_secret_shape(value) or _validation_credential_name(name):
+                return _validation_receipt(
+                    profile, command_id, argv, "rejected", started
+                ), False
+            child_environment[name] = value
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=bound_working_directory,
+            env=child_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+            pass_fds=pass_directory_descriptor,
+        )
+    except OSError:
+        return _validation_receipt(profile, command_id, argv, "rejected", started), False
+    finally:
+        os.close(directory_descriptor)
+
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    selector = selectors.DefaultSelector()
+    assert process.stdout is not None and process.stderr is not None
+    for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+    terminal_status: str | None = None
+    deadline = started + matched["timeoutSeconds"]
+    maximum_output = matched["maxOutputBytes"]
+    try:
+        while selector.get_map():
+            if time.monotonic() >= deadline:
+                terminal_status = "timed_out"
+                _terminate_validation_process(process)
+            for key, _mask in selector.select(timeout=0.05):
+                chunk = os.read(key.fileobj.fileno(), 65_536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                target = output[key.data]
+                remaining = maximum_output + 1 - sum(len(value) for value in output.values())
+                if remaining > 0:
+                    target.extend(chunk[:remaining])
+                if sum(len(value) for value in output.values()) > maximum_output:
+                    terminal_status = "output_limit_exceeded"
+                    _terminate_validation_process(process)
+            if terminal_status is not None and process.poll() is not None:
+                for key in list(selector.get_map().values()):
+                    selector.unregister(key.fileobj)
+        return_code = process.wait(timeout=1)
+    except Exception:
+        _terminate_validation_process(process)
+        process.wait()
+        terminal_status = terminal_status or "failed"
+        return_code = process.returncode
+    finally:
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+    if terminal_status is None:
+        terminal_status = "succeeded" if return_code == 0 else "failed"
+    bounded_stdout = bytes(output["stdout"])
+    bounded_stderr = bytes(output["stderr"])
+    overflow = max(0, len(bounded_stdout) + len(bounded_stderr) - maximum_output)
+    if overflow:
+        if overflow <= len(bounded_stderr):
+            bounded_stderr = bounded_stderr[:-overflow]
+        else:
+            overflow -= len(bounded_stderr)
+            bounded_stderr = b""
+            bounded_stdout = bounded_stdout[:-overflow]
+    receipt = _validation_receipt(
+        profile,
+        command_id,
+        argv,
+        terminal_status,
+        started,
+        exit_code=return_code,
+        stdout=bounded_stdout,
+        stderr=bounded_stderr,
+    )
+    return receipt, terminal_status == "succeeded"
+
+
 def managed_display_provider(adapter_provider: object) -> str:
     """Return the provider label to show for the managed inference adapter.
 
@@ -1336,6 +1854,7 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    managed_validation_profile()
     managed_fetch_proxy_url()
     base_url = managed_inference_base_url()
     os.environ["OPENAI_BASE_URL"] = base_url

@@ -9,6 +9,10 @@ import {
 } from "../sandbox-base-image";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import {
+  DCODE_VALIDATION_PROFILE_DISABLED,
+  DCODE_VALIDATION_PROFILE_ENV,
+} from "./dcode/validation-profile";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
@@ -212,6 +216,12 @@ export async function prepareSandboxDockerfilePatch({
           : {}),
         ...(endpointUrl ? { upstreamEndpointUrl: endpointUrl } : {}),
         ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
+        ...(!fromDockerfile && managedAgentName === "langchain-deepagents-code"
+          ? {
+              dcodeValidationProfileB64:
+                process.env[DCODE_VALIDATION_PROFILE_ENV] ?? DCODE_VALIDATION_PROFILE_DISABLED,
+            }
+          : {}),
         requireToolDisclosureContract: Boolean(fromDockerfile),
         ...(metadata ? { baseImageResolutionMetadata: metadata } : {}),
       };

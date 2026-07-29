@@ -17,6 +17,11 @@ import type {
 } from "../state/registry";
 import * as registry from "../state/registry";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
+import {
+  DCODE_VALIDATION_PROFILE_ENV,
+  type DcodeValidationProfile,
+  decodeDcodeValidationProfile,
+} from "./dcode/validation-profile";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
   getHermesDashboardRegistryFields,
@@ -48,6 +53,7 @@ export interface CreatedSandboxRegistryEntryInput {
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+  dcodeValidationProfile?: DcodeValidationProfile;
   policyTier?: SandboxEntry["policyTier"];
   baselineExclusions?: readonly BaselineExclusionEntry[];
   webSearchEnabled?: boolean;
@@ -72,6 +78,10 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   registerSandbox?(entry: SandboxEntry): void;
+}
+
+export function dcodeValidationProfileFromEnv(sandboxName: string): DcodeValidationProfile | null {
+  return decodeDcodeValidationProfile(process.env[DCODE_VALIDATION_PROFILE_ENV], sandboxName);
 }
 
 export function creationFidelity(
@@ -187,6 +197,9 @@ export function buildCreatedSandboxRegistryEntry(
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined
       ? { dcodeAutoApprovalMode: input.dcodeAutoApprovalMode }
+      : {}),
+    ...(input.dcodeValidationProfile !== undefined
+      ? { dcodeValidationProfile: input.dcodeValidationProfile }
       : {}),
     ...(input.policyTier !== undefined ? { policyTier: input.policyTier } : {}),
     webSearchEnabled: input.webSearchEnabled === true,

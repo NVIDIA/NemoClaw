@@ -119,6 +119,7 @@ ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled
+ARG NEMOCLAW_DCODE_VALIDATION_PROFILE_B64=disabled
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
@@ -131,6 +132,10 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
     && case "$NEMOCLAW_DCODE_AUTO_APPROVAL" in \
         disabled|thread-opt-in) ;; \
         *) echo "ERROR: NEMOCLAW_DCODE_AUTO_APPROVAL must be disabled or thread-opt-in" >&2; exit 1 ;; \
+    esac \
+    && case "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" in \
+        disabled) ;; \
+        *[!A-Za-z0-9+/=]*|'') echo "ERROR: invalid DCode validation profile encoding" >&2; exit 1 ;; \
     esac
 
 # The launcher and startup script read these root-owned files instead of
@@ -143,8 +148,23 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
     && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
     && printf '%s\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval \
+    && if [ "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" = "disabled" ]; then \
+        rm -f /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+    else \
+        printf '%s' "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" > /tmp/nemoclaw-dcode-validation-profile.b64; \
+        base64 -d /tmp/nemoclaw-dcode-validation-profile.b64 > /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+        rm -f /tmp/nemoclaw-dcode-validation-profile.b64; \
+    fi \
     && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
+    && if [ -f /usr/local/share/nemoclaw/dcode-validation-profile.json ]; then \
+        chown root:root /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+    fi \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
+    && if [ -f /usr/local/share/nemoclaw/dcode-validation-profile.json ]; then \
+        chown root:root /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+        chmod 0444 /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+        /opt/venv/bin/python3 -I -c 'import _nemoclaw_managed as managed; managed.validate_managed_validation_profile_file()'; \
+    fi \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && test "$empty_prompt_status" -eq 2 \
