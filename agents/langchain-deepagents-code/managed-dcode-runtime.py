@@ -2569,12 +2569,25 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         if process is not None and process.poll() is None:
             _terminate_validation_process(process)
             process.wait()
+        terminal_status = "rejected"
+        if source_watch is not None:
+            try:
+                if (
+                    source_watch.changed()
+                    or _verified_validation_source_identity(
+                        bound_working_directory, (directory_descriptor,)
+                    )
+                    != profile["sourceIdentity"]
+                ):
+                    terminal_status = "source_identity_mismatch"
+            except (OSError, RuntimeError):
+                terminal_status = "source_identity_mismatch"
         return (
             _validation_receipt(
                 profile,
                 command_id,
                 argv,
-                "rejected",
+                terminal_status,
                 started,
                 verified_source_identity=verified_source_identity,
             ),
