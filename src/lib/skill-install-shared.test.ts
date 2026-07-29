@@ -174,13 +174,18 @@ describe("fresh shared-agent skill install", () => {
     const paths = pathsFor("/sandbox/.deepagents");
     writeFileSync(join(outsideDir, "summarize.js"), "external secret\n");
     let sshCalled = false;
-    try {
-      const result = installFreshSharedSkill(CTX, skillDir, paths, {
-        beforeSnapshotFileRead: (relativePath) => {
-          if (relativePath !== "scripts/summarize.js") return;
+    const beforeSnapshotFileRead = new Map<string, () => void>([
+      [
+        "scripts/summarize.js",
+        () => {
           rmSync(join(skillDir, "scripts"), { recursive: true, force: true });
           symlinkSync(outsideDir, join(skillDir, "scripts"), "dir");
         },
+      ],
+    ]);
+    try {
+      const result = installFreshSharedSkill(CTX, skillDir, paths, {
+        beforeSnapshotFileRead: (relativePath) => beforeSnapshotFileRead.get(relativePath)?.(),
         sshExecImpl: () => {
           sshCalled = true;
           return { status: 0, stdout: "", stderr: "" };
