@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
+import {
+  PRESERVED_ENV_REBUILD_KEY,
+  readPreservedEnvFilesFromEnv,
+} from "../../state/preserved-env/index";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
@@ -217,6 +221,78 @@ describe("runRebuildRecreatePhase handoff", () => {
     } finally {
       restoreEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", previousRecreateWithoutBackup);
     }
+  });
+
+  it("adds preserved Hermes home channels to the image build plan (#7803)", async () => {
+    const previousPreservedEnv = process.env[PRESERVED_ENV_REBUILD_KEY];
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      expect(readPreservedEnvFilesFromEnv()).toEqual([
+        {
+          path: ".env",
+          assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+        },
+      ]);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sandboxEntry: {
+            name: "alpha",
+            agent: "hermes",
+            observabilityEnabled: true,
+            policyTier: "restricted",
+          },
+          rebuildAgent: "hermes",
+          rebuildsHermesSandbox: true,
+          messagingPlan: {
+            schemaVersion: 1,
+            sandboxName: "alpha",
+            agent: "hermes",
+            workflow: "rebuild",
+            channels: [
+              {
+                channelId: "slack",
+                displayName: "Slack",
+                authMode: "token-paste",
+                active: true,
+                selected: true,
+                configured: true,
+                disabled: false,
+                inputs: [],
+                hooks: [],
+              },
+            ],
+            disabledChannels: [],
+            credentialBindings: [],
+            networkPolicy: { presets: [], entries: [] },
+            agentRender: [
+              {
+                channelId: "slack",
+                renderId: "slack-hermes-env",
+                kind: "env-lines",
+                agent: "hermes",
+                target: "~/.hermes/.env",
+                lines: ["SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN"],
+                templateRefs: [],
+              },
+            ],
+            buildSteps: [],
+            stateUpdates: [],
+            healthChecks: [],
+          },
+          backupManifest: {
+            preservedEnv: [
+              {
+                path: ".env",
+                assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+              },
+            ],
+          } as never,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(process.env[PRESERVED_ENV_REBUILD_KEY]).toBe(previousPreservedEnv);
   });
 
   it("restores the caller backup marker after inner recreate failure", async () => {

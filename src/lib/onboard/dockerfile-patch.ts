@@ -15,6 +15,10 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import {
+  mergeHermesPreservedEnvIntoMessagingPlan,
+  readPreservedEnvFilesFromEnv,
+} from "../state/preserved-env/index";
+import {
   DEFAULT_TOOL_DISCLOSURE,
   normalizeToolDisclosure,
   type ToolDisclosure,
@@ -30,13 +34,13 @@ import {
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
 import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
-import { normalizeReasoningEffort, REASONING_EFFORT_ENV } from "./reasoning-mode";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
   validateToolDisclosureDockerfileContract,
 } from "./dockerfile-tool-disclosure-contract";
+import { normalizeReasoningEffort, REASONING_EFFORT_ENV } from "./reasoning-mode";
 
 export { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 
@@ -412,8 +416,12 @@ export function patchStagedDockerfile(
   dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
-    const hydratedMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
+    const baseMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
       parseSandboxMessagingPlan(messagingPlan) ?? messagingPlan,
+    );
+    const hydratedMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
+      baseMessagingPlan,
+      baseMessagingPlan.workflow === "rebuild" ? readPreservedEnvFilesFromEnv() : undefined,
     );
     const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
     if (!messagingPlanArgPattern.test(dockerfile)) {
