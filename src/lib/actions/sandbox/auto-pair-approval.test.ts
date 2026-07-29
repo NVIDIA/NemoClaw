@@ -70,9 +70,23 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
   });
 
   it("accepts exactly one terminal fixed receipt", () => {
-    expect(
-      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=approved-one\n`),
-    ).toBe("approved-one");
+    for (const receipt of [
+      "approved-one",
+      "list-timeout",
+      "list-exec-failed",
+      "list-scope-upgrade-pending",
+      "list-device-pairing-required",
+      "list-gateway-connect-failed",
+      "list-command-failed",
+      "list-empty-output",
+      "list-invalid-json",
+      "list-invalid-output",
+      "list-missing-pending",
+    ] as const) {
+      expect(
+        parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
+      ).toBe(receipt);
+    }
     for (const output of [
       `${RECEIPT_MARKER}=approved-one\nlater output\n`,
       `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
@@ -201,7 +215,7 @@ process.exit(2);
   const pyIt =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
 
-  pyIt("approves only one exact local clone pairing transition on a shared gateway", () => {
+  pyIt("approves one exact local clone transition from listed or gated state (#7818)", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(
@@ -210,16 +224,18 @@ process.exit(2);
         emitSummary: true,
         emitReceipt: true,
         localDeviceOnly: true,
-        budget: { maxApprovals: 1 },
+        budget: { maxApprovals: 1, listTimeoutS: 0.5 },
       },
     );
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-clone-pair-"));
     try {
       const stateDir = path.join(tmpDir, "openclaw-state");
       const identityDir = path.join(stateDir, "identity");
+      const devicesDir = path.join(stateDir, "devices");
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
       fs.mkdirSync(identityDir, { recursive: true });
+      fs.mkdirSync(devicesDir, { recursive: true });
       const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
       const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
       fs.writeFileSync(
@@ -236,8 +252,19 @@ process.exit(2);
 const fs = require("fs");
 const args = process.argv.slice(2);
 if (args[0] === "devices" && args[1] === "list") {
-  process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
-  process.exit(0);
+  if (process.env.NEMOCLAW_LIST_SLEEP_MS) {
+    Atomics.wait(
+      new Int32Array(new SharedArrayBuffer(4)),
+      0,
+      0,
+      Number(process.env.NEMOCLAW_LIST_SLEEP_MS),
+    );
+  }
+  if (process.env.NEMOCLAW_LIST_RESPONSE) {
+    process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
+  }
+  process.stderr.write(process.env.NEMOCLAW_LIST_STDERR || "");
+  process.exit(Number(process.env.NEMOCLAW_LIST_EXIT_CODE || "0"));
 }
 if (args[0] === "devices" && args[1] === "approve") {
   if (process.env.NEMOCLAW_APPROVE_FAIL === "1") {
@@ -262,15 +289,42 @@ process.exit(2);
       );
       const run = (
         pending: unknown[],
-        options: { rawListResponse?: string; failApproval?: boolean } = {},
-      ) =>
-        spawnSync("sh", ["-c", script], {
+        options: {
+          rawListResponse?: string;
+          listExitCode?: number;
+          listSleepMs?: number;
+          listStderr?: string;
+          localPending?: Record<string, unknown>;
+          failApproval?: boolean;
+        } = {},
+      ) => {
+        const pendingByRequestId = Object.fromEntries(
+          pending.flatMap((value) => {
+            if (
+              typeof value !== "object" ||
+              value === null ||
+              !("requestId" in value) ||
+              typeof value.requestId !== "string"
+            ) {
+              return [];
+            }
+            return [[value.requestId, value]];
+          }),
+        );
+        fs.writeFileSync(
+          path.join(devicesDir, "pending.json"),
+          JSON.stringify(options.localPending ?? pendingByRequestId),
+        );
+        return spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
             ...process.env,
             PATH: `${tmpDir}:/usr/bin:/bin`,
             NEMOCLAW_LIST_RESPONSE:
               options.rawListResponse ?? JSON.stringify({ pending, paired: [] }),
+            NEMOCLAW_LIST_EXIT_CODE: String(options.listExitCode ?? 0),
+            NEMOCLAW_LIST_SLEEP_MS: String(options.listSleepMs ?? 0),
+            NEMOCLAW_LIST_STDERR: options.listStderr ?? "",
             NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
@@ -279,6 +333,7 @@ process.exit(2);
           },
           timeout: 10_000,
         });
+      };
       const readApprovals = () =>
         fs.existsSync(approvalsFile)
           ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
@@ -346,9 +401,43 @@ process.exit(2);
       expect(readApprovals()).toEqual(["clone-write-only"]);
 
       resetLogs();
-      const listFailed = run([], { rawListResponse: "raw list output must stay private" });
-      expect(listFailed.stdout).toContain(`${RECEIPT_MARKER}=list-failed`);
-      expect(`${listFailed.stdout}${listFailed.stderr}`).not.toContain("raw list output");
+      const gatedScopeUpgrade = run([repairRequest], {
+        listExitCode: 1,
+        listStderr:
+          "gateway connect failed: pairing required: device is asking for more scopes raw detail",
+      });
+      expect(gatedScopeUpgrade.status).toBe(0);
+      expect(gatedScopeUpgrade.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
+      expect(`${gatedScopeUpgrade.stdout}${gatedScopeUpgrade.stderr}`).not.toContain("raw detail");
+      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+
+      resetLogs();
+      const mismatchedPendingKey = run([repairRequest], {
+        listExitCode: 1,
+        listStderr: "scope upgrade pending approval raw detail",
+        localPending: { "different-request": repairRequest },
+      });
+      expect(mismatchedPendingKey.stdout).toContain(`${RECEIPT_MARKER}=list-missing-pending`);
+      expect(readApprovals()).toEqual([]);
+
+      resetLogs();
+      for (const [options, receipt] of [
+        [{ listSleepMs: 800 }, "list-timeout"],
+        [
+          {
+            listExitCode: 1,
+            listStderr: "raw command failure must stay private",
+          },
+          "list-command-failed",
+        ],
+        [{ rawListResponse: "" }, "list-empty-output"],
+        [{ rawListResponse: "raw invalid JSON must stay private" }, "list-invalid-json"],
+        [{ rawListResponse: "{}" }, "list-missing-pending"],
+      ] as const) {
+        const listFailure = run([], options);
+        expect(listFailure.stdout).toContain(`${RECEIPT_MARKER}=${receipt}`);
+        expect(`${listFailure.stdout}${listFailure.stderr}`).not.toContain("raw ");
+      }
 
       resetLogs();
       const noMatch = run([foreignRequest]);

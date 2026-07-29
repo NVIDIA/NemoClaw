@@ -87,7 +87,16 @@ export type AutoPairApprovalResult = {
 export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
-  | "list-failed"
+  | "list-timeout"
+  | "list-exec-failed"
+  | "list-scope-upgrade-pending"
+  | "list-device-pairing-required"
+  | "list-gateway-connect-failed"
+  | "list-command-failed"
+  | "list-empty-output"
+  | "list-invalid-json"
+  | "list-invalid-output"
+  | "list-missing-pending"
   | "clone-no-match"
   | "clone-ambiguous"
   | "request-rejected"
@@ -95,7 +104,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -165,6 +174,43 @@ def exit_with_receipt(receipt):
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  const gatedListHelper = options.localDeviceOnly
+    ? `
+# A restored clone can create an exact pending request while its device-list
+# call is denied by that same pairing or scope-upgrade gate. Read local state
+# only to recover candidates for the existing identity/scope filter below;
+# canonical OpenClaw approval remains the only writer. This matches the
+# reviewed first-run watcher boundary in scripts/nemoclaw-start.sh (#7818).
+def local_pending_after_gated_list():
+    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    try:
+        with open(
+            os.path.join(state_dir, 'devices', 'pending.json'),
+            encoding='utf-8',
+        ) as handle:
+            local_pending = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(local_pending, dict):
+        return None
+    candidates = []
+    for request_id, request in local_pending.items():
+        if (
+            not isinstance(request_id, str)
+            or not isinstance(request, dict)
+            or request.get('requestId') != request_id
+        ):
+            return None
+        candidates.append(request)
+    return candidates
+`
+    : "";
+  const gatedListAction = (receipt: AutoPairApprovalReceipt) =>
+    options.localDeviceOnly
+      ? `pending = local_pending_after_gated_list()
+        if pending is None:
+            ${exitWithReceipt("list-missing-pending")}`
+      : exitWithReceipt(receipt);
   const localDeviceFilter = options.localDeviceOnly
     ? `
 # Snapshot restore shares one gateway across the source sandbox and its clone.
@@ -315,6 +361,7 @@ import os
 import subprocess
 import sys
 ${receiptPrelude}
+${gatedListHelper}
 try:
     policy_source = base64.b64decode(
         os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
@@ -334,19 +381,35 @@ try:
         [OPENCLAW, 'devices', 'list', '--json'],
         capture_output=True, text=True, timeout=${listTimeoutS},
     )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    ${exitWithReceipt("list-failed")}
-if proc.returncode != 0 or not proc.stdout.strip():
-    ${exitWithReceipt("list-failed")}
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
-    ${exitWithReceipt("list-failed")}
-if not isinstance(data, dict):
-    ${exitWithReceipt("list-failed")}
-pending = data.get('pending')
-if not isinstance(pending, list):
-    ${exitWithReceipt("list-failed")}${localDeviceFilter}
+except subprocess.TimeoutExpired:
+    ${exitWithReceipt("list-timeout")}
+except (FileNotFoundError, OSError):
+    ${exitWithReceipt("list-exec-failed")}
+if proc.returncode != 0:
+    command_output = f'{proc.stdout}\\n{proc.stderr}'.lower()
+    if (
+        'scope upgrade pending approval' in command_output
+        or 'pairing required: device is asking for more scopes' in command_output
+    ):
+        ${gatedListAction("list-scope-upgrade-pending")}
+    elif 'device pairing required' in command_output or 'pairing required' in command_output:
+        ${gatedListAction("list-device-pairing-required")}
+    elif 'gateway connect failed' in command_output:
+        ${exitWithReceipt("list-gateway-connect-failed")}
+    else:
+        ${exitWithReceipt("list-command-failed")}
+else:
+    if not proc.stdout.strip():
+        ${exitWithReceipt("list-empty-output")}
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        ${exitWithReceipt("list-invalid-json")}
+    if not isinstance(data, dict):
+        ${exitWithReceipt("list-invalid-output")}
+    pending = data.get('pending')
+    if not isinstance(pending, list):
+        ${exitWithReceipt("list-missing-pending")}${localDeviceFilter}
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()
