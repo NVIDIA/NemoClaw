@@ -56,13 +56,12 @@ export function buildStateFileRestoreCommand(
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
-    // The agent gateway process owns the live database (created as the
-    // gateway user with no group-write bit), so writing into it in place
-    // fails with "attempt to write a readonly database" for the restoring
-    // sandbox user (#7312). Validate the backup into a staged database this
-    // user owns, then replace the target atomically — replacement only needs
-    // directory write permission, like the copy strategy. The stale WAL/SHM
-    // sidecars belong to the replaced database, so drop them after the swap.
+    // The agent gateway can own the live database under a distinct uid, so
+    // restoring in place can fail for the sandbox user and expose a partially
+    // replaced SQLite file to the gateway (#7312). Validate the backup into a
+    // staged database this user owns, then replace the target atomically;
+    // replacement only needs write permission on the parent directory. The
+    // stale WAL/SHM sidecars belong to the replaced database, so drop them.
     //
     // A successful swap does not prove the agent can persist to the result, so
     // open a write transaction against the replaced database before reporting

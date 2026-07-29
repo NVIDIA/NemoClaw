@@ -39,14 +39,19 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects staging Launchable protected-environment and secret-guard drift", () => {
+  it("rejects a Launchable environment gate, authorization drift, and secret-guard drift", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
         {
           if?: string;
           environment?: Record<string, unknown>;
-          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            run?: string;
+            uses?: string;
+          }>;
         }
       >;
     };
@@ -54,10 +59,20 @@ describe("e2e workflow boundary", () => {
     job.environment = { name: "unprotected" };
     const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
     prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
+    const generateSteps = workflow.jobs["generate-matrix"]!.steps!;
+    const authorization = generateSteps.find(
+      (step) => step.name === "Authorize Launchable E2E maintainer dispatch",
+    )!;
+    delete authorization.env!.TRIGGERING_ACTOR;
+    authorization.run = authorization.run!.replace("maintain | admin", "write");
+    generateSteps.push(...generateSteps.splice(generateSteps.indexOf(authorization), 1));
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "staging-brev-launchable must use its protected non-deployment environment",
+        "staging-brev-launchable must not use a GitHub environment",
+        "Launchable E2E maintainer authorization must bind TRIGGERING_ACTOR",
+        "step 'Authorize Launchable E2E maintainer dispatch' run script must include maintain | admin",
+        "Launchable E2E maintainer authorization must run before generate-matrix checkout",
         "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
       ]),
     );
