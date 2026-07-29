@@ -407,11 +407,6 @@
       "category": "security"
     },
     {
-      "file": "test/perl-critical-cve-remediation.test.ts",
-      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
-      "category": "security"
-    },
-    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
