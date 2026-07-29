@@ -270,6 +270,47 @@ jobs:
             ' <<< "$check_json" >/dev/null ||
             { echo "::error::controller check does not authorize this exact E2E run"; exit 1; }
 
+      - name: Authorize Launchable E2E maintainer dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
+        env:
+          ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_maintainer() {
+            local maintainer="$1"
+            if [[ ! "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ || "$maintainer" == -* || "$maintainer" == *- ]]; then
+              echo "::error::Launchable E2E actor is invalid" >&2
+              exit 1
+            fi
+
+            local permission_json
+            permission_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
+              echo "::error::Launchable E2E permission response did not match the actor" >&2
+              exit 1
+            fi
+            case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
+              maintain | admin) ;;
+              *)
+                echo "::error::Launchable E2E requires a repository maintainer or administrator" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          require_maintainer "$ACTOR"
+          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+            require_maintainer "$TRIGGERING_ACTOR"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -423,9 +464,6 @@ jobs:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    environment:
-      name: approve-brev-launchable-e2e
-      deployment: false
     permissions:
       contents: read
     concurrency:

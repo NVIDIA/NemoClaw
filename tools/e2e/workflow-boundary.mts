@@ -4105,16 +4105,15 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  const environment = asRecord(job.environment);
-  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
-    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  if (Object.hasOwn(job, "environment")) {
+    errors.push("staging-brev-launchable must not use a GitHub environment");
   }
   const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
   if (
     !stringValue(job.if).includes(trustedRun) ||
     stringValue(job.if).includes("checkout_sha == ''")
   ) {
-    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
+    errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
     "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
@@ -4122,6 +4121,53 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors.push(
       "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
     );
+  }
+  const generateMatrix = asRecord(jobs["generate-matrix"]);
+  const generateSteps = asSteps(generateMatrix.steps);
+  const authorization = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Authorize Launchable E2E maintainer dispatch",
+  );
+  const expectedAuthorizationSelector =
+    "${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+  if (authorization?.if !== expectedAuthorizationSelector) {
+    errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
+  }
+  if (authorization?.shell !== "bash") {
+    errors.push("Launchable E2E maintainer authorization must use bash");
+  }
+  const authorizationEnv = asRecord(authorization?.env);
+  for (const [key, expected] of [
+    ["ACTOR", "${{ github.actor }}"],
+    ["GITHUB_TOKEN", "${{ github.token }}"],
+    ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
+  ] as const) {
+    if (authorizationEnv[key] !== expected) {
+      errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
+    }
+  }
+  for (const required of [
+    "/collaborators/${maintainer}/permission",
+    "'.user.login // \"\"'",
+    "'.role_name // \"\"'",
+    "maintain | admin",
+    'require_maintainer "$ACTOR"',
+    'require_maintainer "$TRIGGERING_ACTOR"',
+    "requires a repository maintainer or administrator",
+  ]) {
+    requireRunContains(errors, authorization, required);
+  }
+  const generateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  if (
+    authorization &&
+    generateCheckout &&
+    generateSteps.indexOf(authorization) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("Launchable E2E maintainer authorization must run before generate-matrix checkout");
   }
   const concurrency = asRecord(job.concurrency);
   if (
