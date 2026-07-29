@@ -5,7 +5,7 @@ title: "Set Up Task-Specific Sub-Agents"
 sidebar-title: "Set Up Task-Specific Sub-Agents"
 description: "Where NemoClaw stores OpenClaw sub-agent model configuration, credentials, and workspace files inside the sandbox."
 description-agent: "Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model. Use when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw."
-keywords: ["nemoclaw additional model", "nemoclaw sub-agent model", "openclaw sub-agent", "agents.list", "sessions_spawn"]
+keywords: ["nemoclaw additional model", "nemoclaw sub-agent model", "openclaw sub-agent", "agents.list", "sessions_spawn", "vlm-demo"]
 content:
   type: "how_to"
 skill:
@@ -17,7 +17,7 @@ Use that page as the source of truth for how OpenClaw sub-agents work.
 
 This page covers the sandbox-specific pieces of a sub-agent setup.
 It explains where the OpenClaw config lives, where to put per-agent credentials, and which writable workspace path agents should use.
-It also provides a self-contained Omni vision sub-agent example.
+It also shows how the Omni VLM demo maps onto those paths.
 
 ## NemoClaw Sandbox Paths
 
@@ -37,7 +37,7 @@ Avoid relying on legacy `.openclaw-data` paths or read-only OpenClaw paths in de
 
 ## Omni Vision Sub-Agent Example
 
-This example applies the OpenClaw sub-agent pattern to a vision task.
+The [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) applies the OpenClaw sub-agent pattern to a vision task.
 It keeps the primary `main` agent on the normal NemoClaw inference route.
 It adds a `vision-operator` sub-agent backed by an Omni vision model.
 
@@ -76,138 +76,46 @@ if [ -z "$SANDBOX_CTR" ]; then
   echo "No running sandbox container found for $SANDBOX. Start the sandbox before editing its config."
   exit 1
 fi
-OPENCLAW_CONFIG_FILE=$(mktemp "${TMPDIR:-/tmp}/openclaw.config.XXXXXX")
-export OPENCLAW_CONFIG_FILE
-chmod 600 "$OPENCLAW_CONFIG_FILE"
-docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > "$OPENCLAW_CONFIG_FILE"
+docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
 ```
 
 If `SANDBOX_CTR` is empty, the sandbox is not running on this host.
 Start the sandbox, confirm that `docker ps` shows the matching `openshell.ai/sandbox-name` label, then rerun the export commands before continuing.
-`mktemp` creates a unique host-user-only file and assigns its path to `OPENCLAW_CONFIG_FILE`.
-
-<Warning>
-This direct-provider example copies the NVIDIA API key into two sandbox files.
-The uploaded `openclaw.json` has mode `0444`, so every process in the sandbox can read the key.
-The sub-agent auth profile has mode `0600`, so the sandbox user and root can read it.
-Both copies remain after gateway restarts and sandbox stop-and-start cycles until you replace or remove them, or destroy the sandbox.
-Use a dedicated, narrowly scoped key, and follow [Remove or Rotate the Credential](#remove-or-rotate-the-credential) when you finish.
-Destroying the sandbox removes the credential copies, but it also removes all persistent data in that sandbox.
-</Warning>
 
 ### Prepare the Updated Config
 
-Create another unique host-user-only file with the current hosted Omni model and the `vision-operator` entry.
-This command reads the API key without echoing it and keeps the value out of the child process's operating-system argument list.
+Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
+For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
+The wrapper reads the key without echoing it and keeps the value out of the child process's operating-system argument list.
+Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then run the patch helper.
 
 ```bash
-OPENCLAW_UPDATED_FILE=$(mktemp "${TMPDIR:-/tmp}/openclaw.updated.XXXXXX")
-export OPENCLAW_UPDATED_FILE
-chmod 600 "$OPENCLAW_UPDATED_FILE"
+export VLM_DEMO_DIR=/path/to/nemoclaw-demos/vlm-demo
 (
   read -rsp "NVIDIA API key: " NVIDIA_API_KEY
   printf '\n'
   export NVIDIA_API_KEY
   python3 -c '
-import json
 import os
+import runpy
 import sys
 
-model_id = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-provider_id = "nvidia-omni"
-model_ref = f"{provider_id}/{model_id}"
-config = json.load(sys.stdin)
-
-config["models"]["providers"][provider_id] = {
-    "baseUrl": "https://integrate.api.nvidia.com/v1",
-    "apiKey": os.environ["NVIDIA_API_KEY"],
-    "api": "openai-completions",
-    "models": [
-        {
-            "id": model_id,
-            "name": model_ref,
-            "reasoning": True,
-            "input": ["text", "image"],
-            "cost": {
-                "input": 0,
-                "output": 0,
-                "cacheRead": 0,
-                "cacheWrite": 0,
-            },
-            "contextWindow": 131072,
-            "maxTokens": 16384,
-        }
-    ],
-}
-config["agents"]["defaults"]["subagents"] = {
-    "maxConcurrent": 4,
-    "maxSpawnDepth": 1,
-}
-config["agents"]["defaults"]["timeoutSeconds"] = 300
-agents_by_id = {
-    agent["id"]: agent for agent in config["agents"].get("list", [])
-}
-main_agent = agents_by_id.setdefault(
-    "main",
-    {
-        "id": "main",
-        "model": {
-            "primary": "inference/nvidia/nemotron-3-super-120b-a12b",
-        },
-        "tools": {"profile": "full"},
-    },
-)
-allowed_agents = main_agent.setdefault("subagents", {}).setdefault("allowAgents", [])
-if "vision-operator" not in allowed_agents:
-    allowed_agents.append("vision-operator")
-agents_by_id["vision-operator"] = {
-    "id": "vision-operator",
-    "model": {"primary": model_ref},
-    "tools": {
-        "profile": "full",
-        "deny": ["message", "sessions_spawn"],
-    },
-}
-config["agents"]["list"] = list(agents_by_id.values())
-
-json.dump(config, sys.stdout, indent=2)
-' < "$OPENCLAW_CONFIG_FILE" > "$OPENCLAW_UPDATED_FILE"
+helper = sys.argv[1]
+sys.argv = [helper, os.environ["NVIDIA_API_KEY"]]
+runpy.run_path(helper, run_name="__main__")
+' "$VLM_DEMO_DIR/vlm-subagent/openclaw-patch.py" \
+    < /tmp/openclaw.json > /tmp/openclaw.updated.json
 )
 ```
 
-The updated config contains the NVIDIA API key until you delete the file.
-Do not commit it.
+The helper reads `/tmp/openclaw.json` from standard input.
+It adds the Omni provider and `vision-operator` entry.
+It writes the patched config to `/tmp/openclaw.updated.json`.
 
-Verify both model references before you upload the config:
-
-```bash
-python3 -c '
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as config_file:
-    config = json.load(config_file)
-
-provider = config["models"]["providers"]["nvidia-omni"]
-vision_operator = next(
-    agent for agent in config["agents"]["list"] if agent["id"] == "vision-operator"
-)
-print(provider["models"][0]["id"])
-print(vision_operator["model"]["primary"])
-' "$OPENCLAW_UPDATED_FILE"
-```
-
-Expected output:
-
-```text
-nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
-nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
-```
-
-For a sub-agent other than the Omni example, copy the exported config to the updated config file.
-Use `cp "$OPENCLAW_CONFIG_FILE" "$OPENCLAW_UPDATED_FILE"`.
+For a sub-agent other than the Omni example, copy the exported config to `/tmp/openclaw.updated.json`.
+Use `cp /tmp/openclaw.json /tmp/openclaw.updated.json`.
 Before uploading the file, add your provider under `models.providers` and your sub-agent under `agents.list`.
-Do not commit any file that contains a real API key.
+Do not commit `/tmp/openclaw.updated.json` or any other file that contains a real API key.
 
 ### Upload the Updated Config
 
@@ -220,7 +128,7 @@ Keep the refresh step so OpenClaw detects the update immediately.
 ```bash
 docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
 docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/.config-hash
-docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < "$OPENCLAW_UPDATED_FILE"
+docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < /tmp/openclaw.updated.json
 docker exec --user root "$SANDBOX_CTR" /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
 docker exec --user root "$SANDBOX_CTR" chown sandbox:sandbox /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
 docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/openclaw.json
@@ -254,42 +162,13 @@ For the Omni example:
 ```
 
 Use the same provider ID that appears in `models.providers`, such as `nvidia-omni`.
-Create another unique host-user-only file:
-
-```bash
-AUTH_PROFILES_FILE=$(mktemp "${TMPDIR:-/tmp}/auth-profiles.XXXXXX")
-export AUTH_PROFILES_FILE
-chmod 600 "$AUTH_PROFILES_FILE"
-(
-  read -rsp "NVIDIA API key: " NVIDIA_API_KEY
-  printf '\n'
-  export NVIDIA_API_KEY
-  python3 -c '
-import json
-import os
-import sys
-
-json.dump(
-    {
-        "providers": {
-            "nvidia-omni": {
-                "apiKey": os.environ["NVIDIA_API_KEY"],
-            }
-        }
-    },
-    sys.stdout,
-    indent=2,
-)
-' > "$AUTH_PROFILES_FILE"
-)
-```
-
-The file contains the NVIDIA API key until you delete it.
-Upload the file into the sandbox:
+Create `/tmp/auth-profiles.json` from `vlm-demo/vlm-subagent/auth-profiles.template.json`.
+Replace `YOUR_NVIDIA_API_KEY_HERE` with the provider key.
+Then upload the file into the sandbox:
 
 ```bash
 docker exec --user root "$SANDBOX_CTR" mkdir -p /sandbox/.openclaw/agents/vision-operator/agent
-docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json' < "$AUTH_PROFILES_FILE"
+docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json' < /tmp/auth-profiles.json
 docker exec --user root "$SANDBOX_CTR" chmod 600 /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
 ```
 
@@ -299,12 +178,10 @@ After uploading the auth profile, make sure the sandbox user owns the sub-agent 
 docker exec --user root "$SANDBOX_CTR" chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
 ```
 
-The sandbox copies remain credential-bearing state after you delete the host files.
-
 ## Allow Auxiliary Provider Egress
 
 Update the OpenShell network policy for the binary that makes the request when the sub-agent calls a provider directly.
-In this example, the OpenClaw gateway runs as `/usr/local/bin/node`.
+In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`.
 The NVIDIA endpoint policy must allow that binary.
 
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for policy update workflows.
@@ -336,155 +213,19 @@ Place those instructions in the writable workspace, for example:
 /sandbox/.openclaw/workspace/TOOLS.md
 ```
 
-Tell `main` to delegate image tasks to `vision-operator`.
-Tell the sub-agent to read the image path it receives.
+The Omni demo includes `vlm-demo/vlm-subagent/TOOLS.md`.
+It tells `main` to delegate image tasks to `vision-operator`.
+It tells the sub-agent to read the image path it receives.
 Adapt that file for other task-specific models.
 
-## Remove or Rotate the Credential
+## Demo Assets
 
-These procedures reuse the shell variables and temporary files from the earlier configuration update.
-For rotation in a new shell or after host cleanup, rerun [Export the Current Config](#export-the-current-config) before you prepare the replacement configuration.
-For removal, restore `OPENCLAW_CONFIG_FILE` only when it still identifies the export captured before you added the direct provider.
-In a new shell, rerun only the container-discovery commands from that section, and use the manual-removal fallback below.
-Do not restore a new export as though it were the pre-change configuration.
+Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) repository for runnable Omni assets:
 
-To rotate the key, repeat [Prepare the Updated Config](#prepare-the-updated-config) and [Add Sub-Agent Credentials](#add-sub-agent-credentials) with the replacement key.
-Upload both files before you revoke the old key.
-
-To remove the direct provider without destroying the sandbox, restore the original config that remains in `OPENCLAW_CONFIG_FILE`, remove the sub-agent auth profile, and refresh the config hash:
-
-```bash
-docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
-docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/.config-hash
-docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < "$OPENCLAW_CONFIG_FILE"
-docker exec --user root "$SANDBOX_CTR" /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-docker exec --user root "$SANDBOX_CTR" rm -f /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
-docker exec --user root "$SANDBOX_CTR" chown sandbox:sandbox /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/openclaw.json
-docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/.config-hash
-```
-
-This restores the config captured before this procedure.
-Do not use that file after other config changes, because restoring it would discard those changes.
-
-### Manually Remove the Direct Provider
-
-If the original file is unavailable or no longer current, revoke the provider key before you edit the live config.
-Rerun the container-discovery commands from [Export the Current Config](#export-the-current-config), but do not restore a stale export.
-Instead, export the current config to new host-user-only files and remove only the Omni provider, the `vision-operator` agent, and that agent's entry in `main.subagents.allowAgents`:
-
-```bash
-OPENCLAW_CURRENT_FILE=$(mktemp "${TMPDIR:-/tmp}/openclaw.current.XXXXXX")
-OPENCLAW_CLEANED_FILE=$(mktemp "${TMPDIR:-/tmp}/openclaw.cleaned.XXXXXX")
-chmod 600 "$OPENCLAW_CURRENT_FILE" "$OPENCLAW_CLEANED_FILE"
-docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > "$OPENCLAW_CURRENT_FILE"
-python3 -c '
-import json
-import sys
-
-provider_id = "nvidia-omni"
-agent_id = "vision-operator"
-config = json.load(sys.stdin)
-
-providers = config.get("models", {}).get("providers", {})
-providers.pop(provider_id, None)
-
-agents = config.get("agents", {})
-agent_list = agents.get("list", [])
-retained_agents = []
-for agent in agent_list:
-    if not isinstance(agent, dict):
-        retained_agents.append(agent)
-        continue
-    if agent.get("id") == agent_id:
-        continue
-    if agent.get("id") == "main":
-        subagents = agent.get("subagents")
-        if isinstance(subagents, dict):
-            allowed_agents = subagents.get("allowAgents")
-            if isinstance(allowed_agents, list):
-                subagents["allowAgents"] = [
-                    allowed_agent
-                    for allowed_agent in allowed_agents
-                    if allowed_agent != agent_id
-                ]
-                if not subagents["allowAgents"]:
-                    subagents.pop("allowAgents")
-                if not subagents:
-                    agent.pop("subagents")
-    retained_agents.append(agent)
-agents["list"] = retained_agents
-
-json.dump(config, sys.stdout, indent=2)
-' < "$OPENCLAW_CURRENT_FILE" > "$OPENCLAW_CLEANED_FILE"
-```
-
-Upload the cleaned config, remove the sub-agent auth profile, and refresh the config hash:
-
-```bash
-docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
-docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/.config-hash
-docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < "$OPENCLAW_CLEANED_FILE"
-docker exec --user root "$SANDBOX_CTR" /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-docker exec --user root "$SANDBOX_CTR" rm -f /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
-docker exec --user root "$SANDBOX_CTR" chown sandbox:sandbox /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/openclaw.json
-docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/.config-hash
-```
-
-Verify the live config and auth-profile path before you delete the host temporary files.
-Both commands must print a verification message.
-If either command exits with an error, keep the host files and correct the remaining state before you continue.
-
-```bash
-if docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json | python3 -c '
-import json
-import sys
-
-provider_id = "nvidia-omni"
-agent_id = "vision-operator"
-config = json.load(sys.stdin)
-providers = config.get("models", {}).get("providers", {})
-agents = config.get("agents", {}).get("list", [])
-
-provider_remains = provider_id in providers
-agent_remains = any(
-    isinstance(agent, dict) and agent.get("id") == agent_id
-    for agent in agents
-)
-allow_list_remains = any(
-    isinstance(agent, dict)
-    and agent.get("id") == "main"
-    and agent_id in agent.get("subagents", {}).get("allowAgents", [])
-    for agent in agents
-)
-if provider_remains or agent_remains or allow_list_remains:
-    raise SystemExit(1)
-'; then
-  echo "Provider, agent, and allow-list cleanup verified."
-else
-  echo "Direct provider or sub-agent state remains in openclaw.json." >&2
-  exit 1
-fi
-
-if docker exec --user root "$SANDBOX_CTR" test ! -e /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json; then
-  echo "Sub-agent auth-profile removal verified."
-else
-  echo "The sub-agent auth profile still exists." >&2
-  exit 1
-fi
-
-nemoclaw "$SANDBOX" agents list --json
-rm -f "$OPENCLAW_CURRENT_FILE" "$OPENCLAW_CLEANED_FILE"
-```
-
-The final agent listing must not include `vision-operator`.
-
-Delete the host temporary files after the upload, verification, and any rollback window:
-
-```bash
-rm -f "$OPENCLAW_CONFIG_FILE" "$OPENCLAW_UPDATED_FILE" "$AUTH_PROFILES_FILE"
-```
+- `vlm-subagent-guide.md` for a command-by-command walkthrough.
+- `vlm-subagent/openclaw-patch.py` for patching `openclaw.json`.
+- `vlm-subagent/auth-profiles.template.json` for the sub-agent auth profile.
+- `vlm-subagent/TOOLS.md` for delegation instructions.
 
 ## Next Steps
 
