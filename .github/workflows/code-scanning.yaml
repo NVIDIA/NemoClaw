@@ -83,7 +83,35 @@ jobs:
 
       - name: Install ShellCheck
         if: steps.converter.outputs.present == 'true'
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/shellcheck-json1-probe.sh"
+          printf '#!/bin/sh\ntrue\n' > "$probe"
+          if command -v shellcheck >/dev/null 2>&1 &&
+            shellcheck --format=json1 "$probe" >/dev/null 2>&1; then
+            echo "Using preinstalled ShellCheck"
+            shellcheck --version
+          else
+            apt_options=(
+              -o Acquire::Retries=3
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            if ! sudo apt-get "${apt_options[@]}" update; then
+              echo "Failed to update apt package indexes for ShellCheck" >&2
+              exit 1
+            fi
+            if ! sudo apt-get "${apt_options[@]}" install -y shellcheck; then
+              echo "Failed to install ShellCheck" >&2
+              exit 1
+            fi
+            if ! shellcheck --format=json1 "$probe" >/dev/null 2>&1; then
+              echo "Installed ShellCheck does not support --format=json1" >&2
+              exit 1
+            fi
+            echo "Using installed ShellCheck"
+            shellcheck --version
+          fi
 
       - name: Collect shell files
         id: shell-files

@@ -222,7 +222,7 @@ Then complete the pull-request template's Documentation Writer Review receipt wi
 Rerun the review after any later commit because the receipt is tied to the exact pull-request head.
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
-If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks before opening the PR.
+If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run validate:pr` once to reproduce those checks before opening the PR.
 The command uses `origin/main`, so refresh it with `git fetch origin main` first.
 Run targeted tests once per relevant change set only when the change also touches code, generated behavior, or runtime behavior; rerun after later edits or hook autofixes that can affect it.
 Reserve `npm test` for broad runtime or test-harness changes.
