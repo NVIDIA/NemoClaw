@@ -344,12 +344,16 @@ RUN printf '%s\n' \
 # skip rather than doing a nondeterministic dependency resolve during image
 # build.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
+# Upstream tests are not part of the production runtime and can contain
+# intentionally hostile security-test fixtures. Remove them in the extraction
+# RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 RUN mkdir -p /opt/hermes \
     && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
+    && rm -rf /opt/hermes/tests \
     && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 /tmp/hermes-security-dependencies.patch
@@ -486,9 +490,9 @@ RUN chmod -R a+rX /opt/hermes/.venv \
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 RUN set -eu; \
-    for build_cache in /root/.npm /root/.cache/electron /root/.cache/node-gyp; do \
-        if [ -e "$build_cache" ] || [ -L "$build_cache" ]; then \
-            echo "ERROR: build-only Hermes cache leaked into the base image: $build_cache" >&2; \
+    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp; do \
+        if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
+            echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \
         fi; \
     done; \

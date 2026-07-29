@@ -19,6 +19,7 @@ Thumbs.db
 
 # Project-specific
 .nemoclaw-maintainer/
+.dori_user_status
 draft_newsletter_*
 research/
 specs/

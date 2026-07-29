@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,6 +37,17 @@ function extractHermesInstallCommand(dockerfile: string): string {
     );
   expect(match).not.toBeNull();
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
+}
+
+function extractHermesArchiveCommand(dockerfile: string): string {
+  const archiveStart = dockerfile.indexOf("RUN mkdir -p /opt/hermes");
+  const archiveEnd = dockerfile.indexOf("\n\n# Cross-check the pinned release", archiveStart);
+  expect(archiveStart).toBeGreaterThanOrEqual(0);
+  expect(archiveEnd).toBeGreaterThan(archiveStart);
+  return dockerfile
+    .slice(archiveStart, archiveEnd)
+    .replace(/^RUN\s+/, "")
+    .replace(/\\\n/g, " ");
 }
 
 function extractHermesIntegrityCommand(dockerfile: string): string {
@@ -201,6 +213,83 @@ function runHermesInstallLayer(
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
+  it("removes upstream tests in the Hermes archive extraction layer", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-archive-"));
+    const sourceRoot = path.join(tmp, "source");
+    const archiveRoot = path.join(sourceRoot, "hermes-agent-test");
+    const sourceTarball = path.join(tmp, "source.tar.gz");
+    const targetRoot = path.join(tmp, "target", "hermes");
+    const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
+    const checksumFile = `${downloadedTarball}.sha256`;
+    const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
+    const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
+
+    try {
+      fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
+      fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
+      fs.writeFileSync(securityPatch, "test patch fixture\n");
+      fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
+      fs.writeFileSync(
+        path.join(archiveRoot, "tests", "security-fixture.txt"),
+        "intentionally hostile test-only URL\n",
+      );
+      const packed = spawnSync(
+        "tar",
+        ["-czf", sourceTarball, "-C", sourceRoot, "hermes-agent-test"],
+        { encoding: "utf-8" },
+      );
+      expect(packed.status, packed.stderr).toBe(0);
+      const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
+      const command = extractHermesArchiveCommand(dockerfile)
+        .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
+        .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
+        .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
+        .replaceAll("/opt/hermes", targetRoot);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `source_tarball=${JSON.stringify(sourceTarball)}`,
+          "curl() {",
+          "  output=",
+          '  while [ "$#" -gt 0 ]; do',
+          '    if [ "$1" = "-o" ]; then shift; output="$1"; fi',
+          "    shift",
+          "  done",
+          '  cp "$source_tarball" "$output"',
+          "}",
+          `target_root=${JSON.stringify(targetRoot)}`,
+          `security_patch=${JSON.stringify(securityPatch)}`,
+          "git() {",
+          '  [ "$1" = "-C" ]',
+          '  [ "$2" = "$target_root" ]',
+          '  [ "$3" = "apply" ]',
+          '  if [ "$4" = "--check" ]; then',
+          '    [ "$5" = "$security_patch" ]',
+          "  else",
+          '    [ "$4" = "$security_patch" ]',
+          "  fi",
+          "}",
+          'export HERMES_VERSION="vtest"',
+          `export HERMES_TARBALL_SHA256=${JSON.stringify(checksum)}`,
+          command,
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(path.join(targetRoot, "pyproject.toml"), "utf-8")).toContain(
+        'version = "test"',
+      );
+      expect(() => fs.lstatSync(path.join(targetRoot, "tests"))).toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("requests gnupg, procps, e2fsprogs, and openssh-sftp-server from the Hermes base apt layer", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-share-apt-"));
