@@ -22,10 +22,10 @@ on:
       operation:
         description: E2E gate action to perform.
         required: true
-        default: run-control-plane
+        default: approve-e2e
         type: choice
         options:
-          - run-control-plane
+          - approve-e2e
       pr_number:
         description: Pull request number for the selected E2E gate action.
         required: true
@@ -39,7 +39,7 @@ on:
         required: true
         type: string
       review_reason:
-        description: Why this internal PR may run control-plane E2E.
+        description: Why this PR may run credentialed E2E.
         required: true
         type: string
 
@@ -166,15 +166,9 @@ jobs:
           --superseded-head "$SUPERSEDED_HEAD_SHA"
 
   coordinate:
-    if: ${{ github.run_attempt == 1 && github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'run-control-plane')) }}
+    if: ${{ github.run_attempt == 1 && github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'approve-e2e')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 330
-    outputs:
-      approval_mode: ${{ steps.start.outputs.approval_mode }}
-      approval_environment: ${{ steps.start.outputs.approval_environment }}
-      approval_pr_number: ${{ steps.start.outputs.approval_pr_number }}
-      approval_head_sha: ${{ steps.start.outputs.approval_head_sha }}
-      approval_base_sha: ${{ steps.start.outputs.approval_base_sha }}
     permissions:
       actions: write
       checks: write
@@ -235,7 +229,7 @@ jobs:
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
-              --mode start-control-plane \
+              --mode approve-e2e \
               --pr "$MANUAL_PR_NUMBER" \
               --head "$MANUAL_HEAD_SHA" \
               --base "$MANUAL_BASE_SHA" \
@@ -384,211 +378,6 @@ jobs:
           --workflow-run-attempt "${{ github.run_attempt }}"
 
       - name: Close incomplete check
-        if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode abandon
-          --check-id "${{ steps.start.outputs.check_id }}"
-          --run-id "${{ steps.start.outputs.run_id }}"
-
-      - name: Remove private workspace
-        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
-        run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
-
-  approve-fork-e2e:
-    name: Approve credentialed E2E for fork PR
-    needs: coordinate
-    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode == 'start-approved-fork' && github.run_attempt == 1 }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 330
-    environment:
-      name: approve-credentialed-e2e-for-fork-pr
-      deployment: false
-    permissions:
-      actions: write
-      checks: write
-      contents: read
-      pull-requests: read
-    concurrency:
-      group: pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.approval_pr_number }}-${{ needs.coordinate.outputs.approval_head_sha }}-${{ needs.coordinate.outputs.approval_base_sha }}
-      queue: max
-      cancel-in-progress: false
-    steps:
-      - name: Checkout controller
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Install controller dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - id: workspace
-        name: Create private workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-pr-e2e-approved.XXXXXX")"
-          chmod 700 "$work_dir"
-          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
-
-      - id: start
-        name: Start approved fork E2E
-        env:
-          APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
-          APPROVAL_RUN_ID: ${{ github.run_id }}
-          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.approval_base_sha }}
-          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.approval_head_sha }}
-          GATE_RUN_ID: ${{ github.run_id }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.coordinate.outputs.approval_pr_number }}
-          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: |
-          set -euo pipefail
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
-            --mode start-approved-fork \
-            --pr "$PR_NUMBER" \
-            --head "$EXPECTED_HEAD_SHA" \
-            --base "$EXPECTED_BASE_SHA" \
-            --workflow-sha "$WORKFLOW_SHA" \
-            --approval-run-id "$APPROVAL_RUN_ID" \
-            --approval-run-attempt "$APPROVAL_RUN_ATTEMPT" \
-            --gate-run-id "$GATE_RUN_ID" \
-            --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" \
-            --work-dir "$WORK_DIR"
-
-      - name: Upload approved risk plan
-        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pr-e2e-approved-risk-plan-${{ needs.coordinate.outputs.approval_head_sha }}
-          path: ${{ steps.workspace.outputs.work_dir }}/risk-plan.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - id: wait
-        name: Wait for approved E2E run
-        if: ${{ steps.start.outputs.dispatched == 'true' }}
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode wait
-          --run-id "${{ steps.start.outputs.run_id }}"
-
-      - id: evidence
-        name: Download approved evidence
-        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode download
-          --work-dir "${{ steps.workspace.outputs.work_dir }}"
-          --run-id "${{ steps.start.outputs.run_id }}"
-
-      - id: finish
-        name: Verify approved evidence
-        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode finish
-          --work-dir "${{ steps.workspace.outputs.work_dir }}"
-          --state-hash "${{ steps.start.outputs.state_hash }}"
-          --check-id "${{ steps.start.outputs.check_id }}"
-          --run-id "${{ steps.start.outputs.run_id }}"
-          --evidence-outcome "${{ steps.evidence.outcome }}"
-
-      - id: retry
-        name: Retry approved E2E after hosted runner loss
-        if: ${{ always() && steps.finish.outputs.runner_loss_retry_authorized == 'true' && github.run_attempt == 1 }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode retry-runner-loss
-          --work-dir "${{ steps.workspace.outputs.work_dir }}"
-          --state-hash "${{ steps.start.outputs.state_hash }}"
-          --check-id "${{ steps.start.outputs.check_id }}"
-          --run-id "${{ steps.start.outputs.run_id }}"
-          --workflow-run-attempt "${{ github.run_attempt }}"
-
-      - id: retry_wait
-        name: Wait for approved retry E2E run
-        if: ${{ steps.retry.outputs.dispatched == 'true' }}
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode wait
-          --run-id "${{ steps.retry.outputs.run_id }}"
-
-      - id: retry_evidence
-        name: Download approved retry evidence
-        if: ${{ always() && steps.retry.outputs.dispatched == 'true' }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode download
-          --slot runner-loss-retry
-          --work-dir "${{ steps.workspace.outputs.work_dir }}"
-          --run-id "${{ steps.retry.outputs.run_id }}"
-
-      - id: retry_finish
-        name: Verify approved retry evidence
-        if: ${{ always() && steps.retry.outputs.dispatched == 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode finish
-          --slot runner-loss-retry
-          --work-dir "${{ steps.workspace.outputs.work_dir }}"
-          --state-hash "${{ steps.retry.outputs.state_hash }}"
-          --check-id "${{ steps.retry.outputs.check_id }}"
-          --run-id "${{ steps.retry.outputs.run_id }}"
-          --evidence-outcome "${{ steps.retry_evidence.outcome }}"
-
-      - name: Close incomplete approved retry check
-        if: ${{ always() && steps.retry.outputs.check_id != '' && steps.retry.outputs.finalized != 'true' && steps.retry_finish.outputs.finalized != 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode abandon
-          --check-id "${{ steps.retry.outputs.check_id }}"
-          --run-id "${{ steps.retry.outputs.run_id }}"
-
-      - name: Terminalize interrupted approved retry setup
-        if: ${{ always() && steps.finish.outputs.runner_loss_retry_authorized == 'true' && steps.retry.outcome != 'success' && steps.retry.outputs.check_id == '' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode abandon-runner-loss-retry
-          --check-id "${{ steps.start.outputs.check_id }}"
-          --run-id "${{ steps.start.outputs.run_id }}"
-          --workflow-run-attempt "${{ github.run_attempt }}"
-
-      - name: Close incomplete approved check
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}

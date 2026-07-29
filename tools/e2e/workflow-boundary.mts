@@ -4500,8 +4500,38 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
   requireRunContains(errors, controllerMatrix, "matrix='[]'");
-  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
-  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+  const controllerMatrixScript = stringValue(controllerMatrix?.run);
+  const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
+  const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
+  const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  const trustedControllerMatrixScript = [
+    "set -euo pipefail",
+    'case "${TARGETS}" in',
+    '"")',
+    "matrix='[]'",
+    ";;",
+    `${deepAgentsTarget})`,
+    `matrix='[${deepAgentsMapping}]'`,
+    ";;",
+    `${postRebootTarget})`,
+    `matrix='[${postRebootMapping}]'`,
+    ";;",
+    `${deepAgentsTarget},${postRebootTarget})`,
+    `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
+    ";;",
+    "*)",
+    'echo "::error::PR E2E target is not approved by the trusted controller" >&2',
+    "exit 1",
+    ";;",
+    "esac",
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+  ];
+  const controllerMatrixLines = controllerMatrixScript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!isDeepStrictEqual(controllerMatrixLines, trustedControllerMatrixScript)) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
   requireRunContains(

@@ -60,8 +60,11 @@ function printSandboxRecoveryFailedLookupStatus({
   lookup,
 }: SandboxGatewayLookupStatusContext): void {
   console.log("");
+  const recoveredFromDocker = "recoveredSandbox" in lookup && lookup.recoveredSandbox === true;
   console.log(
-    `  Sandbox '${sandboxName}' was restored from Docker, but its agent delivery chain could not be recovered safely.`,
+    recoveredFromDocker
+      ? `  Sandbox '${sandboxName}' was restored from Docker, but its agent delivery chain could not be proven.`
+      : `  Sandbox '${sandboxName}' is present, but its agent delivery chain could not be proven.`,
   );
   if (lookup.output) console.log(lookup.output);
   console.log(

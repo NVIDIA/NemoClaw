@@ -316,7 +316,7 @@ navigation:
                 path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
                 slug: deploy-to-headless-server
               - page: "Gateway Lifecycle Authority"
-                path: deployment/gateway-lifecycle-authority.mdx
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.openclaw.generated.mdx
                 slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
@@ -631,6 +631,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.deepagents.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.deepagents.generated.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -667,6 +670,9 @@ navigation:
               - page: "Platform Support"
                 path: reference/platform-support.mdx
                 slug: platform-support
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.deepagents.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.deepagents.generated.mdx
                 slug: architecture
@@ -998,6 +1004,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.hermes.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.hermes.generated.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

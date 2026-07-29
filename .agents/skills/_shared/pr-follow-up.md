@@ -75,8 +75,10 @@ gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
 
 ## Handle results
 
-- Follow the [NemoClaw Writing Guide](../../../WRITING.md) for review comments and proposed rewrites.
-- The guide defines which language findings can block and how to write a suggestion.
+- Follow the shared [Documentation Writing and Review](documentation-writing-review.md) contract
+  for review comments, proposed rewrites, and any resulting code or documentation change.
+- The writing guide routed by that contract defines which language findings can block and how to
+  write a suggestion.
 - Before you act on feedback, state the problem and the intended result.
 - Do not add a helper, configuration switch, fallback, migration, or compatibility path only to satisfy reviewer wording.
 - Treat feedback as a suggestion if you cannot connect it to one of these conditions:

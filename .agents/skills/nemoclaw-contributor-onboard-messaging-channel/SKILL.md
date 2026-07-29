@@ -105,7 +105,6 @@ Rerun the targeted command after later edits or hook autofixes that can affect t
 Run `npm run docs` for documentation changes.
 Commit and push normally so pre-commit handles cheap structural and file-local checks and pre-push runs the path-scoped type checks.
 Treat successful hooks as verification and do not rerun their checks manually.
-If `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks.
-Refresh `origin/main` first.
+If `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, refresh `origin/main` first, then run `npm run validate:pr` once to reproduce those checks.
 Reserve `npm test` for broad runtime or test-harness changes.
 Reserve `npm run check` for repo-wide validation or coverage-baseline changes.
