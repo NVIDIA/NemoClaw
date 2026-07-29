@@ -299,17 +299,14 @@ process.exit(2);
         } = {},
       ) => {
         const pendingByRequestId = Object.fromEntries(
-          pending.flatMap((value) => {
-            if (
-              typeof value !== "object" ||
-              value === null ||
-              !("requestId" in value) ||
-              typeof value.requestId !== "string"
-            ) {
-              return [];
-            }
-            return [[value.requestId, value]];
-          }),
+          pending.flatMap((value) =>
+            typeof value === "object" &&
+            value !== null &&
+            "requestId" in value &&
+            typeof value.requestId === "string"
+              ? [[value.requestId, value]]
+              : [],
+          ),
         );
         fs.writeFileSync(
           path.join(devicesDir, "pending.json"),
@@ -400,16 +397,17 @@ process.exit(2);
       expect(writeOnlyInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
       expect(readApprovals()).toEqual(["clone-write-only"]);
 
-      resetLogs();
-      const gatedScopeUpgrade = run([repairRequest], {
-        listExitCode: 1,
-        listStderr:
-          "gateway connect failed: pairing required: device is asking for more scopes raw detail",
-      });
-      expect(gatedScopeUpgrade.status).toBe(0);
-      expect(gatedScopeUpgrade.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
-      expect(`${gatedScopeUpgrade.stdout}${gatedScopeUpgrade.stderr}`).not.toContain("raw detail");
-      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+      for (const listStderr of [
+        "gateway connect failed: pairing required: device is asking for more scopes raw detail",
+        "device pairing required raw detail",
+      ]) {
+        resetLogs();
+        const gated = run([repairRequest], { listExitCode: 1, listStderr });
+        expect(gated.status).toBe(0);
+        expect(gated.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
+        expect(`${gated.stdout}${gated.stderr}`).not.toContain("raw detail");
+        expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+      }
 
       resetLogs();
       const mismatchedPendingKey = run([repairRequest], {

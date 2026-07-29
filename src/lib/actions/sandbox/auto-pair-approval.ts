@@ -181,6 +181,8 @@ def exit_with_receipt(receipt):
 # only to recover candidates for the existing identity/scope filter below;
 # canonical OpenClaw approval remains the only writer. This matches the
 # reviewed first-run watcher boundary in scripts/nemoclaw-start.sh (#7818).
+# Delete this fallback once pinned OpenClaw returns pending entries from an
+# authenticated devices list while that pairing or scope-upgrade gate is active.
 def local_pending_after_gated_list():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
     try:
