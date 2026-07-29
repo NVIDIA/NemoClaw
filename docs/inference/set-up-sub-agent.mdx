@@ -365,7 +365,119 @@ docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/.config-hash
 
 This restores the config captured before this procedure.
 Do not use that file after other config changes, because restoring it would discard those changes.
-If the original file is unavailable or no longer current, revoke the provider key before you edit the live config manually.
+
+### Manually Remove the Direct Provider
+
+If the original file is unavailable or no longer current, revoke the provider key before you edit the live config.
+Rerun the container-discovery commands from [Export the Current Config](#export-the-current-config), but do not restore a stale export.
+Instead, export the current config to new host-user-only files and remove only the Omni provider, the `vision-operator` agent, and that agent's entry in `main.subagents.allowAgents`:
+
+```bash
+OPENCLAW_CURRENT_FILE=$(mktemp "${TMPDIR:-/tmp}/openclaw.current.XXXXXX")
+OPENCLAW_CLEANED_FILE=$(mktemp "${TMPDIR:-/tmp}/openclaw.cleaned.XXXXXX")
+chmod 600 "$OPENCLAW_CURRENT_FILE" "$OPENCLAW_CLEANED_FILE"
+docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > "$OPENCLAW_CURRENT_FILE"
+python3 -c '
+import json
+import sys
+
+provider_id = "nvidia-omni"
+agent_id = "vision-operator"
+config = json.load(sys.stdin)
+
+providers = config.get("models", {}).get("providers", {})
+providers.pop(provider_id, None)
+
+agents = config.get("agents", {})
+agent_list = agents.get("list", [])
+retained_agents = []
+for agent in agent_list:
+    if not isinstance(agent, dict):
+        retained_agents.append(agent)
+        continue
+    if agent.get("id") == agent_id:
+        continue
+    if agent.get("id") == "main":
+        subagents = agent.get("subagents")
+        if isinstance(subagents, dict):
+            allowed_agents = subagents.get("allowAgents")
+            if isinstance(allowed_agents, list):
+                subagents["allowAgents"] = [
+                    allowed_agent
+                    for allowed_agent in allowed_agents
+                    if allowed_agent != agent_id
+                ]
+                if not subagents["allowAgents"]:
+                    subagents.pop("allowAgents")
+                if not subagents:
+                    agent.pop("subagents")
+    retained_agents.append(agent)
+agents["list"] = retained_agents
+
+json.dump(config, sys.stdout, indent=2)
+' < "$OPENCLAW_CURRENT_FILE" > "$OPENCLAW_CLEANED_FILE"
+```
+
+Upload the cleaned config, remove the sub-agent auth profile, and refresh the config hash:
+
+```bash
+docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
+docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/.config-hash
+docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < "$OPENCLAW_CLEANED_FILE"
+docker exec --user root "$SANDBOX_CTR" /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
+docker exec --user root "$SANDBOX_CTR" rm -f /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
+docker exec --user root "$SANDBOX_CTR" chown sandbox:sandbox /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/openclaw.json
+docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/.config-hash
+```
+
+Verify the live config and auth-profile path before you delete the host temporary files.
+Both commands must print a verification message.
+If either command exits with an error, keep the host files and correct the remaining state before you continue.
+
+```bash
+if docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json | python3 -c '
+import json
+import sys
+
+provider_id = "nvidia-omni"
+agent_id = "vision-operator"
+config = json.load(sys.stdin)
+providers = config.get("models", {}).get("providers", {})
+agents = config.get("agents", {}).get("list", [])
+
+provider_remains = provider_id in providers
+agent_remains = any(
+    isinstance(agent, dict) and agent.get("id") == agent_id
+    for agent in agents
+)
+allow_list_remains = any(
+    isinstance(agent, dict)
+    and agent.get("id") == "main"
+    and agent_id in agent.get("subagents", {}).get("allowAgents", [])
+    for agent in agents
+)
+if provider_remains or agent_remains or allow_list_remains:
+    raise SystemExit(1)
+'; then
+  echo "Provider, agent, and allow-list cleanup verified."
+else
+  echo "Direct provider or sub-agent state remains in openclaw.json." >&2
+  exit 1
+fi
+
+if docker exec --user root "$SANDBOX_CTR" test ! -e /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json; then
+  echo "Sub-agent auth-profile removal verified."
+else
+  echo "The sub-agent auth profile still exists." >&2
+  exit 1
+fi
+
+nemoclaw "$SANDBOX" agents list --json
+rm -f "$OPENCLAW_CURRENT_FILE" "$OPENCLAW_CLEANED_FILE"
+```
+
+The final agent listing must not include `vision-operator`.
 
 Delete the host temporary files after the upload, verification, and any rollback window:
 

@@ -593,6 +593,95 @@ describe("inference setup navigation", () => {
     }
   });
 
+  it("documents executable manual removal of Omni state (#7729)", () => {
+    const markdown = fs.readFileSync(subAgentSetupPath, "utf8");
+    const manualRemovalStart = markdown.indexOf("### Manually Remove the Direct Provider");
+    const manualRemovalEnd = markdown.indexOf(
+      "Delete the host temporary files",
+      manualRemovalStart,
+    );
+    expect(manualRemovalStart).toBeGreaterThanOrEqual(0);
+    expect(manualRemovalEnd).toBeGreaterThan(manualRemovalStart);
+    const manualRemoval = markdown.slice(manualRemovalStart, manualRemovalEnd);
+    const cleanupScript = manualRemoval.match(
+      /python3 -c '\n([\s\S]*?)\n' < "\$OPENCLAW_CURRENT_FILE" > "\$OPENCLAW_CLEANED_FILE"/,
+    )?.[1];
+    const liveVerificationScript = manualRemoval.match(
+      /cat \/sandbox\/\.openclaw\/openclaw\.json \| python3 -c '\n([\s\S]*?)\n'; then/,
+    )?.[1];
+
+    expect(cleanupScript).toBeTruthy();
+    expect(liveVerificationScript).toBeTruthy();
+    const originalConfig = {
+      agents: {
+        defaults: { timeoutSeconds: 300 },
+        list: [
+          {
+            id: "main",
+            model: { primary: "inference/custom-primary" },
+            subagents: { allowAgents: ["researcher", "vision-operator"] },
+          },
+          {
+            id: "researcher",
+            model: { primary: "inference/custom-researcher" },
+          },
+          {
+            id: "vision-operator",
+            model: {
+              primary: "nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            },
+          },
+        ],
+      },
+      models: {
+        providers: {
+          inference: { baseUrl: "http://inference.local/v1" },
+          "nvidia-omni": { apiKey: "test-api-key" },
+        },
+      },
+    };
+    const result = spawnSync("python3", ["-c", cleanupScript as string], {
+      encoding: "utf8",
+      input: JSON.stringify(originalConfig),
+    });
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    const config = JSON.parse(result.stdout);
+    expect(config.models.providers).toEqual({
+      inference: { baseUrl: "http://inference.local/v1" },
+    });
+    expect(config.agents.list).toEqual([
+      {
+        id: "main",
+        model: { primary: "inference/custom-primary" },
+        subagents: { allowAgents: ["researcher"] },
+      },
+      {
+        id: "researcher",
+        model: { primary: "inference/custom-researcher" },
+      },
+    ]);
+    const cleanVerification = spawnSync("python3", ["-c", liveVerificationScript as string], {
+      encoding: "utf8",
+      input: result.stdout,
+    });
+    expect(cleanVerification.stderr).toBe("");
+    expect(cleanVerification.status).toBe(0);
+    const dirtyVerification = spawnSync("python3", ["-c", liveVerificationScript as string], {
+      encoding: "utf8",
+      input: JSON.stringify(originalConfig),
+    });
+    expect(dirtyVerification.status).not.toBe(0);
+    expect(manualRemoval).toContain(
+      "rm -f /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json",
+    );
+    expect(manualRemoval).toContain(
+      'docker exec --user root "$SANDBOX_CTR" test ! -e /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json',
+    );
+    expect(manualRemoval).toContain('sha256sum openclaw.json > .config-hash"');
+  });
+
   it("retains self-hosted setup and verification guidance across focused pages", () => {
     const endpoint = fs.readFileSync(compatibleEndpointPath, "utf8");
     const vllm = fs.readFileSync(vllmSetupPath, "utf8");
