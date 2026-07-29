@@ -137,7 +137,7 @@ Normal restarts preserve that state.
 Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
 Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included in the kanban backup.
 During rebuild, NemoClaw also preserves `.env` assignments whose names match `*_HOME_CHANNEL`, `*_HOME_CHANNEL_NAME`, or `*_HOME_CHANNEL_THREAD_ID`.
-The complete `.env` file remains excluded, and a current generated assignment overrides a preserved assignment with the same name.
+The complete `.env` file remains excluded, and a newly generated assignment overrides a preserved assignment with the same name.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
 Back up important state before destroying a Hermes sandbox.

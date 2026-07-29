@@ -149,7 +149,7 @@ NemoClaw excludes regenerated `config.yaml` and the complete `.env` file from sn
 During a Hermes rebuild, NemoClaw preserves only `.env` assignments whose names match `*_HOME_CHANNEL`, `*_HOME_CHANNEL_NAME`, or `*_HOME_CHANNEL_THREAD_ID`.
 These assignments retain home-channel routing configured with Hermes `/sethome`.
 NemoClaw recreates credentials and all other generated values from host-side onboarding and OpenShell provider state.
-A current generated assignment overrides a preserved assignment with the same name.
+A newly generated assignment overrides a preserved assignment with the same name.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 ### Excluded Deep Agents State
