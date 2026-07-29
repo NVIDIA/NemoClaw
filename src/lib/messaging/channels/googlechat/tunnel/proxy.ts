@@ -3,10 +3,10 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import {
-  chmodSync,
   closeSync,
   constants,
   fchmodSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -144,8 +144,34 @@ function validatePort(port: number, label: string): number {
 }
 
 function ensureStateDir(pidDir: string): void {
+  const directoryFlag = Reflect.get(constants, "O_DIRECTORY");
+  const noFollowFlag = Reflect.get(constants, "O_NOFOLLOW");
+  if (
+    typeof directoryFlag !== "number" ||
+    directoryFlag === 0 ||
+    typeof noFollowFlag !== "number" ||
+    noFollowFlag === 0 ||
+    typeof process.geteuid !== "function"
+  ) {
+    throw new Error("Secure state-directory handling is not supported on this platform.");
+  }
+
   mkdirSync(pidDir, { recursive: true, mode: 0o700 });
-  chmodSync(pidDir, 0o700);
+  // pidDir resolves to a predictable /tmp path, so a local user can pre-plant a
+  // symlink or a directory they own before enrollment. Open without following the
+  // final path component, then validate and chmod the descriptor so path swaps
+  // cannot redirect these checks onto another object.
+  const flags = constants.O_RDONLY | directoryFlag | noFollowFlag;
+  const fd = openSync(pidDir, flags);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isDirectory() || stat.uid !== process.geteuid()) {
+      throw new Error(`Refusing to use state directory not owned by this process: ${pidDir}`);
+    }
+    fchmodSync(fd, 0o700);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function readPositiveInteger(file: string): number | null {

@@ -305,7 +305,14 @@ export const outboundAuthPatchInternals = {} as OutboundAuthPatchInternals;
       process.stderr.write(
         "[channels] [googlechat] outbound-auth patch NOT applied: " + errorMessage(e) + "\n",
       );
+    } else {
+      // Any other failure: never break gateway boot, but still surface it so an
+      // inactive patch is diagnosable instead of failing silently.
+      process.stderr.write(
+        "[channels] [googlechat] outbound-auth patch NOT applied (unexpected preload error): " +
+          errorMessage(e) +
+          "\n",
+      );
     }
-    // Any other failure: never break gateway boot.
   }
 })();

@@ -1,12 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   readGooglechatWebhookProxyState,
   startGooglechatWebhookProxy,
@@ -95,6 +103,45 @@ describe("Google Chat webhook route proxy", () => {
     expect(statSync(join(pidDir, "nemoclaw-googlechat-webhook-proxy.json")).mode & 0o777).toBe(
       0o600,
     );
+  });
+
+  it("rejects a pre-planted symlink at the state directory instead of chmod-ing its target", async () => {
+    const base = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));
+    cleanupDirs.add(base);
+    // A local user pre-creates the predictable pidDir as a symlink to a directory
+    // they do not own, hoping the detached host process chmods the target to 0o700.
+    const victim = join(base, "victim");
+    mkdirSync(victim);
+    chmodSync(victim, 0o755);
+    const pidDir = join(base, "state");
+    symlinkSync(victim, pidDir);
+
+    // O_NOFOLLOW refuses the trailing symlink; the exact errno depends on flag
+    // check order (ELOOP for the link, ENOTDIR once O_DIRECTORY sees a non-dir).
+    await expect(startGooglechatWebhookProxy(pidDir, 18789)).rejects.toThrow(/ELOOP|ENOTDIR/);
+
+    // Startup refused the symlinked state dir (O_NOFOLLOW), so the link is intact
+    // and its target keeps its mode — the chmod never followed the link.
+    expect(lstatSync(pidDir).isSymbolicLink()).toBe(true);
+    expect(statSync(victim).mode & 0o777).toBe(0o755);
+  });
+
+  it("rejects a state directory not owned by the effective user", async () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));
+    cleanupDirs.add(pidDir);
+    const effectiveUid = process.geteuid?.();
+    if (effectiveUid === undefined) throw new Error("Test requires process.geteuid().");
+    const getEffectiveUid = vi
+      .spyOn(process, "geteuid")
+      .mockReturnValue(effectiveUid === 0 ? 1 : 0);
+
+    try {
+      await expect(startGooglechatWebhookProxy(pidDir, 18789)).rejects.toThrow(
+        /not owned by this process/,
+      );
+    } finally {
+      getEffectiveUid.mockRestore();
+    }
   });
 
   it("rejects oversized webhook bodies before they reach the dashboard", async () => {
