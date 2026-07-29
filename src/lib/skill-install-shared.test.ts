@@ -168,6 +168,37 @@ describe("fresh shared-agent skill install", () => {
     }
   });
 
+  it("rejects a directory swapped to a symlink before snapshot reads (#7634)", () => {
+    const skillDir = makeSkill();
+    const outsideDir = mkdtempSync(join(tmpdir(), "nemoclaw-shared-outside-"));
+    const paths = pathsFor("/sandbox/.deepagents");
+    writeFileSync(join(outsideDir, "summarize.js"), "external secret\n");
+    let sshCalled = false;
+    try {
+      const result = installFreshSharedSkill(CTX, skillDir, paths, {
+        beforeSnapshotFileRead: (relativePath) => {
+          if (relativePath !== "scripts/summarize.js") return;
+          rmSync(join(skillDir, "scripts"), { recursive: true, force: true });
+          symlinkSync(outsideDir, join(skillDir, "scripts"), "dir");
+        },
+        sshExecImpl: () => {
+          sshCalled = true;
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+
+      expect(result).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "snapshot_failed",
+      });
+      expect(sshCalled).toBe(false);
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   it.runIf(process.platform === "linux")(
     "installs exact bytes directly and leaves the legacy upload path untouched",
     () => {

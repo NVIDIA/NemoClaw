@@ -308,31 +308,87 @@ interface SkillArchiveSnapshot {
   skillName: string;
 }
 
+function isPathInsideRoot(root: string, candidate: string, expectedRelativePath: string): boolean {
+  const relative = path.relative(root, candidate);
+  const expected = path.normalize(expectedRelativePath);
+  return (
+    relative === expected &&
+    relative !== "" &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+function copyRegularFileIntoSnapshot(
+  sourceRoot: string,
+  snapshotDir: string,
+  relativePath: string,
+): boolean {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  const nonblock = fs.constants.O_NONBLOCK;
+  if (typeof noFollow !== "number" || typeof nonblock !== "number") return false;
+
+  const sourcePath = path.join(sourceRoot, relativePath);
+  let sourceDescriptor: number | undefined;
+  try {
+    const beforeRealPath = fs.realpathSync(sourcePath);
+    if (!isPathInsideRoot(sourceRoot, beforeRealPath, relativePath)) return false;
+
+    const before = fs.lstatSync(sourcePath);
+    if (!before.isFile() || before.isSymbolicLink()) return false;
+
+    sourceDescriptor = fs.openSync(sourcePath, fs.constants.O_RDONLY | noFollow | nonblock);
+    const opened = fs.fstatSync(sourceDescriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) return false;
+
+    const content = fs.readFileSync(sourceDescriptor);
+    const after = fs.lstatSync(sourcePath);
+    const afterRealPath = fs.realpathSync(sourcePath);
+    if (
+      !after.isFile() ||
+      after.isSymbolicLink() ||
+      after.dev !== opened.dev ||
+      after.ino !== opened.ino ||
+      !isPathInsideRoot(sourceRoot, afterRealPath, relativePath)
+    ) {
+      return false;
+    }
+
+    const destination = path.join(snapshotDir, relativePath);
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o755 });
+    fs.writeFileSync(destination, content, {
+      flag: "wx",
+      mode: (opened.mode & 0o111) === 0 ? 0o644 : 0o755,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (sourceDescriptor !== undefined) fs.closeSync(sourceDescriptor);
+  }
+}
+
 /**
- * Create one immutable archive, then derive the expected manifest from that
- * archive rather than re-reading the mutable source tree.
+ * Copy validated regular files into a private snapshot with no-follow opens,
+ * then create the archive and manifest only from that immutable snapshot.
  */
 function createSkillArchiveSnapshot(
   localDir: string,
   files: string[],
+  opts: { beforeSnapshotFileRead?: (relativePath: string) => void } = {},
 ): SkillArchiveSnapshot | null {
-  const archiveResult = spawnSync("tar", ["-cf", "-", "-C", localDir, "--", ...files], {
-    encoding: null,
-    env: { ...process.env, COPYFILE_DISABLE: "1" },
-    maxBuffer: 256 * 1024 * 1024,
-    timeout: SKILL_SNAPSHOT_TIMEOUT_MS,
-  });
-  if (archiveResult.status !== 0 || !Buffer.isBuffer(archiveResult.stdout)) return null;
-
   const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-snapshot-"));
   try {
-    const extractResult = spawnSync("tar", ["-xf", "-", "-C", snapshotDir], {
-      encoding: null,
-      input: archiveResult.stdout,
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: SKILL_SNAPSHOT_TIMEOUT_MS,
-    });
-    if (extractResult.status !== 0) return null;
+    fs.chmodSync(snapshotDir, 0o700);
+    const sourceRoot = fs.realpathSync(localDir);
+    const rootStat = fs.lstatSync(sourceRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+
+    for (const relativePath of files.slice().sort()) {
+      opts.beforeSnapshotFileRead?.(relativePath);
+      if (!copyRegularFileIntoSnapshot(sourceRoot, snapshotDir, relativePath)) return null;
+    }
+
     const snapshot = collectFiles(snapshotDir);
     if (
       snapshot.unsafePaths.length > 0 ||
@@ -342,6 +398,19 @@ function createSkillArchiveSnapshot(
     ) {
       return null;
     }
+
+    const archiveResult = spawnSync(
+      "tar",
+      ["-cf", "-", "-C", snapshotDir, "--", ...snapshot.files],
+      {
+        encoding: null,
+        env: { ...process.env, COPYFILE_DISABLE: "1" },
+        maxBuffer: 256 * 1024 * 1024,
+        timeout: SKILL_SNAPSHOT_TIMEOUT_MS,
+      },
+    );
+    if (archiveResult.status !== 0 || !Buffer.isBuffer(archiveResult.stdout)) return null;
+
     let skillName: string;
     try {
       skillName = parseFrontmatter(
@@ -439,7 +508,10 @@ export function installFreshSharedSkill(
   ctx: SshContext,
   localDir: string,
   paths: SkillPaths,
-  opts: { sshExecImpl?: typeof sshExec } = {},
+  opts: {
+    beforeSnapshotFileRead?: (relativePath: string) => void;
+    sshExecImpl?: typeof sshExec;
+  } = {},
 ): FreshSharedSkillInstallResult {
   if (!paths.uploadDirSharedWithAgent || paths.mirrorDir) {
     return { success: false, uploaded: 0, reason: "remote_state_unknown" };
@@ -452,7 +524,9 @@ export function installFreshSharedSkill(
   ) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
-  const snapshot = createSkillArchiveSnapshot(localDir, collected.files);
+  const snapshot = createSkillArchiveSnapshot(localDir, collected.files, {
+    beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
+  });
   if (
     !snapshot ||
     !SHA256_RE.test(snapshot.contentDigest) ||
