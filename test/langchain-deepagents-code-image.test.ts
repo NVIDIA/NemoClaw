@@ -192,6 +192,24 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).not.toContain("exec sleep infinity");
   });
 
+  it("keeps validation invocation claims write-once across sandbox processes (#7774)", () => {
+    const dockerfile = readAgentFile("Dockerfile");
+    const runtime = readAgentFile("managed-dcode-runtime.py");
+    const policy = readAgentFile("policy-additions.yaml");
+
+    expect(dockerfile).toContain("initialize_managed_validation_invocation_budget()");
+    expect(dockerfile).toContain("validate_managed_validation_invocation_budget_unprivileged()");
+    expect(dockerfile).toContain("finalize_managed_validation_invocation_budget()");
+    expect(runtime).toContain(
+      '_VALIDATION_INVOCATION_BUDGET_ROOT = Path(\n    "/usr/local/share/nemoclaw/dcode-validation-invocations"',
+    );
+    expect(runtime).toContain("claims.chmod(0o1733)");
+    expect(runtime).toContain("os.link(anchor, sandbox_probe, follow_symlinks=False)");
+    expect(runtime).toContain('raise RuntimeError("sandbox user rolled back an invocation claim")');
+    expect(runtime).not.toContain("dcode-validation-invocations.json");
+    expect(policy).toContain("- /usr/local/share/nemoclaw/dcode-validation-invocations");
+  });
+
   it("sources the managed runtime environment in interactive and login shells (#6191)", () => {
     const baseDockerfile = readAgentFile("Dockerfile.base");
     const sourceLine = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";

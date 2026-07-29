@@ -80,7 +80,7 @@ agentOnboard.createAgentSandbox = () => {
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.writeFileSync(
     stagedDockerfile,
-    "FROM scratch\nARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled\nCMD [\"/bin/sh\"]\n",
+    "FROM scratch\nARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled\nARG NEMOCLAW_DCODE_VALIDATION_PROFILE_B64=disabled\nCMD [\"/bin/sh\"]\n",
   );
   return { buildCtx, stagedDockerfile };
 };

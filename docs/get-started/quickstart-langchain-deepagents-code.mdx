@@ -196,7 +196,9 @@ Create a JSON document that follows `schemas/dcode-validation-profile.schema.jso
 Each command records one exact absolute executable and argument vector, one fixed working directory, allowed environment variable names, a timeout, a combined output limit, and an invocation limit.
 The profile records environment variable names only; the runtime checks inherited values when it executes a command.
 The `sandboxName` must match the rebuild target.
-Use a stable task identifier for `taskIdentity` and a `sha256:` source identifier for `sourceIdentity`.
+Use a stable task identifier for `taskIdentity`.
+Set `sourceIdentity` to `sha256:` followed by the SHA-256 digest of the ASCII string `git:<object-format>:<full-HEAD-object-id>`.
+For example, a SHA-1 repository at commit `0123...cdef` uses the digest of `git:sha1:0123...cdef`, not the commit ID by itself.
 Set `contentDigest` to the SHA-256 digest of the compact JSON object after removing `contentDigest` and recursively sorting object keys.
 
 Install the profile from a normalized absolute host path.
@@ -209,20 +211,26 @@ nemo-deepagents <sandbox-name> rebuild \
 ```
 
 NemoClaw validates the profile before it changes the existing sandbox, bakes the canonical profile into a root-owned image file, and records the same profile in the sandbox registry.
-The managed runtime admits only an exact profiled argument vector and executes it directly with `shell=False`.
+Before every execution, the managed runtime recomputes `sourceIdentity` from the working directory's Git `HEAD`, rejects tracked changes and untracked files that Git does not ignore, and records the verified identity separately in the receipt.
+It also rejects repository-local hooks, filesystem monitors, and external diff, filter, or merge drivers so source verification cannot invoke repository-configured programs.
+It then admits only an exact profiled argument vector and executes the no-follow, descriptor-bound executable from the descriptor-bound working directory directly with `shell=False`.
 Near matches, shell metacharacters, alternate executables, environment assignments, symbolic-link path escapes, excess output, timeouts, and exhausted invocation budgets fail closed.
 Executable paths must identify root-owned regular files that are not symbolic links or writable by group or other users.
 Working directories must exist without symbolic-link resolution and remain inside a declared root.
+Invocation reservations use root-owned, sticky write-once claims and apply across concurrent and separate headless DCode processes for the installed profile digest.
+The sandbox user can consume a remaining slot but cannot remove or replace a used slot; attempts to corrupt a slot fail closed.
+If process creation fails, the runtime releases the reservation; a launched command consumes it regardless of its terminal result.
 The child receives only the named non-credential environment values plus fixed `HOME` and `PATH` values.
 OpenShell network, filesystem, process, and credential policies continue to apply.
 
 The tool result is a bounded JSON receipt, not command output, with:
 
-- Profile, source, argument, stdout, and stderr digests.
+- Profile, declared source, verified source, argument, stdout, and stderr digests.
 - The non-secret task identity, command identifier, and working directory from the validated profile.
 - Terminal status, duration, byte counts, and exit code.
 
 It never includes stdout, stderr, credentials, or environment values.
+`verifiedSourceIdentity` is `null` when a request is rejected before Git source verification completes.
 Use the host status command before execution to inspect the effective profile and digest in machine-readable form.
 
 ```bash

@@ -59,7 +59,16 @@ _VALIDATION_ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,127}")
 _VALIDATION_SHELL_SYNTAX = re.compile(r"[\x00-\x1f\x7f;&|><`$(){}[\]*?!~]")
 _VALIDATION_FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 _VALIDATION_EXECUTABLE_OWNER_UID = 0
-_VALIDATION_INVOCATIONS: dict[tuple[str, str], int] = {}
+_VALIDATION_GIT_EXECUTABLE = Path("/usr/bin/git")
+_VALIDATION_GIT_OWNER_UID = 0
+_VALIDATION_INVOCATION_BUDGET_ROOT = Path(
+    "/usr/local/share/nemoclaw/dcode-validation-invocations"
+)
+_VALIDATION_INVOCATION_BUDGET_OWNER_UID = 0
+_VALIDATION_INVOCATION_ANCHOR = "anchor"
+_VALIDATION_INVOCATION_CLAIMS = "claims"
+_VALIDATION_INVOCATION_ROOT_PROBE = ".root-write-protection-probe"
+_VALIDATION_INVOCATION_SANDBOX_PROBE = ".sandbox-one-way-claim-probe"
 _VALIDATION_CREDENTIAL_ENV_NAME = re.compile(
     r"(?:^|[_-])(?:api[_-]?key|access[_-]?key|secret[_-]?key|"
     r"auth[_-]?token|refresh[_-]?token|access[_-]?token|client[_-]?secret|"
@@ -1588,6 +1597,100 @@ def validate_managed_validation_profile_file() -> None:
         raise RuntimeError("managed validation profile is unavailable")
 
 
+def _validation_invocation_command_path(
+    profile: dict[str, object], command: dict[str, object]
+) -> Path:
+    digest = str(profile["contentDigest"]).removeprefix("sha256:")
+    return _VALIDATION_INVOCATION_BUDGET_ROOT / digest / str(command["id"])
+
+
+def initialize_managed_validation_invocation_budget() -> None:
+    """Create the root-owned, write-once invocation slots during image build."""
+    if os.geteuid() != _VALIDATION_INVOCATION_BUDGET_OWNER_UID:
+        raise RuntimeError("validation invocation budget requires its trusted owner")
+    if _VALIDATION_INVOCATION_BUDGET_ROOT.exists():
+        raise RuntimeError("validation invocation budget already exists")
+    _VALIDATION_INVOCATION_BUDGET_ROOT.mkdir(mode=0o755)
+    profile = managed_validation_profile()
+    if profile is None:
+        return
+    digest_directory = _VALIDATION_INVOCATION_BUDGET_ROOT / str(
+        profile["contentDigest"]
+    ).removeprefix("sha256:")
+    digest_directory.mkdir(mode=0o755)
+    for command in profile["commands"]:
+        command_directory = _validation_invocation_command_path(profile, command)
+        command_directory.mkdir(mode=0o755)
+        anchor = command_directory / _VALIDATION_INVOCATION_ANCHOR
+        descriptor = os.open(
+            anchor,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o666,
+        )
+        os.close(descriptor)
+        anchor.chmod(0o666)
+        claims = command_directory / _VALIDATION_INVOCATION_CLAIMS
+        claims.mkdir(mode=0o1733)
+        claims.chmod(0o1733)
+        os.link(anchor, claims / _VALIDATION_INVOCATION_ROOT_PROBE)
+
+
+def validate_managed_validation_invocation_budget_unprivileged() -> None:
+    """Prove the sandbox UID can consume but cannot roll back one slot."""
+    profile = managed_validation_profile()
+    if profile is None:
+        return
+    if os.geteuid() == _VALIDATION_INVOCATION_BUDGET_OWNER_UID:
+        raise RuntimeError("validation invocation budget probe requires an unprivileged user")
+    for command in profile["commands"]:
+        command_directory = _validation_invocation_command_path(profile, command)
+        anchor = command_directory / _VALIDATION_INVOCATION_ANCHOR
+        claims = command_directory / _VALIDATION_INVOCATION_CLAIMS
+        root_probe = claims / _VALIDATION_INVOCATION_ROOT_PROBE
+        sandbox_probe = claims / _VALIDATION_INVOCATION_SANDBOX_PROBE
+        anchor_stat = anchor.stat(follow_symlinks=False)
+        os.link(anchor, sandbox_probe, follow_symlinks=False)
+        with root_probe.open("wb") as stream:
+            stream.write(b"sandbox file-write probe")
+        for protected in (root_probe, sandbox_probe):
+            try:
+                protected.unlink()
+            except PermissionError:
+                pass
+            else:
+                raise RuntimeError("sandbox user rolled back an invocation claim")
+            protected_stat = protected.stat(follow_symlinks=False)
+            if (
+                protected_stat.st_dev != anchor_stat.st_dev
+                or protected_stat.st_ino != anchor_stat.st_ino
+            ):
+                raise RuntimeError("validation invocation claim identity changed")
+
+
+def finalize_managed_validation_invocation_budget() -> None:
+    """Remove image-build probes without exposing runtime rollback authority."""
+    profile = managed_validation_profile()
+    if profile is None:
+        return
+    if os.geteuid() != _VALIDATION_INVOCATION_BUDGET_OWNER_UID:
+        raise RuntimeError("validation invocation budget requires its trusted owner")
+    for command in profile["commands"]:
+        command_directory = _validation_invocation_command_path(profile, command)
+        claims = command_directory / _VALIDATION_INVOCATION_CLAIMS
+        for name in (
+            _VALIDATION_INVOCATION_ROOT_PROBE,
+            _VALIDATION_INVOCATION_SANDBOX_PROBE,
+        ):
+            (claims / name).unlink()
+        anchor = command_directory / _VALIDATION_INVOCATION_ANCHOR
+        with anchor.open("wb"):
+            pass
+
+
 def managed_validation_profile_enabled() -> bool:
     """Return whether the immutable image contains a valid command profile."""
     return managed_validation_profile() is not None
@@ -1603,6 +1706,7 @@ def _validation_receipt(
     exit_code: int | None = None,
     stdout: bytes = b"",
     stderr: bytes = b"",
+    verified_source_identity: str | None = None,
 ) -> dict[str, object]:
     return {
         "schemaVersion": _VALIDATION_RECEIPT_SCHEMA,
@@ -1610,6 +1714,7 @@ def _validation_receipt(
         "sandboxName": profile["sandboxName"],
         "taskIdentity": profile["taskIdentity"],
         "sourceIdentity": profile["sourceIdentity"],
+        "verifiedSourceIdentity": verified_source_identity,
         "commandId": command_id,
         "argvDigest": "sha256:"
         + hashlib.sha256(
@@ -1644,6 +1749,282 @@ def _terminate_validation_process(process: subprocess.Popen[bytes]) -> None:
             pass
 
 
+def _validation_descriptor_root() -> Path:
+    candidate = Path("/proc/self/fd")
+    if candidate.is_dir():
+        return candidate
+    raise RuntimeError("validation descriptor execution is unavailable")
+
+
+def _run_validation_git(
+    working_directory: str,
+    arguments: list[str],
+    pass_descriptors: tuple[int, ...],
+) -> tuple[int, bytes]:
+    executable_stat = _VALIDATION_GIT_EXECUTABLE.lstat()
+    if (
+        _VALIDATION_GIT_EXECUTABLE.is_symlink()
+        or not stat.S_ISREG(executable_stat.st_mode)
+        or executable_stat.st_uid != _VALIDATION_GIT_OWNER_UID
+        or executable_stat.st_mode & 0o022
+        or executable_stat.st_mode & 0o111 == 0
+    ):
+        raise RuntimeError("trusted Git executable is unavailable")
+    process = subprocess.Popen(
+        [
+            str(_VALIDATION_GIT_EXECUTABLE),
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            *arguments,
+        ],
+        cwd=working_directory,
+        env={
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "HOME": "/nonexistent",
+            "LC_ALL": "C",
+            "PATH": _VALIDATION_FIXED_PATH,
+        },
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        shell=False,
+        start_new_session=True,
+        pass_fds=pass_descriptors,
+    )
+    assert process.stdout is not None
+    os.set_blocking(process.stdout.fileno(), False)
+    output = bytearray()
+    deadline = time.monotonic() + 5
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    try:
+        while selector.get_map():
+            if time.monotonic() >= deadline:
+                _terminate_validation_process(process)
+                raise RuntimeError("source revision verification timed out")
+            for key, _mask in selector.select(timeout=0.05):
+                chunk = os.read(key.fileobj.fileno(), 4096)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                output.extend(chunk)
+                if len(output) > 8192:
+                    _terminate_validation_process(process)
+                    raise RuntimeError("source revision verification output is excessive")
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            return process.wait(timeout=remaining), bytes(output)
+        except subprocess.TimeoutExpired as exc:
+            _terminate_validation_process(process)
+            raise RuntimeError("source revision verification timed out") from exc
+    finally:
+        selector.close()
+        process.stdout.close()
+        if process.poll() is None:
+            _terminate_validation_process(process)
+            process.wait()
+
+
+def _verified_validation_source_identity(
+    working_directory: str, pass_descriptors: tuple[int, ...]
+) -> str | None:
+    config_status, unsafe_config = _run_validation_git(
+        working_directory,
+        [
+            "config",
+            "--local",
+            "--includes",
+            "--name-only",
+            "--get-regexp",
+            (
+                r"^(core\.(fsmonitor|hooksPath)|diff\..*\.command|"
+                r"filter\..*\.(clean|smudge|process)|merge\..*\.driver)$"
+            ),
+        ],
+        pass_descriptors,
+    )
+    format_status, raw_format = _run_validation_git(
+        working_directory, ["rev-parse", "--show-object-format"], pass_descriptors
+    )
+    oid_status, raw_oid = _run_validation_git(
+        working_directory,
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        pass_descriptors,
+    )
+    dirty_status, _output = _run_validation_git(
+        working_directory,
+        ["diff-index", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--"],
+        pass_descriptors,
+    )
+    untracked_status, untracked = _run_validation_git(
+        working_directory,
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        pass_descriptors,
+    )
+    object_format = raw_format.decode("ascii", errors="strict").strip()
+    object_id = raw_oid.decode("ascii", errors="strict").strip()
+    expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
+    if (
+        format_status != 0
+        or config_status != 1
+        or unsafe_config
+        or oid_status != 0
+        or dirty_status != 0
+        or untracked_status != 0
+        or untracked
+        or expected_length is None
+        or re.fullmatch(rf"[0-9a-f]{{{expected_length}}}", object_id) is None
+    ):
+        return None
+    identity = "sha256:" + hashlib.sha256(
+        f"git:{object_format}:{object_id}".encode("ascii")
+    ).hexdigest()
+    return identity
+
+
+def _reserve_validation_invocation(
+    profile: dict[str, object], command: dict[str, object]
+) -> tuple[int, int, int, int] | None:
+    command_directory = _validation_invocation_command_path(profile, command)
+    expected_directories = (
+        _VALIDATION_INVOCATION_BUDGET_ROOT,
+        command_directory.parent,
+        command_directory,
+    )
+    for directory in expected_directories:
+        directory_stat = directory.lstat()
+        if (
+            directory.is_symlink()
+            or not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
+            or directory_stat.st_mode & 0o022
+        ):
+            raise RuntimeError("validation invocation budget directory is unsafe")
+    claims = command_directory / _VALIDATION_INVOCATION_CLAIMS
+    claims_stat = claims.lstat()
+    if (
+        claims.is_symlink()
+        or not stat.S_ISDIR(claims_stat.st_mode)
+        or claims_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
+        or stat.S_IMODE(claims_stat.st_mode) != 0o1733
+    ):
+        raise RuntimeError("validation invocation claim directory is unsafe")
+    command_descriptor = os.open(
+        command_directory,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    claims_descriptor: int | None = None
+    anchor_descriptor: int | None = None
+    try:
+        claims_descriptor = os.open(
+            _VALIDATION_INVOCATION_CLAIMS,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=command_descriptor,
+        )
+        anchor_descriptor = os.open(
+            _VALIDATION_INVOCATION_ANCHOR,
+            os.O_RDWR
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=command_descriptor,
+        )
+        anchor_stat = os.fstat(anchor_descriptor)
+        if (
+            not stat.S_ISREG(anchor_stat.st_mode)
+            or anchor_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
+            or stat.S_IMODE(anchor_stat.st_mode) != 0o666
+            or anchor_stat.st_dev != os.fstat(claims_descriptor).st_dev
+        ):
+            raise RuntimeError("validation invocation anchor is unsafe")
+        lock_deadline = time.monotonic() + 1
+        while True:
+            try:
+                fcntl.flock(
+                    anchor_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= lock_deadline:
+                    raise RuntimeError(
+                        "validation invocation budget is unavailable"
+                    ) from exc
+                time.sleep(0.01)
+        for slot in range(command["maxInvocations"]):
+            try:
+                claim_stat = os.stat(
+                    str(slot), dir_fd=claims_descriptor, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                return (
+                    command_descriptor,
+                    claims_descriptor,
+                    anchor_descriptor,
+                    slot,
+                )
+            if (
+                not stat.S_ISREG(claim_stat.st_mode)
+                or claim_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
+                or claim_stat.st_dev != anchor_stat.st_dev
+                or claim_stat.st_ino != anchor_stat.st_ino
+            ):
+                raise RuntimeError("validation invocation claim is unsafe")
+        os.close(anchor_descriptor)
+        os.close(claims_descriptor)
+        os.close(command_descriptor)
+        return None
+    except Exception:
+        if anchor_descriptor is not None:
+            os.close(anchor_descriptor)
+        if claims_descriptor is not None:
+            os.close(claims_descriptor)
+        os.close(command_descriptor)
+        raise
+
+
+def _close_validation_invocation_reservation(
+    reservation: tuple[int, int, int, int]
+) -> None:
+    command_descriptor, claims_descriptor, anchor_descriptor, _slot = reservation
+    os.close(anchor_descriptor)
+    os.close(claims_descriptor)
+    os.close(command_descriptor)
+
+
+def _commit_validation_invocation(
+    reservation: tuple[int, int, int, int]
+) -> None:
+    command_descriptor, claims_descriptor, anchor_descriptor, slot = reservation
+    anchor_stat = os.fstat(anchor_descriptor)
+    try:
+        os.link(
+            _VALIDATION_INVOCATION_ANCHOR,
+            str(slot),
+            src_dir_fd=command_descriptor,
+            dst_dir_fd=claims_descriptor,
+            follow_symlinks=False,
+        )
+    except FileExistsError:
+        claim_stat = os.stat(
+            str(slot), dir_fd=claims_descriptor, follow_symlinks=False
+        )
+        if (
+            not stat.S_ISREG(claim_stat.st_mode)
+            or claim_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
+            or claim_stat.st_dev != anchor_stat.st_dev
+            or claim_stat.st_ino != anchor_stat.st_ino
+        ):
+            raise RuntimeError("validation invocation claim changed before commit")
+
+
 def execute_managed_validation_command(command_text: object) -> tuple[dict[str, object], bool]:
     """Execute one exact profiled argv without invoking a shell."""
     started = time.monotonic()
@@ -1667,18 +2048,10 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
     if matched is None:
         return _validation_receipt(profile, None, argv, "rejected", started), False
     command_id = matched["id"]
-    invocation_key = (profile["contentDigest"], command_id)
-    used = _VALIDATION_INVOCATIONS.get(invocation_key, 0)
-    if used >= matched["maxInvocations"]:
-        return (
-            _validation_receipt(
-                profile, command_id, argv, "invocation_limit_exceeded", started
-            ),
-            False,
-        )
     executable = Path(argv[0])
     working_directory = Path(matched["workingDirectory"])
     directory_descriptor: int | None = None
+    executable_descriptor: int | None = None
     try:
         executable_stat = executable.lstat()
         directory_stat = working_directory.lstat()
@@ -1703,33 +2076,6 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         )
     ):
         return _validation_receipt(profile, command_id, argv, "rejected", started), False
-    try:
-        directory_descriptor = os.open(
-            working_directory,
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-        )
-        bound_directory_stat = os.fstat(directory_descriptor)
-        if (
-            bound_directory_stat.st_dev != directory_stat.st_dev
-            or bound_directory_stat.st_ino != directory_stat.st_ino
-        ):
-            raise RuntimeError("working directory changed before execution")
-        linux_descriptor_root = Path("/proc/self/fd")
-        bound_working_directory = (
-            f"{linux_descriptor_root}/{directory_descriptor}"
-            if linux_descriptor_root.is_dir()
-            else str(working_directory)
-        )
-        pass_directory_descriptor = (
-            (directory_descriptor,) if linux_descriptor_root.is_dir() else ()
-        )
-    except (OSError, RuntimeError):
-        if directory_descriptor is not None:
-            os.close(directory_descriptor)
-        return _validation_receipt(profile, command_id, argv, "rejected", started), False
 
     child_environment = {
         "HOME": "/sandbox",
@@ -1745,9 +2091,83 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
                     profile, command_id, argv, "rejected", started
                 ), False
             child_environment[name] = value
+
     try:
+        directory_descriptor = os.open(
+            working_directory,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        bound_directory_stat = os.fstat(directory_descriptor)
+        if (
+            bound_directory_stat.st_dev != directory_stat.st_dev
+            or bound_directory_stat.st_ino != directory_stat.st_ino
+        ):
+            raise RuntimeError("working directory changed before execution")
+        executable_descriptor = os.open(
+            executable,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        bound_executable_stat = os.fstat(executable_descriptor)
+        if (
+            bound_executable_stat.st_dev != executable_stat.st_dev
+            or bound_executable_stat.st_ino != executable_stat.st_ino
+            or not stat.S_ISREG(bound_executable_stat.st_mode)
+            or bound_executable_stat.st_uid != _VALIDATION_EXECUTABLE_OWNER_UID
+            or bound_executable_stat.st_mode & 0o022
+            or bound_executable_stat.st_mode & 0o111 == 0
+        ):
+            raise RuntimeError("executable changed before execution")
+        descriptor_root = _validation_descriptor_root()
+        bound_working_directory = f"{descriptor_root}/{directory_descriptor}"
+        bound_executable = f"{descriptor_root}/{executable_descriptor}"
+        pass_descriptors = (directory_descriptor, executable_descriptor)
+    except (OSError, RuntimeError):
+        if executable_descriptor is not None:
+            os.close(executable_descriptor)
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+        return _validation_receipt(profile, command_id, argv, "rejected", started), False
+
+    verified_source_identity: str | None = None
+    invocation_reservation: tuple[int, int, int, int] | None = None
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        verified_source_identity = _verified_validation_source_identity(
+            bound_working_directory, (directory_descriptor,)
+        )
+        if verified_source_identity != profile["sourceIdentity"]:
+            return (
+                _validation_receipt(
+                    profile,
+                    command_id,
+                    argv,
+                    "source_identity_mismatch",
+                    started,
+                    verified_source_identity=verified_source_identity,
+                ),
+                False,
+            )
+        invocation_reservation = _reserve_validation_invocation(profile, matched)
+        if invocation_reservation is None:
+            return (
+                _validation_receipt(
+                    profile,
+                    command_id,
+                    argv,
+                    "invocation_limit_exceeded",
+                    started,
+                    verified_source_identity=verified_source_identity,
+                ),
+                False,
+            )
         process = subprocess.Popen(
             argv,
+            executable=bound_executable,
             cwd=bound_working_directory,
             env=child_environment,
             stdin=subprocess.DEVNULL,
@@ -1755,13 +2175,32 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
             stderr=subprocess.PIPE,
             shell=False,
             start_new_session=True,
-            pass_fds=pass_directory_descriptor,
+            pass_fds=pass_descriptors,
         )
-    except OSError:
-        return _validation_receipt(profile, command_id, argv, "rejected", started), False
+        _commit_validation_invocation(invocation_reservation)
+        committed_reservation = invocation_reservation
+        invocation_reservation = None
+        _close_validation_invocation_reservation(committed_reservation)
+    except (OSError, RuntimeError):
+        if invocation_reservation is not None:
+            _close_validation_invocation_reservation(invocation_reservation)
+        if process is not None:
+            _terminate_validation_process(process)
+            process.wait()
+        return (
+            _validation_receipt(
+                profile,
+                command_id,
+                argv,
+                "rejected",
+                started,
+                verified_source_identity=verified_source_identity,
+            ),
+            False,
+        )
     finally:
+        os.close(executable_descriptor)
         os.close(directory_descriptor)
-    _VALIDATION_INVOCATIONS[invocation_key] = used + 1
 
     output = {"stdout": bytearray(), "stderr": bytearray()}
     selector = selectors.DefaultSelector()
@@ -1829,6 +2268,7 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         exit_code=return_code,
         stdout=bounded_stdout,
         stderr=bounded_stderr,
+        verified_source_identity=verified_source_identity,
     )
     return receipt, terminal_status == "succeeded"
 

@@ -12,9 +12,11 @@ const harness = String.raw`
 import hashlib
 import importlib.util
 import json
+import multiprocessing
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
 import fcntl
 from pathlib import Path
@@ -28,17 +30,62 @@ managed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(managed)
 
 root = Path(tempfile.mkdtemp(prefix="nemoclaw-validation-runtime-")).resolve()
-unicode_root = (root / "café路径").resolve()
+workspace = (root / "workspace").resolve()
+workspace.mkdir()
+unicode_root = (workspace / "café路径").resolve()
 unicode_root.mkdir()
+(workspace / "tracked.txt").write_text("immutable source\n", encoding="utf-8")
+(unicode_root / ".keep").write_text("tracked unicode path\n", encoding="utf-8")
+git_executable = str(Path(shutil.which("git")).resolve(strict=True))
+for arguments in (
+    ("init", "-q"),
+    ("config", "user.name", "NemoClaw Test"),
+    ("config", "user.email", "nemoclaw-test@example.invalid"),
+    ("add", "."),
+    ("commit", "-qm", "fixture"),
+):
+    subprocess.run(
+        [git_executable, "-C", str(workspace), *arguments],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+object_format = subprocess.run(
+    [git_executable, "-C", str(workspace), "rev-parse", "--show-object-format"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+object_id = subprocess.run(
+    [git_executable, "-C", str(workspace), "rev-parse", "--verify", "HEAD^{commit}"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+source_identity = "sha256:" + hashlib.sha256(
+    f"git:{object_format}:{object_id}".encode("ascii")
+).hexdigest()
 retry_executable = (root / "retry-executable").resolve()
 retry_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
 retry_executable.chmod(0o777)
+popen_retry_executable = (root / "popen-retry-executable").resolve()
+popen_retry_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+popen_retry_executable.chmod(0o755)
 delayed_executable = (root / "delayed-executable").resolve()
 delayed_executable.write_text(
     "#!/bin/sh\nexec >/dev/null 2>&1\nsleep 1.25\nexit 0\n",
     encoding="utf-8",
 )
 delayed_executable.chmod(0o755)
+race_executable = (root / "race-executable").resolve()
+race_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+race_executable.chmod(0o755)
+race_replacement = (root / "race-replacement").resolve()
+race_replacement.write_text(
+    f"#!/bin/sh\ntouch {root / 'race-escaped'}\nexit 7\n",
+    encoding="utf-8",
+)
+race_replacement.chmod(0o755)
 executables = {
     name: str(Path(shutil.which(name)).resolve(strict=True))
     for name in ("echo", "sleep", "yes")
@@ -48,7 +95,7 @@ commands = [
     {
         "id": "echo",
         "argv": [executables["echo"], "managed"],
-        "workingDirectory": str(root),
+        "workingDirectory": str(workspace),
         "environment": ["HOME", "LANG"],
         "timeoutSeconds": 2,
         "maxOutputBytes": 1024,
@@ -57,7 +104,7 @@ commands = [
     {
         "id": "timeout",
         "argv": [executables["sleep"], "2"],
-        "workingDirectory": str(root),
+        "workingDirectory": str(workspace),
         "environment": ["HOME"],
         "timeoutSeconds": 1,
         "maxOutputBytes": 1024,
@@ -66,7 +113,7 @@ commands = [
     {
         "id": "output",
         "argv": [executables["yes"], "bounded"],
-        "workingDirectory": str(root),
+        "workingDirectory": str(workspace),
         "environment": ["HOME"],
         "timeoutSeconds": 2,
         "maxOutputBytes": 64,
@@ -84,7 +131,7 @@ commands = [
     {
         "id": "retry-after-rejection",
         "argv": [str(retry_executable)],
-        "workingDirectory": str(root),
+        "workingDirectory": str(workspace),
         "environment": ["HOME"],
         "timeoutSeconds": 2,
         "maxOutputBytes": 1024,
@@ -93,7 +140,52 @@ commands = [
     {
         "id": "delayed-exit",
         "argv": [str(delayed_executable)],
-        "workingDirectory": str(root),
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "popen-retry",
+        "argv": [str(popen_retry_executable)],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "concurrent",
+        "argv": [str(delayed_executable), "concurrent"],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "descriptor-bound",
+        "argv": [str(race_executable)],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "dirty-source",
+        "argv": [executables["echo"], "dirty-source"],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "unsafe-git-config",
+        "argv": [executables["echo"], "unsafe-git-config"],
+        "workingDirectory": str(workspace),
         "environment": ["HOME"],
         "timeoutSeconds": 2,
         "maxOutputBytes": 1024,
@@ -104,8 +196,8 @@ content = {
     "schemaVersion": "nemoclaw.dcode.validation-profile.v1",
     "sandboxName": "validation-test",
     "taskIdentity": "issue-7774",
-    "sourceIdentity": "sha256:" + ("a" * 64),
-    "workingDirectoryRoots": [str(root)],
+    "sourceIdentity": source_identity,
+    "workingDirectoryRoots": [str(workspace)],
     "commands": commands,
 }
 digest = "sha256:" + hashlib.sha256(
@@ -144,6 +236,12 @@ managed._VALIDATION_PROFILE_FILE = root / "absent-profile.json"
 disabled = managed.managed_validation_profile_enabled()
 managed._VALIDATION_PROFILE_FILE = profile_path
 managed._MANAGED_FILE_OWNER_UID = os.getuid()
+managed._VALIDATION_GIT_EXECUTABLE = Path(git_executable)
+managed._VALIDATION_GIT_OWNER_UID = Path(git_executable).stat().st_uid
+managed._VALIDATION_INVOCATION_BUDGET_ROOT = root / "invocation-budget"
+managed._VALIDATION_INVOCATION_BUDGET_OWNER_UID = os.getuid()
+managed.initialize_managed_validation_invocation_budget()
+managed.finalize_managed_validation_invocation_budget()
 
 def run(command):
     receipt, succeeded = managed.execute_managed_validation_command(command)
@@ -155,7 +253,11 @@ def run(command):
         "stderrBytes": receipt["stderrBytes"],
         "commandId": receipt["commandId"],
         "exitCode": receipt["exitCode"],
+        "sourceVerified": receipt["verifiedSourceIdentity"] == source_identity,
     }
+
+def run_concurrent(queue):
+    queue.put(run(f'{delayed_executable} concurrent')["status"])
 
 results = {
     "allowed": run(f'{executables["echo"]} managed'),
@@ -177,41 +279,113 @@ results["unsafeExecutable"] = run(str(retry_executable))
 retry_executable.chmod(0o755)
 results["successfulAfterRejection"] = run(str(retry_executable))
 results["delayedExit"] = run(str(delayed_executable))
+original_popen = managed.subprocess.Popen
+def fail_target_spawn(*args, **kwargs):
+    if args[0][0] == str(popen_retry_executable):
+        raise OSError("simulated process creation failure")
+    return original_popen(*args, **kwargs)
+managed.subprocess.Popen = fail_target_spawn
+results["popenFailure"] = run(str(popen_retry_executable))
+managed.subprocess.Popen = original_popen
+results["successfulAfterPopenFailure"] = run(str(popen_retry_executable))
+def replace_executable_before_spawn(*args, **kwargs):
+    if args[0][0] == str(race_executable):
+        os.replace(race_replacement, race_executable)
+    return original_popen(*args, **kwargs)
+managed.subprocess.Popen = replace_executable_before_spawn
+try:
+    results["descriptorBound"] = run(str(race_executable))
+finally:
+    managed.subprocess.Popen = original_popen
+results["raceEscaped"] = (root / "race-escaped").exists()
+context = multiprocessing.get_context("fork")
+queue = context.Queue()
+workers = [context.Process(target=run_concurrent, args=(queue,)) for _index in range(2)]
+for worker in workers:
+    worker.start()
+for worker in workers:
+    worker.join(timeout=10)
+results["concurrent"] = sorted(queue.get(timeout=1) for _index in workers)
+managed._VALIDATION_EXECUTABLE_OWNER_UID = Path(executables["echo"]).stat().st_uid
+subprocess.run(
+    [
+        git_executable,
+        "-C",
+        str(workspace),
+        "config",
+        "filter.attacker.clean",
+        f"touch {root / 'filter-escaped'}",
+    ],
+    check=True,
+)
+results["unsafeGitConfig"] = run(f'{executables["echo"]} unsafe-git-config')
+subprocess.run(
+    [
+        git_executable,
+        "-C",
+        str(workspace),
+        "config",
+        "--unset-all",
+        "filter.attacker.clean",
+    ],
+    check=True,
+)
+results["filterEscaped"] = (root / "filter-escaped").exists()
+(workspace / "dirty.txt").write_text("changed\n", encoding="utf-8")
+results["dirtySource"] = run(f'{executables["echo"]} dirty-source')
 print(json.dumps(results))
 `;
 
 describe("managed DCode validation-command runtime", () => {
-  it("admits only exact argv and returns bounded content-free receipts (#7774)", () => {
-    const result = spawnSync("python3", ["-c", harness], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      timeout: 15_000,
-    });
-    expect(result.status, result.stderr).toBe(0);
-    const receipts = JSON.parse(result.stdout) as Record<
-      string,
-      { status: string; success: boolean; stdoutBytes: number }
-    > & { disabled: boolean; escaped: boolean };
-    expect(receipts.disabled).toBe(false);
-    expect(receipts.allowed, JSON.stringify(receipts)).toMatchObject({
-      status: "succeeded",
-      success: true,
-      commandId: "echo",
-    });
-    expect(receipts.extraArgument.status).toBe("rejected");
-    expect(receipts.metacharacter.status).toBe("rejected");
-    expect(receipts.environmentInjection.status).toBe("rejected");
-    expect(receipts.alternateExecutable.status).toBe("rejected");
-    expect(receipts.invocationExhausted.status).toBe("invocation_limit_exceeded");
-    expect(receipts.timeout.status).toBe("timed_out");
-    expect(receipts.output.status).toBe("output_limit_exceeded");
-    expect(receipts.output.stdoutBytes).toBeLessThanOrEqual(64);
-    expect(receipts.unicode.status).toBe("succeeded");
-    expect(receipts.unsafeExecutable.status).toBe("rejected");
-    expect(receipts.successfulAfterRejection.status).toBe("succeeded");
-    expect(receipts.delayedExit.status).toBe("succeeded");
-    expect(receipts.escaped).toBe(false);
-    expect(receipts.secretTaskIdentityRejected).toBe(true);
-    expect(receipts.secretCommandIdRejected).toBe(true);
-  });
+  it.skipIf(process.platform !== "linux")(
+    "admits only exact argv and returns bounded content-free receipts (#7774)",
+    () => {
+      const result = spawnSync("python3", ["-c", harness], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const receipts = JSON.parse(result.stdout) as Record<
+        string,
+        { status: string; success: boolean; sourceVerified: boolean; stdoutBytes: number }
+      > & {
+        concurrent: string[];
+        disabled: boolean;
+        escaped: boolean;
+        filterEscaped: boolean;
+        raceEscaped: boolean;
+      };
+      expect(receipts.disabled).toBe(false);
+      expect(receipts.allowed, JSON.stringify(receipts)).toMatchObject({
+        status: "succeeded",
+        success: true,
+        commandId: "echo",
+        sourceVerified: true,
+      });
+      expect(receipts.extraArgument.status).toBe("rejected");
+      expect(receipts.metacharacter.status).toBe("rejected");
+      expect(receipts.environmentInjection.status).toBe("rejected");
+      expect(receipts.alternateExecutable.status).toBe("rejected");
+      expect(receipts.invocationExhausted.status).toBe("invocation_limit_exceeded");
+      expect(receipts.timeout.status).toBe("timed_out");
+      expect(receipts.output.status).toBe("output_limit_exceeded");
+      expect(receipts.output.stdoutBytes).toBeLessThanOrEqual(64);
+      expect(receipts.unicode.status).toBe("succeeded");
+      expect(receipts.unsafeExecutable.status).toBe("rejected");
+      expect(receipts.successfulAfterRejection.status).toBe("succeeded");
+      expect(receipts.delayedExit.status).toBe("succeeded");
+      expect(receipts.popenFailure.status).toBe("rejected");
+      expect(receipts.successfulAfterPopenFailure.status).toBe("succeeded");
+      expect(receipts.descriptorBound.status).toBe("succeeded");
+      expect(receipts.raceEscaped).toBe(false);
+      expect(receipts.concurrent).toEqual(["invocation_limit_exceeded", "succeeded"]);
+      expect(receipts.unsafeGitConfig.status).toBe("source_identity_mismatch");
+      expect(receipts.filterEscaped).toBe(false);
+      expect(receipts.dirtySource.status).toBe("source_identity_mismatch");
+      expect(receipts.escaped).toBe(false);
+      expect(receipts.secretTaskIdentityRejected).toBe(true);
+      expect(receipts.secretCommandIdRejected).toBe(true);
+    },
+  );
 });

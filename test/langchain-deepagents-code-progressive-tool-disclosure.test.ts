@@ -513,31 +513,34 @@ observability_prebound_manager = observability_counts(
 )
 os.environ.pop("NEMOCLAW_OBSERVABILITY", None)
 
-managed.managed_validation_profile_enabled = lambda: True
-validation_active = validation_counts(
-    agent.create_cli_agent(None, "assistant", interactive=False)
-)
-try:
-    agent.create_cli_agent(
-        None,
-        "assistant",
-        interactive=False,
-        subagents=[object()],
-    )
-except RuntimeError as exc:
-    validation_subagent_rejection = str(exc)
-else:
-    raise AssertionError("non-declarative validation subagent was accepted")
-
+original_validation_profile_enabled = managed.managed_validation_profile_enabled
 original_deep_factory = agent._nemoclaw_original_create_deep_agent
-agent._nemoclaw_original_create_deep_agent = None
+managed.managed_validation_profile_enabled = lambda: True
 try:
-    agent.create_cli_agent(None, "assistant", interactive=False)
-except RuntimeError as exc:
-    validation_boundary_rejection = str(exc)
-else:
-    raise AssertionError("validation profile ran without the middleware boundary")
+    validation_active = validation_counts(
+        agent.create_cli_agent(None, "assistant", interactive=False)
+    )
+    try:
+        agent.create_cli_agent(
+            None,
+            "assistant",
+            interactive=False,
+            subagents=[object()],
+        )
+    except RuntimeError as exc:
+        validation_subagent_rejection = str(exc)
+    else:
+        raise AssertionError("non-declarative validation subagent was accepted")
+
+    agent._nemoclaw_original_create_deep_agent = None
+    try:
+        agent.create_cli_agent(None, "assistant", interactive=False)
+    except RuntimeError as exc:
+        validation_boundary_rejection = str(exc)
+    else:
+        raise AssertionError("validation profile ran without the middleware boundary")
 finally:
+    managed.managed_validation_profile_enabled = original_validation_profile_enabled
     agent._nemoclaw_original_create_deep_agent = original_deep_factory
 
 original_factory = agent._nemoclaw_original_create_cli_agent

@@ -23,6 +23,9 @@ filesystem_policy:
   read_write:
     - /sandbox
     - /sandbox/.deepagents
+    # Runtime claims root-owned, sticky hard-link tokens here. The sandbox user
+    # can consume a slot but DAC prevents deleting or replacing any used slot.
+    - /usr/local/share/nemoclaw/dcode-validation-invocations
     - /tmp
     - /dev/null
 

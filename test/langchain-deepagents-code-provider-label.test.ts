@@ -10,6 +10,7 @@ import {
   cleanupPackageFixtures,
   createPackageFixture,
   patchFixture,
+  writeFixtureFile,
 } from "./helpers/langchain-deepagents-code-patch-fixture";
 
 afterEach(cleanupPackageFixtures);
@@ -17,6 +18,11 @@ afterEach(cleanupPackageFixtures);
 describe("LangChain Deep Agents Code managed provider label", () => {
   it("keeps the managed OpenAI route while reporting the NVIDIA provider family", () => {
     const tempDir = createPackageFixture();
+    writeFixtureFile(
+      tempDir,
+      "langchain/agents/middleware/types.py",
+      "class AgentMiddleware:\n    pass",
+    );
     const model = "nvidia/nemotron-3-super-120b-a12b";
     const stagedDockerfile = path.join(tempDir, "Dockerfile");
     fs.copyFileSync(

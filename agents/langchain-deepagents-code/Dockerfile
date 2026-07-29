@@ -178,6 +178,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
         chmod 0444 /usr/local/share/nemoclaw/dcode-validation-profile.json; \
         /opt/venv/bin/python3 -I -c 'import _nemoclaw_managed as managed; managed.validate_managed_validation_profile_file()'; \
     fi \
+    && /opt/venv/bin/python3 -I -c 'import _nemoclaw_managed as managed; managed.initialize_managed_validation_invocation_budget()' \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && test "$empty_prompt_status" -eq 2 \
@@ -223,10 +224,12 @@ USER sandbox
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/ \
     && node --experimental-strip-types /opt/nemoclaw-deepagents-code/generate-config.ts \
-    && chmod 660 /sandbox/.deepagents/config.toml
+    && chmod 660 /sandbox/.deepagents/config.toml \
+    && /opt/venv/bin/python3 -I -c 'import _nemoclaw_managed as managed; managed.validate_managed_validation_invocation_budget_unprivileged()'
 
 USER root
-RUN chown root:root /sandbox/.nemoclaw \
+RUN /opt/venv/bin/python3 -I -c 'import _nemoclaw_managed as managed; managed.finalize_managed_validation_invocation_budget()' \
+    && chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \
     && chown -R root:root /sandbox/.nemoclaw/blueprints \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \

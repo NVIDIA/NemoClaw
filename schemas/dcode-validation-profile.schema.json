@@ -30,6 +30,7 @@
       "$ref": "#/$defs/identity"
     },
     "sourceIdentity": {
+      "description": "SHA-256 digest of the ASCII string git:<object-format>:<full-HEAD-object-id>. The runtime recomputes this identity and requires a clean tracked worktree with no untracked files that Git does not ignore before every execution.",
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$"
     },
