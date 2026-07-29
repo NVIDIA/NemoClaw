@@ -260,17 +260,7 @@ describe("runRebuildRecreatePhase handoff", () => {
             disabledChannels: [],
             credentialBindings: [],
             networkPolicy: { presets: [], entries: [] },
-            agentRender: [
-              {
-                channelId: "slack",
-                renderId: "slack-hermes-env",
-                kind: "env-lines",
-                agent: "hermes",
-                target: "~/.hermes/.env",
-                lines: ["SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN"],
-                templateRefs: [],
-              },
-            ],
+            agentRender: [],
             buildSteps: [],
             stateUpdates: [],
             healthChecks: [],

@@ -3,7 +3,11 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
-import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
+import {
+  hydrateDerivedSandboxMessagingPlanFields,
+  MessagingSetupApplier,
+  type SandboxMessagingPlan,
+} from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
@@ -94,9 +98,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     log,
     bail,
   } = input;
-  const recreateMessagingPlan = rebuildMessagingPlan
+  const hydratedRebuildMessagingPlan = rebuildMessagingPlan
+    ? hydrateDerivedSandboxMessagingPlanFields(rebuildMessagingPlan)
+    : null;
+  const recreateMessagingPlan = hydratedRebuildMessagingPlan
     ? mergeHermesPreservedEnvIntoMessagingPlan(
-        rebuildMessagingPlan,
+        hydratedRebuildMessagingPlan,
         rebuildsHermesSandbox ? backupManifest?.preservedEnv : undefined,
       )
     : null;
