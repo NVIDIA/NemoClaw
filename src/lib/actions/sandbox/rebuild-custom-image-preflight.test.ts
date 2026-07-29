@@ -11,8 +11,8 @@ import { ROOT } from "../../runner";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
   finalizePreparedRebuildImageMessagingPlan,
-  preflightRebuildImage,
   type PreparedRebuildImage,
+  preflightRebuildImage,
   type RebuildImagePreflightResult,
 } from "./rebuild-custom-image-preflight";
 import {
@@ -372,10 +372,8 @@ describe("preflightRebuildImage", () => {
       .mockReturnValueOnce({ status: 1 } as never)
       .mockReturnValueOnce({ status: 0 } as never);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const processOnce = vi.spyOn(process, "once").mockImplementation((event, listener) => {
-      expect(event).toBe("exit");
-      listener(0);
-      return process;
+    const registerExitHandler = vi.fn((listener: () => void) => {
+      listener();
     });
     try {
       const result = successful(
@@ -387,18 +385,18 @@ describe("preflightRebuildImage", () => {
           })),
           buildImage: vi.fn(() => ({ status: 0 }) as never),
           removeImage,
+          registerExitHandler,
         }),
       );
 
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("failed to remove temporary rebuild preflight image"),
       );
-      expect(processOnce).toHaveBeenCalledWith("exit", expect.any(Function));
+      expect(registerExitHandler).toHaveBeenCalledWith(expect.any(Function));
       expect(removeImage).toHaveBeenCalledTimes(2);
       expect(result.prepared.dashboardRemoteBindPrepared).toBe(true);
       expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {
-      processOnce.mockRestore();
       warn.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -500,6 +498,54 @@ describe("finalizePreparedRebuildImageMessagingPlan", () => {
       });
       expect(buildImage).not.toHaveBeenCalled();
     } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    }
+  });
+
+  it("retries finalization image cleanup at process exit", () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-finalize-cleanup-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=old\n");
+    const contextFingerprint = fingerprintBuildContext(buildCtx);
+    const prepared: PreparedRebuildImage = {
+      buildCtx,
+      stagedDockerfile,
+      cleanupBuildCtx: () => true,
+      buildId: "finalize-cleanup",
+      origin: "generated",
+      contextFingerprint,
+      verifyBuildCtx: createBuildContextVerifier(buildCtx, contextFingerprint),
+      rebuildTarget: { agentName: "hermes", fromDockerfile: null },
+    };
+    const removeImage = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1 } as never)
+      .mockReturnValueOnce({ status: 0 } as never);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const registerExitHandler = vi.fn((listener: () => void) => {
+      listener();
+    });
+    try {
+      expect(
+        finalizePreparedRebuildImageMessagingPlan(
+          prepared,
+          hermesMessagingPlan(),
+          [{ path: ".env", assignments: ["SLACK_HOME_CHANNEL=C0123"] }],
+          {
+            buildImage: vi.fn(() => ({ status: 0 }) as never),
+            removeImage,
+            registerExitHandler,
+          },
+        ).ok,
+      ).toBe(true);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to remove temporary rebuild finalization image"),
+      );
+      expect(registerExitHandler).toHaveBeenCalledWith(expect.any(Function));
+      expect(removeImage).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
       fs.rmSync(buildCtx, { recursive: true, force: true });
     }
   });

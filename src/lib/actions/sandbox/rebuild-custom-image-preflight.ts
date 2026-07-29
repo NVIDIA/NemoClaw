@@ -11,6 +11,11 @@ import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
 import { patchStagedDockerfileMessagingPlan } from "../../onboard/dockerfile-patch";
+import {
+  applyReasoningEffortEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+} from "../../onboard/reasoning-mode";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { ROOT } from "../../runner";
@@ -21,11 +26,6 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
 import type { PreservedEnvFile } from "../../state/preserved-env";
-import {
-  applyReasoningEffortEnv,
-  REASONING_EFFORT_ENV,
-  type ReasoningEffort,
-} from "../../onboard/reasoning-mode";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   createBuildContextVerifier,
@@ -56,6 +56,7 @@ type PreflightDeps = {
   prepareDockerfilePatch?: typeof prepareSandboxDockerfilePatch;
   buildImage?: typeof dockerBuild;
   removeImage?: typeof dockerRmi;
+  registerExitHandler?: (listener: () => void) => void;
 };
 
 export type PreparedRebuildImage = FingerprintedPreparedBuildContext & {
@@ -73,6 +74,7 @@ type FinalizePreparedImageDeps = {
   patchMessagingPlan?: typeof patchStagedDockerfileMessagingPlan;
   buildImage?: typeof dockerBuild;
   removeImage?: typeof dockerRmi;
+  registerExitHandler?: (listener: () => void) => void;
 };
 
 function resultDetail(result: {
@@ -87,6 +89,35 @@ function resultDetail(result: {
   );
 }
 
+function removeTemporaryRebuildImage(
+  imageTag: string | null,
+  imageBuilt: boolean,
+  label: "preflight" | "finalization",
+  removeImage: typeof dockerRmi,
+  registerExitHandler: (listener: () => void) => void,
+): void {
+  let imageRemoved = false;
+  try {
+    imageRemoved =
+      imageTag !== null &&
+      removeImage(imageTag, { ignoreError: true, suppressOutput: true }).status === 0;
+  } catch {
+    // Best effort; retained-context ownership and environment restoration must continue.
+  }
+  if (!imageBuilt || !imageTag || imageRemoved) return;
+  const retainedImageTag = imageTag;
+  console.warn(
+    `  Warning: failed to remove temporary rebuild ${label} image '${retainedImageTag}'.`,
+  );
+  registerExitHandler(() => {
+    try {
+      removeImage(retainedImageTag, { ignoreError: true, suppressOutput: true });
+    } catch {
+      // Best effort process-exit retry.
+    }
+  });
+}
+
 export async function preflightRebuildImage(
   input: PreflightInput,
   deps: PreflightDeps = {},
@@ -95,6 +126,8 @@ export async function preflightRebuildImage(
   const preparePatch = deps.prepareDockerfilePatch ?? prepareSandboxDockerfilePatch;
   const buildImage = deps.buildImage ?? dockerBuild;
   const removeImage = deps.removeImage ?? dockerRmi;
+  const registerExitHandler =
+    deps.registerExitHandler ?? ((listener: () => void) => process.once("exit", listener));
   let cleanup: (() => boolean) | null = null;
   let imageTag: string | null = null;
   let imageBuilt = false;
@@ -173,27 +206,13 @@ export async function preflightRebuildImage(
   } catch (err) {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   } finally {
-    let imageRemoved = false;
-    try {
-      imageRemoved =
-        imageTag !== null &&
-        removeImage(imageTag, { ignoreError: true, suppressOutput: true }).status === 0;
-    } catch {
-      // Best effort; retained-context ownership and environment restoration must continue.
-    }
-    if (imageBuilt && imageTag && !imageRemoved) {
-      const retainedImageTag = imageTag;
-      console.warn(
-        `  Warning: failed to remove temporary rebuild preflight image '${retainedImageTag}'.`,
-      );
-      process.once("exit", () => {
-        try {
-          removeImage(retainedImageTag, { ignoreError: true, suppressOutput: true });
-        } catch {
-          // Best effort process-exit retry.
-        }
-      });
-    }
+    removeTemporaryRebuildImage(
+      imageTag,
+      imageBuilt,
+      "preflight",
+      removeImage,
+      registerExitHandler,
+    );
     if (!retainBuildContext) {
       try {
         cleanup?.();
@@ -220,6 +239,8 @@ export function finalizePreparedRebuildImageMessagingPlan(
   const patchMessagingPlan = deps.patchMessagingPlan ?? patchStagedDockerfileMessagingPlan;
   const buildImage = deps.buildImage ?? dockerBuild;
   const removeImage = deps.removeImage ?? dockerRmi;
+  const registerExitHandler =
+    deps.registerExitHandler ?? ((listener: () => void) => process.once("exit", listener));
   const imageTag = `nemoclaw-rebuild-finalize:${String(process.pid)}-${String(Date.now())}`;
   let imageBuilt = false;
   try {
@@ -247,17 +268,12 @@ export function finalizePreparedRebuildImageMessagingPlan(
   } catch (err) {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   } finally {
-    let imageRemoved = false;
-    try {
-      imageRemoved =
-        removeImage(imageTag, { ignoreError: true, suppressOutput: true }).status === 0;
-    } catch {
-      // Best effort; the caller still owns the retained build context.
-    }
-    if (imageBuilt && !imageRemoved) {
-      console.warn(
-        `  Warning: failed to remove temporary rebuild finalization image '${imageTag}'.`,
-      );
-    }
+    removeTemporaryRebuildImage(
+      imageTag,
+      imageBuilt,
+      "finalization",
+      removeImage,
+      registerExitHandler,
+    );
   }
 }
