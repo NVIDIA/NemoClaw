@@ -109,6 +109,43 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
+  it("rides out a transient Error phase past the old 30s budget by default (#7227)", () => {
+    // No timeoutSeconds option and no env override: the default recovery budget
+    // must be large enough (120s, aligned with connect's readiness wait) to keep
+    // retrying a cold-start phase:Error settling window that exceeds the old
+    // 30s / 11-attempt budget. The 12th probe (past the old 11-attempt cap) must
+    // still be reached, so the primary dashboard/API forward is not abandoned.
+    delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
+    const errorPhase = {
+      status: 1,
+      output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
+      stdout: "",
+      stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+    };
+    const captureOpenshellImpl = vi.fn();
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      captureOpenshellImpl.mockReturnValueOnce(errorPhase);
+    }
+    captureOpenshellImpl.mockReturnValueOnce({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: () => {},
+        // no timeoutSeconds -> exercise the default budget; the old 30s default
+        // capped at 11 attempts and would have given up before the 12th probe.
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(12);
+  });
+
   it("retries the exact supervisor reconnect states exposed during direct recreation", () => {
     const reconnecting = [
       OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR,

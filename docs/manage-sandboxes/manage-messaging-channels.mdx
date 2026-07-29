@@ -79,24 +79,26 @@ If policy restoration fails, the command keeps the channel disabled and exits wi
 
 ## Avoid Cross-Sandbox Conflicts
 
-Telegram, Discord, Slack, and WeChat allow one active consumer per channel credential.
-Multiple sandboxes can use the same channel type when each uses a distinct token or WeChat bot account.
+Use distinct credentials and resources for each active messaging sandbox.
+Follow these channel-specific rules:
 
-For WeChat, each sandbox must own a distinct iLink `accountId`.
-Running two sandboxes against the same account causes one to lose messages.
+- Use a distinct iLink `accountId` for each WeChat sandbox.
+- Use distinct bot and Socket Mode app tokens for each Slack sandbox.
+- Use a different gateway for each Slack sandbox.
+- Use a different local webhook port for each Microsoft Teams sandbox.
 
-If another sandbox already uses the same token, interactive onboarding prompts for confirmation and non-interactive onboarding exits nonzero.
-For Slack, NemoClaw checks both bot and Socket Mode app tokens.
+When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check.
+Legacy entries without credential hashes count as incomplete.
+An unreadable messaging registry also causes onboarding and rebuild to abort.
+Onboarding and rebuild have no conflict override.
 
-For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share it.
-If NemoClaw has only legacy metadata and cannot compare credential hashes, it keeps the conservative warning.
-
+For `channels add` only, `--force` overrides conflict and incomplete-check aborts.
+Use it only when you accept the duplicate-consumer or shared-resource risk.
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 
-Before any rebuild, NemoClaw rechecks the staged messaging plan against other registered sandboxes.
-A credential or resource conflict aborts before backup or deletion and leaves the original sandbox registered and intact.
-
-Resolve the conflict, then rerun the operation.
+Before a rebuild, NemoClaw checks the messaging plan before backup or deletion.
+A conflict leaves the original sandbox intact.
+Resolve any conflict, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps.
 
 ## Stop All Delivery
