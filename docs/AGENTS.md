@@ -102,12 +102,17 @@ Continue using the Writing Style Guide above.
 - Check `docs/.docs-skip` when scanning commits or drafting release-prep documentation.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
+- For every target page, determine which agent runtimes execute the documented behavior and which guide variants must publish it.
+- Use source code, tests, or accepted product scope as evidence for each inclusion or exclusion.
+- Do not infer agent applicability from the page's current navigation placement.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
 ## NemoClaw Doc Patterns
 
-- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw, Hermes, and Deep Agents pages.
-- Use literal command names on pages that have only one agent variant.
+- Use `$$nemoclaw` for host CLI command examples on source pages shared by OpenClaw, Hermes, and Deep Agents guide variants.
+- Use literal command names on source pages published for one guide variant.
+- Publish shared source pages through generated navigation targets in every applicable guide variant.
+- Declare `agent-variants` in frontmatter when a source page intentionally applies to fewer than all three guide variants.
 - Use `<AgentOnly>` blocks only when content differs by behavior, setup flow, state layout, or agent-specific wording.
 - Treat `<AgentOnly>` as a non-nested build-time directive with opening and closing tags at the first column on their own lines; do not import a runtime component for it.
 - Use route-style links without `.mdx` extensions for links between docs pages.

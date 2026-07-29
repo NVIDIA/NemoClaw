@@ -28,7 +28,9 @@ function createInferenceRouteStatusSetup(options: {
   writeSandboxRegistry(home, sandboxName, {
     model: "nvidia/nemotron",
     provider: "nvidia-prod",
-    openshellDriver: "docker",
+    // These cases test only inference.local classification. Use the VM driver
+    // so Docker post-reboot delivery recovery does not affect their assertions.
+    openshellDriver: "vm",
   });
   fs.writeFileSync(
     path.join(localBin, "docker"),
