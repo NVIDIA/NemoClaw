@@ -465,6 +465,26 @@ describe("CUA task lifecycle (#7752)", () => {
     expect(JSON.stringify(registry)).not.toContain("private response");
   });
 
+  it("rejects a pause response that leaves the task running", () => {
+    const current = activeAttachment();
+    const { registry, deps } = harness(current);
+    const adapter = fakeAdapter(() => activeAttachment("task-1", "running"));
+
+    const outcome = executeCuaTaskLifecycle(
+      {
+        operation: "task.pause",
+        sandboxName: "alpha",
+        taskId: "task-1",
+        adapter,
+      },
+      deps,
+    );
+
+    expect(outcome.record).toMatchObject({ kind: "failure", family: "validation_failed" });
+    expect(registry.sandboxes.alpha?.cuaTarget).toEqual(current);
+    expect(deps.save).not.toHaveBeenCalled();
+  });
+
   it.each<[CuaTaskOperation, CuaTaskEvidenceIndex["category"]]>([
     ["task.events", "events"],
     ["task.logs", "logs"],
