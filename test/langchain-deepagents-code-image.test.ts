@@ -162,6 +162,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',
     );
+    for (const probe of [
+      "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
+      "/usr/local/bin/dcode --version",
+      "/usr/local/bin/dcode.real --version",
+      "/usr/local/bin/deepagents-code --version",
+    ]) {
+      expect(dockerfile).toContain(`env -i ${probe}`);
+    }
     expect(dockerfile).toContain("chown root:root /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chown -R root:root /sandbox/.nemoclaw/blueprints");
