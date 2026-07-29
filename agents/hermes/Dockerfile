@@ -59,6 +59,7 @@ COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-en
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
@@ -223,7 +224,7 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
@@ -743,6 +744,18 @@ RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
     && chmod 640 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 
+# Keep the shared NemoClaw state root consistent across every shipped agent.
+# The root-owned sticky directory protects the managed-startup transaction
+# receipt while leaving the named plugin state directories sandbox-writable.
+RUN chown root:root /sandbox/.nemoclaw \
+    && chmod 1755 /sandbox/.nemoclaw \
+    && chown -R root:root /sandbox/.nemoclaw/blueprints \
+    && chmod -R 755 /sandbox/.nemoclaw/blueprints \
+    && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
+    && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
+    && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
+    && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
+
 # OpenShell's macOS VM backend currently remaps extracted rootfs ownership to
 # the host uid/gid before startup. Hermes uses /sandbox as a read_write path, so
 # that repair walks the trusted rc files too; keep this Darwin-only so Linux
@@ -750,6 +763,10 @@ RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.hermes; \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
+            chmod a+rwx "$p"; \
+        done; \
+        chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 
@@ -779,6 +796,7 @@ RUN check_metadata() { \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \
     && check_absent /sandbox/.cache \
+    && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \

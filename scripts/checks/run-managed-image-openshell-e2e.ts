@@ -6,6 +6,8 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { createDockerGpuSandboxCreatePatch } from "../../src/lib/onboard/docker-gpu-sandbox-create.ts";
+import { resolveDockerStartupCommandPatch } from "../../src/lib/onboard/docker-startup-command-agent.ts";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupAgent,
@@ -31,6 +33,9 @@ type Inputs = {
 
 type OnboardModule = {
   openshellArgv(args: string[]): string[];
+  runOpenshell(args: string[], opts?: Record<string, unknown>): ReturnType<typeof commandResult>;
+  runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
+  sleepSeconds(seconds: number): void;
   startGatewayForRecovery(options: { gatewayName: string; gatewayPort: number }): Promise<void>;
 };
 
@@ -39,8 +44,15 @@ type SandboxCreateLaunchModule = {
     createArgv: string[];
     prebuild: { createArgs: string[]; imageId: null; imageRef: null };
     sandboxEnv: Record<string, string>;
+    sandboxStartupCommand: string[];
+    startupRequirement: "sandbox-command" | "trusted-image-init";
+    managedStartupRootApplyRequest: Parameters<
+      typeof createDockerGpuSandboxCreatePatch
+    >[0]["managedStartupRootApplyRequest"];
   };
 };
+
+type ManagedStartupPatch = ReturnType<typeof createDockerGpuSandboxCreatePatch>;
 
 function requiredValue(argv: readonly string[], flag: string): string {
   const index = argv.indexOf(flag);
@@ -213,12 +225,21 @@ export function managedImageOpenShellProbe(agent: ManagedStartupAgent): string {
     }`,
     `grep -F ${JSON.stringify(MODEL)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     "test ! -L /run/nemoclaw/managed-startup-runtime.env",
-    'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:400"',
+    'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
+    "test ! -L /run/nemoclaw/managed-startup-complete.json",
+    'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-complete.json)" = "0:0:444"',
     "test -s /usr/local/share/nemoclaw/corporate-ca.pem",
     'test "$(stat -c "%u:%g:%a" /usr/local/share/nemoclaw/corporate-ca.pem)" = "0:0:444"',
     "test -s /run/nemoclaw/managed-startup-ca-bundle.pem",
     'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"',
     healthProbe,
+  ].join("\n");
+}
+
+export function managedImageOpenShellCommittedProbe(): string {
+  return [
+    "set -eu",
+    "test ! -e /var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
   ].join("\n");
 }
 
@@ -237,16 +258,24 @@ async function waitForSandboxProbe(
   env: NodeJS.ProcessEnv,
   createChild: ChildProcess,
   createLog: string,
+  startupPatch: ManagedStartupPatch,
 ): Promise<void> {
-  const probe = managedImageOpenShellProbe(input.agent);
+  const healthProbe = managedImageOpenShellProbe(input.agent);
+  const committedProbe = managedImageOpenShellCommittedProbe();
   const deadline = Date.now() + 240_000;
   let createSpawnErrorMessage: string | null = null;
   createChild.once("error", (error) => {
     createSpawnErrorMessage = error.message;
   });
-  while (Date.now() < deadline) {
-    const remainingMs = deadline - Date.now();
-    const result = commandResult(
+  const applyStartupPatch = () => {
+    startupPatch.maybeApplyDuringCreate();
+    startupPatch.exitOnPatchError();
+    // Reconnect is a reversible precondition. The receipt and any recreation
+    // backup remain available until the exact live health probe passes.
+    startupPatch.waitForSupervisorReconnectIfNeeded();
+  };
+  const runProbe = (probe: string, timeoutMs: number) =>
+    commandResult(
       onboard.openshellArgv([
         "sandbox",
         "exec",
@@ -259,32 +288,54 @@ async function waitForSandboxProbe(
         probe,
       ]),
       env,
-      Math.max(1, Math.min(15_000, remainingMs)),
+      timeoutMs,
     );
-    if (result.status === 0) return;
-    if (createSpawnErrorMessage) {
-      printLogTail(createLog);
-      throw new Error(`could not spawn OpenShell sandbox create: ${createSpawnErrorMessage}`);
+  try {
+    while (Date.now() < deadline) {
+      applyStartupPatch();
+      const remainingMs = deadline - Date.now();
+      const result = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
+      applyStartupPatch();
+      if (result.status === 0) {
+        startupPatch.commitAfterReady();
+        const committed = runProbe(
+          committedProbe,
+          Math.max(1, Math.min(15_000, deadline - Date.now())),
+        );
+        if (committed.status !== 0) {
+          throw new Error(
+            `managed startup committed, but transaction cleanup was not observable through the exact sandbox: ${commandDetail(committed)}`,
+          );
+        }
+        return;
+      }
+      if (createSpawnErrorMessage) {
+        printLogTail(createLog);
+        throw new Error(`could not spawn OpenShell sandbox create: ${createSpawnErrorMessage}`);
+      }
+      if (createChild.signalCode !== null) {
+        printLogTail(createLog);
+        throw new Error(
+          `OpenShell sandbox create exited on signal ${createChild.signalCode} before the live probe passed: ${commandDetail(result)}`,
+        );
+      }
+      if (createChild.exitCode !== null && createChild.exitCode !== 0) {
+        printLogTail(createLog);
+        throw new Error(
+          `OpenShell sandbox create exited ${String(createChild.exitCode)} before the live probe passed: ${commandDetail(result)}`,
+        );
+      }
+      const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
+      if (sleepMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      }
     }
-    if (createChild.signalCode !== null) {
-      printLogTail(createLog);
-      throw new Error(
-        `OpenShell sandbox create exited on signal ${createChild.signalCode} before the live probe passed: ${commandDetail(result)}`,
-      );
-    }
-    if (createChild.exitCode !== null && createChild.exitCode !== 0) {
-      printLogTail(createLog);
-      throw new Error(
-        `OpenShell sandbox create exited ${String(createChild.exitCode)} before the live probe passed: ${commandDetail(result)}`,
-      );
-    }
-    const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
-    if (sleepMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, sleepMs));
-    }
+    printLogTail(createLog);
+    throw new Error("OpenShell sandbox did not pass the exact-image startup probe within 240s");
+  } catch (error) {
+    startupPatch.rollbackManagedStartupAfterCreateFailure();
+    throw error;
   }
-  printLogTail(createLog);
-  throw new Error("OpenShell sandbox did not pass the exact-image startup probe within 240s");
 }
 
 function exactHarnessContainerIds(
@@ -360,6 +411,7 @@ async function run(input: Inputs): Promise<void> {
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
   process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
   process.env.NEMOCLAW_GATEWAY_PORT = String(GATEWAY_PORT);
+  process.env.NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT = "240";
   process.env.OPENSHELL_DOCKER_NETWORK_NAME = networkName;
   process.env.XDG_CONFIG_HOME = path.join(stateDir, "xdg-config");
   process.env.XDG_DATA_HOME = path.join(stateDir, "xdg-data");
@@ -428,6 +480,27 @@ async function run(input: Inputs): Promise<void> {
     ) {
       throw new Error("managed-image launch renderer altered the exact PR image identity");
     }
+    const startupPlan = resolveDockerStartupCommandPatch(
+      { name: input.agent } as Parameters<typeof resolveDockerStartupCommandPatch>[0],
+      true,
+    );
+    if (!launch.managedStartupRootApplyRequest) {
+      throw new Error("managed-image launch did not retain the bounded root-apply request");
+    }
+    const startupPatch = createDockerGpuSandboxCreatePatch({
+      route: "none",
+      persistStartupCommand: startupPlan.persistStartupCommand,
+      managedStartupRootApplyRequest: launch.managedStartupRootApplyRequest,
+      sandboxName: input.sandbox,
+      openshellSandboxCommand: launch.sandboxStartupCommand,
+      requiredUlimits: startupPlan.requiredUlimits,
+      timeoutSecs: 240,
+      deps: {
+        runOpenshell: onboard.runOpenshell,
+        runCaptureOpenshell: onboard.runCaptureOpenshell,
+        sleep: onboard.sleepSeconds,
+      },
+    });
 
     createLogFd = fs.openSync(createLog, "a", 0o600);
     const [createExecutable, ...createArgs] = launch.createArgv;
@@ -439,7 +512,14 @@ async function run(input: Inputs): Promise<void> {
     fs.closeSync(createLogFd);
     createLogFd = null;
 
-    await waitForSandboxProbe(onboard, input, launch.sandboxEnv, createChild, createLog);
+    await waitForSandboxProbe(
+      onboard,
+      input,
+      launch.sandboxEnv,
+      createChild,
+      createLog,
+      startupPatch,
+    );
     ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
     process.stdout.write(
       `OpenShell launched exact ${input.agent} PR image ${input.image} and applied its managed startup profile.\n`,

@@ -197,6 +197,7 @@ describe("Hermes final image layout", () => {
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
           "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
@@ -299,6 +300,7 @@ describe("Hermes final image layout", () => {
       "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
@@ -316,6 +318,9 @@ describe("Hermes final image layout", () => {
     expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& if /u);
     expect(doctorLayer).toMatch(/fi\s+&& rm -rf \/sandbox\/[.]cache$/u);
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
+    expect(finalStage).toContain("RUN chown root:root /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chmod 1755 /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chown sandbox:sandbox /sandbox/.nemoclaw/config.json");
   });
 
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image

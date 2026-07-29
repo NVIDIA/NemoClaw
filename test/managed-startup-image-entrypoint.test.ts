@@ -1,89 +1,172 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "..");
+const HOLD = path.join(ROOT, "scripts", "managed-startup-hold.sh");
 
-const ENTRYPOINTS = [
-  {
-    agent: "openclaw",
-    script: "scripts/nemoclaw-start.sh",
-    dockerfile: "Dockerfile",
-    managedBlockEnd: "# Reject an invalid explicit dashboard port",
-    runtimeUserDefault: "root",
-    postApplicationContract: 'if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then',
-  },
-  {
-    agent: "hermes",
-    script: "agents/hermes/start.sh",
-    dockerfile: "agents/hermes/Dockerfile",
-    managedBlockEnd: "# ── Source shared sandbox initialisation library",
-    runtimeUserDefault: "root",
-    postApplicationContract: 'if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then',
-  },
-  {
-    agent: "langchain-deepagents-code",
-    script: "agents/langchain-deepagents-code/start.sh",
-    dockerfile: "agents/langchain-deepagents-code/Dockerfile",
-    managedBlockEnd: "# The published managed image uses uid 0",
-    runtimeUserDefault: "sandbox",
-    postApplicationContract:
-      "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
-  },
-] as const;
-
-function read(relativePath: string): string {
-  return fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+function executable(target: string, contents: string): void {
+  fs.writeFileSync(target, contents, { mode: 0o755 });
+  fs.chmodSync(target, 0o755);
 }
 
-describe("managed startup image entrypoint contract", () => {
-  it.each(
-    ENTRYPOINTS,
-  )("$agent applies the profile as root before entering its legacy startup path", (contract) => {
-    const script = read(contract.script);
-    const normalization = script.indexOf("nemoclaw_normalize_entrypoint_env_wrapper");
-    const blockStart = script.indexOf('if [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ]; then');
-    const blockEnd = script.indexOf(contract.managedBlockEnd, blockStart);
-    expect(normalization).toBeGreaterThan(-1);
-    expect(blockStart).toBeGreaterThan(-1);
-    expect(normalization).toBeLessThan(blockStart);
-    expect(blockEnd).toBeGreaterThan(blockStart);
-    const managedBlock = script.slice(blockStart, blockEnd);
+type FakeIdentity = {
+  readonly currentUid: number;
+  readonly currentGid: number;
+  readonly sandboxUid: number;
+  readonly sandboxGid: number;
+};
 
-    expect(managedBlock).toContain('if [ "$(id -u)" -ne 0 ]; then');
-    expect(managedBlock).toContain("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");
-    expect(managedBlock).toContain("/run/nemoclaw/managed-startup-runtime.env");
-    expect(managedBlock).toContain("0:0:400");
-    expect(managedBlock).toContain("unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64");
-    expect(managedBlock).not.toMatch(/\b(?:npm|npx|pip|pip3|uv)\b.*\binstall\b/iu);
+function fakeIdScript(identity: FakeIdentity): string {
+  return `#!/bin/sh
+case "$*" in
+  "-u") printf '${String(identity.currentUid)}\\n' ;;
+  "-g") printf '${String(identity.currentGid)}\\n' ;;
+  "-u sandbox") printf '${String(identity.sandboxUid)}\\n' ;;
+  "-g sandbox") printf '${String(identity.sandboxGid)}\\n' ;;
+  *) exit 1 ;;
+esac
+`;
+}
 
-    expect(contract.agent === "langchain-deepagents-code" ? managedBlock : script).toContain(
-      contract.postApplicationContract,
+function runHoldWithFakeIdentity(identity: FakeIdentity, args: readonly string[]) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-hold-identity-"));
+  try {
+    const script = path.join(directory, "hold.sh");
+    executable(path.join(directory, "id"), fakeIdScript(identity));
+    fs.writeFileSync(
+      script,
+      fs
+        .readFileSync(HOLD, "utf8")
+        .replace(
+          'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+          'export PATH="$TEST_PATH"',
+        ),
+      { mode: 0o755 },
     );
-    expect(script.includes("su -c")).toBe(false);
+    return spawnSync("/bin/bash", [script, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, TEST_PATH: directory },
+    });
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+describe("managed startup image hold", () => {
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("enters the %s legacy startup as sandbox after the exact handoff", (agent) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-hold-"));
+    try {
+      const trace = path.join(directory, "trace");
+      const runtime = path.join(directory, "runtime.cjs");
+      const runtimeEnvironment = path.join(directory, "runtime.env");
+      const script = path.join(directory, "hold.sh");
+      fs.writeFileSync(runtime, "");
+      fs.writeFileSync(runtimeEnvironment, "export NEMOCLAW_MANAGED_STARTUP_APPLIED='1'\n", {
+        mode: 0o444,
+      });
+      executable(
+        path.join(directory, "id"),
+        fakeIdScript({
+          currentUid: 1000,
+          currentGid: 1000,
+          sandboxUid: 1000,
+          sandboxGid: 1000,
+        }),
+      );
+      executable(path.join(directory, "stat"), "#!/bin/sh\nprintf '0:0:444\\n'\n");
+      executable(path.join(directory, "node"), `#!/bin/sh\nprintf 'node:%s\\n' "$*" >>"$TRACE"\n`);
+      executable(
+        path.join(directory, "nemoclaw-start"),
+        `#!/bin/sh\nprintf 'start:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMOCLAW_STARTUP_PROFILE_B64-unset}" "\${NEMOCLAW_CORPORATE_CA_B64-unset}" "$*" >>"$TRACE"\n`,
+      );
+      const source = fs
+        .readFileSync(HOLD, "utf8")
+        .replace(
+          'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+          'export PATH="$TEST_PATH"',
+        )
+        .replace(
+          '_nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"',
+          `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
+        )
+        .replace(
+          '_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"',
+          `_nemoclaw_runtime_env=${JSON.stringify(runtimeEnvironment)}`,
+        )
+        .replace("/usr/local/bin/node", path.join(directory, "node"))
+        .replace("/usr/local/bin/nemoclaw-start", path.join(directory, "nemoclaw-start"));
+      fs.writeFileSync(script, source, { mode: 0o755 });
+      fs.chmodSync(script, 0o755);
+      const fingerprint = "a".repeat(64);
+
+      execFileSync(
+        script,
+        [
+          "--agent",
+          agent,
+          "--profile-fingerprint",
+          fingerprint,
+          "/bin/sh",
+          "-c",
+          "exec tail -f /dev/null",
+        ],
+        {
+          env: {
+            ...process.env,
+            TRACE: trace,
+            TEST_PATH: directory,
+            NEMOCLAW_STARTUP_PROFILE_B64: "must-drop",
+            NEMOCLAW_CORPORATE_CA_B64: "must-drop",
+          },
+        },
+      );
+
+      expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
+        `node:${runtime} --wait-for-completion --agent ${agent} --profile-fingerprint ${fingerprint}`,
+        "start:1:unset:unset:/bin/sh -c exec tail -f /dev/null",
+      ]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
-  it.each(
-    ENTRYPOINTS,
-  )("$agent image bundles the runtime and preserves its legacy default OCI user", (contract) => {
-    const dockerfile = read(contract.dockerfile);
+  it.each([
+    {
+      label: "root supervisor identity",
+      identity: { currentUid: 0, currentGid: 0, sandboxUid: 1000, sandboxGid: 1000 },
+    },
+    {
+      label: "non-sandbox group",
+      identity: { currentUid: 1000, currentGid: 1001, sandboxUid: 1000, sandboxGid: 1000 },
+    },
+  ])("rejects $label before invoking the managed runtime", ({ identity }) => {
+    const result = runHoldWithFakeIdentity(identity, [
+      "--agent",
+      "openclaw",
+      "--profile-fingerprint",
+      "a".repeat(64),
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(String(result.stderr ?? "")).toContain("must run as the sandbox account");
+  });
 
-    expect(dockerfile).toContain(
-      "FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder",
+  it("rejects unsupported agents before invoking the runtime", () => {
+    const result = runHoldWithFakeIdentity(
+      { currentUid: 1000, currentGid: 1000, sandboxUid: 1000, sandboxGid: 1000 },
+      ["--agent", "unknown", "--profile-fingerprint", "a".repeat(64)],
     );
-    expect(dockerfile).toContain(
-      "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
-    );
-    expect(dockerfile).toContain("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh");
-    expect(dockerfile).toContain("src/lib/onboard/managed-startup/image-runtime.ts");
-    expect(dockerfile).toContain("--outfile=/out/managed-startup-image-runtime.cjs");
-    expect(dockerfile).toContain("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");
-    expect(dockerfile).toContain(
-      `ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${contract.runtimeUserDefault}`,
-    );
+    expect(result.status).not.toBe(0);
+    expect(String(result.stderr ?? "")).toContain("agent is unsupported");
   });
 });

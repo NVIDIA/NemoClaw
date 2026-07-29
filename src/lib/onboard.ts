@@ -2639,7 +2639,7 @@ async function createSandboxWithBaseImageResolution(
 
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
+  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
     runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
     legacy: {
       preparedBuildContext, agent, fromDockerfile,
@@ -2689,6 +2689,7 @@ async function createSandboxWithBaseImageResolution(
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
+      managedStartupRootApplyRequest,
       ...sandboxGpuCreateFlow.resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     },
     {
@@ -4693,7 +4694,9 @@ module.exports = {
   findAvailableDashboardPort,
   startGatewayForRecovery,
   openshellArgv,
+  runOpenshell,
   runCaptureOpenshell,
+  sleepSeconds,
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,

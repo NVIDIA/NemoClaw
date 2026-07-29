@@ -11,6 +11,7 @@ import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import type { DockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
@@ -41,6 +42,7 @@ export interface SandboxGpuCreateFlowInput {
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
+  managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
 }
 

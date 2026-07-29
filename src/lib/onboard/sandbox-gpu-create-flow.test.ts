@@ -149,6 +149,8 @@ afterEach(resetGpuFlowMocks);
 describe("runSandboxGpuCreateFlow proof authorization", () => {
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {
     const deps = createDeps();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     vi.mocked(deps.verifyDirectSandboxGpu).mockImplementation(() => {
       throw new Error("openshell sandbox exec denied by policy");
     });
@@ -161,6 +163,8 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(patch.commitAfterReady).not.toHaveBeenCalled();
   });
 
   it("does not let sandbox-controlled CUDA output authorize compatibility fallback (#6110)", async () => {
@@ -184,6 +188,11 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 
   it("retries structured nvidia-smi failure only when host config proves no GPU attachment (#6110)", async () => {
     const deps = createDeps();
+    const nativePatch = createPatch();
+    const compatibilityPatch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch
+      .mockReturnValueOnce(nativePatch)
+      .mockReturnValueOnce(compatibilityPatch);
     vi.mocked(deps.verifyDirectSandboxGpu)
       .mockReturnValueOnce(NVIDIA_SMI_FAILED_PROOF)
       .mockReturnValue(VERIFIED_PROOF);
@@ -199,6 +208,9 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ suppressOutput: true }),
     );
+    expect(nativePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(nativePatch.commitAfterReady).not.toHaveBeenCalled();
+    expect(compatibilityPatch.commitAfterReady).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -304,6 +316,30 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
+    );
+  });
+
+  it("threads managed root apply on native GPU without forcing recreation", async () => {
+    const input = createInput();
+    input.persistStartupCommand = true;
+    input.managedStartupRootApplyRequest = {
+      schemaVersion: 1,
+      agent: "openclaw",
+      encodedProfile: "profile",
+      profileFingerprint: "a".repeat(64),
+      corporateCaB64: null,
+    };
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "native",
+        persistStartupCommand: false,
+        managedStartupRootApplyRequest: input.managedStartupRootApplyRequest,
+      }),
     );
   });
 
@@ -435,10 +471,59 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
+
+  it("keeps rollback authority through Ready and GPU proof, then commits once", async () => {
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+
+    await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(patch.ensureApplied.mock.invocationCallOrder[0]).toBeLessThan(
+      patch.waitForSupervisorReconnectIfNeeded.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(patch.waitForSupervisorReconnectIfNeeded.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.waitForCreatedSandboxReadyWithTrace.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.waitForCreatedSandboxReadyWithTrace.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.verifyGpuSandboxAccessAfterReady.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.verifyGpuSandboxAccessAfterReady.mock.invocationCallOrder[0]).toBeLessThan(
+      patch.commitAfterReady.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("rolls back before terminal readiness cleanup and never commits", async () => {
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mockReadinessFailure();
+    const deps = createDeps();
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(patch.commitAfterReady).not.toHaveBeenCalled();
+    const deleteCall = vi
+      .mocked(deps.runOpenshell)
+      .mock.calls.findIndex(([args]) => (args as string[])[1] === "delete");
+    expect(deleteCall).toBeGreaterThanOrEqual(0);
+    expect(patch.rollbackManagedStartupAfterCreateFailure.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.runOpenshell).mock.invocationCallOrder[deleteCall] ?? 0,
+    );
+  });
 });
 
 describe("runSandboxGpuCreateFlow fallback ordering", () => {
   it("retries readiness only for exact-container host runtime evidence (#6110)", async () => {
+    const nativePatch = createPatch();
+    const compatibilityPatch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch
+      .mockReturnValueOnce(nativePatch)
+      .mockReturnValueOnce(compatibilityPatch);
     mocks.waitForCreatedSandboxReadyWithTrace
       .mockReturnValueOnce({
         ready: false,
@@ -456,6 +541,9 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     });
 
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(nativePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(nativePatch.commitAfterReady).not.toHaveBeenCalled();
+    expect(compatibilityPatch.commitAfterReady).toHaveBeenCalledOnce();
   });
 
   it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {

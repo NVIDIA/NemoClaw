@@ -4,16 +4,15 @@
 import type { AgentDefinition } from "../agent/defs";
 import { formatEnvAssignment } from "../core/url-utils";
 import { buildSubprocessEnv } from "../subprocess-env";
-import { MAX_CORPORATE_CA_BYTES } from "./corporate-ca-policy";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import {
-  decodeManagedStartupProfile,
-  MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
-} from "./managed-startup/profile";
+  createManagedStartupRootApplyRequest,
+  type ManagedStartupRootApplyRequest,
+} from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
   assertSandboxCreateArgvWithinTransportLimit,
@@ -27,6 +26,10 @@ import {
 
 type OpenshellShellCommand = (args: string[]) => string;
 type OpenshellArgv = (args: string[]) => string[];
+
+export type SandboxWorkloadStartupRequirement = "sandbox-command" | "trusted-image-init";
+
+export const MANAGED_STARTUP_HOLD_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-startup-hold";
 
 export {
   assertSandboxCreateArgvWithinTransportLimit,
@@ -82,6 +85,8 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+  startupRequirement: SandboxWorkloadStartupRequirement;
+  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -205,42 +210,31 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     sandboxName: input.sandboxName,
     env,
   });
-  if (input.managedStartupProfile) {
-    const { corporateCaB64, encodedProfile } = input.managedStartupProfile;
-    if (encodedProfile.length > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES) {
-      throw new Error("Managed startup profile transport is too large.");
-    }
-    const profile = decodeManagedStartupProfile(encodedProfile);
-    const expectedAgent = input.agent?.name ?? "openclaw";
-    if (profile.agent !== expectedAgent) {
-      throw new Error(
-        `Managed startup profile agent '${profile.agent}' does not match '${expectedAgent}'.`,
-      );
-    }
-    const expectsCorporateCa = profile.corporateCa.bundleSha256 !== null;
-    if (expectsCorporateCa !== (corporateCaB64 !== undefined)) {
-      throw new Error("Managed corporate CA transport does not match the startup profile.");
-    }
-    envArgs.push(formatEnvAssignment("NEMOCLAW_STARTUP_PROFILE_B64", encodedProfile));
-    if (corporateCaB64 !== undefined) {
-      const decodedCorporateCa = Buffer.from(corporateCaB64, "base64");
-      if (
-        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(corporateCaB64) ||
-        corporateCaB64.length > 4 * Math.ceil(MAX_CORPORATE_CA_BYTES / 3) ||
-        decodedCorporateCa.length > MAX_CORPORATE_CA_BYTES ||
-        decodedCorporateCa.toString("base64") !== corporateCaB64
-      ) {
-        throw new Error("Managed corporate CA transport is malformed or too large.");
-      }
-      envArgs.push(formatEnvAssignment("NEMOCLAW_CORPORATE_CA_B64", corporateCaB64));
-    }
-  }
+  const managedStartupRootApplyRequest = input.managedStartupProfile
+    ? createManagedStartupRootApplyRequest({
+        agent: (input.agent?.name ?? "openclaw") as ManagedStartupRootApplyRequest["agent"],
+        encodedProfile: input.managedStartupProfile.encodedProfile,
+        ...(input.managedStartupProfile.corporateCaB64 === undefined
+          ? {}
+          : { corporateCaB64: input.managedStartupProfile.corporateCaB64 }),
+      })
+    : null;
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const sandboxStartupCommand = managedStartupRootApplyRequest
+    ? [
+        "env",
+        ...envArgs,
+        MANAGED_STARTUP_HOLD_EXECUTABLE,
+        "--agent",
+        managedStartupRootApplyRequest.agent,
+        "--profile-fingerprint",
+        managedStartupRootApplyRequest.profileFingerprint,
+      ]
+    : ["env", ...envArgs, "nemoclaw-start"];
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     input.createArgs,
@@ -265,6 +259,8 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+    startupRequirement: "sandbox-command",
+    managedStartupRootApplyRequest,
   };
 }
 
@@ -295,6 +291,7 @@ export function prepareSandboxCreateManagedImageLaunch(
   };
   return {
     ...prepareSandboxCreateLaunch(input),
+    startupRequirement: "trusted-image-init",
     prebuild,
   };
 }

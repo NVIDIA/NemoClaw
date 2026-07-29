@@ -62,32 +62,6 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# Complete managed images carry a bounded, secret-free startup profile instead
-# of rebuilding a Dockerfile. Its root applicator prepares canonical state,
-# regenerates sandbox-owned config, applies only runtime messaging phases,
-# merges trust, and commits before this legacy supervisor observes the result.
-# An absent profile bypasses this block entirely.
-if [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ]; then
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '%s\n' '[SECURITY] Managed startup profiles require container uid 0.' >&2
-    exit 1
-  fi
-  /usr/local/bin/node \
-    /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
-    --agent openclaw
-  _NEMOCLAW_MANAGED_RUNTIME_ENV="/run/nemoclaw/managed-startup-runtime.env"
-  if [ -L "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
-    || [ ! -f "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
-    || [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MANAGED_RUNTIME_ENV")" != "0:0:400" ]; then
-    printf '%s\n' '[SECURITY] Managed startup runtime environment failed root ownership validation.' >&2
-    exit 1
-  fi
-  # shellcheck disable=SC1090 # generated root-owned fixed-path environment
-  . "$_NEMOCLAW_MANAGED_RUNTIME_ENV"
-  unset _NEMOCLAW_MANAGED_RUNTIME_ENV
-  unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64
-fi
-
 # Reject an invalid explicit dashboard port before installing the tee/fd startup
 # capture below. Some CI Docker runners can drop very early fd4 output from
 # short-lived containers, and this validation is meant to be fail-fast and

@@ -77,6 +77,7 @@ export function createSandboxGpuCreateAttemptRunner(
       // Other native routes are not swapped solely to persist a command.
       persistStartupCommand:
         input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
+      managedStartupRootApplyRequest: input.managedStartupRootApplyRequest,
       sandboxName: input.sandboxName,
       gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
       openshellSandboxCommand: input.sandboxStartupCommand,
@@ -144,6 +145,7 @@ export function createSandboxGpuCreateAttemptRunner(
           return false;
         })()
       ) {
+        dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
         return {
           ok: false,
           route,
@@ -152,6 +154,7 @@ export function createSandboxGpuCreateAttemptRunner(
           fallbackEligible: true,
         } as const;
       } else {
+        dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
         reportSandboxCreateFailure(
           {
             sandboxName: input.sandboxName,
@@ -204,6 +207,7 @@ export function createSandboxGpuCreateAttemptRunner(
         })
       ) {
         state.nativeRuntimeSnapshot = runtimeSnapshot;
+        dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
         return {
           ok: false,
           route,
@@ -214,6 +218,7 @@ export function createSandboxGpuCreateAttemptRunner(
           fallbackEligible: true,
         } as const;
       }
+      dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
       printSandboxCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
@@ -240,9 +245,9 @@ export function createSandboxGpuCreateAttemptRunner(
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&
         nativeFallbackHasCleanBaseline;
-      const proof: SandboxGpuProofResult = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
-        input.sandboxGpuConfig,
-        {
+      let proof: SandboxGpuProofResult;
+      try {
+        proof = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(input.sandboxGpuConfig, {
           sandboxName: input.sandboxName,
           dockerDriverGateway: input.dockerDriverGateway,
           selectedRoute: route,
@@ -254,13 +259,17 @@ export function createSandboxGpuCreateAttemptRunner(
           selectedMode: dockerGpuCreatePatch.selectedMode,
           runCaptureOpenshell: deps.runCaptureOpenshell,
           log: console.log,
-        },
-      );
+        });
+      } catch (error) {
+        dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
+        throw error;
+      }
       if (deferNativeProofFailure && proof.status === "failed") {
         if (sandboxGpuPreflight.isExplicitNvidiaSmiDriverProofFailure(proof)) {
           const snapshot = inspectNativeRuntime();
           if (snapshot.ok && snapshot.nativeGpuAttachmentState === "absent") {
             state.nativeRuntimeSnapshot = snapshot;
+            dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
             return {
               ok: false,
               route,
@@ -272,6 +281,7 @@ export function createSandboxGpuCreateAttemptRunner(
             } as const;
           }
         }
+        dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
         console.error("");
         console.error("  Native sandbox GPU proof failed.");
         console.error(
@@ -283,9 +293,11 @@ export function createSandboxGpuCreateAttemptRunner(
         process.exit(1);
       }
       if (proof.status === "failed") {
+        dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
         throw new Error("Sandbox GPU proof returned failed status.");
       }
     }
+    dockerGpuCreatePatch.commitAfterReady();
     return {
       ok: true,
       route,

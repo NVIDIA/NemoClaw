@@ -9,7 +9,9 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
 import {
+  managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
@@ -139,7 +141,7 @@ function managedPromoter(workflow: Workflow): Job {
 function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
-    "managed-image workflow is missing its pull-request build and entrypoint matrix",
+    "managed-image workflow is missing its pull-request managed-startup matrix",
   );
 }
 
@@ -169,9 +171,6 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
     'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
     "bootstrap the GHCR package",
-    ".Config.Entrypoint",
-    ".Config.Cmd",
-    "/usr/local/bin/nemoclaw-start",
     "/opt/nemoclaw-blueprint/blueprint.yaml",
     "/usr/local/share/nemoclaw/node-tar-inventory.json",
     "/usr/local/share/nemoclaw/corporate-ca.pem",
@@ -193,31 +192,10 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "microsoft-teams-apps",
     "config.plugins?.entries?.[id]?.enabled !== false",
     'config["platforms"].get(name) != {"enabled": False}',
-    "generate-managed-startup-profile-fixture.mts",
-    "--corporate-ca",
-    "--corporate-ca-b64",
-    "/run/nemoclaw/managed-startup-ca-bundle.pem",
-    "/opt/venv/bin/python3 -I",
-    "_managed_fetch_ca_bundle",
-    "--network none",
-    "/tmp/nemoclaw-managed-command-uid",
-    "/tmp/nemoclaw-managed-command-proxy-env",
-    '/usr/local/bin/dcode -n ""',
-    "/tmp/nemoclaw-managed-dcode-empty-prompt-status",
-    "/tmp/nemoclaw-managed-dcode-empty-prompt-output",
-    "NemoClaw: empty non-interactive prompt for -n; provide prompt text.",
-    "managed DCode launcher/supervisor empty-prompt contract failed",
-    "HTTP_PROXY=%s",
-    "HTTPS_PROXY=%s",
-    "NO_PROXY=%s",
-    "http_proxy=%s",
-    "https_proxy=%s",
-    "no_proxy=%s",
-    "http://10.200.0.1:3128",
-    "localhost,127.0.0.1,::1,10.200.0.1",
-    "is already committed",
-    "recreate the sandbox",
-    "--user sandbox",
+    "run-managed-image-direct-e2e.ts",
+    '--agent "$AGENT"',
+    '--image "$reference"',
+    '--platform "$PLATFORM"',
   ];
   const candidateMarkers = [
     'phase: "candidate"',
@@ -396,7 +374,7 @@ describe("complete managed-image publication workflow", () => {
     expect(promoter.if).toBe("github.event_name != 'pull_request'");
     expect(promoter.permissions).toEqual({ contents: "read", packages: "write" });
     expect(builder["runs-on"]).toBe("ubuntu-24.04");
-    expect(builder["timeout-minutes"]).toBe(90);
+    expect(builder["timeout-minutes"]).toBe(120);
     expect(builder.strategy?.["fail-fast"]).toBe(false);
     expect(builder.strategy?.matrix?.include).toEqual([
       {
@@ -497,13 +475,13 @@ describe("complete managed-image publication workflow", () => {
     expect(unverifiedGetTag).toHaveBeenCalledTimes(10);
   });
 
-  it("builds all three images and exercises real entrypoints and OpenShell for every relevant pull request", () => {
+  it("builds all three images and exercises managed startup and OpenShell for every relevant pull request", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const prBuilder = managedPrBuilder(workflow);
     const steps = prBuilder.steps ?? [];
     const build = step(prBuilder, "Build PR managed image locally");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
-    const gate = step(prBuilder, "Exercise real managed-image entrypoint");
+    const gate = step(prBuilder, "Exercise managed startup root stdin and hold");
     const dependencies = step(prBuilder, "Install managed-image OpenShell harness dependencies");
     const install = step(prBuilder, "Install pinned OpenShell runtime");
     const openshell = step(prBuilder, "Exercise exact PR image through real OpenShell");
@@ -511,7 +489,7 @@ describe("complete managed-image publication workflow", () => {
 
     expect(prBuilder).toMatchObject({
       if: "github.event_name == 'pull_request'",
-      name: "PR build, entrypoint, and OpenShell (${{ matrix.display_name }})",
+      name: "PR build, managed startup, and OpenShell (${{ matrix.display_name }})",
       permissions: { contents: "read", packages: "read" },
       "runs-on": "ubuntu-24.04",
       "timeout-minutes": 90,
@@ -596,8 +574,6 @@ describe("complete managed-image publication workflow", () => {
       "expected one local image identity",
       "^sha256:[0-9a-f]{64}$",
       "docker image inspect --format '{{.Id}}' \"$image_id\"",
-      '.[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"]',
-      '.[0].Config.Cmd == ["/bin/bash"]',
       '((.[0].Config.User // "") as $user |',
       "io.nvidia.nemoclaw.agent",
       "io.nvidia.nemoclaw.managed-image.contract",
@@ -611,51 +587,20 @@ describe("complete managed-image publication workflow", () => {
     ]) {
       expect(contract.run).toContain(marker);
     }
+    expect(contract.run).not.toContain(".Config.Entrypoint");
+    expect(contract.run).not.toContain(".Config.Cmd");
     expect(gate.env?.IMAGE_REFERENCE).toBe("${{ steps.contract.outputs.reference }}");
     expect(gate.env?.IMAGE_REFERENCE).not.toContain("matrix.image");
     for (const marker of [
-      "generate-managed-startup-profile-fixture.mts",
-      "--corporate-ca",
-      "--corporate-ca-b64",
-      "--without-host-proxy",
-      "docker run -d",
-      "--network none",
-      "/tmp/nemoclaw-pr-command-uid",
-      "/tmp/nemoclaw-pr-command-proxy-env",
-      '/usr/local/bin/dcode -n ""',
-      "/tmp/nemoclaw-pr-dcode-empty-prompt-status",
-      "/tmp/nemoclaw-pr-dcode-empty-prompt-output",
-      "NemoClaw: empty non-interactive prompt for -n; provide prompt text.",
-      "managed DCode launcher/supervisor empty-prompt contract failed",
-      "upper-http:upper-secret",
-      "lower-http:lower-secret",
-      "authenticated proxy material entered the startup profile",
-      "authenticated proxy material entered the durable runtime file",
-      "http://10.200.0.1:3128",
-      "NEMOCLAW_MANAGED_STARTUP_APPLIED",
-      'command_uid" != "$sandbox_uid',
-      "/sandbox/.openclaw/openclaw.json",
-      "/sandbox/.hermes/config.yaml",
-      "/sandbox/.deepagents/config.toml",
-      "/run/nemoclaw/managed-startup-runtime.env",
-      "/usr/local/share/nemoclaw/corporate-ca.pem",
-      "/run/nemoclaw/managed-startup-ca-bundle.pem",
+      "run-managed-image-direct-e2e.ts",
+      '--agent "$AGENT"',
+      '--image "$IMAGE_REFERENCE"',
+      "--platform linux/amd64",
     ]) {
       expect(gate.run).toContain(marker);
     }
-    expect(
-      gate.run?.match(
-        /"\$IMAGE_REFERENCE" \\\n\s+env \\\n\s+"NEMOCLAW_STARTUP_PROFILE_B64=\$profile" \\\n\s+"NEMOCLAW_CORPORATE_CA_B64=\$corporate_ca_b64" \\\n[\s\S]*?\s+nemoclaw-start \\/gu,
-      ),
-    ).toHaveLength(1);
-    expect(gate.run).not.toContain('--env "NEMOCLAW_STARTUP_PROFILE_B64=');
-    expect(gate.run).not.toContain('--env "NEMOCLAW_CORPORATE_CA_B64=');
-    expect(gate.run).not.toMatch(
-      /if \[ "\$AGENT" = "langchain-deepagents-code" \]; then\s+expected_http_proxy=/u,
-    );
-    expect(gate.run).not.toContain(
-      'expected_http_proxy="http://upper-http:upper-secret@upper-http.example.test:18080"',
-    );
+    expect(gate.run).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
+    expect(gate.run).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
 
     expect(dependencies.run).toContain("npm ci --ignore-scripts");
     expect(dependencies.run).toContain("npm run build:policy-boundary");
@@ -721,6 +666,27 @@ describe("complete managed-image publication workflow", () => {
     ]) {
       expect(harness).toContain(marker);
     }
+    const probeFunctionStart = harness.indexOf("async function waitForSandboxProbe");
+    const supervisorReconnect = harness.indexOf(
+      "startupPatch.waitForSupervisorReconnectIfNeeded();",
+      probeFunctionStart,
+    );
+    const exactHealthProbe = harness.indexOf(
+      "const result = runProbe(healthProbe",
+      supervisorReconnect,
+    );
+    const transactionCommit = harness.indexOf("startupPatch.commitAfterReady();", exactHealthProbe);
+    const transactionAbsenceProbe = harness.indexOf("committedProbe,", transactionCommit);
+    const rollback = harness.indexOf(
+      "startupPatch.rollbackManagedStartupAfterCreateFailure();",
+      transactionAbsenceProbe,
+    );
+    expect(probeFunctionStart).toBeGreaterThanOrEqual(0);
+    expect(supervisorReconnect).toBeGreaterThan(probeFunctionStart);
+    expect(exactHealthProbe).toBeGreaterThan(supervisorReconnect);
+    expect(transactionCommit).toBeGreaterThan(exactHealthProbe);
+    expect(transactionAbsenceProbe).toBeGreaterThan(transactionCommit);
+    expect(rollback).toBeGreaterThan(transactionAbsenceProbe);
     expect(harness).not.toContain("Dockerfile");
     expect(harness).not.toContain("packages: write");
   });
@@ -767,6 +733,7 @@ describe("complete managed-image publication workflow", () => {
       hermes: managedImageOpenShellProbe("hermes"),
       "langchain-deepagents-code": managedImageOpenShellProbe("langchain-deepagents-code"),
     };
+    const committedProbe = managedImageOpenShellCommittedProbe();
     expect(probes.openclaw).toContain("/sandbox/.openclaw/openclaw.json");
     expect(probes.openclaw).toContain("http://127.0.0.1:18789/health");
     expect(probes.hermes).toContain("/sandbox/.hermes/config.yaml");
@@ -776,9 +743,88 @@ describe("complete managed-image publication workflow", () => {
     for (const probe of Object.values(probes)) {
       expect(probe).toContain("nvidia/nemotron-3-ultra-550b-a55b");
       expect(probe).toContain("/run/nemoclaw/managed-startup-runtime.env");
+      expect(probe).not.toContain("managed-startup-shared-state-transaction-v1");
       expect(probe).toContain("/usr/local/share/nemoclaw/corporate-ca.pem");
       expect(probe).toContain("/run/nemoclaw/managed-startup-ca-bundle.pem");
     }
+    expect(committedProbe).toContain(
+      "test ! -e /var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
+    );
+  });
+
+  it("drives the direct image gate through exact root stdin and the root-trusted hold", () => {
+    const localImage = `sha256:${"a".repeat(64)}`;
+    const digestImage = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"b".repeat(64)}`;
+    expect(
+      parseManagedImageDirectE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        localImage,
+        "--platform",
+        "linux/amd64",
+      ]),
+    ).toEqual({ agent: "openclaw", image: localImage, platform: "linux/amd64" });
+    expect(
+      parseManagedImageDirectE2eInputs([
+        "--platform",
+        "linux/amd64",
+        "--image",
+        digestImage,
+        "--agent",
+        "langchain-deepagents-code",
+      ]),
+    ).toEqual({
+      agent: "langchain-deepagents-code",
+      image: digestImage,
+      platform: "linux/amd64",
+    });
+    expect(() =>
+      parseManagedImageDirectE2eInputs([
+        "--agent",
+        "hermes",
+        "--image",
+        "ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest",
+        "--platform",
+        "linux/amd64",
+      ]),
+    ).toThrow("--image must be an immutable image ID or digest reference");
+
+    const harness = fs.readFileSync(
+      path.join(repoRoot, "scripts", "checks", "run-managed-image-direct-e2e.ts"),
+      "utf8",
+    );
+    for (const marker of [
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "serializeManagedStartupRootApplyRequest",
+      '"--apply-root-stdin"',
+      '"--commit-shared-state-transaction"',
+      '"--interactive"',
+      '"/usr/bin/env"',
+      '"-i"',
+      '"HOME=/root"',
+      '"--user",\n      "sandbox"',
+      "managed hold or legacy entrypoint did not preserve the sandbox command identity",
+      "docker inspect did not return one exact container",
+      "managed profile or corporate CA entered Docker argv/env metadata",
+      "transaction pending",
+      "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
+      "was already complete",
+      "changed profile did not require a fresh sandbox",
+      "sandbox account bypassed root-only profile application",
+      "upper-http:upper-secret",
+      "lower-http:lower-secret",
+      "/tmp/nemoclaw-managed-command-proxy-env",
+      "/tmp/nemoclaw-managed-dcode-empty-prompt-status",
+      "managed DCode launcher/supervisor empty-prompt contract failed",
+      "/run/nemoclaw/managed-startup-runtime.env",
+      "/run/nemoclaw/managed-startup-complete.json",
+      "/usr/local/share/nemoclaw/corporate-ca.pem",
+      "/run/nemoclaw/managed-startup-ca-bundle.pem",
+    ]) {
+      expect(harness).toContain(marker);
+    }
+    expect(harness).not.toContain("Dockerfile");
   });
 
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
@@ -894,6 +940,12 @@ fi
     const guard = step(builder, "Validate production build args");
     const build = step(builder, "Build and push managed image by digest");
     const validate = step(builder, "Validate exact managed image before promotion");
+    const dependencies = step(builder, "Install managed-image publication harness dependencies");
+    const install = step(builder, "Install pinned OpenShell runtime for publication");
+    const openshell = step(
+      builder,
+      "Exercise exact candidate through real OpenShell before promotion",
+    );
     expect(buildSteps.indexOf(guard)).toBeLessThan(buildSteps.indexOf(build));
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
     expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
@@ -925,6 +977,32 @@ fi
     );
 
     const candidate = step(builder, "Export validated managed image candidate");
+    expect(buildSteps.indexOf(validate)).toBeLessThan(buildSteps.indexOf(dependencies));
+    expect(buildSteps.indexOf(dependencies)).toBeLessThan(buildSteps.indexOf(install));
+    expect(buildSteps.indexOf(install)).toBeLessThan(buildSteps.indexOf(openshell));
+    expect(buildSteps.indexOf(openshell)).toBeLessThan(buildSteps.indexOf(candidate));
+    expect(dependencies.run).toContain("npm ci --ignore-scripts");
+    expect(dependencies.run).toContain("npm run build:policy-boundary");
+    expect(install.env).toMatchObject({
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85",
+      NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.85",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85",
+    });
+    expect(install.run).toContain("bash scripts/install-openshell.sh");
+    expect(openshell.env).toEqual({
+      AGENT: "${{ matrix.agent }}",
+      IMAGE_REFERENCE: "${{ steps.validate.outputs.local_id }}",
+      SANDBOX_NAME: "nemoclaw-publish-${{ matrix.agent }}",
+    });
+    for (const marker of [
+      "npx tsx scripts/checks/run-managed-image-openshell-e2e.ts",
+      '--agent "$AGENT"',
+      '--image "$IMAGE_REFERENCE"',
+      '--sandbox "$SANDBOX_NAME"',
+    ]) {
+      expect(openshell.run).toContain(marker);
+    }
     for (const marker of [
       "--arg baseReference",
       "--arg digest",
@@ -985,13 +1063,14 @@ fi
       step(builder, "Validate exact managed image before promotion").run,
       "managed image validation script is missing",
     );
-    expect(validation.match(/docker run/g)).toHaveLength(4);
-    expect(validation.match(/--platform "\$PLATFORM"/g)).toHaveLength(5);
-    expect(
-      validation.match(
-        /"\$reference" \\\n\s+env \\\n\s+"NEMOCLAW_STARTUP_PROFILE_B64=\$profile" \\\n\s+"NEMOCLAW_CORPORATE_CA_B64=\$corporate_ca_b64" \\\n\s+nemoclaw-start \\/gu,
-      ),
-    ).toHaveLength(2);
+    expect(validation.match(/docker run/g)).toHaveLength(2);
+    expect(validation).toContain("run-managed-image-direct-e2e.ts");
+    expect(validation).toContain('--image "$reference"');
+    expect(validation).toContain("printf 'local_id=%s\\n' \"$image_id\"");
+    expect(validation).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
+    expect(validation).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
+    expect(validation).not.toContain(".Config.Entrypoint");
+    expect(validation).not.toContain(".Config.Cmd");
   });
 
   it("executes the all-three barrier and rejects incomplete or stale sets before promotion", () => {

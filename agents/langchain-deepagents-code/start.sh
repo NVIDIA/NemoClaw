@@ -34,33 +34,6 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# Managed DCode images start as uid 0 only long enough to apply the canonical
-# startup profile and root-owned routing material. OCI --user nonroot is
-# rejected for profile application. After commit, setpriv performs an explicit
-# no-shell privilege drop and re-enters the unchanged legacy sandbox path.
-if [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ]; then
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '%s\n' '[SECURITY] Managed startup profiles require container uid 0.' >&2
-    exit 1
-  fi
-  /usr/local/bin/node \
-    /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
-    --agent langchain-deepagents-code
-  _NEMOCLAW_MANAGED_RUNTIME_ENV="/run/nemoclaw/managed-startup-runtime.env"
-  if [ -L "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
-    || [ ! -f "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
-    || [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MANAGED_RUNTIME_ENV")" != "0:0:400" ]; then
-    printf '%s\n' '[SECURITY] Managed startup runtime environment failed root ownership validation.' >&2
-    exit 1
-  fi
-  # shellcheck disable=SC1090 # generated root-owned fixed-path environment
-  . "$_NEMOCLAW_MANAGED_RUNTIME_ENV"
-  unset _NEMOCLAW_MANAGED_RUNTIME_ENV
-  unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64
-  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-    /usr/local/bin/nemoclaw-start "$@"
-fi
-
 # The published managed image uses uid 0 as its OCI entry user so it can accept
 # a future profile. Without one, drop immediately and execute the byte-for-byte
 # legacy sandbox-user path. Ordinary non-managed builds still start as sandbox.

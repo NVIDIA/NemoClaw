@@ -24,6 +24,8 @@ function makeLaunch(overrides: Record<string, unknown> = {}) {
     envArgs: [],
     sandboxEnv: { FOO: "bar" },
     sandboxStartupCommand: ["run", "alpha"],
+    startupRequirement: "sandbox-command",
+    managedStartupRootApplyRequest: null,
     prebuild: { imageRef: "img:tag", createArgs: ["sandbox", "create", "alpha"] },
     ...overrides,
   };
@@ -33,7 +35,13 @@ function makePatch() {
   return {
     maybeApplyDuringCreate: vi.fn(),
     createFailureMessage: vi.fn(() => null),
+    rollbackManagedStartupAfterCreateFailure: vi.fn(),
     ensureApplied: vi.fn(),
+    waitForSupervisorReconnectIfNeeded: vi.fn(),
+    commitAfterReady: vi.fn(),
+    selectedMode: vi.fn(() => null),
+    printReadinessFailureIfEnabled: vi.fn(),
+    verifyGpuOrExit: vi.fn(),
   };
 }
 
@@ -192,6 +200,48 @@ describe("runSandboxCreateStep", () => {
           { name: "nproc", soft: 512, hard: 512 },
           { name: "nofile", soft: 65_536, hard: 65_536 },
         ],
+      }),
+    );
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("threads the root-apply request for managed %s Docker launch", async (agent) => {
+    const managedStartupRootApplyRequest = {
+      schemaVersion: 1,
+      agent,
+      encodedProfile: "profile",
+      profileFingerprint: "a".repeat(64),
+      corporateCaB64: null,
+    } as const;
+    const launch = makeLaunch({
+      sandboxStartupCommand: ["env", "/usr/local/bin/nemoclaw-managed-startup-hold"],
+      startupRequirement: "trusted-image-init",
+      managedStartupRootApplyRequest,
+    });
+    const patch = makePatch();
+    const deps = makeDeps(launch, patch, { status: 0, output: "created" });
+
+    await runSandboxCreateStep(
+      makeContext({
+        agent: { name: agent } as SandboxCreateStepContext["agent"],
+        prebuild: {
+          buildCtx: "/tmp/ctx",
+          buildId: "b1",
+          dockerDriverGateway: true,
+          origin: "generated",
+        },
+      }),
+      deps,
+    );
+
+    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        persistStartupCommand: agent !== "openclaw",
+        managedStartupRootApplyRequest,
+        openshellSandboxCommand: launch.sandboxStartupCommand,
       }),
     );
   });

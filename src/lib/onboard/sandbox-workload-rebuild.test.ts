@@ -422,11 +422,13 @@ describe("managed workload rebuild handoff", () => {
     expect(fromIndexes).toHaveLength(1);
     expect(launch.launch.createArgv[fromIndexes[0]! + 1]).toBe(replacementReference);
     expect(replacementReference).toBe(`${replacement.image}@${replacement.digest}`);
-    expect(
-      launch.launch.createArgv.filter(
-        (argument) => argument === `NEMOCLAW_STARTUP_PROFILE_B64=${encodedProfile}`,
-      ),
-    ).toHaveLength(1);
+    expect(launch.launch.managedStartupRootApplyRequest?.encodedProfile).toBe(encodedProfile);
+    expect(launch.launch.sandboxStartupCommand).toContain(
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+    );
+    expect(launch.launch.createArgv.join("\n")).not.toContain(encodedProfile);
+    expect(launch.launch.sandboxStartupCommand.join("\n")).not.toContain(encodedProfile);
+    expect(launch.launch.startupRequirement).toBe("trusted-image-init");
     expect(launch.launch.createArgv.join("\n")).not.toContain("Dockerfile");
     expect(launch.legacyBuildContext).toBeNull();
     expect(launch.launch.prebuild).toEqual({

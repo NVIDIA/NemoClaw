@@ -44,7 +44,7 @@ env:
 
 jobs:
   pr-build-and-entrypoint:
-    name: PR build, entrypoint, and OpenShell (${{ matrix.display_name }})
+    name: PR build, managed startup, and OpenShell (${{ matrix.display_name }})
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -212,8 +212,6 @@ jobs:
                --arg revision "$GITHUB_SHA" '
                  length == 1 and
                  .[0].Id == $image_id and
-                 .[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"] and
-                 .[0].Config.Cmd == ["/bin/bash"] and
                  ((.[0].Config.User // "") as $user |
                    $user == "" or $user == "root" or $user == "0") and
                  .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
@@ -232,161 +230,18 @@ jobs:
           printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
             >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Exercise real managed-image entrypoint
+      - name: Exercise managed startup root stdin and hold
         shell: bash
         env:
           AGENT: ${{ matrix.agent }}
           IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
         run: |
           set -euo pipefail
-          profile="$(
-            node --no-warnings --experimental-strip-types \
-              scripts/checks/generate-managed-startup-profile-fixture.mts \
-              --agent "$AGENT" --corporate-ca --without-host-proxy
-          )"
-          corporate_ca_b64="$(
-            node --no-warnings --experimental-strip-types \
-              scripts/checks/generate-managed-startup-profile-fixture.mts \
-              --corporate-ca-b64
-          )"
-          container="$(
-            docker run -d \
-              --platform linux/amd64 \
-              --network none \
-              "$IMAGE_REFERENCE" \
-              env \
-              "NEMOCLAW_STARTUP_PROFILE_B64=$profile" \
-              "NEMOCLAW_CORPORATE_CA_B64=$corporate_ca_b64" \
-              "HTTP_PROXY=http://upper-http:upper-secret@upper-http.example.test:18080" \
-              "HTTPS_PROXY=http://upper-https:upper-secret@upper-https.example.test:18443" \
-              "NO_PROXY=upper.internal" \
-              "http_proxy=http://lower-http:lower-secret@lower-http.example.test:28080" \
-              "https_proxy=http://lower-https:lower-secret@lower-https.example.test:28443" \
-              "no_proxy=lower.internal" \
-              nemoclaw-start \
-              /bin/sh -c \
-              'if [ -x /usr/local/bin/dcode ]; then
-                timeout 10 /usr/local/bin/dcode -n "" \
-                  > /tmp/nemoclaw-pr-dcode-empty-prompt-output 2>&1
-                printf "%s\n" "$?" \
-                  > /tmp/nemoclaw-pr-dcode-empty-prompt-status
-              fi
-              id -u > /tmp/nemoclaw-pr-command-uid
-              printf "%s\n" "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-}" \
-                > /tmp/nemoclaw-pr-applied
-              {
-                printf "HTTP_PROXY=%s\n" "${HTTP_PROXY-__UNSET__}"
-                printf "HTTPS_PROXY=%s\n" "${HTTPS_PROXY-__UNSET__}"
-                printf "NO_PROXY=%s\n" "${NO_PROXY-__UNSET__}"
-                printf "http_proxy=%s\n" "${http_proxy-__UNSET__}"
-                printf "https_proxy=%s\n" "${https_proxy-__UNSET__}"
-                printf "no_proxy=%s\n" "${no_proxy-__UNSET__}"
-              } > /tmp/nemoclaw-pr-command-proxy-env
-              exec /usr/bin/tail -f /dev/null'
-          )"
-          cleanup() {
-            docker rm -f "$container" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          for _attempt in $(seq 1 60); do
-            if [ "$(docker inspect --format '{{.State.Running}}' "$container")" = "true" ] \
-              && docker exec -u 0 "$container" test -s /tmp/nemoclaw-pr-command-uid; then
-              break
-            fi
-            sleep 1
-          done
-          if [ "$(docker inspect --format '{{.State.Running}}' "$container")" != "true" ] \
-            || ! docker exec -u 0 "$container" test -s /tmp/nemoclaw-pr-command-uid; then
-            docker logs "$container" >&2 || true
-            echo "ERROR: real managed-image entrypoint did not reach the agent command." >&2
-            exit 1
-          fi
-
-          sandbox_uid="$(docker exec -u 0 "$container" id -u sandbox)"
-          command_uid="$(docker exec -u 0 "$container" cat /tmp/nemoclaw-pr-command-uid)"
-          applied="$(docker exec -u 0 "$container" cat /tmp/nemoclaw-pr-applied)"
-          if [ "$command_uid" != "$sandbox_uid" ] || [ "$applied" != "1" ]; then
-            echo "ERROR: managed entrypoint did not apply the profile and drop to sandbox." >&2
-            exit 1
-          fi
-          if [ "$AGENT" = "langchain-deepagents-code" ]; then
-            dcode_empty_prompt_status="$(
-              docker exec -u 0 "$container" \
-                cat /tmp/nemoclaw-pr-dcode-empty-prompt-status
-            )"
-            dcode_empty_prompt_output="$(
-              docker exec -u 0 "$container" \
-                cat /tmp/nemoclaw-pr-dcode-empty-prompt-output
-            )"
-            if [ "$dcode_empty_prompt_status" != "2" ] \
-              || [ "$dcode_empty_prompt_output" != \
-                "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then
-              echo "ERROR: managed DCode launcher/supervisor empty-prompt contract failed." >&2
-              printf 'Status: %s\nOutput:\n%s\n' \
-                "$dcode_empty_prompt_status" "$dcode_empty_prompt_output" >&2
-              exit 1
-            fi
-          fi
-          expected_http_proxy="http://10.200.0.1:3128"
-          expected_https_proxy="$expected_http_proxy"
-          expected_no_proxy="localhost,127.0.0.1,::1,10.200.0.1"
-          expected_lower_http_proxy="$expected_http_proxy"
-          expected_lower_https_proxy="$expected_https_proxy"
-          expected_lower_no_proxy="$expected_no_proxy"
-          expected_proxy_environment="$(
-            printf 'HTTP_PROXY=%s\n' "$expected_http_proxy"
-            printf 'HTTPS_PROXY=%s\n' "$expected_https_proxy"
-            printf 'NO_PROXY=%s\n' "$expected_no_proxy"
-            printf 'http_proxy=%s\n' "$expected_lower_http_proxy"
-            printf 'https_proxy=%s\n' "$expected_lower_https_proxy"
-            printf 'no_proxy=%s\n' "$expected_lower_no_proxy"
-          )"
-          effective_proxy_environment="$(
-            docker exec -u sandbox "$container" \
-              cat /tmp/nemoclaw-pr-command-proxy-env
-          )"
-          if [ "$effective_proxy_environment" != "$expected_proxy_environment" ]; then
-            echo "ERROR: managed entrypoint did not preserve or normalize proxy policy." >&2
-            printf 'Expected:\n%s\nActual:\n%s\n' \
-              "$expected_proxy_environment" "$effective_proxy_environment" >&2
-            exit 1
-          fi
-          PROFILE="$profile" node <<'VALIDATE_SECRET_FREE_PROFILE'
-          const profile = JSON.parse(Buffer.from(process.env.PROFILE, "base64url").toString("utf8"));
-          const serialized = JSON.stringify(profile);
-          if (
-            profile.proxy.hostHttpUrl !== null ||
-            profile.proxy.hostHttpsUrl !== null ||
-            profile.proxy.hostNoProxy.length !== 0 ||
-            serialized.includes("upper-secret") ||
-            serialized.includes("lower-secret")
-          ) {
-            throw new Error("authenticated proxy material entered the startup profile");
-          }
-          VALIDATE_SECRET_FREE_PROFILE
-          if docker exec -u 0 "$container" \
-            grep -Eq 'upper-secret|lower-secret' /run/nemoclaw/managed-startup-runtime.env; then
-            echo "ERROR: authenticated proxy material entered the durable runtime file." >&2
-            exit 1
-          fi
-
-          case "$AGENT" in
-            openclaw) managed_config=/sandbox/.openclaw/openclaw.json ;;
-            hermes) managed_config=/sandbox/.hermes/config.yaml ;;
-            langchain-deepagents-code) managed_config=/sandbox/.deepagents/config.toml ;;
-            *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
-          esac
-          docker exec -u sandbox "$container" \
-            grep -F "nvidia/nemotron-3-ultra-550b-a55b" "$managed_config" >/dev/null
-          docker exec -u 0 "$container" /bin/sh -eu -c '
-            test ! -L /run/nemoclaw/managed-startup-runtime.env
-            test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:400"
-            test ! -L /usr/local/share/nemoclaw/corporate-ca.pem
-            test "$(stat -c "%u:%g:%a" /usr/local/share/nemoclaw/corporate-ca.pem)" = "0:0:444"
-            test ! -L /run/nemoclaw/managed-startup-ca-bundle.pem
-            test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"
-          '
+          node --no-warnings --experimental-strip-types \
+            scripts/checks/run-managed-image-direct-e2e.ts \
+            --agent "$AGENT" \
+            --image "$IMAGE_REFERENCE" \
+            --platform linux/amd64
 
       - name: Install managed-image OpenShell harness dependencies
         run: |
@@ -427,7 +282,7 @@ jobs:
     name: Build and validate ${{ matrix.display_name }} managed image
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -464,6 +319,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
 
       - name: Download exact base image contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -596,19 +456,15 @@ jobs:
             exit 1
           fi
 
-          entrypoint="$(docker image inspect --format '{{json .Config.Entrypoint}}' "$reference")"
-          command="$(docker image inspect --format '{{json .Config.Cmd}}' "$reference")"
+          image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+             [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: exact managed image did not resolve to one immutable local image ID." >&2
+            exit 1
+          fi
           image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
-          if [ "$entrypoint" != '["/usr/local/bin/nemoclaw-start"]' ]; then
-            echo "ERROR: managed image has unexpected entrypoint: $entrypoint" >&2
-            exit 1
-          fi
-          if [ "$command" != '["/bin/bash"]' ]; then
-            echo "ERROR: managed image has unexpected command: $command" >&2
-            exit 1
-          fi
           if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
-            echo "ERROR: managed image must enter as uid 0 for startup-profile application: $image_user" >&2
+            echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
             exit 1
           fi
 
@@ -781,227 +637,49 @@ jobs:
             exit 1
           fi
 
-          # Exercise the real entrypoint with no network: root prepare, the
-          # matching generator, runtime-only messaging phases, commit, and the
-          # final sandbox identity. Then prove same-profile idempotence and
-          # changed-profile recreation semantics in the same writable layer.
-          profile="$(
+          DOCKER_CONFIG="$anonymous_config" \
             node --no-warnings --experimental-strip-types \
-              scripts/checks/generate-managed-startup-profile-fixture.mts \
-              --agent "$AGENT" --corporate-ca
-          )"
-          changed_profile="$(
-            node --no-warnings --experimental-strip-types \
-              scripts/checks/generate-managed-startup-profile-fixture.mts \
-              --agent "$AGENT" --changed --corporate-ca
-          )"
-          corporate_ca_b64="$(
-            node --no-warnings --experimental-strip-types \
-              scripts/checks/generate-managed-startup-profile-fixture.mts \
-              --corporate-ca-b64
-          )"
-          managed_container="$(
-            DOCKER_CONFIG="$anonymous_config" docker run -d \
-              --platform "$PLATFORM" \
-              --network none \
-              "$reference" \
-              env \
-              "NEMOCLAW_STARTUP_PROFILE_B64=$profile" \
-              "NEMOCLAW_CORPORATE_CA_B64=$corporate_ca_b64" \
-              nemoclaw-start \
-              /bin/sh -c \
-              'if [ -x /usr/local/bin/dcode ]; then
-                timeout 10 /usr/local/bin/dcode -n "" \
-                  > /tmp/nemoclaw-managed-dcode-empty-prompt-output 2>&1
-                printf "%s\n" "$?" \
-                  > /tmp/nemoclaw-managed-dcode-empty-prompt-status
-              fi
-              id -u > /tmp/nemoclaw-managed-command-uid
-              {
-                printf "HTTP_PROXY=%s\n" "${HTTP_PROXY-__UNSET__}"
-                printf "HTTPS_PROXY=%s\n" "${HTTPS_PROXY-__UNSET__}"
-                printf "NO_PROXY=%s\n" "${NO_PROXY-__UNSET__}"
-                printf "http_proxy=%s\n" "${http_proxy-__UNSET__}"
-                printf "https_proxy=%s\n" "${https_proxy-__UNSET__}"
-                printf "no_proxy=%s\n" "${no_proxy-__UNSET__}"
-              } > /tmp/nemoclaw-managed-command-proxy-env
-              exec /usr/bin/tail -f /dev/null'
-          )"
-          cleanup_managed_container() {
-            if [ -n "${managed_container:-}" ]; then
-              DOCKER_CONFIG="$anonymous_config" docker rm -f "$managed_container" >/dev/null 2>&1 || true
-            fi
-          }
-          trap cleanup_managed_container EXIT
-          for _attempt in $(seq 1 60); do
-            if [ "$(docker inspect --format '{{.State.Running}}' "$managed_container")" = "true" ] \
-              && docker exec -u 0 "$managed_container" \
-                /usr/bin/test -s /tmp/nemoclaw-managed-command-uid; then
-              break
-            fi
-            sleep 1
-          done
-          if [ "$(docker inspect --format '{{.State.Running}}' "$managed_container")" != "true" ] \
-            || ! docker exec -u 0 "$managed_container" \
-              /usr/bin/test -s /tmp/nemoclaw-managed-command-uid; then
-            docker logs "$managed_container" >&2 || true
-            echo "ERROR: managed startup profile did not reach the agent command." >&2
-            exit 1
-          fi
-          sandbox_uid="$(docker exec -u 0 "$managed_container" /usr/bin/id -u sandbox)"
-          managed_command_uid="$(
-            docker exec -u 0 "$managed_container" \
-              /bin/sh -c 'cat /tmp/nemoclaw-managed-command-uid'
-          )"
-          if [ "$managed_command_uid" != "$sandbox_uid" ]; then
-            echo "ERROR: managed entrypoint did not explicitly drop to sandbox for the agent command." >&2
-            exit 1
-          fi
-          if [ "$AGENT" = "langchain-deepagents-code" ]; then
-            dcode_empty_prompt_status="$(
-              docker exec -u 0 "$managed_container" \
-                /usr/bin/cat /tmp/nemoclaw-managed-dcode-empty-prompt-status
-            )"
-            dcode_empty_prompt_output="$(
-              docker exec -u 0 "$managed_container" \
-                /usr/bin/cat /tmp/nemoclaw-managed-dcode-empty-prompt-output
-            )"
-            if [ "$dcode_empty_prompt_status" != "2" ] \
-              || [ "$dcode_empty_prompt_output" != \
-                "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then
-              echo "ERROR: managed DCode launcher/supervisor empty-prompt contract failed." >&2
-              printf 'Status: %s\nOutput:\n%s\n' \
-                "$dcode_empty_prompt_status" "$dcode_empty_prompt_output" >&2
-              exit 1
-            fi
-          fi
-          expected_http_proxy="http://10.200.0.1:3128"
-          expected_https_proxy="$expected_http_proxy"
-          expected_no_proxy="localhost,127.0.0.1,::1,10.200.0.1"
-          expected_proxy_environment="$(
-            printf 'HTTP_PROXY=%s\n' "$expected_http_proxy"
-            printf 'HTTPS_PROXY=%s\n' "$expected_https_proxy"
-            printf 'NO_PROXY=%s\n' "$expected_no_proxy"
-            printf 'http_proxy=%s\n' "$expected_http_proxy"
-            printf 'https_proxy=%s\n' "$expected_https_proxy"
-            printf 'no_proxy=%s\n' "$expected_no_proxy"
-          )"
-          effective_proxy_environment="$(
-            docker exec -u sandbox "$managed_container" \
-              /usr/bin/cat /tmp/nemoclaw-managed-command-proxy-env
-          )"
-          if [ "$effective_proxy_environment" != "$expected_proxy_environment" ]; then
-            echo "ERROR: managed agent command did not receive the exact proxy environment." >&2
-            printf 'Expected:\n%s\nActual:\n%s\n' \
-              "$expected_proxy_environment" "$effective_proxy_environment" >&2
-            exit 1
-          fi
-          docker exec -u 0 "$managed_container" /bin/sh -eu -c '
-            for ca_file in \
-              /usr/local/share/nemoclaw/corporate-ca.pem \
-              /run/nemoclaw/managed-startup-ca-bundle.pem
-            do
-              test -f "$ca_file"
-              test ! -L "$ca_file"
-              test "$(stat -c "%u:%g:%a" "$ca_file")" = "0:0:444"
-            done
-          '
-          docker exec -i -u 0 \
-            --env "EXPECTED_CA_B64=$corporate_ca_b64" \
-            "$managed_container" /usr/local/bin/node <<'VALIDATE_MANAGED_CA'
-          const fs = require("node:fs");
-          const expected = Buffer.from(process.env.EXPECTED_CA_B64, "base64");
-          const installed = fs.readFileSync("/usr/local/share/nemoclaw/corporate-ca.pem");
-          const merged = fs.readFileSync("/run/nemoclaw/managed-startup-ca-bundle.pem");
-          if (!installed.equals(expected) || !merged.subarray(-installed.length).equals(installed)) {
-            throw new Error("managed corporate CA was not installed and merged exactly");
-          }
-          VALIDATE_MANAGED_CA
-
-          case "$AGENT" in
-            openclaw) managed_config=/sandbox/.openclaw/openclaw.json ;;
-            hermes) managed_config=/sandbox/.hermes/config.yaml ;;
-            langchain-deepagents-code) managed_config=/sandbox/.deepagents/config.toml ;;
-            *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
-          esac
-          docker exec -u sandbox "$managed_container" \
-            /usr/bin/grep -F "nvidia/nemotron-3-ultra-550b-a55b" "$managed_config" >/dev/null
-          if [ "$AGENT" = "langchain-deepagents-code" ]; then
-            docker exec -i -u sandbox "$managed_container" /opt/venv/bin/python3 -I \
-              <<'VALIDATE_DCODE_MANAGED_CA'
-          from pathlib import Path
-
-          from deepagents_code import _nemoclaw_managed
-
-          descriptor, selected_path = _nemoclaw_managed._managed_fetch_ca_bundle()
-          try:
-              selected = Path(selected_path).read_bytes()
-              corporate = Path(
-                  "/usr/local/share/nemoclaw/corporate-ca.pem"
-              ).read_bytes()
-              if not selected.endswith(corporate):
-                  raise SystemExit(
-                      "DCode hardened fetch trust does not include the managed CA"
-                  )
-          finally:
-              _nemoclaw_managed._close_managed_fetch_ca_bundle(descriptor)
-          VALIDATE_DCODE_MANAGED_CA
-          fi
-          config_before="$(
-            docker exec -u sandbox "$managed_container" /usr/bin/sha256sum "$managed_config"
-          )"
-          same_output="$(
-            docker exec -u 0 \
-              --env "NEMOCLAW_STARTUP_PROFILE_B64=$profile" \
-              --env "NEMOCLAW_CORPORATE_CA_B64=$corporate_ca_b64" \
-              "$managed_container" \
-              /usr/local/bin/node \
-              /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
-              --agent "$AGENT" 2>&1
-          )"
-          printf '%s\n' "$same_output" | grep -F "is already committed" >/dev/null
-          config_after="$(
-            docker exec -u sandbox "$managed_container" /usr/bin/sha256sum "$managed_config"
-          )"
-          if [ "$config_before" != "$config_after" ]; then
-            echo "ERROR: an idempotent managed startup reapplied mutable agent configuration." >&2
-            exit 1
-          fi
-          if changed_output="$(
-            docker exec -u 0 \
-              --env "NEMOCLAW_STARTUP_PROFILE_B64=$changed_profile" \
-              --env "NEMOCLAW_CORPORATE_CA_B64=$corporate_ca_b64" \
-              "$managed_container" \
-              /usr/local/bin/node \
-              /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
-              --agent "$AGENT" 2>&1
-          )"; then
-            echo "ERROR: a changed managed startup profile was accepted in place." >&2
-            exit 1
-          fi
-          printf '%s\n' "$changed_output" | grep -F "recreate the sandbox" >/dev/null
-
-          if nonroot_output="$(
-            DOCKER_CONFIG="$anonymous_config" docker run --rm \
-              --platform "$PLATFORM" \
-              --network none \
-              --user sandbox \
-              "$reference" \
-              env \
-              "NEMOCLAW_STARTUP_PROFILE_B64=$profile" \
-              "NEMOCLAW_CORPORATE_CA_B64=$corporate_ca_b64" \
-              nemoclaw-start \
-              /usr/bin/true 2>&1
-          )"; then
-            echo "ERROR: OCI nonroot bypassed root-only startup-profile application." >&2
-            exit 1
-          fi
-          printf '%s\n' "$nonroot_output" | grep -F "require container uid 0" >/dev/null
-
-          cleanup_managed_container
-          managed_container=""
-          trap - EXIT
+              scripts/checks/run-managed-image-direct-e2e.ts \
+              --agent "$AGENT" \
+              --image "$reference" \
+              --platform "$PLATFORM"
+          printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Install managed-image publication harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
+      - name: Install pinned OpenShell runtime for publication
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85"
+          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.85"
+          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG \
+            -u DOCKERHUB_USERNAME \
+            -u DOCKERHUB_TOKEN \
+            -u NVIDIA_API_KEY \
+            -u NVIDIA_INFERENCE_API_KEY \
+            -u GITHUB_TOKEN \
+            -u GH_TOKEN \
+            bash scripts/install-openshell.sh
+
+      - name: Exercise exact candidate through real OpenShell before promotion
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ steps.validate.outputs.local_id }}
+          SANDBOX_NAME: nemoclaw-publish-${{ matrix.agent }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          npx tsx scripts/checks/run-managed-image-openshell-e2e.ts \
+            --agent "$AGENT" \
+            --image "$IMAGE_REFERENCE" \
+            --sandbox "$SANDBOX_NAME"
 
       # Matrix children publish immutable candidates only. No consumer alias can
       # move until the aggregate job has accepted the complete three-agent set.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -213,9 +214,21 @@ describe("prepareSandboxCreateLaunch", () => {
         encodedProfile,
       },
     });
-    expect(managed.envArgs).toContain(`NEMOCLAW_STARTUP_PROFILE_B64=${encodedProfile}`);
+    expect(managed.envArgs.some((arg) => arg.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))).toBe(
+      false,
+    );
     expect(managed.envArgs.some((arg) => arg.startsWith("NEMOCLAW_CORPORATE_CA_B64="))).toBe(false);
-    expect(managed.sandboxStartupCommand).toEqual(["env", ...managed.envArgs, "nemoclaw-start"]);
+    expect(managed.managedStartupRootApplyRequest?.encodedProfile).toBe(encodedProfile);
+    expect(managed.sandboxStartupCommand).toEqual([
+      "env",
+      ...managed.envArgs,
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      agentName,
+      "--profile-fingerprint",
+      managed.managedStartupRootApplyRequest?.profileFingerprint,
+    ]);
+    expect(managed.createArgv.join("\n")).not.toContain(encodedProfile);
   });
 
   it.each([
@@ -252,9 +265,10 @@ describe("prepareSandboxCreateLaunch", () => {
         "https_proxy=http://lower-https:lower-pass@lower-https.example.test:28443",
         expect.stringMatching(/^NO_PROXY=upper\.internal,localhost,/u),
         expect.stringMatching(/^no_proxy=lower\.internal,localhost,/u),
-        `NEMOCLAW_STARTUP_PROFILE_B64=${encodedProfile}`,
       ]),
     );
+    expect(managed.managedStartupRootApplyRequest?.encodedProfile).toBe(encodedProfile);
+    expect(managed.createArgv.join("\n")).not.toContain(encodedProfile);
     expect(JSON.stringify(decodeManagedStartupProfile(encodedProfile))).not.toContain("upper-pass");
     expect(JSON.stringify(decodeManagedStartupProfile(encodedProfile))).not.toContain("lower-pass");
   });
@@ -290,12 +304,14 @@ describe("prepareSandboxCreateLaunch", () => {
           corporateCaB64: "not-base64",
         },
       }),
-    ).toThrow(/corporate CA transport is malformed/u);
+    ).toThrow(/corporate CA is not canonical bounded base64/u);
   });
 
-  it("bounds the complete bash -lc managed handoff before create setup", () => {
+  it("keeps the maximum corporate CA in bounded root stdin instead of create argv", () => {
+    const acceptedCaBytes = 128 * 1024;
+    const corporateCa = Buffer.alloc(acceptedCaBytes, 0x41);
     const encodedProfile = encodeManagedStartupProfile(
-      managedProfileForAgent("openclaw", "a".repeat(64)),
+      managedProfileForAgent("openclaw", createHash("sha256").update(corporateCa).digest("hex")),
     );
     const buildEnv = vi.fn(() => ({}));
     const input = {
@@ -315,25 +331,16 @@ describe("prepareSandboxCreateLaunch", () => {
       openshellShellCommand: (args: string[]) => args.join(" "),
       buildEnv,
     };
-    const emptyCaLaunch = prepareSandboxCreateLaunch({
-      ...input,
-      managedStartupProfile: { encodedProfile, corporateCaB64: "" },
-    });
-    const emptyCommandBytes = Buffer.byteLength(emptyCaLaunch.createArgv[2] ?? "", "utf8") + 1;
-    const encodedCapacity = SANDBOX_CREATE_MAX_ARGUMENT_BYTES - emptyCommandBytes;
-    const acceptedCaBytes = Math.floor(encodedCapacity / 4) * 3;
-    expect(acceptedCaBytes).toBeGreaterThan(0);
-
+    const corporateCaB64 = corporateCa.toString("base64");
     const accepted = prepareSandboxCreateLaunch({
       ...input,
       managedStartupProfile: {
         encodedProfile,
-        corporateCaB64: Buffer.alloc(acceptedCaBytes, 0x41).toString("base64"),
+        corporateCaB64,
       },
     });
-    expect(Buffer.byteLength(accepted.createArgv[2] ?? "", "utf8") + 1).toBeLessThanOrEqual(
-      SANDBOX_CREATE_MAX_ARGUMENT_BYTES,
-    );
+    expect(accepted.managedStartupRootApplyRequest?.corporateCaB64).toBe(corporateCaB64);
+    expect(accepted.createArgv.join("\n")).not.toContain(corporateCaB64);
 
     buildEnv.mockClear();
     expect(() =>
@@ -344,7 +351,7 @@ describe("prepareSandboxCreateLaunch", () => {
           corporateCaB64: Buffer.alloc(acceptedCaBytes + 3, 0x41).toString("base64"),
         },
       }),
-    ).toThrow(/safe per-argument transport limit/u);
+    ).toThrow(/corporate CA is not canonical bounded base64/u);
     expect(buildEnv).not.toHaveBeenCalled();
   });
 

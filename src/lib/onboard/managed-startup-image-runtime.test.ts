@@ -17,11 +17,15 @@ import {
   MANAGED_STARTUP_MERGED_CA_FILE,
   normalizeHermesManagedConfigDescriptor,
   readStableRegularFile,
+  serializeManagedStartupCompletionMarker,
   serializeManagedStartupRuntimeEnvironment,
+  verifyManagedStartupImageCompletion,
 } from "./managed-startup/image-runtime";
 import {
   fingerprintManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
+  type ManagedStartupAgent,
+  type ManagedStartupProfile,
   validateManagedStartupProfile,
 } from "./managed-startup/profile";
 
@@ -71,6 +75,48 @@ describe("managed startup image runtime", () => {
       owned(realLstatSync(file, options))) as typeof fs.lstatSync);
   }
 
+  function writeCompletionFixture(
+    profile: ManagedStartupProfile,
+    corporateCaMerged = false,
+  ): {
+    readonly agent: ManagedStartupAgent;
+    readonly completionFile: string;
+    readonly fingerprint: string;
+    readonly runtimeEnvironmentFile: string;
+  } {
+    const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
+    const runtimeEnvironment = serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      corporateCaMerged,
+      mapped.configurationEnvironment,
+    );
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const completionFile = path.join(temporaryDirectory(), "managed-startup-complete.json");
+    const runtimeEnvironmentFile = path.join(temporaryDirectory(), "managed-startup-runtime.env");
+    fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+    fs.chmodSync(runtimeEnvironmentFile, 0o444);
+    fs.writeFileSync(
+      completionFile,
+      serializeManagedStartupCompletionMarker({
+        schemaVersion: 1,
+        agent: profile.agent,
+        profileFingerprint: fingerprint,
+        runtimeEnvironmentSha256: createHash("sha256")
+          .update(runtimeEnvironment, "utf8")
+          .digest("hex"),
+        corporateCaMerged,
+      }),
+      { mode: 0o444 },
+    );
+    fs.chmodSync(completionFile, 0o444);
+    return {
+      agent: profile.agent,
+      completionFile,
+      fingerprint,
+      runtimeEnvironmentFile,
+    };
+  }
+
   it.each([
     "openclaw",
     "hermes",
@@ -92,6 +138,8 @@ describe("managed startup image runtime", () => {
     ]);
     expect(plan[0]?.argv).toContain("runtime-setup");
     expect(plan[2]?.argv).toContain("post-agent-install");
+    expect(plan[0]?.argv).not.toContain("--managed-startup-runtime");
+    expect(plan[2]?.argv).toContain("--managed-startup-runtime");
   });
 
   it("maps the complete DCode profile to its offline config action plan", () => {
@@ -129,6 +177,74 @@ describe("managed startup image runtime", () => {
     expect(fingerprintManagedStartupProfile(same)).toBe(fingerprintManagedStartupProfile(initial));
     expect(fingerprintManagedStartupProfile(changed)).not.toBe(
       fingerprintManagedStartupProfile(initial),
+    );
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("accepts the root completion marker and exact runtime handoff for %s", (agent) => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile(agent));
+    mockDescriptorOwnership(0n, 0n);
+    expect(
+      verifyManagedStartupImageCompletion(
+        agent,
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toEqual({ agent, fingerprint: fixture.fingerprint });
+  });
+
+  it("rejects a changed profile against the root completion fingerprint", () => {
+    const initial = writeCompletionFixture(managedStartupE2eProfile("openclaw"));
+    const changedProfile = managedStartupE2eProfile("openclaw", true);
+    mockDescriptorOwnership(0n, 0n);
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        "openclaw",
+        fingerprintManagedStartupProfile(changedProfile),
+        initial.completionFile,
+        initial.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/completion marker does not match the requested profile/u);
+  });
+
+  it("rejects runtime handoff drift after a matching completion", () => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile("hermes"));
+    mockDescriptorOwnership(0n, 0n);
+    fs.chmodSync(fixture.runtimeEnvironmentFile, 0o644);
+    fs.appendFileSync(fixture.runtimeEnvironmentFile, "export NEMOCLAW_MODEL='tampered/model'\n");
+    fs.chmodSync(fixture.runtimeEnvironmentFile, 0o444);
+
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        "hermes",
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/runtime environment digest mismatch/u);
+  });
+
+  it("accepts merged CA paths without putting the CA payload in the readable handoff", () => {
+    const fixture = writeCompletionFixture(
+      managedStartupE2eProfile("langchain-deepagents-code", false, true),
+      true,
+    );
+    mockDescriptorOwnership(0n, 0n);
+    expect(
+      verifyManagedStartupImageCompletion(
+        "langchain-deepagents-code",
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toEqual({
+      agent: "langchain-deepagents-code",
+      fingerprint: fixture.fingerprint,
+    });
+    expect(fs.readFileSync(fixture.runtimeEnvironmentFile, "utf8")).not.toContain(
+      "NEMOCLAW_CORPORATE_CA_B64",
     );
   });
 

@@ -225,6 +225,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-startup-hold.sh"),
+    path.join(stagedScriptsDir, "managed-startup-hold.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "gateway-control.sh"),
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );

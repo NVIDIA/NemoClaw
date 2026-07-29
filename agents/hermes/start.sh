@@ -44,30 +44,6 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# Apply a complete-image startup profile before legacy Hermes initialization.
-# The root applicator commits only after the trusted generator, runtime-only
-# messaging phases, config sealing, and corporate-CA merge all succeed.
-if [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ]; then
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '%s\n' '[SECURITY] Managed startup profiles require container uid 0.' >&2
-    exit 1
-  fi
-  /usr/local/bin/node \
-    /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs \
-    --agent hermes
-  _NEMOCLAW_MANAGED_RUNTIME_ENV="/run/nemoclaw/managed-startup-runtime.env"
-  if [ -L "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
-    || [ ! -f "$_NEMOCLAW_MANAGED_RUNTIME_ENV" ] \
-    || [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MANAGED_RUNTIME_ENV")" != "0:0:400" ]; then
-    printf '%s\n' '[SECURITY] Managed startup runtime environment failed root ownership validation.' >&2
-    exit 1
-  fi
-  # shellcheck disable=SC1090 # generated root-owned fixed-path environment
-  . "$_NEMOCLAW_MANAGED_RUNTIME_ENV"
-  unset _NEMOCLAW_MANAGED_RUNTIME_ENV
-  unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64
-fi
-
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # scripts/nemoclaw-start.sh (OpenClaw). Ref: #2277
