@@ -335,6 +335,7 @@ describe("Hermes final image layout", () => {
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );
     expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(finalStage).toContain("check_absent /opt/hermes/tests \\");
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
   });
 
