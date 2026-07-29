@@ -8,7 +8,11 @@ import {
   type WebSearchConfig,
   webSearchProviderForConfig,
 } from "../inference/web-search";
-import { hydrateDerivedSandboxMessagingPlanFields, MessagingSetupApplier } from "../messaging";
+import {
+  hydrateDerivedSandboxMessagingPlanFields,
+  MessagingSetupApplier,
+  type SandboxMessagingPlan,
+} from "../messaging";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import {
   formatSandboxBaseImageResolutionLabels,
@@ -132,6 +136,40 @@ export function isValidProxyPort(value: string): boolean {
 export type PatchedDockerfileMetadata = { dashboardRemoteBindPrepared: boolean };
 
 export { hasPreparedRemoteDashboardBind } from "./dockerfile-remote-dashboard-bind-contract";
+
+function patchMessagingPlanDockerArg(
+  dockerfile: string,
+  plan: SandboxMessagingPlan,
+  preservedEnv: readonly PreservedEnvFile[] | undefined,
+): string {
+  const baseMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
+    parseSandboxMessagingPlan(plan) ?? plan,
+  );
+  const imageMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
+    baseMessagingPlan,
+    preservedEnv,
+  );
+  const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
+  if (!messagingPlanArgPattern.test(dockerfile)) {
+    throw new Error(
+      "Dockerfile is missing ARG NEMOCLAW_MESSAGING_PLAN_B64; cannot apply messaging plan.",
+    );
+  }
+  return dockerfile.replace(
+    messagingPlanArgPattern,
+    `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(imageMessagingPlan))}`,
+  );
+}
+
+export function patchStagedDockerfileMessagingPlan(
+  dockerfilePath: string,
+  plan: SandboxMessagingPlan,
+  preservedEnv: readonly PreservedEnvFile[],
+): void {
+  const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
+  const dockerfile = patchMessagingPlanDockerArg(patchSnapshot.content, plan, preservedEnv);
+  replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
+}
 
 export function patchStagedDockerfile(
   dockerfilePath: string,
@@ -417,22 +455,10 @@ export function patchStagedDockerfile(
   dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
-    const baseMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
-      parseSandboxMessagingPlan(messagingPlan) ?? messagingPlan,
-    );
-    const imageMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
-      baseMessagingPlan,
+    dockerfile = patchMessagingPlanDockerArg(
+      dockerfile,
+      messagingPlan,
       options.rebuildPreservedEnv,
-    );
-    const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
-    if (!messagingPlanArgPattern.test(dockerfile)) {
-      throw new Error(
-        "Dockerfile is missing ARG NEMOCLAW_MESSAGING_PLAN_B64; cannot apply messaging plan.",
-      );
-    }
-    dockerfile = dockerfile.replace(
-      messagingPlanArgPattern,
-      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(imageMessagingPlan))}`,
     );
   }
   if (hermesToolGateways.length > 0) {
