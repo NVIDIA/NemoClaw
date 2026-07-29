@@ -217,9 +217,13 @@ A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
 `targets` selectors runs the default suite and the Launchable E2E job.
 This is the full run required for pre-tag evidence. Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
-cannot supersede it while it waits. The protected `staging-brev-launchable` job
-uses the non-cancelling `staging-brev-launchable-cpu` group with `queue: max`,
-so pending Launchable E2E runs remain queued instead of replacing one another.
+cannot supersede it while it waits. The trusted `main` workflow dispatch
+verifies that the dispatching and rerunning actors have repository `maintain` or
+`admin` permission before the Launchable path's source checkout. That automatic
+role check authorizes `staging-brev-launchable`; the job does not use GitHub
+environment approval. The job uses the non-cancelling
+`staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
+runs remain queued instead of replacing one another.
 
 ### Hosted-runner recovery
 

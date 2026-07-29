@@ -9,7 +9,11 @@ import {
   createBuiltInRenderTemplateResolver,
 } from "../channels";
 import { MessagingWorkflowPlanner } from "../compiler";
-import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../hooks";
+import {
+  createBuiltInMessagingHookRegistry,
+  MessagingHookConflictError,
+  runMessagingHook,
+} from "../hooks";
 import type {
   ChannelHookSpec,
   MessagingAgentId,
@@ -363,10 +367,14 @@ describe("MessagingSetupApplier", () => {
       await expect(
         MessagingSetupApplier.applyPreEnableChecks(plan, {
           runHook: () => {
-            throw new Error(`blocked ${request?.channelId ?? "channel"}`);
+            throw new MessagingHookConflictError(`blocked ${request?.channelId ?? "channel"}`);
           },
         }),
-      ).rejects.toThrow(`blocked ${request?.channelId ?? "channel"}`);
+      ).rejects.toMatchObject({
+        message: `blocked ${request?.channelId ?? "channel"}`,
+        channelId: request?.channelId,
+        onFailure: "abort",
+      });
     }
   });
 
