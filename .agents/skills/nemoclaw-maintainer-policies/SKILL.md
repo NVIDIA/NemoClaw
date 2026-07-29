@@ -30,7 +30,8 @@ This package contains policy references. This file is its manifest and index.
 Read the related reference before you answer or apply policy.
 Use plain language for maintainers. Distinguish Issue Type, PR type labels, `needs:*` labels, Project fields, close reasons, and release labels.
 Do not invent labels, statuses, fields, release labels, or workflow states.
-Follow the [NemoClaw Writing Guide](../../../WRITING.md) for changed workflow guidance and maintainer-facing text.
+Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
+contract for changed workflow guidance and maintainer-facing text.
 
 For agent implementation, use `triage-instructions.md` as the payload contract.
 Use `label-taxonomy.json` to validate allowed values.

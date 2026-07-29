@@ -27,6 +27,7 @@ on:
       - "agents/openclaw/openclaw-runtime/package-lock.json"
       - "scripts/lib/reviewed-npm-archive.mts"
       - "agents/hermes/Dockerfile.base"
+      - "agents/hermes/security-dependencies.patch"
       - "agents/langchain-deepagents-code/Dockerfile.base"
       - "agents/langchain-deepagents-code/manifest.yaml"
       - "agents/langchain-deepagents-code/requirements.lock"

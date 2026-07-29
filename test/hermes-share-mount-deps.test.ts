@@ -164,7 +164,14 @@ function runHermesInstallLayer(
     "set -euo pipefail",
     `cd ${JSON.stringify(fixture)}`,
     `call_log=${JSON.stringify(logPath)}`,
-    'uv() { printf "uv %s\\n" "$*" >> "$call_log"; }',
+    "uv() {",
+    '  printf "uv %s\\n" "$*" >> "$call_log"',
+    '  if [ "${1:-}" = "sync" ]; then',
+    "    mkdir -p .venv/bin",
+    "    printf '#!/usr/bin/env sh\\nexit 0\\n' > .venv/bin/python",
+    "    chmod 755 .venv/bin/python",
+    "  fi",
+    "}",
     "npm() {",
     '  if [ "${1:-}" = "view" ]; then',
     '    printf "%s\\n" "${HERMES_NPM_INTEGRITY}"',
@@ -215,11 +222,13 @@ describe("Hermes share mount package parity (#2947)", () => {
     const targetRoot = path.join(tmp, "target", "hermes");
     const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
     const checksumFile = `${downloadedTarball}.sha256`;
+    const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
     const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
 
     try {
       fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
       fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
+      fs.writeFileSync(securityPatch, "test patch fixture\n");
       fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
       fs.writeFileSync(
         path.join(archiveRoot, "tests", "security-fixture.txt"),
@@ -233,6 +242,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(packed.status, packed.stderr).toBe(0);
       const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
       const command = extractHermesArchiveCommand(dockerfile)
+        .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
         .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
         .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
         .replaceAll("/opt/hermes", targetRoot);
@@ -249,6 +259,18 @@ describe("Hermes share mount package parity (#2947)", () => {
           "    shift",
           "  done",
           '  cp "$source_tarball" "$output"',
+          "}",
+          `target_root=${JSON.stringify(targetRoot)}`,
+          `security_patch=${JSON.stringify(securityPatch)}`,
+          "git() {",
+          '  [ "$1" = "-C" ]',
+          '  [ "$2" = "$target_root" ]',
+          '  [ "$3" = "apply" ]',
+          '  if [ "$4" = "--check" ]; then',
+          '    [ "$5" = "$security_patch" ]',
+          "  else",
+          '    [ "$4" = "$security_patch" ]',
+          "  fi",
           "}",
           'export HERMES_VERSION="vtest"',
           `export HERMES_TARBALL_SHA256=${JSON.stringify(checksum)}`,
