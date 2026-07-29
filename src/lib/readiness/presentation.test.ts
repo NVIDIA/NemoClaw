@@ -56,6 +56,24 @@ describe("public readiness presentation (#7412)", () => {
     expect(publicReport).toMatchObject({ ...outcome, mutated: false });
   });
 
+  it("preserves valid immutable build provenance (#7777)", () => {
+    const sourceRevision = `8bfff4526${"a".repeat(31)}`;
+    const publicReport = createPublicReadinessReport(
+      report({
+        provenance: {
+          nemoclawVersion: "0.0.96-35-g8bfff4526",
+          sourceRevision,
+          observedAt: "2026-06-01T12:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(publicReport.provenance).toMatchObject({
+      nemoclawVersion: "0.0.96-35-g8bfff4526",
+      sourceRevision,
+    });
+  });
+
   it.each([
     `nvapi-${"a".repeat(24)}`,
     "not-a-source-revision",
