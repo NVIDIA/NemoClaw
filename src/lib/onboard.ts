@@ -115,7 +115,6 @@ const {
 const {
   getDcodeSelectionDrift,
   requiresSelectionRecreate,
-  usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
 const {
   finalizeCreatedSandbox,
@@ -2258,15 +2257,7 @@ async function createSandboxWithBaseImageResolution(
     resolvedCreateIntent,
   );
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
-  const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
-  const managedDcodeValidationProfile =
-    sandboxRegistration.dcodeValidationProfileFromEnv(sandboxName);
-  if (managedDcodeValidationProfile && !isManagedDcodeAgent) {
-    console.error(
-      "  DCode validation profiles are supported only for managed LangChain Deep Agents Code sandboxes.",
-    );
-    process.exit(1);
-  }
+  const dcode = sandboxRegistration.dcodeCreate(sandboxName, agent?.name, fromDockerfile);
   let effectivePort = 0,
     chatUiUrl = "";
   if (manageDashboard) {
@@ -2319,9 +2310,9 @@ async function createSandboxWithBaseImageResolution(
     return sandboxName;
   }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
+  const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, dcode.managed, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
+  const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: dcode.managed, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2383,12 +2374,12 @@ async function createSandboxWithBaseImageResolution(
     const needsProviderMigration =
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
-    const selectionDrift = isManagedDcodeAgent
+    const selectionDrift = dcode.managed
       ? getDcodeSelectionDrift(sandboxName, provider, model, preferredInferenceApi, {
           runCaptureOpenshell,
         })
       : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
-    const actionableSelectionDrift = requiresSelectionRecreate(selectionDrift, isManagedDcodeAgent);
+    const actionableSelectionDrift = requiresSelectionRecreate(selectionDrift, dcode.managed);
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
     const existingSandboxEntry = registry.getSandbox(sandboxName);
     const recordedHermesToolGateways = normalizeHermesToolGatewaySelections(
@@ -2692,7 +2683,7 @@ async function createSandboxWithBaseImageResolution(
       preferredInferenceApi,
       webSearchConfig,
       toolDisclosure: effectiveToolDisclosure,
-      ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
+      ...(dcode.managed ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
       hermesToolGateways,
       sandboxGpuConfig: effectiveSandboxGpuConfig,
       selectedGpuRoute: initialGpuRoute,
@@ -2825,7 +2816,7 @@ async function createSandboxWithBaseImageResolution(
       targetAgentType: agent?.name ?? "openclaw",
       customImage: Boolean(fromDockerfile),
       discoverOpenClawImagePluginInstalls: customOpenClawImage,
-      validateManagedDcode: isManagedDcodeAgent,
+      validateManagedDcode: dcode.managed,
       provider,
       model,
       preferredInferenceApi,
@@ -2854,10 +2845,7 @@ async function createSandboxWithBaseImageResolution(
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
-          ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
-          ...(managedDcodeValidationProfile
-            ? { dcodeValidationProfile: managedDcodeValidationProfile }
-            : {}),
+          ...dcode.registrationFields(dcodeAutoApprovalPlan.mode),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared, resolvedCreateIntent.policy.options.baselineExclusions),

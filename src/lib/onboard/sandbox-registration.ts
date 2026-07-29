@@ -23,6 +23,7 @@ import {
   decodeDcodeValidationProfile,
 } from "./dcode/validation-profile";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import { usesManagedDcodeIdentity } from "./dcode-selection-drift";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -80,8 +81,30 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
   registerSandbox?(entry: SandboxEntry): void;
 }
 
-export function dcodeValidationProfileFromEnv(sandboxName: string): DcodeValidationProfile | null {
-  return decodeDcodeValidationProfile(process.env[DCODE_VALIDATION_PROFILE_ENV], sandboxName);
+export function dcodeCreate(
+  sandboxName: string,
+  agentName: string | null | undefined,
+  fromDockerfile: string | null | undefined,
+) {
+  const managed = usesManagedDcodeIdentity(agentName, fromDockerfile);
+  const profile = decodeDcodeValidationProfile(
+    process.env[DCODE_VALIDATION_PROFILE_ENV],
+    sandboxName,
+  );
+  if (profile && !managed) {
+    throw new Error(
+      "DCode validation profiles are supported only for managed LangChain Deep Agents Code sandboxes.",
+    );
+  }
+  return {
+    managed,
+    registrationFields(dcodeAutoApprovalMode: DcodeAutoApprovalMode) {
+      return {
+        ...(managed ? { dcodeAutoApprovalMode } : {}),
+        ...(profile ? { dcodeValidationProfile: profile } : {}),
+      };
+    },
+  };
 }
 
 export function creationFidelity(

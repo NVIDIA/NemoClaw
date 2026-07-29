@@ -11,9 +11,16 @@ const {
   baselineExclusionsForCreate,
   buildCreatedSandboxRegistryEntry,
   creationFidelity,
+  dcodeCreate,
   registerCreatedSandbox,
   selection,
 } = requireDist("./sandbox-registration.ts") as typeof import("./sandbox-registration");
+const {
+  DCODE_VALIDATION_PROFILE_ENV,
+  DCODE_VALIDATION_PROFILE_SCHEMA_VERSION,
+  dcodeValidationProfileDigest,
+  encodeDcodeValidationProfile,
+} = requireDist("./dcode/validation-profile.ts") as typeof import("./dcode/validation-profile");
 
 const runtimeFields = {
   gpuEnabled: true,
@@ -24,6 +31,48 @@ const runtimeFields = {
   openshellDriver: "docker",
   openshellVersion: "0.1.2",
 };
+
+describe("dcodeCreate", () => {
+  it("rejects a recorded validation profile for an unmanaged image (#7774)", () => {
+    const content = {
+      schemaVersion: DCODE_VALIDATION_PROFILE_SCHEMA_VERSION,
+      sandboxName: "demo",
+      taskIdentity: "issue-7774",
+      sourceIdentity: `sha256:${"a".repeat(64)}`,
+      workingDirectoryRoots: ["/sandbox/workspace"],
+      commands: [
+        {
+          id: "tests",
+          argv: ["/usr/bin/npm", "test"],
+          workingDirectory: "/sandbox/workspace",
+          environment: [],
+          timeoutSeconds: 60,
+          maxOutputBytes: 1024,
+          maxInvocations: 1,
+        },
+      ],
+    };
+    const previous = process.env[DCODE_VALIDATION_PROFILE_ENV];
+    process.env[DCODE_VALIDATION_PROFILE_ENV] = encodeDcodeValidationProfile({
+      ...content,
+      contentDigest: dcodeValidationProfileDigest(content),
+    });
+    try {
+      const managed = dcodeCreate("demo", "langchain-deepagents-code", null);
+      expect(managed.managed).toBe(true);
+      expect(managed.registrationFields("thread-opt-in")).toMatchObject({
+        dcodeAutoApprovalMode: "thread-opt-in",
+        dcodeValidationProfile: { taskIdentity: "issue-7774" },
+      });
+      expect(() => dcodeCreate("demo", "openclaw", null)).toThrow(
+        /supported only for managed LangChain Deep Agents Code/,
+      );
+    } finally {
+      if (previous === undefined) delete process.env[DCODE_VALIDATION_PROFILE_ENV];
+      else process.env[DCODE_VALIDATION_PROFILE_ENV] = previous;
+    }
+  });
+});
 
 describe("buildCreatedSandboxRegistryEntry", () => {
   it("blocks create intent while a baseline policy transaction needs repair (#7178)", () => {
