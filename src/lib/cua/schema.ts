@@ -10,6 +10,7 @@ import {
   type CuaComponentIdentity,
   type CuaLifecycleRecord,
   type CuaRuntimeReadiness,
+  type CuaSecurityAttestation,
   type CuaTargetAttachment,
   type CuaTaskEvidenceIndex,
   type CuaTaskResult,
@@ -67,6 +68,14 @@ export function parseCuaTargetAttachment(value: unknown): CuaTargetAttachment {
   const record = parseCuaLifecycleRecord(value);
   if (record.kind !== "target-attachment") {
     throw new Error("CUA target state must be a target-attachment record");
+  }
+  return record;
+}
+
+export function parseCuaSecurityAttestation(value: unknown): CuaSecurityAttestation {
+  const record = parseCuaLifecycleRecord(value);
+  if (record.kind !== "security-attestation") {
+    throw new Error("CUA security state must be a security-attestation record");
   }
   return record;
 }

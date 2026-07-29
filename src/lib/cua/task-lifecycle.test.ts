@@ -11,12 +11,18 @@ import type {
 } from "../adapters/cua-task";
 import type { SandboxRegistry } from "../state/registry/types";
 import {
+  CUA_ARTIFACT_CLEANUP_OPERATIONS,
+  CUA_DENIED_DESTINATIONS,
   CUA_FAILURE_FAMILIES,
   CUA_LIFECYCLE_SCHEMA_VERSION,
+  CUA_MATERIAL_EXCLUSIONS,
+  CUA_PRIVATE_MATERIALS,
   CUA_TASK_OPERATIONS,
+  CUA_UNTRUSTED_INPUTS,
   type CuaComponentIdentity,
   type CuaFailureFamily,
   type CuaRuntimeReadiness,
+  type CuaSecurityAttestation,
   type CuaTargetAttachment,
   type CuaTaskEvidenceIndex,
   type CuaTaskResult,
@@ -179,6 +185,68 @@ function evidence(
   };
 }
 
+function securityAttestation(
+  runtime = readiness(),
+  target = attachment().target!,
+): CuaSecurityAttestation {
+  return {
+    schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+    kind: "security-attestation",
+    status: "enforced",
+    bindings: {
+      targetIdentityDigest: target.identityDigest,
+      components: {
+        runtime: runtime.components.runtime,
+        sandboxImage: runtime.components.sandboxImage,
+        targetImage: target.image,
+        serviceBundle: target.serviceBundle,
+        policy: runtime.components.policy,
+        taskProtocol: runtime.components.taskProtocol,
+      },
+      inference: runtime.inference,
+      capabilities: target.capabilities.map(({ id, protocolVersion }) => ({
+        id,
+        protocolVersion,
+      })),
+    },
+    network: {
+      defaultAction: "deny",
+      managedInference: "only",
+      targetServices: ["browser", "computer", "terminal"],
+      deniedDestinations: CUA_DENIED_DESTINATIONS,
+    },
+    materialBoundary: {
+      delivery: "host-side-secret-boundary",
+      sandboxMaterial: "absent",
+      excludedFrom: CUA_MATERIAL_EXCLUSIONS,
+    },
+    isolation: {
+      runAs: "non-root",
+      privileged: false,
+      hostDockerSocket: false,
+      hostDesktop: false,
+      broadWritableHostMounts: false,
+    },
+    artifacts: {
+      materials: CUA_PRIVATE_MATERIALS,
+      classification: "private",
+      contentIdentity: "sha256",
+      access: "owner-only",
+      metadata: "bounded",
+      retention: "until-target-reset-or-destroy",
+      cleanupOperations: CUA_ARTIFACT_CLEANUP_OPERATIONS,
+      backup: "excluded",
+    },
+    authority: {
+      fixtureScope: "synthetic-local",
+      externalSideEffects: "denied",
+      untrustedInputs: CUA_UNTRUSTED_INPUTS,
+      mayExpand: false,
+    },
+    verifier: component("fixture-security-verifier", digests.policy),
+  };
+}
+
 function harness(
   target = attachment(),
   runtime = readiness(),
@@ -193,6 +261,10 @@ function harness(
         name: "alpha",
         cuaRuntimeReadiness: structuredClone(runtime),
         cuaTarget: structuredClone(target),
+        cuaSecurityAttestation:
+          target.target === null
+            ? undefined
+            : structuredClone(securityAttestation(runtime, target.target)),
         cuaTaskResults: structuredClone(cuaTaskResults),
       },
     },
@@ -269,6 +341,49 @@ describe("CUA task lifecycle (#7752)", () => {
     expect(outcome.record).toMatchObject({ kind: "failure", family: "task_conflict" });
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(registry.sandboxes.alpha?.cuaTarget?.activeTask?.taskId).toBe("task-existing");
+  });
+
+  it("fails before task execution when the security attestation is missing", () => {
+    const { registry, deps } = harness();
+    delete registry.sandboxes.alpha!.cuaSecurityAttestation;
+    const adapter = fakeAdapter(() => activeAttachment());
+
+    const outcome = executeCuaTaskLifecycle(
+      {
+        operation: "task.start",
+        sandboxName: "alpha",
+        taskId: "task-1",
+        mode: "headless",
+        input: "task",
+        adapter,
+      },
+      deps,
+    );
+
+    expect(outcome.record).toMatchObject({ kind: "failure", family: "policy_invalid" });
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("fails before task execution when the attested target identity is stale", () => {
+    const { registry, deps } = harness();
+    registry.sandboxes.alpha!.cuaSecurityAttestation!.bindings.targetIdentityDigest =
+      digests.browser;
+    const adapter = fakeAdapter(() => activeAttachment());
+
+    const outcome = executeCuaTaskLifecycle(
+      {
+        operation: "task.start",
+        sandboxName: "alpha",
+        taskId: "task-1",
+        mode: "headless",
+        input: "task",
+        adapter,
+      },
+      deps,
+    );
+
+    expect(outcome.record).toMatchObject({ kind: "failure", family: "policy_invalid" });
+    expect(adapter.execute).not.toHaveBeenCalled();
   });
 
   it("rejects reuse of a retained completed task ID", () => {

@@ -11,6 +11,9 @@
       "$ref": "#/$defs/targetAttachment"
     },
     {
+      "$ref": "#/$defs/securityAttestation"
+    },
+    {
       "$ref": "#/$defs/taskEvidenceIndex"
     },
     {
@@ -415,6 +418,276 @@
         }
       }
     },
+    "securityAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "status",
+        "bindings",
+        "network",
+        "materialBoundary",
+        "isolation",
+        "artifacts",
+        "authority",
+        "verifier"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "security-attestation"
+        },
+        "status": {
+          "const": "enforced"
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "targetIdentityDigest",
+            "components",
+            "inference",
+            "capabilities"
+          ],
+          "properties": {
+            "targetIdentityDigest": {
+              "$ref": "#/$defs/digest"
+            },
+            "components": {
+              "$ref": "#/$defs/componentSetWithTarget"
+            },
+            "inference": {
+              "$ref": "#/$defs/inferenceIdentity"
+            },
+            "capabilities": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/capabilityIdentity"
+              }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "defaultAction",
+            "managedInference",
+            "targetServices",
+            "deniedDestinations"
+          ],
+          "properties": {
+            "defaultAction": {
+              "const": "deny"
+            },
+            "managedInference": {
+              "const": "only"
+            },
+            "targetServices": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/capabilityId"
+              }
+            },
+            "deniedDestinations": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "unrelated-internet",
+                  "cloud-metadata",
+                  "undeclared-loopback",
+                  "host-administration",
+                  "host-desktop",
+                  "docker-socket"
+                ]
+              }
+            }
+          }
+        },
+        "materialBoundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "delivery",
+            "sandboxMaterial",
+            "excludedFrom"
+          ],
+          "properties": {
+            "delivery": {
+              "const": "host-side-secret-boundary"
+            },
+            "sandboxMaterial": {
+              "const": "absent"
+            },
+            "excludedFrom": {
+              "type": "array",
+              "minItems": 9,
+              "maxItems": 9,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "prompt",
+                  "sandbox-filesystem",
+                  "arguments",
+                  "logs",
+                  "state",
+                  "diagnostics",
+                  "backups",
+                  "public-json",
+                  "build-logs"
+                ]
+              }
+            }
+          }
+        },
+        "isolation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runAs",
+            "privileged",
+            "hostDockerSocket",
+            "hostDesktop",
+            "broadWritableHostMounts"
+          ],
+          "properties": {
+            "runAs": {
+              "const": "non-root"
+            },
+            "privileged": {
+              "const": false
+            },
+            "hostDockerSocket": {
+              "const": false
+            },
+            "hostDesktop": {
+              "const": false
+            },
+            "broadWritableHostMounts": {
+              "const": false
+            }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "materials",
+            "contentIdentity",
+            "access",
+            "metadata",
+            "retention",
+            "cleanupOperations",
+            "backup"
+          ],
+          "properties": {
+            "materials": {
+              "type": "array",
+              "minItems": 11,
+              "maxItems": 11,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "screenshots",
+                  "page-content",
+                  "screen-content",
+                  "downloads",
+                  "browser-profiles",
+                  "cookies",
+                  "mutable-target-state",
+                  "task-content",
+                  "results",
+                  "logs",
+                  "documents"
+                ]
+              }
+            },
+            "classification": {
+              "const": "private"
+            },
+            "contentIdentity": {
+              "const": "sha256"
+            },
+            "access": {
+              "const": "owner-only"
+            },
+            "metadata": {
+              "const": "bounded"
+            },
+            "retention": {
+              "const": "until-target-reset-or-destroy"
+            },
+            "cleanupOperations": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "target.reset",
+                  "target.destroy"
+                ]
+              }
+            },
+            "backup": {
+              "const": "excluded"
+            }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fixtureScope",
+            "externalSideEffects",
+            "untrustedInputs",
+            "mayExpand"
+          ],
+          "properties": {
+            "fixtureScope": {
+              "const": "synthetic-local"
+            },
+            "externalSideEffects": {
+              "const": "denied"
+            },
+            "untrustedInputs": {
+              "type": "array",
+              "minItems": 5,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "page-content",
+                  "screen-content",
+                  "downloads",
+                  "task-input",
+                  "runtime-output"
+                ]
+              }
+            },
+            "mayExpand": {
+              "const": false
+            }
+          }
+        },
+        "verifier": {
+          "$ref": "#/$defs/componentIdentity"
+        }
+      }
+    },
     "evidenceReference": {
       "type": "object",
       "additionalProperties": false,
@@ -666,7 +939,9 @@
             "task.pause",
             "task.cancel",
             "task.guide",
-            "task.respond"
+            "task.respond",
+            "security.status",
+            "security.verify"
           ]
         },
         "family": {

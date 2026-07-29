@@ -153,6 +153,9 @@ export function registerSandbox(entry: SandboxEntry): void {
         ? structuredClone(entry.cuaRuntimeReadiness)
         : undefined,
       cuaTarget: entry.cuaTarget ? structuredClone(entry.cuaTarget) : undefined,
+      cuaSecurityAttestation: entry.cuaSecurityAttestation
+        ? structuredClone(entry.cuaSecurityAttestation)
+        : undefined,
       cuaTaskResults: entry.cuaTaskResults ? structuredClone(entry.cuaTaskResults) : undefined,
       openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
         ? entry.openclawImagePluginInstalls.map((install) => ({

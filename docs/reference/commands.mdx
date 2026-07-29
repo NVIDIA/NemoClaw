@@ -1655,11 +1655,60 @@ They exclude the target, browser profile, mutable desktop state, adapter state, 
 Recovery never reuses an attachment handle.
 The host adapter obtains fresh authority and NemoClaw validates the immutable identities again.
 
+## CUA security lifecycle
+
+These commands verify the CUA sandbox and target security boundary through one trusted, host-side verifier.
+The verifier inspects the actually applied policy, target reachability, process isolation, secret delivery, artifact handling, and fixture authority.
+It returns only a content-free `security-attestation` record.
+Private service endpoints, host names, transport details, paths, and credentials remain inside the verifier boundary.
+
+The verifier must be an absolute executable path.
+NemoClaw starts it without a shell, with a fixed credential-free environment, and writes one `security-adapter-request` JSON object to standard input.
+The request contains only the recorded runtime, policy, inference, target, and capability identities.
+NemoClaw accepts one `security-attestation` or `failure` record from `schemas/cua-lifecycle.schema.json` on standard output and never copies verifier standard error into public output.
+
+A valid attestation proves that:
+
+- network access defaults to deny and permits only managed inference plus the declared browser, computer, and terminal services;
+- unrelated Internet access, cloud metadata, undeclared loopback, host administration, host desktop access, and the host Docker socket are denied;
+- provider, target, and service credentials remain in the host-side secret boundary and are absent from prompts, the sandbox filesystem, arguments, logs, state, diagnostics, backups, public JSON, and build logs;
+- the sandbox runs unprivileged as a non-root user without broad writable host mounts;
+- screenshots, page and screen content, downloads, browser profiles, cookies, mutable target state, task content, results, logs, and documents are SHA-256-addressed, owner-only, metadata-bounded, excluded from backups, and retained only until target reset or destroy; and
+- synthetic local fixtures cannot produce external side effects, and untrusted task or runtime content cannot expand authority.
+
+The attestation is valid only for the exact recorded runtime, sandbox image, target image, service bundle, policy, task protocol, inference route, capability protocols, and target identity.
+NemoClaw clears it after target reset, detach, destroy, identity change, or failed target health validation.
+Every task operation requires a current matching attestation before it invokes the task adapter.
+
+Successful commands exit `0`.
+Validation failures exit `2`, unavailable runtime or lifecycle state exits `4`, and absent, malformed, incomplete, or identity-stale security state exits `5`.
+
+### `$$nemoclaw <name> cua security verify`
+
+Run the trusted verifier and record its content-free attestation only when every required boundary is enforced.
+
+```bash
+$$nemoclaw my-cua cua security verify \
+  --adapter /absolute/path/to/security-verifier \
+  --json
+```
+
+### `$$nemoclaw <name> cua security status`
+
+Validate the recorded attestation against the current runtime and target identities without invoking the verifier.
+The same content-free projection appears as `cuaSecurity` in `$$nemoclaw <name> status --json`.
+`$$nemoclaw <name> doctor` reports whether the attestation is present and current.
+
+```bash
+$$nemoclaw my-cua cua security status --json
+```
+
 ## CUA task lifecycle
 
 These commands drive the checked-in CUA task contract through one explicit, operator-owned task adapter.
 The adapter is a protocol boundary for the selected CUA runtime; it is not a runtime plugin or a terminal-output parser.
 Interactive and headless starts use the same adapter, runtime identity, task protocol, and explicit task ID.
+Before any task adapter runs, the sandbox must have a current CUA security attestation for the exact runtime, policy, inference, target, and capability identities.
 
 The adapter must be an absolute executable path.
 NemoClaw starts it without a shell and writes one `task-adapter-request` JSON object to standard input.

@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CuaRuntimeReadiness, CuaTargetAttachment, CuaTaskResult } from "../../cua/contract";
+import type {
+  CuaRuntimeReadiness,
+  CuaSecurityAttestation,
+  CuaTargetAttachment,
+  CuaTaskResult,
+} from "../../cua/contract";
 import type { InferenceSelection } from "../../inference/selection";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
@@ -112,6 +117,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   cuaRuntimeReadiness?: CuaRuntimeReadiness;
   /** Secret-free projection of the one attached disposable desktop target. */
   cuaTarget?: CuaTargetAttachment;
+  /** Content-free proof that the CUA security boundary is enforced for current identities. */
+  cuaSecurityAttestation?: CuaSecurityAttestation;
   /** Bounded completed CUA task results retained for reconnect inspection. */
   cuaTaskResults?: CuaTaskResult[];
   /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */

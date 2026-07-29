@@ -97,6 +97,11 @@ A runtime may advertise these optional task operations:
 - `task.guide`
 - `task.respond`
 
+NemoClaw also exposes these security operations:
+
+- `security.verify`
+- `security.status`
+
 The runtime-readiness record always lists every required task operation and
 lists an optional operation only when the runtime implements it. A request for
 an unlisted optional operation returns `lifecycle_unavailable`; it is never
@@ -215,8 +220,38 @@ NemoClaw retains at most the 16 most recent validated terminal results for
 normal CLI reconnect inspection. It never persists task input. A task ID in
 that retained set cannot be reused.
 
-The security issue owns artifact access controls, retention, redaction,
-cleanup, target credential delivery, and the deny-default network policy.
+Before a task adapter runs, NemoClaw requires a current `security-attestation`
+record. A trusted host-side verifier produces that content-free record only
+after it validates the policy applied to the sandbox and target. The
+attestation is bound to the exact runtime, sandbox image, target image, service
+bundle, policy, task protocol, inference route, capability protocols, and
+target identity.
+
+The verifier must prove all of these conditions:
+
+- network access defaults to deny and permits only managed inference plus the
+  declared browser, computer, and terminal target services;
+- unrelated Internet access, cloud metadata, undeclared loopback, host
+  administration, host desktop access, and the host Docker socket are denied;
+- provider, target, and service credentials remain in the host-side secret
+  boundary and are absent from prompts, the sandbox filesystem, process
+  arguments, logs, state, diagnostics, backups, public JSON, and build logs;
+- the sandbox runs unprivileged as a non-root user without broad writable host
+  mounts;
+- screenshots, page and screen content, downloads, browser profiles, cookies,
+  mutable target state, task content, results, logs, and documents are
+  content-addressed, owner-only, metadata-bounded, excluded from backups, and
+  removed by target reset or destroy according to the retention boundary; and
+- qualification uses synthetic local fixtures, denies external side effects,
+  and never lets task input, page or screen content, downloads, or runtime
+  output expand authority.
+
+The verifier owns any private endpoint and credential inspection needed to
+make those assertions. Neither its request nor its attestation contains those
+values. NemoClaw rejects malformed, incomplete, or identity-stale
+attestations. Target reset, detach, destroy, identity change, or failed health
+validation clears the recorded attestation, so task execution remains
+fail-closed until verification succeeds again.
 
 ## Failure families
 

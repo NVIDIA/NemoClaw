@@ -169,6 +169,8 @@ export interface SandboxStatusReport {
   policies: string[];
   /** Secret-free CUA target attachment and capability-health projection. */
   cuaTarget: registry.SandboxEntry["cuaTarget"] | null;
+  /** Content-free proof that CUA policy and private-state boundaries were verified. */
+  cuaSecurity: registry.SandboxEntry["cuaSecurityAttestation"] | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -526,6 +528,7 @@ async function buildSandboxStatusReport(
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
     cuaTarget: sb?.cuaTarget ?? null,
+    cuaSecurity: sb?.cuaSecurityAttestation ?? null,
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,

@@ -292,6 +292,22 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "--adapter <absolute-path> [--json]",
     },
   ],
+  "sandbox:cua:security:verify": [
+    {
+      group: "Sandbox Management",
+      order: 6.65,
+      description: "Verify and record the CUA deny-default security boundary",
+      flags: "--adapter <absolute-path> [--json]",
+    },
+  ],
+  "sandbox:cua:security:status": [
+    {
+      group: "Sandbox Management",
+      order: 6.66,
+      description: "Show the content-free CUA security attestation",
+      flags: "[--json]",
+    },
+  ],
   "sandbox:cua:task:start": [
     {
       group: "Sandbox Management",

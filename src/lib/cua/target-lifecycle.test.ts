@@ -9,11 +9,17 @@ import type {
 } from "../adapters/cua-target";
 import type { SandboxRegistry } from "../state/registry/types";
 import {
+  CUA_ARTIFACT_CLEANUP_OPERATIONS,
   CUA_CAPABILITIES,
+  CUA_DENIED_DESTINATIONS,
   CUA_LIFECYCLE_SCHEMA_VERSION,
+  CUA_MATERIAL_EXCLUSIONS,
+  CUA_PRIVATE_MATERIALS,
   CUA_REQUIRED_TASK_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_UNTRUSTED_INPUTS,
   type CuaRuntimeReadiness,
+  type CuaSecurityAttestation,
   type CuaTargetAttachment,
 } from "./contract";
 import type { CuaTargetManifest } from "./schema";
@@ -24,6 +30,12 @@ import {
 } from "./target-lifecycle";
 
 const digest = (value: string): string => `sha256:${value.repeat(64).slice(0, 64)}`;
+const component = (name: string, value: string) => ({
+  name,
+  version: "1.0.0",
+  digest: digest(value),
+  owner: "fixture",
+});
 
 const runtimeReadiness: CuaRuntimeReadiness = {
   schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
@@ -95,6 +107,65 @@ function attachedTarget(
   };
 }
 
+function securityAttestation(target: CuaTargetAttachment): CuaSecurityAttestation {
+  return {
+    schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+    kind: "security-attestation",
+    status: "enforced",
+    bindings: {
+      targetIdentityDigest: target.target!.identityDigest,
+      components: {
+        runtime: runtimeReadiness.components.runtime,
+        sandboxImage: runtimeReadiness.components.sandboxImage,
+        targetImage: target.target!.image,
+        serviceBundle: target.target!.serviceBundle,
+        policy: runtimeReadiness.components.policy,
+        taskProtocol: runtimeReadiness.components.taskProtocol,
+      },
+      inference: runtimeReadiness.inference,
+      capabilities: target.target!.capabilities.map(({ id, protocolVersion }) => ({
+        id,
+        protocolVersion,
+      })),
+    },
+    network: {
+      defaultAction: "deny",
+      managedInference: "only",
+      targetServices: CUA_CAPABILITIES,
+      deniedDestinations: CUA_DENIED_DESTINATIONS,
+    },
+    materialBoundary: {
+      delivery: "host-side-secret-boundary",
+      sandboxMaterial: "absent",
+      excludedFrom: CUA_MATERIAL_EXCLUSIONS,
+    },
+    isolation: {
+      runAs: "non-root",
+      privileged: false,
+      hostDockerSocket: false,
+      hostDesktop: false,
+      broadWritableHostMounts: false,
+    },
+    artifacts: {
+      materials: CUA_PRIVATE_MATERIALS,
+      classification: "private",
+      contentIdentity: "sha256",
+      access: "owner-only",
+      metadata: "bounded",
+      retention: "until-target-reset-or-destroy",
+      cleanupOperations: CUA_ARTIFACT_CLEANUP_OPERATIONS,
+      backup: "excluded",
+    },
+    authority: {
+      fixtureScope: "synthetic-local",
+      externalSideEffects: "denied",
+      untrustedInputs: CUA_UNTRUSTED_INPUTS,
+      mayExpand: false,
+    },
+    verifier: component("security-verifier", "9"),
+  };
+}
+
 function fakeAdapter(
   implementation: (request: CuaTargetAdapterRequest) => CuaTargetAdapterResult,
 ): CuaTargetAdapter & { execute: ReturnType<typeof vi.fn> } {
@@ -112,6 +183,7 @@ function harness(target?: CuaTargetAttachment): {
         name: "alpha",
         cuaRuntimeReadiness: structuredClone(runtimeReadiness),
         ...(target ? { cuaTarget: structuredClone(target) } : {}),
+        ...(target ? { cuaSecurityAttestation: structuredClone(securityAttestation(target)) } : {}),
       },
     },
   };
@@ -190,6 +262,7 @@ describe("CUA target lifecycle (#7751)", () => {
 
     expect(outcome.record).toMatchObject({ kind: "failure", family: "target_replaced" });
     expect(registry.sandboxes.alpha?.cuaTarget).toEqual({ ...current, status: "replaced" });
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
   });
 
   it("records service-bundle drift as incompatible", () => {
@@ -208,6 +281,7 @@ describe("CUA target lifecycle (#7751)", () => {
 
     expect(outcome.record).toMatchObject({ kind: "failure", family: "target_incompatible" });
     expect(registry.sandboxes.alpha?.cuaTarget?.status).toBe("incompatible");
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
   });
 
   it("records an unreachable target without exposing adapter diagnostics", () => {
@@ -229,6 +303,7 @@ describe("CUA target lifecycle (#7751)", () => {
 
     expect(outcome.record).toMatchObject({ kind: "failure", family: "target_unreachable" });
     expect(registry.sandboxes.alpha?.cuaTarget?.status).toBe("unreachable");
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
   });
 
   it("classifies one failed service check without disturbing other capability identities", () => {
@@ -265,6 +340,22 @@ describe("CUA target lifecycle (#7751)", () => {
         ]),
       },
     });
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
+  });
+
+  it("preserves the current attestation after a healthy identity-stable probe", () => {
+    const current = attachedTarget();
+    const { registry, deps } = harness(current);
+    const original = structuredClone(registry.sandboxes.alpha?.cuaSecurityAttestation);
+    const adapter = fakeAdapter(() => current);
+
+    const outcome = executeCuaTargetLifecycle(
+      { operation: "target.health", sandboxName: "alpha", adapter },
+      deps,
+    );
+
+    expect(outcome).toEqual({ record: current, exitCode: 0 });
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toEqual(original);
   });
 
   it("rejects reset while the target has an active task", () => {
@@ -297,6 +388,7 @@ describe("CUA target lifecycle (#7751)", () => {
 
     expect(outcome).toEqual({ record: replacement, exitCode: 0 });
     expect(registry.sandboxes.alpha?.cuaTarget).toEqual(replacement);
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
   });
 
   it.each([
@@ -310,6 +402,7 @@ describe("CUA target lifecycle (#7751)", () => {
 
     expect(outcome).toEqual({ record: detachedCuaTarget(), exitCode: 0 });
     expect(registry.sandboxes.alpha?.cuaTarget).toEqual(detachedCuaTarget());
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
   });
 
   it("reports the target lifecycle unavailable before canonical runtime registration", () => {

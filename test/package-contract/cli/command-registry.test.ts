@@ -56,8 +56,8 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("returns exactly 78 entries", () => {
-      // 70 visible + 8 hidden (shields×3 + config get/set/rotate-token +
+    it("returns exactly 80 entries", () => {
+      // 72 visible + 8 hidden (shields×3 + config get/set/rotate-token +
       // inference get/set).
       // 60 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
@@ -66,8 +66,9 @@ describe("command-registry", () => {
       // container lifecycle pair (#6026), the policy baseline exclude + restore
       // pair, plus five MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent, six CUA target
-      // lifecycle commands, and ten CUA task lifecycle commands.
-      expect(sandboxCommands()).toHaveLength(78);
+      // lifecycle commands, two CUA security commands, and ten CUA task
+      // lifecycle commands.
+      expect(sandboxCommands()).toHaveLength(80);
     });
 
     it("every entry has scope sandbox", () => {

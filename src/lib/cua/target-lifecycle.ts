@@ -171,6 +171,7 @@ function persistFailureState(
   const sandbox = registry.sandboxes[sandboxName];
   if (!sandbox) return false;
   sandbox.cuaTarget = { ...current, status };
+  delete sandbox.cuaSecurityAttestation;
   return true;
 }
 
@@ -255,6 +256,10 @@ function executeLocked(
     if (!input.manifest) return failed(input.operation, "validation_failed", false, "target");
   } else if (current.status === "detached" || current.target === null) {
     if (input.operation === "target.detach" || input.operation === "target.destroy") {
+      if (sandbox.cuaSecurityAttestation) {
+        delete sandbox.cuaSecurityAttestation;
+        deps.save(registry);
+      }
       return result(current);
     }
     return failed(input.operation, "target_unreachable", false, "target");
@@ -279,6 +284,7 @@ function executeLocked(
 
   if (input.operation === "target.detach" || input.operation === "target.destroy") {
     sandbox.cuaTarget = detachedCuaTarget();
+    delete sandbox.cuaSecurityAttestation;
     deps.save(registry);
     return result(sandbox.cuaTarget);
   }
@@ -293,6 +299,7 @@ function executeLocked(
   } else if (current.target) {
     if (!targetComponentsMatch(observed, current.target)) {
       sandbox.cuaTarget = { ...current, status: "incompatible" };
+      delete sandbox.cuaSecurityAttestation;
       deps.save(registry);
       return failed(input.operation, "target_incompatible", false, "target");
     }
@@ -301,6 +308,7 @@ function executeLocked(
       observed.identityDigest !== current.target.identityDigest
     ) {
       sandbox.cuaTarget = { ...current, status: "replaced" };
+      delete sandbox.cuaSecurityAttestation;
       deps.save(registry);
       return failed(input.operation, "target_replaced", false, "target");
     }
@@ -314,6 +322,7 @@ function executeLocked(
         status: "unreachable",
         target: observed,
       };
+      delete sandbox.cuaSecurityAttestation;
       deps.save(registry);
     }
     return failed(input.operation, "capability_unhealthy", true, unhealthy);
@@ -324,6 +333,9 @@ function executeLocked(
     status: "attached",
     activeTask: current.activeTask,
   };
+  if (input.operation === "target.attach" || input.operation === "target.reset") {
+    delete sandbox.cuaSecurityAttestation;
+  }
   deps.save(registry);
   return result(sandbox.cuaTarget);
 }

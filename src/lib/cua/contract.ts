@@ -35,7 +35,13 @@ export const CUA_TASK_OPERATIONS = [
   ...CUA_OPTIONAL_TASK_OPERATIONS,
 ] as const;
 
-export const CUA_OPERATIONS = [...CUA_TARGET_OPERATIONS, ...CUA_TASK_OPERATIONS] as const;
+export const CUA_SECURITY_OPERATIONS = ["security.status", "security.verify"] as const;
+
+export const CUA_OPERATIONS = [
+  ...CUA_TARGET_OPERATIONS,
+  ...CUA_TASK_OPERATIONS,
+  ...CUA_SECURITY_OPERATIONS,
+] as const;
 export type CuaOperation = (typeof CUA_OPERATIONS)[number];
 
 export const CUA_FAILURE_FAMILIES = [
@@ -174,6 +180,98 @@ export interface CuaTaskResult {
   evidence: readonly CuaEvidenceReference[];
 }
 
+export const CUA_DENIED_DESTINATIONS = [
+  "unrelated-internet",
+  "cloud-metadata",
+  "undeclared-loopback",
+  "host-administration",
+  "host-desktop",
+  "docker-socket",
+] as const;
+
+export const CUA_MATERIAL_EXCLUSIONS = [
+  "prompt",
+  "sandbox-filesystem",
+  "arguments",
+  "logs",
+  "state",
+  "diagnostics",
+  "backups",
+  "public-json",
+  "build-logs",
+] as const;
+
+export const CUA_ARTIFACT_CLEANUP_OPERATIONS = ["target.reset", "target.destroy"] as const;
+
+export const CUA_PRIVATE_MATERIALS = [
+  "screenshots",
+  "page-content",
+  "screen-content",
+  "downloads",
+  "browser-profiles",
+  "cookies",
+  "mutable-target-state",
+  "task-content",
+  "results",
+  "logs",
+  "documents",
+] as const;
+
+export const CUA_UNTRUSTED_INPUTS = [
+  "page-content",
+  "screen-content",
+  "downloads",
+  "task-input",
+  "runtime-output",
+] as const;
+
+export interface CuaSecurityAttestation {
+  schemaVersion: string;
+  kind: "security-attestation";
+  status: "enforced";
+  bindings: {
+    targetIdentityDigest: string;
+    components: CuaTaskResult["components"];
+    inference: CuaInferenceIdentity;
+    capabilities: readonly CuaCapabilityIdentity[];
+  };
+  network: {
+    defaultAction: "deny";
+    managedInference: "only";
+    targetServices: readonly CuaCapability[];
+    deniedDestinations: readonly (typeof CUA_DENIED_DESTINATIONS)[number][];
+  };
+  materialBoundary: {
+    delivery: "host-side-secret-boundary";
+    sandboxMaterial: "absent";
+    excludedFrom: readonly (typeof CUA_MATERIAL_EXCLUSIONS)[number][];
+  };
+  isolation: {
+    runAs: "non-root";
+    privileged: false;
+    hostDockerSocket: false;
+    hostDesktop: false;
+    broadWritableHostMounts: false;
+  };
+  artifacts: {
+    materials: readonly (typeof CUA_PRIVATE_MATERIALS)[number][];
+    classification: "private";
+    contentIdentity: "sha256";
+    access: "owner-only";
+    metadata: "bounded";
+    retention: "until-target-reset-or-destroy";
+    cleanupOperations: readonly (typeof CUA_ARTIFACT_CLEANUP_OPERATIONS)[number][];
+    backup: "excluded";
+  };
+  authority: {
+    fixtureScope: "synthetic-local";
+    externalSideEffects: "denied";
+    untrustedInputs: readonly (typeof CUA_UNTRUSTED_INPUTS)[number][];
+    mayExpand: false;
+  };
+  verifier: CuaComponentIdentity;
+}
+
 export interface CuaFailure {
   schemaVersion: string;
   kind: "failure";
@@ -186,6 +284,7 @@ export interface CuaFailure {
 export type CuaLifecycleRecord =
   | CuaRuntimeReadiness
   | CuaTargetAttachment
+  | CuaSecurityAttestation
   | CuaTaskEvidenceIndex
   | CuaTaskResult
   | CuaFailure;
@@ -387,6 +486,38 @@ export function getCuaLifecycleSemanticErrors(record: CuaLifecycleRecord): strin
     if ((record.status === "cancelled") !== (record.agentResult.status === "cancelled")) {
       errors.push("task and agent result cancellation status must match");
     }
+  }
+
+  if (record.kind === "security-attestation") {
+    errors.push(
+      ...exactSetErrors(
+        "bindings.capabilities",
+        record.bindings.capabilities.map(({ id }) => id),
+        CUA_CAPABILITIES,
+      ),
+      ...exactSetErrors("network.targetServices", record.network.targetServices, CUA_CAPABILITIES),
+      ...exactSetErrors(
+        "network.deniedDestinations",
+        record.network.deniedDestinations,
+        CUA_DENIED_DESTINATIONS,
+      ),
+      ...exactSetErrors(
+        "materialBoundary.excludedFrom",
+        record.materialBoundary.excludedFrom,
+        CUA_MATERIAL_EXCLUSIONS,
+      ),
+      ...exactSetErrors(
+        "artifacts.cleanupOperations",
+        record.artifacts.cleanupOperations,
+        CUA_ARTIFACT_CLEANUP_OPERATIONS,
+      ),
+      ...exactSetErrors("artifacts.materials", record.artifacts.materials, CUA_PRIVATE_MATERIALS),
+      ...exactSetErrors(
+        "authority.untrustedInputs",
+        record.authority.untrustedInputs,
+        CUA_UNTRUSTED_INPUTS,
+      ),
+    );
   }
 
   if (record.kind === "task-evidence-index") {

@@ -10,14 +10,20 @@ import cuaLifecycleSchema from "../../../schemas/cua-lifecycle.schema.json" with
 import { AGENTS_DIR, getAgentChoices, loadAgent } from "../agent/defs.js";
 import { getTerminalCommand } from "../agent/runtime.js";
 import {
+  CUA_ARTIFACT_CLEANUP_OPERATIONS,
   CUA_CAPABILITIES,
+  CUA_DENIED_DESTINATIONS,
   CUA_LIFECYCLE_SCHEMA_VERSION,
+  CUA_MATERIAL_EXCLUSIONS,
+  CUA_PRIVATE_MATERIALS,
   CUA_REQUIRED_TASK_OPERATIONS,
   CUA_TARGET_OPERATIONS,
   CUA_TASK_OPERATIONS,
+  CUA_UNTRUSTED_INPUTS,
   type CuaComponentIdentity,
   type CuaLifecycleRecord,
   type CuaRuntimeReadiness,
+  type CuaSecurityAttestation,
   type CuaTargetAttachment,
   type CuaTaskEvidenceIndex,
   type CuaTaskResult,
@@ -170,6 +176,67 @@ function taskEvidenceIndex(): CuaTaskEvidenceIndex {
   };
 }
 
+function securityAttestation(): CuaSecurityAttestation {
+  const readiness = runtimeReadiness();
+  const attachment = targetAttachment().target;
+  return {
+    schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+    kind: "security-attestation",
+    status: "enforced",
+    bindings: {
+      targetIdentityDigest: attachment.identityDigest,
+      components: {
+        runtime: readiness.components.runtime,
+        sandboxImage: readiness.components.sandboxImage,
+        targetImage: attachment.image,
+        serviceBundle: attachment.serviceBundle,
+        policy: readiness.components.policy,
+        taskProtocol: readiness.components.taskProtocol,
+      },
+      inference: readiness.inference,
+      capabilities: attachment.capabilities.map(({ id, protocolVersion }) => ({
+        id,
+        protocolVersion,
+      })),
+    },
+    network: {
+      defaultAction: "deny",
+      managedInference: "only",
+      targetServices: CUA_CAPABILITIES,
+      deniedDestinations: CUA_DENIED_DESTINATIONS,
+    },
+    materialBoundary: {
+      delivery: "host-side-secret-boundary",
+      sandboxMaterial: "absent",
+      excludedFrom: CUA_MATERIAL_EXCLUSIONS,
+    },
+    isolation: {
+      runAs: "non-root",
+      privileged: false,
+      hostDockerSocket: false,
+      hostDesktop: false,
+      broadWritableHostMounts: false,
+    },
+    artifacts: {
+      materials: CUA_PRIVATE_MATERIALS,
+      classification: "private",
+      contentIdentity: "sha256",
+      access: "owner-only",
+      metadata: "bounded",
+      retention: "until-target-reset-or-destroy",
+      cleanupOperations: CUA_ARTIFACT_CLEANUP_OPERATIONS,
+      backup: "excluded",
+    },
+    authority: {
+      fixtureScope: "synthetic-local",
+      externalSideEffects: "denied",
+      untrustedInputs: CUA_UNTRUSTED_INPUTS,
+      mayExpand: false,
+    },
+    verifier: component("security-verifier", thirdDigest),
+  };
+}
+
 function createValidator() {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   return ajv.compile(cuaLifecycleSchema as AnySchema);
@@ -185,6 +252,7 @@ describe("first-class CUA contract", () => {
     const records: CuaLifecycleRecord[] = [
       runtimeReadiness(),
       targetAttachment(),
+      securityAttestation(),
       taskEvidenceIndex(),
       taskResult(),
       {

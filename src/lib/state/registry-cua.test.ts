@@ -6,11 +6,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  CUA_ARTIFACT_CLEANUP_OPERATIONS,
   CUA_CAPABILITIES,
+  CUA_DENIED_DESTINATIONS,
   CUA_LIFECYCLE_SCHEMA_VERSION,
+  CUA_MATERIAL_EXCLUSIONS,
+  CUA_PRIVATE_MATERIALS,
   CUA_REQUIRED_TASK_OPERATIONS,
   CUA_TARGET_OPERATIONS,
+  CUA_UNTRUSTED_INPUTS,
   type CuaRuntimeReadiness,
+  type CuaSecurityAttestation,
   type CuaTargetAttachment,
   type CuaTaskResult,
 } from "../cua/contract";
@@ -93,6 +99,53 @@ const completedResult: CuaTaskResult = {
   ],
 };
 
+const securityAttestation: CuaSecurityAttestation = {
+  schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+  kind: "security-attestation",
+  status: "enforced",
+  bindings: {
+    targetIdentityDigest: attachment.target!.identityDigest,
+    components: completedResult.components,
+    inference: readiness.inference,
+    capabilities: completedResult.capabilities,
+  },
+  network: {
+    defaultAction: "deny",
+    managedInference: "only",
+    targetServices: CUA_CAPABILITIES,
+    deniedDestinations: CUA_DENIED_DESTINATIONS,
+  },
+  materialBoundary: {
+    delivery: "host-side-secret-boundary",
+    sandboxMaterial: "absent",
+    excludedFrom: CUA_MATERIAL_EXCLUSIONS,
+  },
+  isolation: {
+    runAs: "non-root",
+    privileged: false,
+    hostDockerSocket: false,
+    hostDesktop: false,
+    broadWritableHostMounts: false,
+  },
+  artifacts: {
+    materials: CUA_PRIVATE_MATERIALS,
+    classification: "private",
+    contentIdentity: "sha256",
+    access: "owner-only",
+    metadata: "bounded",
+    retention: "until-target-reset-or-destroy",
+    cleanupOperations: CUA_ARTIFACT_CLEANUP_OPERATIONS,
+    backup: "excluded",
+  },
+  authority: {
+    fixtureScope: "synthetic-local",
+    externalSideEffects: "denied",
+    untrustedInputs: CUA_UNTRUSTED_INPUTS,
+    mayExpand: false,
+  },
+  verifier: component("security-verifier", "a"),
+};
+
 beforeEach(() => {
   registry.clearAll();
 });
@@ -155,5 +208,26 @@ describe("CUA completed-task registry state (#7752)", () => {
     expect(JSON.stringify(disk.sandboxes.alpha.cuaTaskResults)).not.toMatch(
       /credential|password|secret|token|endpoint|hostName|ssh|vnc|path|url/i,
     );
+  });
+});
+
+describe("CUA security registry state (#7754)", () => {
+  it("round-trips only a content-free attestation and rejects authority fields", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      cuaRuntimeReadiness: readiness,
+      cuaTarget: attachment,
+      cuaSecurityAttestation: securityAttestation,
+    });
+
+    expect(registry.getSandbox("alpha")?.cuaSecurityAttestation).toEqual(securityAttestation);
+    const disk = JSON.parse(fs.readFileSync(registry.REGISTRY_FILE, "utf8"));
+    expect(JSON.stringify(disk.sandboxes.alpha.cuaSecurityAttestation)).not.toMatch(
+      /"(endpoint|hostname|cookie|password|token|credential|ssh|vnc|path|url)"\s*:/i,
+    );
+    disk.sandboxes.alpha.cuaSecurityAttestation.endpoint = "https://host.invalid";
+    fs.writeFileSync(registry.REGISTRY_FILE, JSON.stringify(disk));
+
+    expect(() => registry.load()).toThrow("CUA lifecycle record does not match its schema");
   });
 });

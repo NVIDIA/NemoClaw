@@ -11,6 +11,7 @@ import { getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
+import { cuaSecurityAttestationMatches } from "../../cua/security-lifecycle";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
@@ -475,6 +476,31 @@ export function buildCuaTargetDoctorCheck(
   };
 }
 
+export function buildCuaSecurityDoctorCheck(
+  sandboxName: string,
+  sb: SandboxEntry,
+): DoctorCheck | null {
+  const runtime = sb.cuaRuntimeReadiness;
+  if (!runtime) return null;
+  const target = sb.cuaTarget?.target;
+  const attestation = sb.cuaSecurityAttestation;
+  if (!target || !attestation || !cuaSecurityAttestationMatches(attestation, runtime, target)) {
+    return {
+      group: "Sandbox",
+      label: "CUA security",
+      status: "fail",
+      detail: "deny-default security boundary is not verified for the current identities",
+      hint: `run \`${CLI_NAME} ${sandboxName} cua security verify\` with the operator-owned verifier`,
+    };
+  }
+  return {
+    group: "Sandbox",
+    label: "CUA security",
+    status: "ok",
+    detail: `enforced; policy=${attestation.bindings.components.policy.digest}; target=${attestation.bindings.targetIdentityDigest}`,
+  };
+}
+
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -485,6 +511,8 @@ function collectRegisteredSandboxChecks(
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
   const cuaTargetCheck = buildCuaTargetDoctorCheck(sandboxName, sb);
   if (cuaTargetCheck) checks.push(cuaTargetCheck);
+  const cuaSecurityCheck = buildCuaSecurityDoctorCheck(sandboxName, sb);
+  if (cuaSecurityCheck) checks.push(cuaSecurityCheck);
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));

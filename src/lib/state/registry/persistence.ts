@@ -6,6 +6,7 @@ import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
 import {
   parseCuaRuntimeReadiness,
+  parseCuaSecurityAttestation,
   parseCuaTargetAttachment,
   parseCuaTaskResult,
 } from "../../cua/schema";
@@ -99,6 +100,10 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
       : parseCuaRuntimeReadiness(entry.cuaRuntimeReadiness);
   const cuaTarget =
     entry.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(entry.cuaTarget);
+  const cuaSecurityAttestation =
+    entry.cuaSecurityAttestation === undefined
+      ? undefined
+      : parseCuaSecurityAttestation(entry.cuaSecurityAttestation);
   const cuaTaskResults =
     entry.cuaTaskResults === undefined
       ? undefined
@@ -110,6 +115,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     baselineExclusionTransition: _baselineExclusionTransition,
     cuaRuntimeReadiness: _cuaRuntimeReadiness,
     cuaTarget: _cuaTarget,
+    cuaSecurityAttestation: _cuaSecurityAttestation,
     cuaTaskResults: _cuaTaskResults,
     ...rest
   } = entry;
@@ -121,6 +127,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
     ...(cuaTarget ? { cuaTarget } : {}),
+    ...(cuaSecurityAttestation ? { cuaSecurityAttestation } : {}),
     ...(cuaTaskResults ? { cuaTaskResults } : {}),
   };
 }
@@ -157,6 +164,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
       : parseCuaRuntimeReadiness(durable.cuaRuntimeReadiness);
   const cuaTarget =
     durable.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(durable.cuaTarget);
+  const cuaSecurityAttestation =
+    durable.cuaSecurityAttestation === undefined
+      ? undefined
+      : parseCuaSecurityAttestation(durable.cuaSecurityAttestation);
   const cuaTaskResults =
     durable.cuaTaskResults === undefined
       ? undefined
@@ -168,6 +179,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     baselineExclusionTransition: _baselineExclusionTransition,
     cuaRuntimeReadiness: _cuaRuntimeReadiness,
     cuaTarget: _cuaTarget,
+    cuaSecurityAttestation: _cuaSecurityAttestation,
     cuaTaskResults: _cuaTaskResults,
     ...rest
   } = durable;
@@ -180,6 +192,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
     ...(cuaTarget ? { cuaTarget } : {}),
+    ...(cuaSecurityAttestation ? { cuaSecurityAttestation } : {}),
     ...(cuaTaskResults ? { cuaTaskResults } : {}),
   };
 }

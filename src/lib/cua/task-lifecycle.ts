@@ -22,6 +22,7 @@ import {
   type CuaTaskEvidenceIndex,
   type CuaTaskResult,
 } from "./contract";
+import { cuaSecurityAttestationMatches } from "./security-lifecycle";
 
 export interface CuaTaskLifecycleInput {
   operation: CuaTaskOperation;
@@ -283,17 +284,23 @@ function executeLocked(
     return failed(input.operation, "lifecycle_unavailable", false, "runtime");
   }
 
-  const target = sandbox.cuaTarget;
-  if (!target?.target || target.status !== "attached") {
-    return failed(input.operation, "target_unreachable", true, "target");
-  }
-
   const stored = matchingStoredResult(registry, input.sandboxName, input.taskId);
   if (input.operation === "task.start" && stored) {
     return failed(input.operation, "validation_failed", false);
   }
   if ((input.operation === "task.result" || input.operation === "task.status") && stored) {
     return result(stored);
+  }
+
+  const target = sandbox.cuaTarget;
+  if (!target?.target || target.status !== "attached") {
+    return failed(input.operation, "target_unreachable", true, "target");
+  }
+  if (
+    !sandbox.cuaSecurityAttestation ||
+    !cuaSecurityAttestationMatches(sandbox.cuaSecurityAttestation, runtime, target.target)
+  ) {
+    return failed(input.operation, "policy_invalid", false, "policy");
   }
 
   const active = target.activeTask;
