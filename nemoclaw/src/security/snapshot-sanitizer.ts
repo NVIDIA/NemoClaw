@@ -4,8 +4,12 @@
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -52,12 +56,22 @@ function writeSnapshotFile(filePath: string, contents: string): boolean {
 }
 
 function readRegularSnapshotFile(filePath: string): string | null {
+  let fd: number;
   try {
-    const stat = lstatSync(filePath);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    return readFileSync(filePath, "utf-8");
+    if (typeof constants.O_NOFOLLOW !== "number") {
+      const stat = lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    }
+    const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+    fd = openSync(filePath, constants.O_RDONLY | noFollowFlag);
   } catch {
     return null;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return null;
+    return String(readFileSync(fd, "utf-8"));
+  } finally {
+    closeSync(fd);
   }
 }
 

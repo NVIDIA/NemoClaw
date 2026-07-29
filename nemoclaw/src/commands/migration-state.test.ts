@@ -12,6 +12,8 @@ interface FsEntry {
   content?: string;
 }
 const store = new Map<string, FsEntry>();
+const descriptors = new Map<number, string>();
+let nextDescriptor = 100;
 function addDir(p: string): void {
   store.set(p, { type: "dir" });
 }
@@ -33,11 +35,25 @@ vi.mock("node:fs", async (importOriginal) => {
       addDir(p);
     }),
     chmodSync: vi.fn(),
-    readFileSync: (p: string) => {
-      const entry = store.get(p);
-      if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
+    readFileSync: (p: string | number) => {
+      const resolvedPath = typeof p === "number" ? descriptors.get(p) : p;
+      if (!resolvedPath) throw new Error(`EBADF: ${String(p)}`);
+      const entry = store.get(resolvedPath);
+      if (entry?.type !== "file") throw new Error(`ENOENT: ${resolvedPath}`);
       return entry.content ?? "";
     },
+    openSync: (p: string) => {
+      const entry = store.get(p);
+      if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
+      const fd = nextDescriptor++;
+      descriptors.set(fd, p);
+      return fd;
+    },
+    fstatSync: (fd: number) => {
+      const entry = store.get(descriptors.get(fd) ?? "");
+      return { isFile: () => entry?.type === "file" };
+    },
+    closeSync: (fd: number) => descriptors.delete(fd),
     writeFileSync: vi.fn((p: string, data: string) => {
       store.set(p, { type: "file", content: data });
     }),
@@ -121,6 +137,7 @@ function makeLogger(): PluginLogger {
 describe("commands/migration-state", () => {
   beforeEach(() => {
     store.clear();
+    descriptors.clear();
     vi.clearAllMocks();
   });
 
