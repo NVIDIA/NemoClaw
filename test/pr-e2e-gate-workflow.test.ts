@@ -152,7 +152,7 @@ function runControlPlaneStartStep(reviewReason: string) {
 
 function runApprovedForkStartStep() {
   const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-  const approve = step(workflow.jobs["approve-e2e"], "Start approved E2E");
+  const approve = step(workflow.jobs["approve-fork-e2e"], "Start approved fork E2E");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-approve-"));
   const binDir = path.join(tempDir, "bin");
   const argumentsPath = path.join(tempDir, "node-arguments");
@@ -309,7 +309,7 @@ describe("PR E2E gate workflow", () => {
     const required = workflow.jobs.required;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
-    const approveE2e = workflow.jobs["approve-e2e"];
+    const approveE2e = workflow.jobs["approve-fork-e2e"];
     const longestSelectedE2eMinutes = 130;
     const controllerWaitMinutes = 140;
     const evidenceAndKillGraceMinutes = 10.5;
@@ -473,13 +473,13 @@ describe("PR E2E gate workflow", () => {
       approval_head_sha: "${{ steps.start.outputs.approval_head_sha }}",
       approval_base_sha: "${{ steps.start.outputs.approval_base_sha }}",
     });
-    expect(approveE2e.name).toBe("Approve credentialed E2E for reviewed PR");
+    expect(approveE2e.name).toBe("Approve credentialed E2E for fork PR");
     expect(approveE2e.needs).toBe("coordinate");
     expect(approveE2e.if).toBe(
-      "${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode != '' && github.run_attempt == 1 }}",
+      "${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode == 'start-approved-fork' && github.run_attempt == 1 }}",
     );
     expect(approveE2e.environment).toEqual({
-      name: "${{ needs.coordinate.outputs.approval_environment }}",
+      name: "approve-credentialed-e2e-for-fork-pr",
       deployment: false,
     });
     expect(approveE2e.permissions).toEqual({
@@ -522,9 +522,8 @@ describe("PR E2E gate workflow", () => {
     expect(start.run).toContain("--mode start-control-plane");
     expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
     expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
-    const approvedStart = step(approveE2e, "Start approved E2E");
+    const approvedStart = step(approveE2e, "Start approved fork E2E");
     expect(approvedStart.env).toMatchObject({
-      APPROVAL_MODE: "${{ needs.coordinate.outputs.approval_mode }}",
       APPROVAL_RUN_ATTEMPT: "${{ github.run_attempt }}",
       APPROVAL_RUN_ID: "${{ github.run_id }}",
       EXPECTED_BASE_SHA: "${{ needs.coordinate.outputs.approval_base_sha }}",
@@ -535,8 +534,7 @@ describe("PR E2E gate workflow", () => {
       WORKFLOW_RUN_ATTEMPT: "${{ github.run_attempt }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
     });
-    expect(approvedStart.run).toContain("start-approved-control-plane | start-approved-fork");
-    expect(approvedStart.run).toContain('--mode "$APPROVAL_MODE"');
+    expect(approvedStart.run).toContain("--mode start-approved-fork");
     expect(approvedStart.run).toContain('--approval-run-id "$APPROVAL_RUN_ID"');
     expect(approvedStart.run).toContain('--approval-run-attempt "$APPROVAL_RUN_ATTEMPT"');
     expect(approvedStart.run).toContain('--head "$EXPECTED_HEAD_SHA"');
@@ -734,7 +732,7 @@ describe("PR E2E gate workflow", () => {
   it("orders the coordinate steps and always finalizes through the controller", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const coordinate = workflow.jobs.coordinate;
-    const approveE2e = workflow.jobs["approve-e2e"];
+    const approveE2e = workflow.jobs["approve-fork-e2e"];
 
     expect((coordinate.steps ?? []).map((candidate) => candidate.name)).toEqual([
       "Checkout controller",
@@ -772,7 +770,7 @@ describe("PR E2E gate workflow", () => {
       "Setup Node",
       "Install controller dependencies",
       "Create private workspace",
-      "Start approved E2E",
+      "Start approved fork E2E",
       "Upload approved risk plan",
       "Wait for approved E2E run",
       "Download approved evidence",
