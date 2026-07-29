@@ -357,7 +357,8 @@ describe("agent base image provisioning", () => {
             "/test/root/agents/langchain-deepagents-code/requirements.lock",
           ],
           validateImage: expect.any(Function),
-          validationDescription: "deepagents-code==0.1.34",
+          validationDescription:
+            "deepagents-code==0.1.34 and the immutable security package inventory",
         }),
       );
     });

@@ -700,6 +700,16 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
   return openshellError ? `${detail} Last OpenShell readiness error: ${openshellError}` : detail;
 }
 
+// Default seconds to wait for OpenShell to re-register a recreated sandbox as
+// Ready before giving up and surfacing the manual-recover hint. Aligned with
+// `connect`'s readiness budget (`waitForSandboxReadyOrExit` defaults to 120s):
+// both prove the same post-recreate sandbox readiness, but this path used to
+// give up 4x sooner (30s), so a cold-start `phase: Error` settling window that
+// exceeded 30s but was within `connect`'s 120s left the primary dashboard/API
+// forward unstarted — exactly why `connect --probe-only` recovers what `start`
+// abandons (#7227). Env-tunable via NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS.
+const GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS = 120;
+
 /**
  * Wait until OpenShell has re-registered a directly recreated sandbox as
  * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
@@ -718,7 +728,10 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     Number.isFinite(options.timeoutSeconds) &&
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
-      : readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", 30);
+      : readNonNegativeNumberEnv(
+          "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+          GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS,
+        );
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     options.intervalSeconds ?? 3,
@@ -914,7 +927,7 @@ export function waitForRecoveredSandboxGateway(
     Number.isFinite(options.timeoutSeconds) &&
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
-      : 30;
+      : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
   const timeoutSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
     requestedTimeoutSeconds,
