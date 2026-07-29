@@ -153,6 +153,37 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(gatewayStatePath)).toBe(true);
   });
 
+  it("keeps selected gateway state during scoped cleanup under external supervision (#6576)", () => {
+    const test = fixture(true);
+    const gatewayStatePath = writeGatewayState(test);
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: () => true,
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+          stateDir: path.dirname(gatewayStatePath),
+          supervisor: {
+            kind: "systemd-user",
+            serviceName: "external-openshell.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: [],
+        }),
+      },
+      [{ name: "nemoclaw" }, { name: "sibling" }],
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.existsSync(gatewayStatePath)).toBe(true);
+  });
+
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
