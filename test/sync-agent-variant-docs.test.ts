@@ -22,6 +22,8 @@ import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SYNC_SCRIPT = path.join(REPO_ROOT, "scripts/sync-agent-variant-docs.mts");
 const NODE_MODULES = path.join(REPO_ROOT, "node_modules");
+const AGENT_VARIANTS = ["openclaw", "hermes", "deepagents"] as const;
+type AgentVariant = (typeof AGENT_VARIANTS)[number];
 
 const FRONTMATTER = `---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -36,7 +38,104 @@ content:
 ---
 `;
 
+function runVariantScopeFixture(
+  source: string,
+  publishedVariants: readonly AgentVariant[],
+): { output: string; status: number | null } {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-agent-variant-scope-"));
+  try {
+    const fixtureScript = path.join(fixtureRoot, "scripts/sync-agent-variant-docs.mts");
+    mkdirSync(path.dirname(fixtureScript), { recursive: true });
+    writeFileSync(fixtureScript, readFileSync(SYNC_SCRIPT, "utf8"));
+    symlinkSync(NODE_MODULES, path.join(fixtureRoot, "node_modules"), "junction");
+
+    const docsRoot = path.join(fixtureRoot, "docs");
+    mkdirSync(path.join(docsRoot, "reference"), { recursive: true });
+    const variantNavigation = AGENT_VARIANTS.map((variant) => {
+      const layout = publishedVariants.includes(variant)
+        ? `
+          - page: Example
+            path: reference/example.mdx`
+        : " []";
+      return `      - slug: ${variant}
+        layout:${layout}`;
+    }).join("\n");
+    writeFileSync(
+      path.join(docsRoot, "index.yml"),
+      `navigation:
+  - section: User Guide
+    variants:
+${variantNavigation}
+`,
+    );
+    writeFileSync(path.join(docsRoot, "reference/example.mdx"), source);
+
+    const result = spawnSync(process.execPath, ["--import", "tsx", realpathSync(fixtureScript)], {
+      cwd: fixtureRoot,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    return {
+      output: `${result.stdout}\n${result.stderr}`,
+      status: result.status,
+    };
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
 describe("sync-agent-variant-docs", () => {
+  it("rejects a partial-variant page without an explicit scope declaration (#6576)", () => {
+    const result = runVariantScopeFixture(
+      `---
+title: "Example"
+---
+OpenClaw content.
+`,
+      ["openclaw"],
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      "docs/reference/example.mdx is published for [openclaw] but does not declare agent-variants",
+    );
+    expect(result.output).toContain(
+      "Publish each source page in every applicable guide variant, or declare the intentional subset in frontmatter.",
+    );
+  });
+
+  it("rejects a scope declaration that differs from navigation membership (#6576)", () => {
+    const result = runVariantScopeFixture(
+      `---
+title: "Example"
+agent-variants: ["openclaw", "hermes"]
+---
+OpenClaw content.
+`,
+      ["openclaw"],
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      "docs/reference/example.mdx declares agent-variants [openclaw, hermes] but navigation publishes [openclaw]",
+    );
+  });
+
+  it("accepts an explicit scope that matches navigation membership (#6576)", () => {
+    const result = runVariantScopeFixture(
+      `---
+title: "Example"
+agent-variants: ["openclaw"]
+---
+OpenClaw content.
+`,
+      ["openclaw"],
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.output).not.toContain("Guide variant scope does not match docs/index.yml");
+  });
+
   it("passes --check when generated docs are already synchronized", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-agent-variant-check-"));
     try {
