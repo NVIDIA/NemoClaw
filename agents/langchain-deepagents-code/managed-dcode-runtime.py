@@ -2482,6 +2482,21 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         committed_reservation = invocation_reservation
         invocation_reservation = None
         _close_validation_invocation_reservation(committed_reservation)
+        if source_watch.changed():
+            _terminate_validation_process(process)
+            process.wait()
+            return (
+                _validation_receipt(
+                    profile,
+                    command_id,
+                    argv,
+                    "source_identity_mismatch",
+                    started,
+                    exit_code=process.returncode,
+                    verified_source_identity=verified_source_identity,
+                ),
+                False,
+            )
 
         output = {"stdout": bytearray(), "stderr": bytearray()}
         selector = selectors.DefaultSelector()
