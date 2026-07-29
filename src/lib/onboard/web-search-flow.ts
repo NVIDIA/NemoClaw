@@ -74,6 +74,7 @@ export interface WebSearchFlowDeps {
 }
 
 export interface WebSearchFlowHelpers {
+  webSearchProviderForConfig(config: WebSearchConfig): WebSearchProvider;
   validateWebSearchApiKey(provider: WebSearchProvider, apiKey: string): CurlProbeResult;
   validateBraveSearchApiKey(apiKey: string): CurlProbeResult;
   validateTavilySearchApiKey(apiKey: string): CurlProbeResult;
@@ -103,6 +104,7 @@ export interface WebSearchFlowHelpers {
   verifyWebSearchInsideSandbox(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
+    provider: WebSearchProvider,
   ): boolean;
 }
 
@@ -479,8 +481,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
   function verifyWebSearchInsideSandbox(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
+    provider: WebSearchProvider,
   ): boolean {
-    return verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, {
+    return verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, provider, {
       runCaptureOpenshell: deps.runCaptureOpenshell,
       cliName: deps.cliName,
       webSearchEnvFor,
@@ -489,6 +492,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
   }
 
   return {
+    webSearchProviderForConfig,
     validateWebSearchApiKey,
     validateBraveSearchApiKey,
     validateTavilySearchApiKey,

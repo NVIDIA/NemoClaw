@@ -65,6 +65,7 @@ async function finalizeMigration(
     stagedLegacyKeys,
     migratedLegacyKeys,
     webSearchEnabled: false,
+    webSearchProvider: null,
     deps: {
       ensureAgentDashboardForward: () => 0,
       setDefaultSandbox: () => undefined,

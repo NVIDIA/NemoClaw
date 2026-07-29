@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -22,6 +23,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   stagedLegacyKeys: readonly string[];
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
+  webSearchProvider: WebSearchVerifyProvider | null;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
     /**
@@ -67,7 +69,11 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * Other web-search diagnostics remain best-effort. Returns false only for
      * a confirmed exposure so finalization cannot report the sandbox as ready.
      */
-    verifyWebSearchInsideSandbox(sandboxName: string, agent: Agent): boolean;
+    verifyWebSearchInsideSandbox(
+      sandboxName: string,
+      agent: Agent,
+      provider: WebSearchVerifyProvider,
+    ): boolean;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -194,6 +200,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   hermesAuthMethod,
   hermesToolGateways,
   webSearchEnabled,
+  webSearchProvider,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -210,7 +217,9 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     // diagnostics remain best-effort, but a confirmed raw credential must
     // prevent a successful handoff (#7425).
     const webSearchCredentialBoundarySafe =
-      !webSearchEnabled || deps.verifyWebSearchInsideSandbox(sandboxName, agent);
+      !webSearchEnabled ||
+      (webSearchProvider !== null &&
+        deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);

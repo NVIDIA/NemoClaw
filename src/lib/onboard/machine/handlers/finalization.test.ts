@@ -86,6 +86,7 @@ function baseOptions(
     stagedLegacyKeys: [],
     migratedLegacyKeys: new Set(),
     webSearchEnabled: false,
+    webSearchProvider: null,
     deps,
   };
 }
@@ -241,6 +242,7 @@ describe("finalization handlers", () => {
       ...baseOptions(deps),
       agent,
       webSearchEnabled: true,
+      webSearchProvider: "brave",
     });
 
     const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
@@ -349,8 +351,9 @@ describe("finalization handlers", () => {
       ...baseOptions(depsOn),
       agent,
       webSearchEnabled: true,
+      webSearchProvider: "brave",
     });
-    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent);
+    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent, "brave");
     // Probe runs after sandbox-process recovery so the post-policy state is live.
     expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(
       callsOn.recoverProcesses.mock.invocationCallOrder[0],
@@ -370,6 +373,7 @@ describe("finalization handlers", () => {
       ...baseOptions(deps),
       agent,
       webSearchEnabled: true,
+      webSearchProvider: "brave",
     });
 
     expect(result.deploymentHealthy).toBe(false);

@@ -234,6 +234,7 @@ export function createPhases(
       stagedLegacyKeys: [],
       migratedLegacyKeys: new Set(),
       webSearchEnabled: () => false,
+      webSearchProvider: (config) => (config.provider === "tavily" ? "tavily" : "brave"),
     },
     finalizationDeps: {
       ensureAgentDashboardForward: vi.fn(() => {

@@ -4,7 +4,7 @@
 import YAML from "yaml";
 import { shellQuote } from "../core/shell-quote";
 
-type WebSearchVerifyProvider = "brave" | "tavily";
+export type WebSearchVerifyProvider = "brave" | "tavily";
 
 export type WebSearchVerifyAgent =
   | {
@@ -25,7 +25,7 @@ export type WebSearchVerifyDeps = {
   warn?: (message?: string) => void;
 };
 
-export type WebSearchEnvBoundary = "absent" | "placeholder" | "raw-secret";
+export type WebSearchEnvBoundary = "absent" | "placeholder" | "raw-secret" | "unknown";
 
 // Unique marker prefixing the sentinel so the host can extract it even when a
 // shell prints unrelated text; the marker cannot appear in incidental output.
@@ -57,15 +57,15 @@ function buildWebSearchEnvBoundaryScript(envKey: string): string {
 /**
  * Extract the typed boundary state from the marked sentinel. The marker match
  * ignores any surrounding shell noise, so login banners cannot mask a real
- * `raw-secret` result as `absent`. Absent marker (including a failed probe
- * returning null) is treated as `absent` so a probe hiccup never raises a false
- * security alert.
+ * `raw-secret` result as `absent`. A missing or malformed marker is `unknown`;
+ * finalization must not report a security boundary as safe when it could not
+ * inspect it.
  */
 export function classifyWebSearchEnvBoundary(
   probeOutput: string | null | undefined,
 ): WebSearchEnvBoundary {
   const match = (probeOutput ?? "").match(WEB_SEARCH_ENV_BOUNDARY_PATTERN);
-  return (match?.[1] as WebSearchEnvBoundary) ?? "absent";
+  return (match?.[1] as WebSearchEnvBoundary) ?? "unknown";
 }
 
 /**
@@ -84,25 +84,41 @@ function checkWebSearchEnvSecretBoundary(
   warn: (message?: string) => void,
 ): boolean {
   const envKey = deps.webSearchEnvFor(provider);
-  const probe = deps.runCaptureOpenshell(
-    // `sh -c` (not `-lc`): no login profiles run, so their output cannot
-    // contaminate the sentinel the host classifies.
-    [
-      "sandbox",
-      "exec",
-      "-n",
-      sandboxName,
-      "--",
-      "sh",
-      "-c",
-      buildWebSearchEnvBoundaryScript(envKey),
-    ],
-    { ignoreError: true, timeout: 10_000 },
-  );
-  if (classifyWebSearchEnvBoundary(probe) !== "raw-secret") return false;
+  let probe: string | null = null;
+  try {
+    probe = deps.runCaptureOpenshell(
+      // `sh -c` (not `-lc`): no login profiles run, so their output cannot
+      // contaminate the sentinel the host classifies.
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        sandboxName,
+        "--",
+        "sh",
+        "-c",
+        buildWebSearchEnvBoundaryScript(envKey),
+      ],
+      { ignoreError: true, timeout: 10_000 },
+    );
+  } catch {
+    // The missing sentinel below is handled as an unsafe, unknown boundary.
+  }
+  const boundary = classifyWebSearchEnvBoundary(probe);
+  if (boundary === "absent" || boundary === "placeholder") return false;
 
   const label = deps.webSearchLabelFor(provider);
   warn("");
+  if (boundary === "unknown") {
+    warn(`  ✗ SECURITY: could not verify the ${label} credential isolation boundary.`);
+    warn(`    The ${envKey} probe inside sandbox '${sandboxName}' returned no valid sentinel, so`);
+    warn("    NemoClaw cannot confirm that the agent is unable to read the raw credential.");
+    warn("    Retry onboarding after checking sandbox health. If the probe still fails, recreate");
+    warn("    the sandbox before using web search:");
+    warn(`      ${deps.cliName()} onboard --recreate-sandbox`);
+    return true;
+  }
+
   warn(`  ✗ SECURITY: the ${label} credential is exposed in the sandbox environment.`);
   warn(`    ${envKey} holds a raw key inside sandbox '${sandboxName}', so the agent can read and`);
   warn("    print it when asked to list environment variables or API keys.");
@@ -212,11 +228,14 @@ function hasTavilyResult(body: string): boolean {
 export function verifyWebSearchInsideSandbox(
   sandboxName: string,
   agent: WebSearchVerifyAgent,
+  provider: WebSearchVerifyProvider,
   deps: WebSearchVerifyDeps,
 ): boolean {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const agentName = agent?.name || "openclaw";
+  if (checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn)) return false;
+
   try {
     if (agentName === "hermes") {
       // Hermes v2026.6.19 `dump` does not expose web.backend. Inspect the
@@ -250,8 +269,6 @@ export function verifyWebSearchInsideSandbox(
         );
         return true;
       }
-
-      if (checkWebSearchEnvSecretBoundary(sandboxName, "tavily", deps, warn)) return false;
 
       const placeholder = "openshell:resolve:env:TAVILY_API_KEY";
       const probe = deps.runCaptureOpenshell(
@@ -304,7 +321,6 @@ export function verifyWebSearchInsideSandbox(
           warn(`  ⚠ Web search provider '${String(provider)}' cannot be verified.`);
           return true;
         }
-        if (checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn)) return false;
         const providerLabel = provider === "tavily" ? "Tavily Search" : "Brave Search";
         // Current OpenClaw schema keeps the provider-owned apiKey under
         // plugins.entries.<provider>.config.webSearch; older configs carried

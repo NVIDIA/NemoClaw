@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WebSearchConfig } from "../../inference/web-search";
+import type { WebSearchConfig, WebSearchProvider } from "../../inference/web-search";
 import { assertSandboxCreatedContext, type OnboardFlowContext } from "./flow-context";
 import {
   createAgentSetupPhase,
@@ -38,6 +38,7 @@ export interface FinalOnboardFlowPhaseOptions<
     stagedLegacyKeys: readonly string[];
     migratedLegacyKeys: ReadonlySet<string>;
     webSearchEnabled(webSearchConfig: WebSearchConfig | null): boolean;
+    webSearchProvider(webSearchConfig: WebSearchConfig): WebSearchProvider;
   };
   finalizationDeps: FinalizationStateOptions<
     Context["agent"],
@@ -108,6 +109,7 @@ export function createFinalOnboardFlowPhases<
 
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "finalization");
+    const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -118,7 +120,11 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       stagedLegacyKeys: options.finalization.stagedLegacyKeys,
       migratedLegacyKeys: options.finalization.migratedLegacyKeys,
-      webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
+      webSearchEnabled,
+      webSearchProvider:
+        webSearchEnabled && context.webSearchConfig
+          ? options.finalization.webSearchProvider(context.webSearchConfig)
+          : null,
       deps: options.finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
@@ -126,6 +132,7 @@ export function createFinalOnboardFlowPhases<
 
   const postVerifyPhase = createPostVerifyPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "post verification");
+    const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
     const postVerifyResult = await handlePostVerifyState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -136,7 +143,11 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       stagedLegacyKeys: options.finalization.stagedLegacyKeys,
       migratedLegacyKeys: options.finalization.migratedLegacyKeys,
-      webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
+      webSearchEnabled,
+      webSearchProvider:
+        webSearchEnabled && context.webSearchConfig
+          ? options.finalization.webSearchProvider(context.webSearchConfig)
+          : null,
       deps: options.finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };
