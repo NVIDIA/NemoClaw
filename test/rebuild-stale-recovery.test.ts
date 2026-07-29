@@ -173,6 +173,10 @@ const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
       path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs"),
     )});
 if (a[0]==="info") {
+  if (a.includes("{{.ID}}")) {
+    process.stdout.write("engine-a\\n");
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
   process.exit(0);
 }

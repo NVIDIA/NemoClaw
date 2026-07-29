@@ -271,7 +271,11 @@ const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
     )});
 const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
 const readProvenance = () => fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : {};
-if (a[0] === "info") { process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n"); process.exit(0); }
+if (a[0] === "info") {
+  if (a.includes("{{.ID}}")) { process.stdout.write("engine-a\\n"); process.exit(0); }
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
 if (a[0] === "build") {
   const labelIndex = a.indexOf("--label");
   const tagIndex = a.indexOf("-t");
