@@ -19,8 +19,7 @@
  * -----------------
  * Delete this debounce once OpenShell guarantees `sandbox list` skips the
  * brief Error transition during a known recreate. A real-Docker GPU E2E
- * reproduction (e.g. `e2e-branch-validation:gpu`,
- * `gpu-repo-local-ollama-openclaw`) showing a transient teardown-Error that
+ * reproduction (for example, `gpu-e2e`) showing a transient teardown-Error that
  * recovers to Ready is the runtime evidence required.
  */
 

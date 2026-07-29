@@ -217,7 +217,7 @@ describe("native PR E2E required job", () => {
             id: 18,
             status: "in_progress",
             conclusion: null,
-            output: { title: "E2E reviewer authorization required to run E2E" },
+            output: { title: "E2E maintainer authorization required to run E2E" },
           }),
         ]),
       ),
@@ -373,7 +373,7 @@ describe("native PR E2E required job", () => {
                   ? check(undefined, {
                       status: "in_progress",
                       conclusion: null,
-                      output: { title: "E2E reviewer authorization required to run E2E" },
+                      output: { title: "E2E maintainer authorization required to run E2E" },
                     })
                   : coordinationQueries === 2
                     ? check(undefined, {

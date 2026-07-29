@@ -27,46 +27,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "does not expose stale published-launchable controls",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "fails closed on unsupported reusable test-suite values before checkout",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "grants the reusable workflow permission ceiling so GitHub can start the run",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps instance deletion inside the workflow ownership boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps manual dispatch inputs out of the Brev credential boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps write permissions out of the secret-bearing target-branch job",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "passes only declared inputs and secrets to branch validation",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "verifies the pinned Brev CLI digest before extracting it",
-      "category": "security"
-    },
-    {
       "file": "test/candidate-compat.test.ts",
       "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
       "category": "security"
