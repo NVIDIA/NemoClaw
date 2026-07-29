@@ -362,6 +362,12 @@ describe("sandbox skill action orchestration", () => {
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
       skillDir,
       sharedPaths,
+      {
+        expectedRootIdentity: {
+          dev: expect.any(Number),
+          ino: expect.any(Number),
+        },
+      },
     );
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();

@@ -292,6 +292,13 @@ export async function installSandboxSkill(
     process.exit(1);
   }
 
+  const skillDirStat = lstatOrNull(skillDir);
+  if (!skillDirStat?.isDirectory() || skillDirStat.isSymbolicLink()) {
+    console.error(`  Skill directory '${skillDir}' must remain a regular directory.`);
+    process.exit(1);
+  }
+  const expectedRootIdentity = { dev: skillDirStat.dev, ino: skillDirStat.ino };
+
   const skillMdRead = readRegularFileNoFollow(skillMdPath);
   if (!skillMdRead.success && skillMdRead.reason === "missing") {
     console.error(`  No SKILL.md found in '${skillDir}'.`);
@@ -360,7 +367,9 @@ export async function installSandboxSkill(
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
 
     if (paths.uploadDirSharedWithAgent) {
-      const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths);
+      const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths, {
+        expectedRootIdentity,
+      });
       if (!fresh.success || !fresh.contentDigest) {
         if (fresh.reason === "destination_exists") {
           console.error(

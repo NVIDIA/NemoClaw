@@ -308,6 +308,20 @@ interface SkillArchiveSnapshot {
   skillName: string;
 }
 
+export interface SkillRootIdentity {
+  dev: number;
+  ino: number;
+}
+
+function matchesSkillRootIdentity(stat: fs.Stats, expected: SkillRootIdentity): boolean {
+  return (
+    stat.isDirectory() &&
+    !stat.isSymbolicLink() &&
+    stat.dev === expected.dev &&
+    stat.ino === expected.ino
+  );
+}
+
 function isPathInsideRoot(root: string, candidate: string, expectedRelativePath: string): boolean {
   const relative = path.relative(root, candidate);
   const expected = path.normalize(expectedRelativePath);
@@ -369,14 +383,27 @@ function copyRegularFileIntoSnapshot(
 function createSkillArchiveSnapshot(
   localDir: string,
   files: string[],
-  opts: { beforeSnapshotFileRead?: (relativePath: string) => void } = {},
+  expectedRootIdentity: SkillRootIdentity,
+  opts: {
+    beforeSnapshotFileRead?: (relativePath: string) => void;
+    beforeSnapshotRootRead?: () => void;
+  } = {},
 ): SkillArchiveSnapshot | null {
   const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-snapshot-"));
   try {
     fs.chmodSync(snapshotDir, 0o700);
-    const sourceRoot = fs.realpathSync(localDir);
-    const rootStat = fs.lstatSync(sourceRoot);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+    opts.beforeSnapshotRootRead?.();
+    let sourceRoot: string;
+    try {
+      const selectedRoot = fs.lstatSync(localDir);
+      if (!matchesSkillRootIdentity(selectedRoot, expectedRootIdentity)) return null;
+
+      sourceRoot = fs.realpathSync(localDir);
+      const rootStat = fs.lstatSync(sourceRoot);
+      if (!matchesSkillRootIdentity(rootStat, expectedRootIdentity)) return null;
+    } catch {
+      return null;
+    }
 
     for (const relativePath of files.slice().sort()) {
       opts.beforeSnapshotFileRead?.(relativePath);
@@ -504,11 +531,25 @@ export function installFreshSharedSkill(
   paths: SkillPaths,
   opts: {
     beforeSnapshotFileRead?: (relativePath: string) => void;
+    beforeSnapshotRootRead?: () => void;
+    expectedRootIdentity?: SkillRootIdentity;
     sshExecImpl?: typeof sshExec;
   } = {},
 ): FreshSharedSkillInstallResult {
   if (!paths.uploadDirSharedWithAgent || paths.mirrorDir) {
     return { success: false, uploaded: 0, reason: "remote_state_unknown" };
+  }
+  let expectedRootIdentity = opts.expectedRootIdentity;
+  if (!expectedRootIdentity) {
+    try {
+      const rootStat = fs.lstatSync(localDir);
+      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+        return { success: false, uploaded: 0, reason: "snapshot_failed" };
+      }
+      expectedRootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
+    } catch {
+      return { success: false, uploaded: 0, reason: "snapshot_failed" };
+    }
   }
   const collected = collectFiles(localDir);
   if (
@@ -518,8 +559,9 @@ export function installFreshSharedSkill(
   ) {
     return { success: false, uploaded: 0, reason: "snapshot_failed" };
   }
-  const snapshot = createSkillArchiveSnapshot(localDir, collected.files, {
+  const snapshot = createSkillArchiveSnapshot(localDir, collected.files, expectedRootIdentity, {
     beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
+    beforeSnapshotRootRead: opts.beforeSnapshotRootRead,
   });
   if (
     !snapshot ||

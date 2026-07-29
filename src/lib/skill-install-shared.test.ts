@@ -204,6 +204,37 @@ describe("fresh shared-agent skill install", () => {
     }
   });
 
+  it("rejects the selected skill root when it is swapped before snapshot creation (#7634)", () => {
+    const skillDir = makeSkill();
+    const replacementDir = makeSkill();
+    const originalRoot = lstatSync(skillDir);
+    const paths = pathsFor("/sandbox/.deepagents");
+    let sshCalled = false;
+    try {
+      const result = installFreshSharedSkill(CTX, skillDir, paths, {
+        expectedRootIdentity: { dev: originalRoot.dev, ino: originalRoot.ino },
+        beforeSnapshotRootRead: () => {
+          rmSync(skillDir, { recursive: true, force: true });
+          symlinkSync(replacementDir, skillDir, "dir");
+        },
+        sshExecImpl: () => {
+          sshCalled = true;
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+
+      expect(result).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "snapshot_failed",
+      });
+      expect(sshCalled).toBe(false);
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+      rmSync(replacementDir, { recursive: true, force: true });
+    }
+  });
+
   it.runIf(process.platform === "linux")(
     "installs exact bytes directly and leaves the legacy upload path untouched",
     () => {
