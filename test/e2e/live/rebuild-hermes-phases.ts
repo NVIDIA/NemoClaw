@@ -3,7 +3,7 @@
 
 export const REBUILD_HERMES_PHASES = [
   "confirm Docker and prepare Hermes rebuild resources",
-  "onboard the current Hermes sandbox",
+  "prepare trusted gateway inference and the current Hermes base",
   "pull and verify the historical Hermes base fixture",
   "create the historical Hermes sandbox",
   "seed persistent Hermes state and registry metadata",
