@@ -355,6 +355,9 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(JSON.stringify(pending?.body)).toContain(`base SHA \`${BASE_SHA}\``);
       expect(JSON.stringify(pending?.body)).toContain("targets:");
       expect(JSON.stringify(pending?.body)).toContain("deterministic plan");
+      expect(JSON.stringify(pending?.body)).toContain(
+        "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
+      );
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).not.toContain("approval_");
       expect(outputs).toContain("finalized=true");
