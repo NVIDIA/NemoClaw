@@ -10,8 +10,8 @@ const offlineSourceEntry: {
   agent: string;
   imageTag: string | null;
   openshellDriver: string;
-  provider: string;
-  model: string;
+  provider: string | null;
+  model: string | null;
 } = {
   name: "alpha",
   agent: "openclaw",
@@ -77,6 +77,23 @@ describe("runSandboxSnapshot restore: source sandbox no longer running", () => {
     const errors = consoleError.mock.calls.flat().join("\n");
     expect(errors).toContain(
       "source 'alpha' is not running and its registry entry records no image",
+    );
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("stops before creating a replacement when the source inference route is incomplete", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubOfflineSource({ ...offlineSourceEntry, model: null });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "source 'alpha' has no complete durable inference route",
     );
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
