@@ -3774,6 +3774,9 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
 | `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION` | `1`, `true`, `yes`, or `on` to enable | Skips the live Slack `auth.test` and `apps.connections.open` credential probes during onboard and `channels add slack`. Use only in restricted networks or hermetic test environments; Slack token format checks still apply. |
 </AgentOnly>
+<AgentOnly variant="openclaw">
+| `NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL` | `1` to enable | Skips the interactive Google Chat webhook-tunnel derivation and Google Cloud Console confirmation during onboard, accepting a pre-supplied `GOOGLECHAT_AUDIENCE` instead. Use only in hermetic test environments; unlike the Slack and Telegram probes this skips a required operator step, so the channel receives no inbound events unless you configured the Console endpoint out of band. The audience is still shape-validated. |
+</AgentOnly>
 | `NEMOCLAW_RESOURCE_PROFILE` | profile name or `default` | Selects a sandbox CPU/RAM resource profile from the blueprint during onboarding. `default` means no resource preference, so NemoClaw passes no OpenShell CPU or memory flags. Unknown names fail fast. |
 | `NEMOCLAW_CPU` | percentage or Kubernetes CPU quantity | Overrides the selected profile's CPU size passed to OpenShell `--cpu`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |

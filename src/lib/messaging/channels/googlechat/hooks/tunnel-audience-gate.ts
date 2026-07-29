@@ -104,13 +104,14 @@ export function createGooglechatTunnelAudienceGateHook(
     // inbound webhooks. A pre-supplied GOOGLECHAT_AUDIENCE does NOT bypass this —
     // the Console/appPrincipal steps still require a human.
     //
-    // Exception (test/automation opt-in): when NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL=1
-    // AND the audience is supplied up front, the operator asserts the Console
-    // endpoint is already configured out-of-band, so accept that audience and skip
-    // only the live-tunnel derivation + Console confirmation. The flag is never set
-    // in normal onboarding, so the default contract above is unchanged; it exists
-    // so the live E2E fake-token matrix can drive Google Chat headless. The audience
-    // is still shape-validated below, so this narrows — it does not disable — the gate.
+    // Exception (hermetic-test opt-in, mirrors NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION and
+    // NEMOCLAW_SKIP_TELEGRAM_REACHABILITY): when NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL=1 AND the
+    // audience is supplied up front, accept that audience and skip only the live-tunnel
+    // derivation + Console confirmation. Documented in docs/reference/commands.mdx as a
+    // test-only flag; never set in normal onboarding (the live channels-stop-start matrix
+    // sets it to drive Google Chat headless), so the default contract above is unchanged.
+    // The audience is still shape-validated below, so this narrows — it does not disable —
+    // the gate.
     if (context.isInteractive === false) {
       const presetAudience =
         readString(context.inputs?.audience) || readString(env.GOOGLECHAT_AUDIENCE);

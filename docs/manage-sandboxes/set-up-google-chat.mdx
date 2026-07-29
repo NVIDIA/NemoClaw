@@ -45,7 +45,7 @@ If `GOOGLECHAT_AUDIENCE` already contains the public webhook URL, NemoClaw uses 
 That operator-managed endpoint must preserve `/googlechat` and deny every other dashboard or control path before forwarding to OpenClaw.
 
 Google Chat enrollment always requires an interactive terminal.
-NemoClaw skips the channel when `NEMOCLAW_NON_INTERACTIVE=1`, even if you provide the audience and service-account environment variables.
+Supported non-interactive onboarding skips the channel, because the Console endpoint and appPrincipal steps need an operator.
 
 ## Configure Access
 
