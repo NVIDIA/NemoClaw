@@ -321,6 +321,40 @@ process.exit(2);
 `,
         { mode: 0o755 },
       );
+      const writeCompletedApprovalBaseline = (pending: unknown[]) => {
+        const localRequest = pending.find(
+          (value) =>
+            typeof value === "object" &&
+            value !== null &&
+            "deviceId" in value &&
+            value.deviceId === deviceId,
+        ) as Record<string, unknown>;
+        const pairedBaseline = {
+          ...localRequest,
+          scopes: ["operator.pairing"],
+          approvedScopes: ["operator.pairing"],
+          tokens: {
+            operator: {
+              token: "pairing-only-clone-token",
+              role: "operator",
+              scopes: ["operator.pairing"],
+            },
+          },
+        };
+        fs.writeFileSync(pairedFile, JSON.stringify({ [deviceId]: pairedBaseline }));
+        fs.writeFileSync(
+          authFile,
+          JSON.stringify({
+            version: 1,
+            deviceId,
+            tokens: pairedBaseline.tokens,
+          }),
+        );
+      };
+      const clearCompletedApprovalBaseline = (_pending: unknown[]) => {
+        fs.rmSync(pairedFile, { force: true });
+        fs.rmSync(authFile, { force: true });
+      };
       const run = (
         pending: unknown[],
         options: {
@@ -349,39 +383,10 @@ process.exit(2);
           path.join(devicesDir, "pending.json"),
           JSON.stringify(options.localPending ?? pendingByRequestId),
         );
-        if (options.completedApproval) {
-          const localRequest = pending.find(
-            (value) =>
-              typeof value === "object" &&
-              value !== null &&
-              "deviceId" in value &&
-              value.deviceId === deviceId,
-          ) as Record<string, unknown>;
-          const pairedBaseline = {
-            ...localRequest,
-            scopes: ["operator.pairing"],
-            approvedScopes: ["operator.pairing"],
-            tokens: {
-              operator: {
-                token: "pairing-only-clone-token",
-                role: "operator",
-                scopes: ["operator.pairing"],
-              },
-            },
-          };
-          fs.writeFileSync(pairedFile, JSON.stringify({ [deviceId]: pairedBaseline }));
-          fs.writeFileSync(
-            authFile,
-            JSON.stringify({
-              version: 1,
-              deviceId,
-              tokens: pairedBaseline.tokens,
-            }),
-          );
-        } else {
-          fs.rmSync(pairedFile, { force: true });
-          fs.rmSync(authFile, { force: true });
-        }
+        const configureCompletedApprovalBaseline = options.completedApproval
+          ? writeCompletedApprovalBaseline
+          : clearCompletedApprovalBaseline;
+        configureCompletedApprovalBaseline(pending);
         return spawnSync("sh", ["-c", options.approvalScript ?? script], {
           encoding: "utf-8",
           env: {
