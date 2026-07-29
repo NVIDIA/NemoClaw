@@ -30,7 +30,9 @@ it("adds preserved Hermes home channels at the Dockerfile patch boundary (#7803)
       schemaVersion: 1,
       sandboxName: "my-assistant",
       agent: "hermes",
-      workflow: "rebuild",
+      // Inner onboarding can refresh the ordinary plan before Dockerfile
+      // patching. The separately scoped rebuild carrier remains authoritative.
+      workflow: "onboard",
       channels: [
         {
           channelId: "slack",

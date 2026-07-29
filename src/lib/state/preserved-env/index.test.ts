@@ -173,12 +173,15 @@ describe("preserved environment inventory", () => {
   });
 
   it("retains restored values when the current manifest leaves them unset (#7803)", () => {
-    const merged = mergeHermesPreservedEnvIntoMessagingPlan(hermesPlan(), [
-      {
-        path: ".env",
-        assignments: ["SLACK_HOME_CHANNEL=C0123"],
-      },
-    ]);
+    const merged = mergeHermesPreservedEnvIntoMessagingPlan(
+      { ...hermesPlan(), workflow: "onboard" },
+      [
+        {
+          path: ".env",
+          assignments: ["SLACK_HOME_CHANNEL=C0123"],
+        },
+      ],
+    );
     const envLines: string[] = [];
     applyMessagingAgentRenderToEnvLines(envLines, merged, "~/.hermes/.env");
     expect(envLines).toContain("SLACK_HOME_CHANNEL=C0123");

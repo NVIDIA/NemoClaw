@@ -159,13 +159,7 @@ export function mergeHermesPreservedEnvIntoMessagingPlan(
   plan: SandboxMessagingPlan | null,
   preservedFiles: readonly PreservedEnvFile[] | undefined,
 ): SandboxMessagingPlan | null {
-  if (
-    !plan ||
-    plan.agent !== "hermes" ||
-    plan.workflow !== "rebuild" ||
-    !preservedFiles ||
-    preservedFiles.length === 0
-  ) {
+  if (!plan || plan.agent !== "hermes" || !preservedFiles || preservedFiles.length === 0) {
     return plan;
   }
   const assignments = preservedFiles

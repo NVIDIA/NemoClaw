@@ -421,7 +421,7 @@ export function patchStagedDockerfile(
     );
     const imageMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
       baseMessagingPlan,
-      baseMessagingPlan.workflow === "rebuild" ? readPreservedEnvFilesFromEnv() : undefined,
+      readPreservedEnvFilesFromEnv(),
     );
     const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
     if (!messagingPlanArgPattern.test(dockerfile)) {
