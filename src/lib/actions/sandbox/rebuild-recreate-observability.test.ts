@@ -87,10 +87,12 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     recreateOptions,
     recreateJournal: {
       id: "journal-1",
+      acceptedTarget: false,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
       markDeleting: vi.fn(),
       confirmDeleted: vi.fn(),
+      completeAcceptedTarget: vi.fn(),
     },
     fromDockerfile: null,
     rebuildAgent: DCODE_AGENT,
@@ -218,20 +220,26 @@ describe("runRebuildRecreatePhase handoff", () => {
     let observedFingerprint: string | null | undefined;
     let observedJournalPhase: string | undefined;
     let observedCheckpointSessionId: string | undefined;
-    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
-      observedFingerprint = options.recreateJournalTargetIntentFingerprint;
-      const carried = onboardSession.loadSession()?.checkpoint;
-      observedJournalPhase = carried?.sandboxRecreate?.phase;
-      observedCheckpointSessionId = carried?.sessionId;
-    });
+    const onboardSpy = vi
+      .spyOn(rebuildOnboardDependencies, "onboard")
+      .mockImplementation(async (options) => {
+        observedFingerprint = options.recreateJournalTargetIntentFingerprint;
+        const carried = onboardSession.loadSession()?.checkpoint;
+        observedJournalPhase = carried?.sandboxRecreate?.phase;
+        observedCheckpointSessionId = carried?.sessionId;
+      });
 
-    await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
+    try {
+      await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
 
-    expect(observedFingerprint).toBe("intent-1");
-    expect(observedJournalPhase).toBe("deleted");
-    expect(observedCheckpointSessionId).toBe(onboardSession.loadSession()?.sessionId);
-    expect(observedCheckpointSessionId).not.toBe(retiredSessionId);
-    expect(onboardSession.loadSession()?.checkpoint?.effectGroups).toEqual({});
+      expect(observedFingerprint).toBe("intent-1");
+      expect(observedJournalPhase).toBe("deleted");
+      expect(observedCheckpointSessionId).toBe(onboardSession.loadSession()?.sessionId);
+      expect(observedCheckpointSessionId).not.toBe(retiredSessionId);
+      expect(onboardSession.loadSession()?.checkpoint?.effectGroups).toEqual({});
+    } finally {
+      onboardSpy.mockRestore();
+    }
   });
 
   it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {

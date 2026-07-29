@@ -11,6 +11,7 @@ import {
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
+  clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
   planSandboxRecreateRecovery,
   sandboxRecreatePhaseReached,
@@ -28,10 +29,12 @@ export type RebuildSandboxObserver = SandboxRecreateObserver;
 
 export interface RebuildRecreateJournal {
   readonly id: string;
+  readonly acceptedTarget: boolean;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
   markDeleting(): void;
   confirmDeleted(): void;
+  completeAcceptedTarget(): void;
 }
 
 export function fingerprintRebuildRecreateTargetIntent(
@@ -88,14 +91,18 @@ export function openRebuildRecreateJournal(
   const sourceEntry = registry.getSandbox(target.sandboxName);
   const observation = observe(target);
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
-  if (active) {
-    const recovery = planSandboxRecreateRecovery(active, observation, sourceEntry);
-    if (recovery.action === "reject") {
-      throw new Error(
-        `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
-      );
-    }
+  const recovery = active
+    ? planSandboxRecreateRecovery(active, observation, sourceEntry)
+    : { action: "continue_delete" as const };
+  if (recovery.action === "reject") {
+    throw new Error(
+      `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
+    );
   }
+  // A registered, ready same-name sandbox carrying the journaled target
+  // generation and identity is the replacement this rebuild already proved.
+  // The caller must retire the transaction instead of deleting it again.
+  const acceptedTarget = recovery.action === "accept_target";
 
   const session = onboardSession.updateSession((current) => {
     const checkpoint = current.checkpoint ?? deriveCheckpointFromSession(current);
@@ -137,6 +144,7 @@ export function openRebuildRecreateJournal(
 
   return {
     id: transaction.id,
+    acceptedTarget,
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,
     markDeleting: () => {
@@ -150,6 +158,20 @@ export function openRebuildRecreateJournal(
         );
       }
       advance("deleted");
+    },
+    completeAcceptedTarget: () => {
+      if (!acceptedTarget) {
+        throw new Error(
+          `Sandbox '${target.sandboxName}' replacement journal cannot be retired before its replacement is proven.`,
+        );
+      }
+      for (const next of ["registry_committing", "completed"] as const) {
+        if (!sandboxRecreatePhaseReached(phase, next)) advance(next);
+      }
+      onboardSession.updateSession((current) => {
+        clearCompletedSandboxRecreateTransaction(current, transaction.id);
+        return current;
+      });
     },
   };
 }

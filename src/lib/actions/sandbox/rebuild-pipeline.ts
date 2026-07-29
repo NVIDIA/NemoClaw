@@ -225,6 +225,21 @@ async function rebuildSandboxUnlocked(
         log,
       });
 
+      // An earlier run of this rebuild already registered and proved the
+      // replacement. Retire its journal and stop before the destroy phase so a
+      // restart converges to that sandbox instead of deleting it.
+      if (recreateJournal.acceptedTarget) {
+        recreateJournal.completeAcceptedTarget();
+        log(`Recovered journaled replacement ${recreateJournal.id} for '${sandboxName}'`);
+        console.log(
+          `  Sandbox '${sandboxName}' already holds the replacement from the interrupted rebuild.`,
+        );
+        if (backup.backupManifest) {
+          console.log(`  State backup is preserved at: ${backup.backupManifest.backupPath}`);
+        }
+        return;
+      }
+
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,

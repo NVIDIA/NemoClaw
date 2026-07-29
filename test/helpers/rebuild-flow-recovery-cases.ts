@@ -8,6 +8,7 @@ import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
 } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { fingerprintSandboxLiveIdentity } from "../../src/lib/onboard/sandbox-recreate-transaction";
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import { createRebuildFlowHarness, installRebuildFlowTestHooks } from "./rebuild-flow-test-harness";
 
@@ -259,6 +260,58 @@ export function registerRebuildFlowRecoveryTests(): void {
         defaultSandbox: "alpha",
         defaultSelectionRevision: 10,
       });
+    });
+
+    it("keeps a registered replacement when a rebuild restarts after its commit (#7734)", async () => {
+      const replacementProbe = "Name: alpha\nId: sbx-replacement\nPhase: Ready\n";
+      const replacementIdentity = fingerprintSandboxLiveIdentity(replacementProbe);
+      const provenReplacement = {
+        sandboxEntry: {
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: replacementIdentity,
+        },
+      };
+
+      // The interrupted run journals the replacement and registers it, then
+      // dies before the journal is cleared.
+      const interrupted = createRebuildFlowHarness({
+        ...provenReplacement,
+        onboard: (session) => {
+          Object.assign(
+            (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
+            {
+              phase: "registry_committing",
+              targetGeneration: "generation-1",
+              targetLiveIdentityFingerprint: replacementIdentity,
+            },
+          );
+          throw new Error("interrupted after replacement registration");
+        },
+      });
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+
+      const restarted = createRebuildFlowHarness({
+        ...provenReplacement,
+        captureOpenshell: (argv) =>
+          argv[0] === "sandbox" && argv[1] === "get"
+            ? { status: 0, output: replacementProbe, stdout: replacementProbe, stderr: "" }
+            : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" },
+      });
+      restarted.session.checkpoint = interrupted.session.checkpoint;
+      // Both harnesses share one spy per mocked module function, so the
+      // interrupted run's calls have to be dropped before the restart.
+      restarted.runOpenshellSpy.mockClear();
+      restarted.onboardSpy.mockClear();
+
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+      expect(
+        (restarted.session.checkpoint as { sandboxRecreate: unknown }).sandboxRecreate,
+      ).toBeNull();
     });
 
     it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {

@@ -356,7 +356,26 @@ export async function runRebuildDestroyPhase(
     return null;
   }
 
-  recreateJournal.markDeleting();
+  // MCP adapter entries are already detached and scrubbed here. A journal write
+  // that fails must reattach them before the rebuild gives up, or the still
+  // running sandbox is left without its MCP wiring.
+  try {
+    recreateJournal.markDeleting();
+  } catch (error) {
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    const detail = error instanceof Error ? error.message : String(error);
+    bail(
+      mcpRecoveryFailure
+        ? `Sandbox deletion could not be journaled: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
+    );
+    return null;
+  }
   log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
   const deleteResult = runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
     ignoreError: true,

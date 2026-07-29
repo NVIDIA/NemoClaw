@@ -27,7 +27,10 @@ export interface SandboxReuseDeps {
 
 export interface SandboxReuseHelpers {
   getSandboxReuseState(sandboxName: string | null): string;
-  getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
+  getSandboxRecreateObservation(
+    sandboxName: string | null,
+    gatewayName?: string,
+  ): SandboxRecreateObservation;
   repairRecordedSandbox(sandboxName: string | null): void;
 }
 
@@ -114,25 +117,34 @@ export function applyReusedSandboxDashboardState(
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {
-  function gatewayArgs(): string[] {
-    const gatewayName = deps.getGatewayName?.();
+  // A recorded gateway wins over the ambient one: a resumed replacement must
+  // prove presence or absence on the gateway its journal names.
+  function gatewayArgs(recordedGatewayName?: string): string[] {
+    const gatewayName = recordedGatewayName ?? deps.getGatewayName?.();
     return gatewayName ? ["-g", gatewayName] : [];
   }
 
-  function readSandboxState(sandboxName: string | null): { state: string; getOutput: string } {
+  function readSandboxState(
+    sandboxName: string | null,
+    recordedGatewayName?: string,
+  ): { state: string; getOutput: string } {
     if (!sandboxName) return { state: "missing", getOutput: "" };
-    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", ...gatewayArgs(), sandboxName], {
+    const args = gatewayArgs(recordedGatewayName);
+    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", ...args, sandboxName], {
       ignoreError: true,
     });
-    const listOutput = deps.runCaptureOpenshell(["sandbox", "list", ...gatewayArgs()], {
+    const listOutput = deps.runCaptureOpenshell(["sandbox", "list", ...args], {
       ignoreError: true,
     });
     const state = deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
     return { state, getOutput };
   }
 
-  function getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation {
-    const { state, getOutput } = readSandboxState(sandboxName);
+  function getSandboxRecreateObservation(
+    sandboxName: string | null,
+    recordedGatewayName?: string,
+  ): SandboxRecreateObservation {
+    const { state, getOutput } = readSandboxState(sandboxName, recordedGatewayName);
     if (state !== "missing" && state !== "not_ready" && state !== "ready") {
       throw new Error(
         `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell returned state '${state}'.`,

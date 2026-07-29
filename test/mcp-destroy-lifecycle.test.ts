@@ -97,10 +97,12 @@ import * as registry from "../src/lib/state/registry";
 function stubRecreateJournal(): RebuildRecreateJournal {
   return {
     id: "journal-1",
+    acceptedTarget: false,
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
     markDeleting: vi.fn(),
     confirmDeleted: vi.fn(),
+    completeAcceptedTarget: vi.fn(),
   };
 }
 

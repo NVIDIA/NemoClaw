@@ -328,4 +328,63 @@ describe("rebuild replacement journal", () => {
     expect(second.id).toBe(first.id);
     expect(second.targetGeneration).toBe(first.targetGeneration);
   });
+
+  function proveReplacement(journalId: string, targetGeneration: string): string {
+    const identity = session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint ?? "";
+    onboardSession.updateSession((current) => {
+      const checkpoint = current.checkpoint;
+      const transaction = checkpoint?.sandboxRecreate;
+      if (!checkpoint || !transaction || transaction.id !== journalId) {
+        throw new Error("journal is missing");
+      }
+      current.checkpoint = {
+        ...checkpoint,
+        sandboxRecreate: {
+          ...transaction,
+          phase: "registry_committing",
+          targetLiveIdentityFingerprint: identity,
+        },
+      };
+      return current;
+    });
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      lifecycleGeneration: targetGeneration,
+      lifecycleLiveIdentityFingerprint: identity,
+    } as registry.SandboxEntry);
+    return identity;
+  }
+
+  it("reports a registered ready replacement as the proven target (#7734)", () => {
+    const first = open();
+    proveReplacement(first.id, first.targetGeneration);
+
+    const resumed = open();
+
+    expect(first.acceptedTarget).toBe(false);
+    expect(resumed.acceptedTarget).toBe(true);
+    expect(resumed.id).toBe(first.id);
+  });
+
+  it("retires the journal of a proven replacement instead of deleting it again (#7734)", () => {
+    const first = open();
+    proveReplacement(first.id, first.targetGeneration);
+    const resumed = open();
+
+    resumed.completeAcceptedTarget();
+
+    expect(session.checkpoint?.sandboxRecreate).toBeNull();
+  });
+
+  it("refuses to retire a journal whose replacement is not proven (#7734)", () => {
+    const journal = open();
+
+    expect(() => journal.completeAcceptedTarget()).toThrow(
+      /cannot be retired before its replacement is proven/,
+    );
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("planned");
+  });
 });

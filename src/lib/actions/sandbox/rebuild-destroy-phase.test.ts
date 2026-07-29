@@ -76,10 +76,12 @@ import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 function stubRecreateJournal(): RebuildRecreateJournal {
   return {
     id: "journal-1",
+    acceptedTarget: false,
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
     markDeleting: vi.fn(),
     confirmDeleted: vi.fn(),
+    completeAcceptedTarget: vi.fn(),
   };
 }
 
@@ -925,6 +927,46 @@ describe("rebuild destroy phase", () => {
     });
 
     expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+  });
+
+  it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+      throw new Error("session store is unwritable");
+    });
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [{ server: "github" }],
+      detachedProviderEntries: [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      scrubbedAdapterEntries: [{ server: "github" }],
+    });
+    const relockShieldsIfNeeded = vi.fn(() => true);
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Sandbox deletion could not be journaled");
+
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      [{ server: "github" }],
+    );
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("stops before inference and registry mutation when absence cannot be journaled (#7734)", async () => {
