@@ -182,6 +182,35 @@ describe("rebuild destroy phase", () => {
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
+  it("blocks the exact delete edge when the shared inference route drifts (#7798)", async () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        backupManifest: null,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded: vi.fn(() => true),
+        validateAtDeleteEdge: () => ({
+          ok: false,
+          message: "Shared inference route changed before sandbox deletion.",
+        }),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Shared inference route changed before sandbox deletion.");
+
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+    expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
     const log = vi.fn();
     const bail = vi.fn((message: string): never => {
