@@ -14,11 +14,11 @@ before those targets run; local runners must provide it themselves.
   publishes the trusted `E2E / PR Gate Coordination` check for the PR/base SHA pair and the
   native `E2E / PR Gate` job that mirrors coordination into the PR's required
   GitHub Actions check suite.
-- `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
-  runs focused E2E targets from source on a clean machine.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
+- The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
+  the baked candidate without installing or copying NemoClaw source.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
@@ -49,6 +49,26 @@ E2E tests when those boundaries are the behavior under test.
 four independent shards on each of macOS and WSL, with `fail-fast` disabled.
 Each macOS shard has a 30-minute budget and each WSL shard has a 90-minute
 budget. The additional root-required WSL contracts run only on shard 1.
+
+## Retired Brev source-install coverage
+
+Issue #7490 retired the generic Brev source-install lane. The unified workflow
+and exact-staging Launchable job own its product coverage:
+
+| Legacy suite | Disposition | Current owner |
+|---|---|---|
+| `full` | Launchable E2E | `staging-brev-launchable` runs `full-e2e` in preinstalled mode against the exact baked candidate. |
+| `credential-sanitization` | Unified E2E | `credential-sanitization` |
+| `telegram-injection` | Unified E2E | `telegram-injection` |
+| `messaging-providers` | Unified E2E | `messaging-providers` |
+| `messaging-compatible-endpoint` | Unified E2E | `messaging-compatible-endpoint` |
+| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup. |
+| `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
+| `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
+
+The retired nightly caller duplicated scheduled unified E2E coverage.
+Manual GPU validation must use `gpu-e2e`.
+It must not provision a generic Brev VM.
 
 ## Credential-free tests
 

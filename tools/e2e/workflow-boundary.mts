@@ -3797,6 +3797,64 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
 }
 
+function validateDashboardRemoteBindJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "dashboard-remote-bind";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing dashboard-remote-bind job");
+    return;
+  }
+
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("dashboard-remote-bind job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 65) {
+    errors.push("dashboard-remote-bind job must keep the 65 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  const expectedEnv = {
+    E2E_TARGET_ID: "dashboard-remote-bind",
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
+    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
+  };
+  for (const [key, value] of Object.entries(expectedEnv)) {
+    if (jobEnv[key] !== value) {
+      errors.push(`dashboard-remote-bind job must set ${key}=${value}`);
+    }
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, "dashboard-remote-bind job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  const runVitest = requireJobStep(errors, jobName, steps, "Run dashboard remote-bind live test");
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push("dashboard-remote-bind step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/dashboard-remote-bind.test.ts");
+
+  for (const step of steps) {
+    const stepName = `dashboard-remote-bind step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step !== runVitest) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+}
+
 function validateBedrockRuntimeCompatibleAnthropicJob(
   errors: string[],
   jobs: WorkflowRecord,
@@ -4900,6 +4958,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateOpenClawSlackPairingJob(errors, jobs);
   validateChannelsStopStartJob(errors, jobs);
   validateTelegramInjectionJob(errors, jobs);
+  validateDashboardRemoteBindJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {

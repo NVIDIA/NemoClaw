@@ -97,7 +97,6 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
    aggregate checks for code-changing PRs and code-changing pushes to `main`
 7. **`e2e-live`** — opt-in live targets that mutate real external state
-8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:
 
