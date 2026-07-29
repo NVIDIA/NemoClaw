@@ -33,6 +33,20 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
+COMPUTE_DRIVER_REQUEST="${NEMOCLAW_COMPUTE_DRIVER:-auto}"
+COMPUTE_DRIVER_REQUEST="${COMPUTE_DRIVER_REQUEST#"${COMPUTE_DRIVER_REQUEST%%[![:space:]]*}"}"
+COMPUTE_DRIVER_REQUEST="${COMPUTE_DRIVER_REQUEST%"${COMPUTE_DRIVER_REQUEST##*[![:space:]]}"}"
+COMPUTE_DRIVER_REQUEST="$(printf '%s' "${COMPUTE_DRIVER_REQUEST:-auto}" | tr '[:upper:]' '[:lower:]')"
+case "$COMPUTE_DRIVER_REQUEST" in
+  auto | docker) EFFECTIVE_COMPUTE_DRIVER="docker" ;;
+  podman) EFFECTIVE_COMPUTE_DRIVER="podman" ;;
+  *) fail "NEMOCLAW_COMPUTE_DRIVER must be one of: auto, docker, podman." ;;
+esac
+if [ "$EFFECTIVE_COMPUTE_DRIVER" = "podman" ] \
+  && { [ "$OS" != "Linux" ] || [ "$ARCH_LABEL" != "x86_64" ]; }; then
+  fail "Native Podman support currently requires Linux x86_64; detected ${OS_LABEL} ${ARCH_LABEL}."
+fi
+
 # Minimum version required for native messaging credential rewrite and
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
@@ -225,12 +239,17 @@ installed_component_path() {
 selected_sandbox_component_path() {
   local openshell_bin="$1"
   local explicit_path="${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-}"
+  [ "$EFFECTIVE_COMPUTE_DRIVER" = "podman" ] && return 0
   # Darwin uses the VM driver and ships no standalone sandbox supervisor.
   # Ignore a leftover sibling unless the operator explicitly selected it.
   if [ "$OS" = "Darwin" ] && [ -z "$explicit_path" ]; then
     return 0
   fi
   installed_component_path "$openshell_bin" openshell-sandbox "$explicit_path"
+}
+
+driver_requires_sandbox_component() {
+  [ "$OS" = "Linux" ] && [ "$EFFECTIVE_COMPUTE_DRIVER" = "docker" ]
 }
 
 canonical_file_path() {
@@ -364,8 +383,10 @@ required_driver_bins_present() {
   sandbox_bin="$(selected_sandbox_component_path "$openshell_bin")"
   case "$OS" in
     Linux)
-      [ -f "$gateway_bin" ] && [ -x "$gateway_bin" ] \
-        && [ -f "$sandbox_bin" ] && [ -x "$sandbox_bin" ]
+      [ -f "$gateway_bin" ] && [ -x "$gateway_bin" ] || return 1
+      if driver_requires_sandbox_component; then
+        [ -f "$sandbox_bin" ] && [ -x "$sandbox_bin" ]
+      fi
       ;;
     Darwin)
       [ -f "$gateway_bin" ] && [ -x "$gateway_bin" ]
@@ -380,7 +401,10 @@ required_driver_bins_installed_in_dir() {
   local dir="$1"
   case "$OS" in
     Linux)
-      [ -x "$dir/openshell-gateway" ] && [ -x "$dir/openshell-sandbox" ]
+      [ -x "$dir/openshell-gateway" ] || return 1
+      if driver_requires_sandbox_component; then
+        [ -x "$dir/openshell-sandbox" ]
+      fi
       ;;
     Darwin)
       [ -x "$dir/openshell-gateway" ]
@@ -450,7 +474,8 @@ openshell_has_required_messaging_features() {
     OPENSHELL_FEATURE_CHECK_ERROR="The explicit OpenShell gateway binary '$gateway_bin' is missing, unreadable, or not executable."
     return 1
   fi
-  if [ -n "${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-}" ] \
+  if [ "$EFFECTIVE_COMPUTE_DRIVER" != "podman" ] \
+    && [ -n "${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-}" ] \
     && { [ ! -f "$sandbox_bin" ] || [ ! -r "$sandbox_bin" ] || [ ! -x "$sandbox_bin" ]; }; then
     OPENSHELL_FEATURE_CHECK_ERROR="The explicit OpenShell sandbox binary '$sandbox_bin' is missing, unreadable, or not executable."
     return 1
@@ -753,7 +778,9 @@ install_macos_homebrew_formula() {
 }
 
 validate_explicit_component_override gateway "${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}"
-validate_explicit_component_override sandbox "${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-}"
+if [ "$EFFECTIVE_COMPUTE_DRIVER" != "podman" ]; then
+  validate_explicit_component_override sandbox "${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-}"
+fi
 
 ACTIVE_OPENSHELL_BIN=""
 if command -v openshell >/dev/null 2>&1; then
@@ -792,7 +819,11 @@ if command -v openshell >/dev/null 2>&1; then
       if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
         warn "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release — reinstalling pinned OpenShell ${PIN_VERSION}..."
       elif ! required_driver_bins_present "$ACTIVE_OPENSHELL_BIN"; then
-        warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
+        if [ "$EFFECTIVE_COMPUTE_DRIVER" = "docker" ]; then
+          warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
+        else
+          warn "openshell $INSTALLED_VERSION is missing Podman-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
+        fi
       elif ! openshell_has_required_messaging_features "$ACTIVE_OPENSHELL_BIN"; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite and MCP L7 policy support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, request-body credential rewrite, and MCP/JSON-RPC L7 policy enforcement.}"
       elif [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1 && ! macos_homebrew_formula_installed; then
@@ -853,15 +884,19 @@ case "$OS" in
     case "$ARCH_LABEL" in
       x86_64)
         ASSETS+=("openshell-gateway-x86_64-unknown-linux-gnu.tar.gz")
-        ASSETS+=("openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz")
         ;;
       aarch64)
         ASSETS+=("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz")
-        ASSETS+=("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz")
         ;;
     esac
     CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
-    CHECKSUM_FILES+=("openshell-sandbox-checksums-sha256.txt")
+    if driver_requires_sandbox_component; then
+      case "$ARCH_LABEL" in
+        x86_64) ASSETS+=("openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz") ;;
+        aarch64) ASSETS+=("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz") ;;
+      esac
+      CHECKSUM_FILES+=("openshell-sandbox-checksums-sha256.txt")
+    fi
     ;;
 esac
 
@@ -994,7 +1029,7 @@ else
 fi
 
 required_driver_bins_installed_in_dir "$target_dir" \
-  || fail "OpenShell release '$RELEASE_TAG' did not install the required Docker-driver binaries."
+  || fail "OpenShell release '$RELEASE_TAG' did not install the required ${EFFECTIVE_COMPUTE_DRIVER}-driver binaries."
 require_openshell_messaging_features "$target_dir/openshell"
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"

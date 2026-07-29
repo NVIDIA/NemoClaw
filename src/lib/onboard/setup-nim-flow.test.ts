@@ -302,6 +302,46 @@ describe("createSetupNim", () => {
     });
   });
 
+  it("lets a compute runtime remove every unqualified local provider before selection", async () => {
+    const filterProviderOptions = vi.fn<NonNullable<SetupNimFlowDeps["filterProviderOptions"]>>(
+      (options) => options.filter(({ key }) => Object.hasOwn(REMOTE_PROVIDER_CONFIG, key)),
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async ({ selected }, state) => {
+        expect(selected.key).toBe("build");
+        state.model = "nvidia/nemotron";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        experimental: true,
+        filterProviderOptions,
+        loadRoutedProfile: () => ({ router: { enabled: true } }),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            hasOllama: true,
+            ollamaHost: "127.0.0.1",
+            ollamaRunning: true,
+            gpuNimCapable: true,
+            vllmRunning: true,
+            vllmEntries: [{ key: "vllm", label: "Local vLLM" }],
+          }),
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim({ nimCapable: true } as never);
+
+    const offeredKeys = filterProviderOptions.mock.calls[0]?.[0].map(({ key }) => key);
+    expect(offeredKeys).toEqual(expect.arrayContaining(["nim-local", "ollama", "vllm", "routed"]));
+    expect(result.provider).toBe("nvidia-prod");
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+  });
+
   it("re-enters provider selection when a handler requests a retry (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const prompt = vi.fn(async () => "");

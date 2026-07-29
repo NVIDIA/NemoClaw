@@ -247,24 +247,19 @@ type SandboxDriverLookup = (name: string) => { openshellDriver?: string | null }
 // `docker` driver and the `kubernetes`/k3s driver (k3s-in-Docker, or Docker
 // Desktop's Kubernetes — selected by `isLinuxDockerDriverGatewayEnabled()` for
 // non-Linux/non-arm64 hosts) both depend on a reachable local Docker daemon. A
-// `vm` sandbox runs in a real VM with no local Docker daemon, so a failing
-// `docker info` is normal and must not trigger the outage preflight.
-const NON_DOCKER_DRIVERS = new Set(["vm"]);
+const DOCKER_BACKED_DRIVERS = new Set(["docker", "kubernetes"]);
 
 /**
- * Whether a sandbox's runtime depends on the local Docker daemon. Only the
- * explicit `vm` driver is excluded. The `docker` and `kubernetes` drivers are
- * Docker-backed, and legacy/recovered registry entries that predate
- * `openshellDriver` metadata (field omitted/null) are also treated as
- * Docker-backed so the outage guard still protects the Linux/Docker sandboxes
- * #4428 targets — the historical default driver was Docker. The narrow cost is
- * that a recovered `vm` entry that lost its driver metadata could see Docker
- * guidance on a Docker-less host; that is preferable to silently regressing
- * every legacy Docker sandbox. (#4428)
+ * Whether a sandbox's runtime explicitly depends on the local Docker daemon.
+ * The `docker` and `kubernetes` drivers are Docker-backed, and legacy entries
+ * without driver metadata retain that historical default. Podman, vm, and
+ * future named drivers do not inherit Docker probes merely because their
+ * runtime adapter has not been loaded in this module.
  */
 function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLookup): boolean {
   const driver = getSandbox(sandboxName)?.openshellDriver;
-  return !(typeof driver === "string" && NON_DOCKER_DRIVERS.has(driver.toLowerCase()));
+  if (typeof driver !== "string" || !driver.trim()) return true;
+  return DOCKER_BACKED_DRIVERS.has(driver.trim().toLowerCase());
 }
 
 /**
@@ -272,9 +267,10 @@ function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLoo
  * `docker_unreachable` layer of {@link classifyGatewayFailure}). Sandbox
  * commands use this as a fast preflight so a transient Docker daemon outage is
  * classified as a host runtime problem rather than a stuck sandbox phase or a
- * connect timeout (#4428). Returns `false` for VM sandboxes so they are never
- * misclassified. `docker info` is a `spawnSync` call, so this stays synchronous
- * and can run from non-async call sites such as `logs` and `policy-list`.
+ * connect timeout (#4428). Returns `false` for every named non-Docker runtime
+ * so Podman, vm, and future adapters are never misclassified. `docker info` is
+ * a `spawnSync` call, so this stays synchronous and can run from non-async call
+ * sites such as `logs` and `policy-list`.
  */
 export function isDockerRuntimeDown(
   sandboxName: string,

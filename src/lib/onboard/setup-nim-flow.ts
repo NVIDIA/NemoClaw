@@ -81,6 +81,7 @@ export interface SetupNimFlowDeps {
     probeVllm?: boolean;
   }): InferenceProviderHostState;
   getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[];
+  filterProviderOptions?(options: readonly ProviderMenuChoice[]): ProviderMenuChoice[];
   loadRoutedProfile(): { router?: { enabled?: boolean } } | null | undefined;
   readRecordedProvider(
     sandboxName: string | null | undefined,
@@ -183,6 +184,18 @@ function requireSelectedProvider(
     deps.exitProcess(1);
   }
   return selected;
+}
+
+function availableProviderOptions(
+  options: readonly ProviderMenuChoice[],
+  deps: Pick<SetupNimFlowDeps, "error" | "exitProcess" | "filterProviderOptions">,
+): ProviderMenuChoice[] {
+  const available = deps.filterProviderOptions ? deps.filterProviderOptions(options) : [...options];
+  if (available.length === 0) {
+    deps.error("  No inference providers are available for the selected compute runtime.");
+    deps.exitProcess(1);
+  }
+  return available;
 }
 
 function resolveValidationInferenceApi(
@@ -374,7 +387,7 @@ export function createSetupNim(
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
-    const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
+    const providerMenu = buildInferenceProviderMenu({
       remoteProviderConfig: deps.remoteProviderConfig,
       agentProviderOptions,
       experimental: deps.experimental,
@@ -397,6 +410,8 @@ export function createSetupNim(
       vllmEntries,
       routedEnabled: blueprintRouterCfg?.router?.enabled === true,
     });
+    const options = availableProviderOptions(providerMenu.options, deps);
+    const { hermesProviderAvailable } = providerMenu;
 
     function rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean {
       return deps.rejectWindowsHostOllama(

@@ -12,6 +12,10 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import {
+  type OpenShellComputeDriverRequest,
+  resolveOpenShellComputeDriverRequest,
+} from "./compute/plan";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
@@ -23,6 +27,7 @@ export interface OnboardCommandOptions {
   resume: boolean;
   fresh: boolean;
   recreateSandbox: boolean;
+  computeDriver: OpenShellComputeDriverRequest;
   fromDockerfile: string | null;
   sandboxName: string | null;
   sandboxGpu: "enable" | "disable" | null;
@@ -153,8 +158,10 @@ export function resolveOnboardOptions(
   const agent = resolveAgent(flags.agent, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
+  let computeDriver: OpenShellComputeDriverRequest;
   try {
     toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
+    computeDriver = resolveOpenShellComputeDriverRequest(flags["compute-driver"], deps.env);
   } catch (error) {
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -163,6 +170,7 @@ export function resolveOnboardOptions(
     resume: flags.resume === true,
     fresh: flags.fresh === true,
     recreateSandbox: flags["recreate-sandbox"] === true,
+    computeDriver,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
     sandboxName: flags.name ?? null,
     sandboxGpu: resolveSandboxGpu(flags),

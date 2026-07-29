@@ -10,7 +10,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { type DockerRuntimeReady, EnvironmentPhaseFixture } from "../fixtures/phases/index.ts";
+import { type ContainerRuntimeReady, EnvironmentPhaseFixture } from "../fixtures/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -89,11 +89,12 @@ describe("environment phase fixture", () => {
       runtime: "docker-running",
       onboarding: "cloud-openclaw",
       cliPath: "./bin/nemoclaw.js",
-      docker: {
+      containerRuntime: {
         id: "docker-running",
+        driverName: "docker",
         expectation: "required",
         available: true,
-      } satisfies Partial<DockerRuntimeReady>,
+      } satisfies Partial<ContainerRuntimeReady>,
     });
     expect(runner.calls).toEqual([
       {
@@ -143,8 +144,9 @@ describe("environment phase fixture", () => {
       onboarding: "cloud-openclaw-no-docker",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.containerRuntime).toMatchObject({
       id: "docker-missing",
+      driverName: "docker",
       expectation: "missing",
       available: false,
     });
@@ -162,8 +164,9 @@ describe("environment phase fixture", () => {
       onboarding: "cloud-openclaw-no-docker",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.containerRuntime).toMatchObject({
       id: "docker-missing",
+      driverName: "docker",
       expectation: "missing",
       available: true,
     });
@@ -181,8 +184,9 @@ describe("environment phase fixture", () => {
       runtime: "macos-docker-optional",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.containerRuntime).toMatchObject({
       id: "macos-docker-optional",
+      driverName: "docker",
       expectation: "optional",
       available: false,
       probeError: "spawn docker ENOENT",
@@ -201,8 +205,9 @@ describe("environment phase fixture", () => {
       runtime: "macos-docker-optional",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.containerRuntime).toMatchObject({
       id: "macos-docker-optional",
+      driverName: "docker",
       expectation: "optional",
       available: true,
     });
@@ -286,8 +291,9 @@ describe("environment phase fixture", () => {
       runtime: "gpu-docker-cdi",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.containerRuntime).toMatchObject({
       id: "gpu-docker-cdi",
+      driverName: "docker",
       expectation: "required",
       available: true,
     });
@@ -312,8 +318,79 @@ describe("environment phase fixture", () => {
 
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     await expect(
-      environment.assertReady({ ...cloudOpenClawEnvironment, runtime: "podman-running" }),
-    ).rejects.toThrow(/Unsupported target runtime 'podman-running'/);
+      environment.assertReady({ ...cloudOpenClawEnvironment, runtime: "mxc-running" }),
+    ).rejects.toThrow(/Unsupported target runtime 'mxc-running'/);
+  });
+
+  it("probes Podman through the exact native socket without Docker environment", async () => {
+    const previousSocket = process.env.OPENSHELL_PODMAN_SOCKET;
+    const previousDockerHost = process.env.DOCKER_HOST;
+    const previousDockerConfig = process.env.DOCKER_CONFIG;
+    process.env.OPENSHELL_PODMAN_SOCKET = "/run/user/1001/podman/podman.sock";
+    process.env.DOCKER_HOST = "unix:///var/run/docker.sock";
+    process.env.DOCKER_CONFIG = "/tmp/docker-config";
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      runner.enqueue(shellResult(0, '{"host":{"security":{"rootless":true}}}\n'));
+      const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+
+      const ready = await environment.assertReady({
+        ...cloudOpenClawEnvironment,
+        runtime: "podman-running",
+      });
+
+      expect(ready.containerRuntime).toMatchObject({
+        id: "podman-running",
+        driverName: "podman",
+        expectation: "required",
+        available: true,
+      });
+      expect(runner.calls[1]).toMatchObject({
+        command: "podman",
+        args: ["--url", "unix:///run/user/1001/podman/podman.sock", "info", "--format", "json"],
+        options: {
+          artifactName: "runtime-podman-info-podman-running",
+          timeoutMs: 30_000,
+        },
+      });
+      expect(runner.calls[1]?.options?.env).toMatchObject({
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      });
+      expect(runner.calls[1]?.options?.env).not.toHaveProperty("DOCKER_HOST");
+      expect(runner.calls[1]?.options?.env).not.toHaveProperty("DOCKER_CONFIG");
+    } finally {
+      if (previousSocket === undefined) delete process.env.OPENSHELL_PODMAN_SOCKET;
+      else process.env.OPENSHELL_PODMAN_SOCKET = previousSocket;
+      if (previousDockerHost === undefined) delete process.env.DOCKER_HOST;
+      else process.env.DOCKER_HOST = previousDockerHost;
+      if (previousDockerConfig === undefined) delete process.env.DOCKER_CONFIG;
+      else process.env.DOCKER_CONFIG = previousDockerConfig;
+    }
+  });
+
+  it("requires an explicit absolute Podman socket", async () => {
+    const previousSocket = process.env.OPENSHELL_PODMAN_SOCKET;
+    try {
+      delete process.env.OPENSHELL_PODMAN_SOCKET;
+      const missingRunner = new FakeRunner();
+      missingRunner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      const missing = new EnvironmentPhaseFixture(new HostCliClient(missingRunner));
+      await expect(
+        missing.assertReady({ ...cloudOpenClawEnvironment, runtime: "podman-running" }),
+      ).rejects.toThrow(/requires OPENSHELL_PODMAN_SOCKET/);
+
+      process.env.OPENSHELL_PODMAN_SOCKET = "relative/podman.sock";
+      const relativeRunner = new FakeRunner();
+      relativeRunner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      const relative = new EnvironmentPhaseFixture(new HostCliClient(relativeRunner));
+      await expect(
+        relative.assertReady({ ...cloudOpenClawEnvironment, runtime: "podman-running" }),
+      ).rejects.toThrow(/must be an absolute path/);
+    } finally {
+      if (previousSocket === undefined) delete process.env.OPENSHELL_PODMAN_SOCKET;
+      else process.env.OPENSHELL_PODMAN_SOCKET = previousSocket;
+    }
   });
 
   it("writes an environment phase result artifact on success", async () => {

@@ -31,7 +31,7 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
-import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import { cleanupGatewayAfterLastSandbox, resolvePerGatewayState } from "./destroy-gateway";
 import {
   resolveDestroyedSandboxHttpsPinRouteId,
   revokeDestroyedSandboxHttpsPinRoute,
@@ -485,12 +485,20 @@ async function destroySandboxUnlocked(
   if (
     shouldCleanupGatewayAfterConfirmedFinalDestroy({
       deleteSucceededOrAlreadyGone,
+      gatewayStateDir: resolvePerGatewayState(cleanupGatewayName)?.stateDir ?? null,
+      openshellDriver: sandbox?.openshellDriver,
       removedRegistryEntry: removed,
     })
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
+      if (sandbox?.openshellDriver) {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell, {
+          openshellDriver: sandbox.openshellDriver,
+        });
+      } else {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
+      }
     } else {
       // `gateway remove <name>` is the modern OpenShell subcommand on every
       // platform; the old `gateway destroy -g` was pre-0.0.44 only and current

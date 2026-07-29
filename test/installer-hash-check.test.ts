@@ -897,7 +897,7 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("installer operational template is not base-trusted");
     expect(result.stdout).toContain(
-      "actual_sha256=ee10afaeb5dc1477ca4b35a70a654ed32092399dbb290266f9f138d64484f1e2",
+      "actual_sha256=02944169d7fe943deeabc36da0618fc68b00029de67cda5aa7b3a9a75cb1f698",
     );
     expect(result.stdout).not.toContain("All installer hashes are current");
   });

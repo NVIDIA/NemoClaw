@@ -78,10 +78,20 @@ function input(agentName: string) {
 describe("sandbox workload preparation", () => {
   it.each(
     SHIPPED_MANAGED_IMAGE_AGENTS,
-  )("resolves the complete release catalog and exact %s image (#7744)", async (agent) => {
+  )("resolves the complete release catalog and exact %s image for Podman (#7744)", async (agent) => {
     const resolveCatalog = vi.fn(async () => CATALOG);
 
-    const prepared = await prepareSandboxWorkloadSource(input(agent), { resolveCatalog });
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input(agent),
+        runtime: resolveSandboxWorkloadRuntimeCapabilities(
+          { driverName: "podman" },
+          undefined,
+          "x64",
+        ),
+      },
+      { resolveCatalog },
+    );
 
     expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
       release: RELEASE,

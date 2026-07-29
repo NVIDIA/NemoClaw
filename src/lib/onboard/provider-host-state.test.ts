@@ -58,6 +58,37 @@ function detectWithDeps(
 }
 
 describe("detectInferenceProviderHostState", () => {
+  it("keeps remote-only runtime profiles off every local and Docker provider probe", () => {
+    const deps = buildDeps();
+
+    const state = detectInferenceProviderHostState({
+      gpu: { nimCapable: true, type: "nvidia", platform: "linux" },
+      experimental: true,
+      localInferenceEnabled: false,
+      platform: "linux",
+      env: {},
+      log: () => {},
+      deps,
+    });
+
+    expect(state).toMatchObject({
+      hasOllama: false,
+      ollamaRunning: false,
+      vllmRunning: false,
+      hasVllmImage: false,
+      vllmEntries: [],
+      gpuNimCapable: false,
+      ollamaInstallMenu: { entry: null },
+    });
+    expect(deps.runCapture).not.toHaveBeenCalled();
+    expect(deps.dockerCapture).not.toHaveBeenCalled();
+    expect(deps.hostCommandExists).not.toHaveBeenCalled();
+    expect(deps.findReachableOllamaHost).not.toHaveBeenCalled();
+    expect(deps.detectVllmProfile).not.toHaveBeenCalled();
+    expect(deps.detectWindowsHostOllama).not.toHaveBeenCalled();
+    expect(deps.getContainerRuntime).not.toHaveBeenCalled();
+  });
+
   it("suppresses local endpoint probes when route preflight disallows them (#6315)", () => {
     const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "{}");
     const findReachableOllamaHost = vi.fn(() => "127.0.0.1");

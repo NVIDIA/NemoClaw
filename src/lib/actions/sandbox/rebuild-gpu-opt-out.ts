@@ -6,6 +6,7 @@ import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
 } from "../../inference/selection";
+import { resolveCurrentOpenShellComputePlan } from "../../onboard/compute/plan";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DcodeAutoApprovalMode,
@@ -44,6 +45,7 @@ export type RebuildGpuOptOutEntry = {
   observabilityEnabled?: boolean;
   policyTier?: string | null;
   endpointSource?: InferenceEndpointSource | null;
+  openshellDriver?: string | null;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -111,6 +113,7 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayName: string;
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
+  computeDriver: string;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
@@ -166,6 +169,8 @@ export function buildRebuildRecreateOnboardOpts(args: {
   const managesDashboard = shouldManageDashboardForAgent(
     loadAgent(args.rebuildAgent || "openclaw"),
   );
+  const computeDriver =
+    args.sb?.openshellDriver?.trim() || resolveCurrentOpenShellComputePlan().driverName;
   if (managesDashboard && (!dashboardPort || dashboardPort < 1)) {
     throw new Error(
       "Cannot recreate a dashboard-managed sandbox without its persisted dashboard port.",
@@ -186,6 +191,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     targetGatewayName,
     targetGatewayPort,
     onboardLockAlreadyHeld: true,
+    computeDriver,
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),

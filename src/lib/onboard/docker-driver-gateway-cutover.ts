@@ -23,6 +23,7 @@ export function readDockerDriverGatewayHealth(
 }
 
 export interface DockerDriverGatewayCutoverInput {
+  driverLabel?: string;
   gatewayBin: string | null;
   identityGatewayBin: string | null;
   driftGatewayBin: string | null;
@@ -71,14 +72,15 @@ export interface DockerDriverGatewayCutoverDeps {
 }
 
 /**
- * Resolve reuse, adoption, or replacement for the host Docker-driver gateway.
+ * Resolve reuse, adoption, or replacement for a NemoClaw-managed host gateway.
  * Every reuse path requires a complete listener scan; replacement reaps only
  * port-observed PIDs before the fresh-launch callback is allowed to run.
  */
-export async function runDockerDriverGatewayCutover(
+export async function runManagedDriverGatewayCutover(
   input: DockerDriverGatewayCutoverInput,
   deps: DockerDriverGatewayCutoverDeps,
 ): Promise<"reused" | "launch"> {
+  const driverLabel = input.driverLabel?.trim() || "Docker";
   const portListenerPids = input.portListenerScan.pids;
   const portListenerPid = input.portListenerScan.complete ? (portListenerPids[0] ?? null) : null;
 
@@ -118,11 +120,11 @@ export async function runDockerDriverGatewayCutover(
       await deps.verifySandboxBridgeGatewayReachableOrExit(input.exitOnFailure, {
         skip: input.skipSandboxBridgeReachability,
       });
-      deps.log("  ✓ Reusing existing Docker-driver gateway");
+      deps.log(`  ✓ Reusing existing ${driverLabel}-driver gateway`);
       return "reused";
     } else {
       deps.log(
-        "  Docker-driver gateway metadata reports healthy but its HTTP endpoint is not responding. Starting a fresh gateway...",
+        `  ${driverLabel}-driver gateway metadata reports healthy but its HTTP endpoint is not responding. Starting a fresh gateway...`,
       );
     }
   }
@@ -154,7 +156,9 @@ export async function runDockerDriverGatewayCutover(
         await deps.verifySandboxBridgeGatewayReachableOrExit(input.exitOnFailure, {
           skip: input.skipSandboxBridgeReachability,
         });
-        deps.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
+        deps.log(
+          `  ✓ Reusing existing ${driverLabel}-driver gateway process (PID ${portListenerPid})`,
+        );
         return "reused";
       }
     }
@@ -175,4 +179,12 @@ export async function runDockerDriverGatewayCutover(
     );
   }
   return "launch";
+}
+
+/** Backward-compatible Docker entry point for existing callers and tests. */
+export function runDockerDriverGatewayCutover(
+  input: DockerDriverGatewayCutoverInput,
+  deps: DockerDriverGatewayCutoverDeps,
+): Promise<"reused" | "launch"> {
+  return runManagedDriverGatewayCutover({ driverLabel: "Docker", ...input }, deps);
 }

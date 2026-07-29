@@ -486,7 +486,7 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     const unsafeProviderUpdate: Parameters<OnboardSessionModule["markStepComplete"]>[1] & {
       apiKey: string;
-      metadata: { gatewayName: string; token: string };
+      metadata: { gatewayName: string; openshellDriver: string; token: string };
     } = {
       provider: "nvidia-nim",
       model: "nvidia/test-model",
@@ -500,6 +500,7 @@ describe("onboard session", () => {
       apiKey: "nvapi-secret",
       metadata: {
         gatewayName: "nemoclaw",
+        openshellDriver: "podman",
         token: "secret",
       },
     };
@@ -520,7 +521,29 @@ describe("onboard session", () => {
     );
     expect("apiKey" in loaded).toBe(false);
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
+    expect(loaded.metadata.openshellDriver).toBe("podman");
     expect("token" in loaded.metadata).toBe(false);
+  });
+
+  it("round-trips durable compute-driver identity and defaults legacy sessions safely", () => {
+    const current = session.createSession({
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: null,
+        openshellDriver: "podman",
+      },
+    });
+    expect(requireLoadedSession(session.normalizeSession(current)).metadata.openshellDriver).toBe(
+      "podman",
+    );
+
+    const legacy = session.createSession() as unknown as {
+      metadata: Record<string, unknown>;
+    };
+    delete legacy.metadata.openshellDriver;
+    expect(
+      requireLoadedSession(session.normalizeSession(legacy as never)).metadata.openshellDriver,
+    ).toBeNull();
   });
 
   // ── GH #2625: provider switch from remote→local must clear stale fields ──

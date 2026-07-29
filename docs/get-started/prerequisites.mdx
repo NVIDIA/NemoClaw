@@ -27,24 +27,26 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 
 ## Software
 
-| Dependency | Version                          |
-|------------|----------------------------------|
-| Node.js    | 22.19 or later |
-| npm        | 10 or later |
-| Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
-| Platform   | Refer to [Platforms](#platforms) below |
+| Dependency | Version |
+|------------|---------|
+| Node.js | 22.19 or later |
+| npm | 10 or later |
+| Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform; or rootless Podman 5 or later on Linux amd64 |
+| Platform | Refer to [Platforms](#platforms) below |
 
-On Linux, the installer checks Docker before it installs the NemoClaw CLI.
-The installer can install Docker, start the Docker service, and add your user to the `docker` group.
-When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
+Docker remains the default container runtime.
+On Linux, the installer checks Docker before it installs the NemoClaw CLI unless you explicitly select Podman with `NEMOCLAW_COMPUTE_DRIVER=podman`.
+For the default path, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
+On that default Docker path, when Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
 In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
+For the Podman path, the installer validates the existing rootless Podman service and does not install or start Docker.
 
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
 <Warning title="Docker Group Access">
-NemoClaw needs Docker access.
+The default Docker driver needs Docker access; the rootless Podman path does not.
 On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
 Members of the `docker` group can control the daemon with root-level impact.
 Grant this access only to trusted local accounts.
@@ -58,6 +60,43 @@ If the installer reports that `strings` is missing, install `binutils` and rerun
 ```bash
 sudo apt-get install -y binutils
 ```
+
+### Rootless Podman on Linux amd64
+
+The first native Podman release supports CPU-only OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes on Linux amd64.
+It requires Podman 5 or later, cgroup v2, subordinate UID and GID ranges for the current user, and a responsive rootless Podman API socket.
+Verify the host before installation:
+
+```bash
+podman --version
+test "$(uname -s)" = Linux
+test "$(uname -m)" = x86_64
+test "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs
+podman unshare cat /proc/self/uid_map
+podman unshare cat /proc/self/gid_map
+systemctl --user enable --now podman.socket
+test -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+```
+
+Each `podman unshare` result must include a subordinate range longer than one ID.
+If it does not, configure the current user in `/etc/subuid` and `/etc/subgid`, then restart the user Podman socket.
+NemoClaw checks the canonical user socket automatically.
+For a nonstandard absolute socket path, set `OPENSHELL_PODMAN_SOCKET` for the first onboarding run.
+
+Select Podman explicitly; `auto` continues to select Docker for a new sandbox:
+
+<AgentOnly variant="openclaw,hermes,deepagents">
+
+```bash
+$$nemoclaw onboard --compute-driver podman --no-gpu
+```
+
+</AgentOnly>
+
+For scripted setup, `NEMOCLAW_COMPUTE_DRIVER=podman` is equivalent to the flag.
+The Podman path uses the complete immutable managed OCI image for the selected agent.
+It rejects `--from <Dockerfile>` and stops if a complete managed-image cohort cannot be resolved; it never falls back to a local Dockerfile build or Docker daemon.
+GPU passthrough and host-local Ollama, NIM, or vLLM are not supported on Podman in this release.
 
 On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
@@ -96,6 +135,7 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 | DGX OS (Spark) | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
 | DGX OS (Station) | Docker | Tested with limitations | Tested with limitations across qualified profiles on one physical DGX Station GB300; see [Additional Setup for DGX Station](additional-setup/dgx-station-preparation) for accepted profiles, the pending no-OTA DGX OS `7.6.x` end-to-end qualification, runtime gates, and current dual-Station and dedicated CI limitations. |
 | Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
+| Linux (Podman, amd64) | Podman 5+ (rootless) | Tested with limitations | Supported for CPU-only OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes on Linux amd64 with rootless Podman 5 or later, cgroup v2, subordinate UID/GID ranges, and an active user Podman API socket. Select it explicitly with `--compute-driver podman` or `NEMOCLAW_COMPUTE_DRIVER=podman`. This path requires an immutable managed OCI image and does not use a local Dockerfile build. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. When Homebrew is available, OpenShell uses its official formula and the gateway appears in `brew services list` as `openshell`; without Homebrew, NemoClaw uses the standalone OpenShell install and detached gateway fallback. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart. |
 

@@ -39,6 +39,12 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
   exitOnFailure: boolean;
 };
 
+export type ReportManagedDriverGatewayStartFailureOpts =
+  ReportDockerDriverGatewayStartFailureOpts & {
+    driverLabel: string;
+    runtimeDiagnostics?: readonly string[];
+  };
+
 /**
  * Print the standard Docker-driver-gateway-start failure diagnostic set
  * to stderr and either exit or return. Always prints:
@@ -49,16 +55,20 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
  *   - a short Troubleshooting footer with the log path and a docker CDI
  *     inspection command.
  */
-export function reportDockerDriverGatewayStartFailure(
+export function reportManagedDriverGatewayStartFailure(
   logPath: string,
   childExit: ChildExitState,
-  { exitOnFailure }: ReportDockerDriverGatewayStartFailureOpts,
+  {
+    driverLabel,
+    exitOnFailure,
+    runtimeDiagnostics = [],
+  }: ReportManagedDriverGatewayStartFailureOpts,
 ): void {
   const tail = fs.existsSync(logPath)
     ? fs.readFileSync(logPath, "utf-8").split("\n").filter(Boolean).slice(-20).join("\n")
     : "";
 
-  console.error("  Docker-driver gateway failed to start.");
+  console.error(`  ${driverLabel}-driver gateway failed to start.`);
   if (childExit.exited) {
     console.error(`  Gateway process ${childExit.describeExit()} before becoming ready.`);
   } else {
@@ -74,16 +84,28 @@ export function reportDockerDriverGatewayStartFailure(
     console.error("  Gateway log tail:");
     for (const line of tail.split("\n")) console.error(`    ${redact(line)}`);
   }
-  if (classifyGatewayStartFailure(tail).kind === "docker_unreachable") {
+  if (driverLabel === "Docker" && classifyGatewayStartFailure(tail).kind === "docker_unreachable") {
     printDockerDaemonRecovery(console.error);
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);
   console.error("    openshell status");
   console.error("    openshell gateway info");
-  console.error("    docker info --format '{{json .CDISpecDirs}}'");
+  for (const command of runtimeDiagnostics) console.error(`    ${command}`);
 
   if (exitOnFailure) {
     process.exit(1);
   }
+}
+
+export function reportDockerDriverGatewayStartFailure(
+  logPath: string,
+  childExit: ChildExitState,
+  options: ReportDockerDriverGatewayStartFailureOpts,
+): void {
+  reportManagedDriverGatewayStartFailure(logPath, childExit, {
+    ...options,
+    driverLabel: "Docker",
+    runtimeDiagnostics: ["docker info --format '{{json .CDISpecDirs}}'"],
+  });
 }

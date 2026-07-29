@@ -7,13 +7,67 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { writeSafeGatewayAuthConfig } from "../../../test/support/docker-driver-gateway-env-test-support";
-import { startPackageManagedDockerDriverGatewayWithEnvOverride } from "./docker-driver-gateway-env";
+import {
+  startPackageManagedDockerDriverGatewayWithEnvOverride,
+  startPackageManagedDriverGatewayWithEnvOverride,
+} from "./docker-driver-gateway-env";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
 }
 
 describe("package-managed Docker-driver gateway env service", () => {
+  it("writes a native Podman service environment without inheriting DOCKER_HOST", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        startPackageManagedDriverGatewayWithEnvOverride({
+          allowWildcardBind: true,
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          driverLabel: "Podman",
+          driverName: "podman",
+          env: {
+            ...homeEnv(tempHome),
+            DOCKER_HOST: "unix:///should/not/be/inherited.sock",
+          },
+          exitOnFailure: false,
+          gatewayEnv: {
+            OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+            OPENSHELL_GATEWAY_CONFIG: writeSafeGatewayAuthConfig(tempHome),
+            OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+            OPENSHELL_SERVER_PORT: "8080",
+          },
+          gatewayName: "nemoclaw",
+          hasOpenShellGatewayUserService: () => true,
+          isDockerDriverGatewayReady: async () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: (args) =>
+            args[0] === "status"
+              ? "Gateway: nemoclaw\nConnected"
+              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
+          skipSandboxBridgeReachability: false,
+          startOpenShellGatewayUserService: (opts) => {
+            opts?.prepareServiceEnv?.();
+            return { attempted: true, fallbackAllowed: false, started: true };
+          },
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).resolves.toBe(true);
+
+      const serviceEnv = fs.readFileSync(envFile, "utf-8");
+      expect(serviceEnv).toContain("OPENSHELL_PODMAN_SOCKET='/run/user/1000/podman/podman.sock'\n");
+      expect(serviceEnv).not.toContain("DOCKER_HOST=");
+      expect(log).toHaveBeenCalledWith(
+        "  Starting OpenShell Podman-driver gateway via managed service...",
+      );
+    } finally {
+      log.mockRestore();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("stages the service and writes its env under one XDG config root (#6903)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const configHome = path.join(tempHome, "xdg-config");

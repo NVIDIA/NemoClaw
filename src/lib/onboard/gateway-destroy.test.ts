@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { destroyGatewayWithVolumeCleanup, type DestroyGatewayDeps } from "./gateway-destroy";
+import { type DestroyGatewayDeps, destroyGatewayWithVolumeCleanup } from "./gateway-destroy";
 
 function deps(overrides: Partial<DestroyGatewayDeps> = {}): DestroyGatewayDeps {
   return {
@@ -80,6 +80,20 @@ describe("destroyGatewayWithVolumeCleanup", () => {
     expect(d.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
       ignoreError: true,
     });
+  });
+
+  it("stops a non-Docker managed gateway without invoking Docker volume cleanup", () => {
+    const d = deps({
+      hasLifecycleCommands: vi.fn(() => false),
+      isManagedDriverGatewayEnabled: vi.fn(() => true),
+      shouldCleanupLegacyDockerVolumes: vi.fn(() => false),
+    });
+
+    expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
+
+    expect(d.stopDockerDriverGatewayProcess).toHaveBeenCalledOnce();
+    expect(d.removeDockerDriverGatewayRegistration).toHaveBeenCalledOnce();
+    expect(d.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
   it("does not clear registry or remove volumes when gateway removal fails", () => {

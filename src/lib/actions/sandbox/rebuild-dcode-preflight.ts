@@ -170,7 +170,9 @@ export async function ensureDcodeRebuildTargetGatewaySelected(
     fail(error instanceof Error ? error.message : String(error), bail);
   }
 
+  const computeDriver = entry.openshellDriver?.trim();
   const recovery = await recoverNamedGatewayRuntime({
+    ...(computeDriver ? { computeDriver } : {}),
     gatewayName,
     recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
   });

@@ -194,7 +194,7 @@ export function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
  */
 export function shouldInspectLegacyGatewayContainer(sb: SandboxEntry | null | undefined): boolean {
   const driver = sb?.openshellDriver;
-  if (driver === "docker" || driver === "vm") return false;
+  if (driver === "docker" || driver === "podman" || driver === "vm") return false;
   if (driver === "kubernetes") return true;
   return !isLinuxDockerDriverGatewayEnabled();
 }

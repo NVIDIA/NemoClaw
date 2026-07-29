@@ -65,6 +65,8 @@ describe("gateway recovery", () => {
 
     expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
       exitOnFailure: false,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
     });
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
@@ -292,15 +294,47 @@ describe("gateway recovery", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("fails closed on cross-port recovery when the Linux Docker-driver gateway is enabled", async () => {
+  it("routes cross-port Linux Docker-driver recovery through the exact managed target", async () => {
     const deps = createDeps({ isLinuxDockerDriverGatewayEnabled: () => true });
 
-    await expect(startGatewayForRecovery({ gatewayName: "nemoclaw-8090" }, deps)).rejects.toThrow(
-      /Cross-port recovery for Linux Docker-driver gateway 'nemoclaw-8090' is not safe/,
-    );
+    await startGatewayForRecovery({ gatewayName: "nemoclaw-8090" }, deps);
 
     expect(deps.runOpenshell).not.toHaveBeenCalled();
-    expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
+      exitOnFailure: false,
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
+  });
+
+  it("routes a non-Docker managed gateway through the shared recovery lifecycle", async () => {
+    const deps = createDeps({
+      isLinuxDockerDriverGatewayEnabled: () => false,
+      isManagedDriverGatewayEnabled: () => true,
+    });
+
+    await startGatewayForRecovery({}, deps);
+
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["gateway", "start"]),
+      expect.anything(),
+    );
+  });
+
+  it("routes cross-port recovery for every managed driver through the exact target", async () => {
+    const deps = createDeps({
+      isLinuxDockerDriverGatewayEnabled: () => false,
+      isManagedDriverGatewayEnabled: () => true,
+    });
+
+    await startGatewayForRecovery({ gatewayName: "nemoclaw-8090" }, deps);
+
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
+      exitOnFailure: false,
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
   });
 });
 
@@ -313,8 +347,8 @@ describe("gateway lifecycle authority during recovery", () => {
       }),
     });
 
-    // The cross-port, non-default-name target is the branch that reaches a raw
-    // `openshell gateway start` without going through startGatewayWithOptions.
+    // The cross-port, non-default-name target must still pass the ownership
+    // guard before the exact managed target reaches startGatewayWithOptions.
     await expect(
       startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 }, deps),
     ).rejects.toThrow(ownershipError);

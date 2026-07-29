@@ -79,6 +79,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
   ): Record<string, string>;
+  getOpenShellSupervisorImage(versionOutput?: string | null): string;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
   getDockerDriverGatewayPortListenerScan(
@@ -200,9 +201,11 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return null;
   }
 
-  function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
-    if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
-      return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
+  function getOpenShellSupervisorImage(versionOutput: string | null = null): string {
+    const configured =
+      process.env.OPENSHELL_SUPERVISOR_IMAGE || process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
+    if (configured) {
+      return configured;
     }
     const installedVersion = deps.getInstalledOpenshellVersion(versionOutput);
     if (deps.shouldUseOpenshellDevChannel() || deps.isOpenshellDevVersion(versionOutput)) {
@@ -227,7 +230,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-      getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
+      getDockerSupervisorImage: () => getOpenShellSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
     });
     if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
@@ -273,12 +276,14 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return env;
   }
 
-  function hasDockerDriverGatewayEnv(pid: number): boolean {
+  function hasManagedDriverGatewayEnv(pid: number): boolean {
     const env = readProcessEnv(pid);
     if (!env) return false;
     return (
       env.OPENSHELL_DRIVERS === "docker" ||
+      env.OPENSHELL_DRIVERS === "podman" ||
       Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
+      Boolean(env.OPENSHELL_PODMAN_SOCKET) ||
       env.OPENSHELL_GRPC_ENDPOINT ===
         dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort())
     );
@@ -446,7 +451,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     if (!identity) return false;
     const matchesGatewayBinary = processIdentityMatchesGatewayBinary(identity, gatewayBin);
     if (!matchesGatewayBinary) return false;
-    if (opts.requireDockerDriverEnv && !hasDockerDriverGatewayEnv(pid)) return false;
+    if (opts.requireDockerDriverEnv && !hasManagedDriverGatewayEnv(pid)) return false;
     return true;
   }
 
@@ -513,6 +518,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     clearDockerDriverGatewayRuntimeFiles,
     createGatewayServicePortOwnership,
     getDockerDriverGatewayEnv,
+    getOpenShellSupervisorImage,
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,
     getDockerDriverGatewayPortListenerScan,

@@ -199,6 +199,23 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.logs).toContain("  inference.local route repaired.");
   });
 
+  it("uses inference route reapply without Docker repair for Podman sandboxes", () => {
+    const { calls, deps } = makeRepairDeps([broken(), healthy()]);
+
+    const result = repairSandboxInferenceRouteWithDeps(
+      "podman-box",
+      sandbox({ openshellDriver: "podman" }),
+      {},
+      deps,
+    );
+
+    expect(result.healthy).toBe(true);
+    expect(result.repairAttempted).toBe(true);
+    expect(calls.legacyRepairs).toEqual([]);
+    expect(calls.reapplications).toEqual(["podman-box"]);
+    expect(calls.logs).toContain("  inference.local route repaired.");
+  });
+
   it("lets the VM monkeypatch satisfy the route before inference reapply", () => {
     const { calls, deps } = makeRepairDeps([broken(), healthy()], {
       shouldApplyVmDnsMonkeypatch: vi.fn(() => true),

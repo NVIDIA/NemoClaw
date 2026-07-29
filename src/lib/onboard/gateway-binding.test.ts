@@ -21,9 +21,11 @@ import {
   createDynamicGatewayRuntimeHelpers,
   resolveCoreOnboardGatewayBinding,
   resolveGatewayCompatContainerName,
+  resolveGatewayComputeDriverBinding,
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
+  resolveManagedGatewayStateDirectory,
   resolveSandboxGatewayName,
 } from "./gateway-binding";
 
@@ -177,6 +179,21 @@ describe("gateway-binding resolver (#4422)", () => {
     expect(resolveGatewayStateDirName(a)).not.toBe(resolveGatewayStateDirName(b));
     expect(resolveGatewayCompatContainerName(a)).not.toBe(resolveGatewayCompatContainerName(b));
   });
+
+  it("resolves the durable managed-runtime directory for a gateway", () => {
+    expect(
+      resolveManagedGatewayStateDirectory("nemoclaw-8081", {
+        env: {},
+        home: "/home/tester",
+      }),
+    ).toBe("/home/tester/.local/state/nemoclaw/openshell-docker-gateway-8081");
+    expect(
+      resolveManagedGatewayStateDirectory("nemoclaw", {
+        env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/runtime/gateway" },
+        home: "/home/tester",
+      }),
+    ).toBe("/runtime/gateway");
+  });
 });
 
 describe("resolveSandboxGatewayName", () => {
@@ -272,6 +289,74 @@ describe("resolveSandboxGatewayName", () => {
     // gateway name that does not exist.
     expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-8080" })).toThrow(
       /Invalid persisted sandbox gateway binding/,
+    );
+  });
+});
+
+describe("resolveGatewayComputeDriverBinding", () => {
+  it("returns the one driver shared by live sandboxes on the target gateway", () => {
+    expect(
+      resolveGatewayComputeDriverBinding({
+        gatewayName: "nemoclaw-9090",
+        legacyDriverName: "docker",
+        sandboxes: [
+          {
+            name: "podman-a",
+            gatewayPort: 9090,
+            openshellDriver: "podman",
+          },
+          {
+            name: "podman-b",
+            gatewayName: "nemoclaw-9090",
+            openshellDriver: " podman ",
+          },
+          {
+            name: "other-gateway",
+            gatewayPort: 9191,
+            openshellDriver: "docker",
+          },
+          {
+            name: "route-only",
+            pendingRouteReservation: true,
+            openshellDriver: "docker",
+          },
+        ],
+      }),
+    ).toBe("podman");
+  });
+
+  it("treats a legacy live row as its platform-derived driver", () => {
+    expect(
+      resolveGatewayComputeDriverBinding({
+        gatewayName: "nemoclaw",
+        legacyDriverName: "docker",
+        sandboxes: [{ name: "legacy" }],
+      }),
+    ).toBe("docker");
+  });
+
+  it("returns null when no live sandbox is bound to the gateway", () => {
+    expect(
+      resolveGatewayComputeDriverBinding({
+        gatewayName: "nemoclaw-9090",
+        legacyDriverName: "docker",
+        sandboxes: [{ name: "other", gatewayPort: 9191, openshellDriver: "docker" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("fails closed when one shared gateway contains mixed drivers", () => {
+    expect(() =>
+      resolveGatewayComputeDriverBinding({
+        gatewayName: "nemoclaw",
+        legacyDriverName: "docker",
+        sandboxes: [
+          { name: "docker-agent", openshellDriver: "docker" },
+          { name: "podman-agent", openshellDriver: "podman" },
+        ],
+      }),
+    ).toThrow(
+      "Conflicting OpenShell compute drivers are bound to gateway 'nemoclaw': docker-agent='docker', podman-agent='podman'.",
     );
   });
 });

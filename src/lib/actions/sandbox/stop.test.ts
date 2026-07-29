@@ -138,7 +138,11 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(0);
     expect(h.stopSandboxChannels).toHaveBeenCalledWith(
       "my-sandbox",
-      expect.objectContaining({ info: expect.any(Function), warn: expect.any(Function) }),
+      expect.objectContaining({
+        allowDockerGatewayExec: true,
+        info: expect.any(Function),
+        warn: expect.any(Function),
+      }),
     );
     expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
       ignoreError: true,

@@ -9,6 +9,7 @@ import type {
 } from "../../onboard/rebuild-route-handoff";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
+  resolveRebuildOpenShellComputePlan,
   stageRebuildBaseImageResolutionHandoff,
   stageRegistryProviderRecoveryReceipt,
 } from "./rebuild-preflight-target-phase";
@@ -55,6 +56,22 @@ describe("stageRegistryProviderRecoveryReceipt", () => {
       nonce: "nonce-with-route",
       expiresAtMs: 1_000,
       sessionId: null,
+    });
+  });
+});
+
+describe("resolveRebuildOpenShellComputePlan", () => {
+  it("preserves the durable Podman driver for managed workload rebuilds", () => {
+    expect(resolveRebuildOpenShellComputePlan("podman")).toEqual({
+      driverName: "podman",
+      gatewayLauncher: "nemoclaw",
+    });
+  });
+
+  it("normalizes a legacy VM receipt to its existing Docker-managed plan", () => {
+    expect(resolveRebuildOpenShellComputePlan("vm")).toEqual({
+      driverName: "docker",
+      gatewayLauncher: "nemoclaw",
     });
   });
 });

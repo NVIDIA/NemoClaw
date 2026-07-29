@@ -13,6 +13,19 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
   beforeEach(() => {
     captureSpy = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "captureOpenshell");
     runSpy = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "runOpenshell");
+    vi.spyOn(
+      gatewayRuntime.gatewayRuntimeDependencies,
+      "listSandboxDriverBindings",
+    ).mockReturnValue([
+      { name: "default-agent", gatewayName: "nemoclaw", openshellDriver: "docker" },
+      { name: "port-agent", gatewayPort: 8090, openshellDriver: "docker" },
+    ]);
+    vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "legacyComputeDriverName").mockReturnValue(
+      "docker",
+    );
+    vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "readGatewayRuntimeDriver").mockReturnValue(
+      null,
+    );
     startGatewaySpy = vi
       .spyOn(gatewayRuntime.gatewayRuntimeDependencies, "startGatewayForRecovery")
       .mockResolvedValue(undefined as never);
@@ -224,12 +237,105 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       });
 
       expect(startGatewaySpy).toHaveBeenCalledWith({
+        computeDriver: "docker",
         gatewayName: "nemoclaw-8090",
         gatewayPort: 8090,
       });
       expect(result.recovered).toBe(true);
       expect(result.via).toBe("start");
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
+    });
+
+    it("forwards the durable Podman driver when a missing gateway must be started", async () => {
+      vi.mocked(
+        gatewayRuntime.gatewayRuntimeDependencies.listSandboxDriverBindings,
+      ).mockReturnValue([{ name: "podman-agent", gatewayPort: 8090, openshellDriver: "podman" }]);
+      captureSpy
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw-8090\n",
+        })
+        .mockReturnValueOnce({ status: 0, output: "Gateway: nemoclaw-8090\n" });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+      });
+
+      expect(startGatewaySpy).toHaveBeenCalledWith({
+        computeDriver: "podman",
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8090,
+      });
+      expect(result.recovered).toBe(true);
+    });
+
+    it("does not start a gateway without durable driver evidence", async () => {
+      vi.mocked(
+        gatewayRuntime.gatewayRuntimeDependencies.listSandboxDriverBindings,
+      ).mockReturnValue([]);
+      captureSpy.mockReturnValue({ status: 0, output: "Status: Disconnected\nGateway: other\n" });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+      });
+
+      expect(startGatewaySpy).not.toHaveBeenCalled();
+      expect(result.recovered).toBe(false);
+    });
+
+    it("uses a durable gateway-runtime binding when no sandbox row remains", async () => {
+      vi.mocked(
+        gatewayRuntime.gatewayRuntimeDependencies.listSandboxDriverBindings,
+      ).mockReturnValue([]);
+      vi.mocked(gatewayRuntime.gatewayRuntimeDependencies.readGatewayRuntimeDriver).mockReturnValue(
+        "podman",
+      );
+      captureSpy
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw-8090\n",
+        })
+        .mockReturnValueOnce({ status: 0, output: "Gateway: nemoclaw-8090\n" });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+      });
+
+      expect(startGatewaySpy).toHaveBeenCalledWith({
+        computeDriver: "podman",
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8090,
+      });
+      expect(result.recovered).toBe(true);
+    });
+
+    it("does not start a gateway with conflicting durable driver evidence", async () => {
+      vi.mocked(
+        gatewayRuntime.gatewayRuntimeDependencies.listSandboxDriverBindings,
+      ).mockReturnValue([
+        { name: "docker-agent", gatewayPort: 8090, openshellDriver: "docker" },
+        { name: "podman-agent", gatewayPort: 8090, openshellDriver: "podman" },
+      ]);
+      captureSpy.mockReturnValue({ status: 0, output: "Status: Disconnected\nGateway: other\n" });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+      });
+
+      expect(startGatewaySpy).not.toHaveBeenCalled();
+      expect(result.recovered).toBe(false);
     });
   });
 });

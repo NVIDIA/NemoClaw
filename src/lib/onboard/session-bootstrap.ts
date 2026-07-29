@@ -24,6 +24,8 @@ export interface OnboardSessionBootstrapInput {
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
+  /** Compute identity resolved before the session is created. */
+  openshellDriver?: string | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -293,7 +295,11 @@ function prepareFreshSession(
       observabilityEnabled: input.requestedObservabilityEnabled === true,
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       stationExpressIntent: input.stationExpressIntent ?? null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: fromDockerfile || null,
+        openshellDriver: input.openshellDriver ?? null,
+      },
     }),
   );
   return { session, fromDockerfile };

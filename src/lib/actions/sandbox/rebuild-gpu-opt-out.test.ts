@@ -203,6 +203,20 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(opts.toolDisclosure).toBe("direct");
   });
 
+  it("preserves the concrete compute driver through destructive recreate", () => {
+    const recorded = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { ...dashboard, openshellDriver: "podman" },
+    });
+    const legacy = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: dashboard,
+    });
+
+    expect(recorded.computeDriver).toBe("podman");
+    expect(legacy.computeDriver).not.toBe("auto");
+  });
+
   it("preserves only recognized endpoint provenance across authoritative rebuild", () => {
     const onboard = buildRebuildRecreateOnboardOpts({
       ...baseArgs,

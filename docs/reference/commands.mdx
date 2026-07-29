@@ -211,7 +211,7 @@ The wizard creates an OpenShell gateway, registers inference providers, prepares
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--compute-driver <auto|docker|podman>] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -238,6 +238,31 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases.
 For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
 
+#### `--compute-driver <auto|docker|podman>`
+
+Select the local container-runtime driver for the NemoClaw-managed OpenShell gateway and sandbox.
+`auto` is the default: it preserves the persisted driver for an existing sandbox or shared gateway and otherwise selects Docker.
+Use `docker` to require the existing Docker Engine, Docker Desktop, or Colima path.
+Use `podman` to require the qualified rootless Podman path on Linux amd64.
+
+The Podman path requires Podman 5 or later, cgroup v2, subordinate UID/GID ranges, and a responsive rootless user API socket.
+It supports CPU-only sandboxes with hosted inference in this release.
+It uses immutable managed OCI images and rejects `--from <Dockerfile>` rather than building locally or falling back to Docker.
+The same driver is available to every shipped agent:
+
+<AgentOnly variant="openclaw,hermes,deepagents">
+
+```bash
+$$nemoclaw onboard --compute-driver podman --no-gpu
+```
+
+</AgentOnly>
+
+Set `NEMOCLAW_COMPUTE_DRIVER=podman` for the equivalent scripted selection.
+An explicit flag takes precedence over the environment variable.
+NemoClaw records the selected driver with the onboarding session, sandbox, and managed gateway runtime.
+Resume, rebuild, status recovery, doctor, and destroy use that persisted binding; a later conflicting driver request fails instead of migrating the sandbox or silently falling back to Docker.
+
 #### `--events=jsonl`
 
 Emit a read-only stream of canonical onboarding FSM events as JSON Lines on stdout.
@@ -262,7 +287,7 @@ Without `--events=jsonl`, terminal output and behavior are unchanged.
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
-Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, and custom Dockerfile path recorded by the original run.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, compute driver, observability choice, and custom Dockerfile path recorded by the original run.
 
 <AgentOnly variant="openclaw">
 
@@ -351,17 +376,17 @@ Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/u
 
 </AgentOnly>
 
-On supported `amd64` and `arm64` Docker hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
+On supported `amd64` and `arm64` Docker hosts and qualified Linux `amd64` Podman hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
 NemoClaw accepts the release catalog only when the same publication cohort contains OpenClaw, Hermes, and Deep Agents images.
 It resolves the selected image to an exact repository digest and builds a secret-free startup profile for the current sandbox configuration.
 The startup applicator verifies and materializes that profile when the sandbox starts.
 Managed rebuilds resolve the current CLI release to an exact digest, while managed clones retain the source image digest and prepare a target-specific profile.
 
-On those Docker hosts, catalog or registry resolution failures stop stock onboarding before mutation.
-The Docker managed-image path never silently falls back to a Dockerfile.
+On Docker and Podman, catalog or registry resolution failures stop stock onboarding before sandbox mutation.
+Neither managed-image path silently falls back to a Dockerfile.
+Podman rejects `--from <Dockerfile>` because it is buildless; an explicit Docker `--from <Dockerfile>` request remains a separate local Dockerfile build.
 Kubernetes drivers continue to use the trusted Dockerfile workflow until they advertise the managed-image startup-profile capability.
-An explicit `--from <Dockerfile>` request remains a separate local Dockerfile build.
-NemoClaw shows a Dockerfile build-time estimate only after that explicit local-build path is known.
+NemoClaw shows a Dockerfile build-time estimate only after the explicit Docker local-build path is known.
 Stock managed-image launch does not show the estimate because it does not run a local Dockerfile build.
 
 The base-image resolution controls below apply only to explicit custom Dockerfile workflows.
@@ -664,8 +689,8 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
-Native Podman is not supported by this release; use Docker Engine, Docker Desktop, or Colima.
+For the default Docker driver, it verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
+For an explicitly selected Podman driver, it verifies Linux amd64, Podman 5 or later, rootless operation, cgroup v2, subordinate UID/GID mappings, and the user API socket without probing Docker.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -685,8 +710,9 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 
 #### `--from <Dockerfile>`
 
-Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
+On the Docker driver, build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
+The buildless Podman driver rejects this option and requires an immutable managed OCI image.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
 When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths.
 This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`.
@@ -1265,7 +1291,7 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 
 ### `$$nemoclaw <name> stop`
 
-Stop the sandbox's Docker container while preserving all of its state.
+Stop the sandbox's local runtime container while preserving all of its state.
 Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place.
 Use this to free CPU, memory, and GPU resources without destroying the sandbox; use [`$$nemoclaw <name> destroy`](#$$nemoclaw-name-destroy) when you want to delete it instead.
 
@@ -1286,7 +1312,9 @@ Stopping an already-stopped sandbox succeeds and attempts to remove any leftover
 <AgentOnly variant="deepagents">
 Stopping an already-stopped sandbox succeeds without changes.
 </AgentOnly>
-The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
+The command controls the local container directly through the sandbox's recorded runtime adapter, so it is available for Docker, vm, and native Podman sandboxes and unavailable for remote or unregistered drivers such as kubernetes.
+Docker keeps its daemon-outage guidance.
+Podman resolves the exact protected rootless socket and refuses missing, ambiguous, or identity-mismatched managed containers instead of guessing which container to mutate.
 
 ### `$$nemoclaw <name> start`
 
@@ -1494,7 +1522,8 @@ The rebuild reuses the existing sandbox name and preserved manifest-defined stat
 ### `$$nemoclaw <name> doctor`
 
 Run a focused health check for one sandbox and the host services it depends on.
-The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
+The command checks the local CLI build, selected container runtime, OpenShell CLI, NemoClaw-managed gateway runtime, gateway listener, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
+For a Podman sandbox, it validates the persisted rootless socket and managed runtime binding with Podman and does not probe or fall back to Docker.
 <AgentOnly variant="openclaw,hermes">
 For gateway-based agents, it also reports messaging channel conflicts.
 </AgentOnly>
@@ -1522,6 +1551,7 @@ Use `--json` for machine-readable output.
 For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`.
 The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials.
 Because the check has `info` status, it does not change the command's exit status.
+After a host reboot on Podman, start the user `podman.socket`, run `$$nemoclaw <name> status` to recover the persisted managed gateway, and use `doctor --json` as the readiness check.
 
 <AgentOnly variant="openclaw">
 
@@ -1731,8 +1761,8 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 
 ### `$$nemoclaw <name> destroy`
 
-Stop the NIM container, remove any sandbox-owned local Dockerfile image, and delete the sandbox.
-Shared immutable managed images remain in Docker's cache for other sandboxes.
+Stop the NIM container when applicable, remove any sandbox-owned local Dockerfile image on Docker, and delete the sandbox.
+Shared immutable managed images remain in the selected runtime's cache for other sandboxes.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
@@ -1764,6 +1794,8 @@ If deletion fails after hardening, the command keeps the surviving sandbox's loc
 By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
 These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
+For the last Podman sandbox, `--cleanup-gateway` uses the exact persisted driver, socket, network, and managed runtime binding to remove the gateway and its protected binding state.
+It does not consult Docker or an ambient socket override that conflicts with the recorded binding.
 If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
@@ -3811,6 +3843,8 @@ Set them before running `$$nemoclaw onboard`.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
+| `NEMOCLAW_COMPUTE_DRIVER` | `auto`, `docker`, or `podman` | Selects the OpenShell compute driver for onboarding and installation. `auto` preserves a persisted driver and otherwise selects Docker. The `--compute-driver` flag takes precedence. A conflicting selection for an existing sandbox or shared gateway fails closed rather than migrating it. |
+| `OPENSHELL_PODMAN_SOCKET` | Absolute Unix socket path | Selects a nonstandard rootless Podman API socket for the first Podman onboarding run. NemoClaw persists the qualified socket in the managed runtime binding for later recovery and lifecycle commands; a conflicting ambient override is rejected. |
 | `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup, but does not change managed-vLLM storage-warning handling. Express and other non-interactive setup continue after a verified insufficient-capacity warning, interactive setup still requires an explicit `y` or `yes`, and an inconclusive model-cache check stops non-interactive setup with guidance to rerun interactively. |
 | `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, an agent that uses the legacy `16384`-token context floor, currently OpenClaw, prints a warning and selects the default fallback model instead of spawning `ollama serve`. An agent that requires a larger verified runtime context, currently Hermes at `64000` tokens, returns to interactive provider selection or exits when the Ollama provider is pinned or onboarding is non-interactive. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
 | `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` or empty/unset | When set to `prompt`, allows non-interactive onboarding to use prompt-capable `sudo` for host setup steps that require elevation, which can ask for a password. Empty/unset is the default and uses `sudo -n`, which fails instead of asking for a password. Any other value is rejected. |

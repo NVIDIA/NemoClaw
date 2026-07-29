@@ -50,6 +50,12 @@ export const CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES = {
     managedImageSelectionPolicy: "require-managed",
     legacyDockerfileBuilds: true,
   },
+  podman: {
+    support: COMPLETE_MANAGED_IMAGE_V1_SUPPORT,
+    hostArchitectures: ["amd64"],
+    managedImageSelectionPolicy: "require-managed",
+    legacyDockerfileBuilds: false,
+  },
   kubernetes: {
     support: null,
     hostArchitectures: [],

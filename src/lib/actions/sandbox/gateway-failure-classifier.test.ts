@@ -10,7 +10,11 @@ vi.mock("../../state/registry", () => ({
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
 }));
 
-import { classifyGatewayFailure, type GatewayFailureRunners } from "./gateway-failure-classifier";
+import {
+  classifyGatewayFailure,
+  type GatewayFailureRunners,
+  isDockerRuntimeDown,
+} from "./gateway-failure-classifier";
 
 function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
@@ -91,5 +95,39 @@ describe("classifyGatewayFailure (#7348)", () => {
 
     expect(result.layer).toBe("docker_unreachable");
     expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("runtime-specific Docker outage preflight", () => {
+  it.each([
+    "vm",
+    "podman",
+    "mxc",
+  ])("does not inherit a Docker probe for the %s driver", (openshellDriver) => {
+    const dockerInfo = vi.fn(() => false);
+
+    expect(
+      isDockerRuntimeDown("sb-1", {
+        getSandbox: () => ({ name: "sb-1", openshellDriver }),
+        runners: { dockerInfo },
+      }),
+    ).toBe(false);
+    expect(dockerInfo).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    "docker",
+    "kubernetes",
+  ])("keeps the Docker outage probe for driver evidence %s", (openshellDriver) => {
+    const dockerInfo = vi.fn(() => false);
+
+    expect(
+      isDockerRuntimeDown("sb-1", {
+        getSandbox: () => ({ name: "sb-1", openshellDriver }),
+        runners: { dockerInfo },
+      }),
+    ).toBe(true);
+    expect(dockerInfo).toHaveBeenCalledOnce();
   });
 });

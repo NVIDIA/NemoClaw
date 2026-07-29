@@ -15,6 +15,7 @@ import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
+  getKnownSandboxOpenShellDriver,
   getKnownSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
@@ -76,6 +77,11 @@ type SandboxGatewayStateLookup = (
   sandboxName: string,
   gatewayName?: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
+
+function sandboxUsesDockerLifecycle(sandboxName: string): boolean {
+  const driver = getKnownSandboxOpenShellDriver(sandboxName)?.toLowerCase();
+  return driver === undefined || driver === "" || driver === "docker" || driver === "vm";
+}
 
 function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
   if (!gatewayName) return args;
@@ -373,7 +379,9 @@ export function reconcileMissingAgainstNamedGateway(
     // no sandbox memory, but Docker may still have the labeled
     // container. Attempt active Docker-side recovery before falling
     // through to non-destructive guidance.
-    return tryRecoverDockerDriverSandbox(sandboxName, missingLookup);
+    return sandboxUsesDockerLifecycle(sandboxName)
+      ? tryRecoverDockerDriverSandbox(sandboxName, missingLookup)
+      : missingLookup;
   }
   return missingLookup;
 }
@@ -556,7 +564,11 @@ export async function getReconciledSandboxGatewayState(
       return lookup;
     }
     const recoveryGatewayName = targetGatewayName ?? getSandboxTargetGatewayName();
-    const recovery = await recoverNamedGatewayRuntime({ gatewayName: recoveryGatewayName });
+    const computeDriver = getKnownSandboxOpenShellDriver(sandboxName);
+    const recovery = await recoverNamedGatewayRuntime({
+      ...(computeDriver ? { computeDriver } : {}),
+      gatewayName: recoveryGatewayName,
+    });
     if (recovery.recovered) {
       const retried = await getState(sandboxName, recoveryGatewayName);
       if (retried.state === "present" || retried.state === "missing") {
@@ -619,11 +631,13 @@ export async function ensureLiveSandboxOrExit(
       // sandbox is fine and recreating it cannot succeed until Docker is back
       // (#4428). Terminal phases (Failed/Error/...) are settled failures and
       // keep the rebuild guidance so a genuine failure is never masked.
-      if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
+      const dockerLifecycle = sandboxUsesDockerLifecycle(sandboxName);
+      if (dockerLifecycle && !isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
         printDockerRuntimeDownGuidance(sandboxName);
         process.exit(1);
       }
-      const dockerRuntime = phase === "Error" ? getSandboxDockerRuntime(sandboxName) : null;
+      const dockerRuntime =
+        dockerLifecycle && phase === "Error" ? getSandboxDockerRuntime(sandboxName) : null;
       if (dockerRuntime?.paused && dockerRuntime.containerName) {
         console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
         console.error("");

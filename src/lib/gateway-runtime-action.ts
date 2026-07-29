@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { listSandboxGatewayComputeBindings } from "./actions/sandbox/gateway-target";
 import { stripAnsi } from "./adapters/openshell/client";
 import * as openshellRuntime from "./adapters/openshell/runtime";
 import {
@@ -8,9 +9,17 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "./core/ports";
-import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
+import { resolveCurrentOpenShellComputePlan } from "./onboard/compute/plan";
+import { readManagedGatewayRuntimeBinding } from "./onboard/docker-driver-gateway-config";
+import {
+  resolveGatewayComputeDriverBinding,
+  resolveGatewayName,
+  resolveGatewayPortFromName,
+  resolveManagedGatewayStateDirectory,
+} from "./onboard/gateway-binding";
 
 type StartGatewayForRecoveryOptions = {
+  computeDriver?: string;
   gatewayName?: string;
   gatewayPort?: number;
 };
@@ -34,6 +43,18 @@ export const gatewayRuntimeDependencies = {
   async startGatewayForRecovery(options?: StartGatewayForRecoveryOptions): Promise<void> {
     const onboard = (await import("./onboard")) as unknown as LegacyOnboardModule;
     return onboard.startGatewayForRecovery(options);
+  },
+  listSandboxDriverBindings() {
+    return listSandboxGatewayComputeBindings();
+  },
+  legacyComputeDriverName() {
+    return resolveCurrentOpenShellComputePlan().driverName;
+  },
+  readGatewayRuntimeDriver(gatewayName: string) {
+    return (
+      readManagedGatewayRuntimeBinding(resolveManagedGatewayStateDirectory(gatewayName))
+        ?.driverName ?? null
+    );
   },
 };
 
@@ -139,9 +160,41 @@ export function getNamedGatewayLifecycleState(
 type NamedGatewayLifecycleStateName = ReturnType<typeof getNamedGatewayLifecycleState>["state"];
 
 export type RecoverNamedGatewayRuntimeOptions = {
+  computeDriver?: string;
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
 };
+
+export function resolveGatewayRecoveryComputeDriver(options: {
+  computeDriver?: string;
+  gatewayName: string;
+}): string {
+  const requested = options.computeDriver?.trim() || null;
+  const registryDriver = resolveGatewayComputeDriverBinding({
+    gatewayName: options.gatewayName,
+    sandboxes: gatewayRuntimeDependencies.listSandboxDriverBindings(),
+    legacyDriverName: gatewayRuntimeDependencies.legacyComputeDriverName(),
+  });
+  const runtimeDriver = gatewayRuntimeDependencies.readGatewayRuntimeDriver(options.gatewayName);
+  if (registryDriver && runtimeDriver && registryDriver !== runtimeDriver) {
+    throw new Error(
+      `Gateway '${options.gatewayName}' has conflicting registry and runtime drivers '${registryDriver}' and '${runtimeDriver}'.`,
+    );
+  }
+  const persisted = registryDriver ?? runtimeDriver;
+  if (requested && persisted && requested !== persisted) {
+    throw new Error(
+      `Requested OpenShell compute driver '${requested}' does not match gateway '${options.gatewayName}' driver '${persisted}'.`,
+    );
+  }
+  const driverName = requested ?? persisted;
+  if (!driverName) {
+    throw new Error(
+      `No durable OpenShell compute driver is bound to gateway '${options.gatewayName}'; refusing ambiguous recovery.`,
+    );
+  }
+  return driverName;
+}
 
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
 export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRuntimeOptions = {}) {
@@ -181,7 +234,12 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   if (shouldStartGateway) {
     try {
+      const computeDriver = resolveGatewayRecoveryComputeDriver({
+        computeDriver: options.computeDriver,
+        gatewayName,
+      });
       await gatewayRuntimeDependencies.startGatewayForRecovery({
+        computeDriver,
         gatewayName,
         gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
       });

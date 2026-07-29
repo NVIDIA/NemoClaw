@@ -55,6 +55,24 @@ describe("destroySandbox flow", () => {
     expectSuccessfulLiveDestroy(harness, exitSpy);
   });
 
+  it("carries the native Podman driver into final gateway cleanup without probing Docker", async () => {
+    const harness = createDestroyHarness({ openshellDriver: "podman" });
+    harness.dockerCaptureSpy.mockImplementation(() => {
+      throw new Error("Docker must not be invoked for Podman destroy");
+    });
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+      { openshellDriver: "podman" },
+    );
+  });
+
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
     const routeId = "a".repeat(64);
     const harness = createDestroyHarness({

@@ -40,6 +40,17 @@ describe("sandbox workload runtime capabilities", () => {
     });
   });
 
+  it("registers Podman as a buildless managed-image v1 runtime on amd64 (#7744)", () => {
+    expect(
+      resolveSandboxWorkloadRuntimeCapabilities({ driverName: "podman" }, undefined, "x64"),
+    ).toEqual({
+      driverName: "podman",
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+      managedImages: AMD64_MANAGED_IMAGE_V1_SUPPORT,
+    });
+  });
+
   it("selects the complete multi-architecture managed cohort on arm64 (#7744)", () => {
     expect(
       resolveSandboxWorkloadRuntimeCapabilities({ driverName: "docker" }, undefined, "arm64"),
@@ -48,6 +59,20 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: true,
       managedImages: ARM64_MANAGED_IMAGE_V1_SUPPORT,
+    });
+  });
+
+  it.each([
+    "arm64",
+    "s390x",
+  ])("does not select the amd64-only Podman cohort on a %s host (#7744)", (architecture) => {
+    expect(
+      resolveSandboxWorkloadRuntimeCapabilities({ driverName: "podman" }, undefined, architecture),
+    ).toEqual({
+      driverName: "podman",
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+      managedImages: null,
     });
   });
 
@@ -93,10 +118,8 @@ describe("sandbox workload runtime capabilities", () => {
     });
   });
 
-  it.each([
-    "podman",
-    "mxc",
-  ])("lets the %s driver register the same portable contract without Docker coupling (#7744)", (driverName) => {
+  it("lets an MXC-shaped driver inject the same portable contract without Docker coupling (#7744)", () => {
+    const driverName = "mxc";
     const profiles: ManagedImageRuntimeProfileRegistry = {
       ...CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES,
       [driverName]: {

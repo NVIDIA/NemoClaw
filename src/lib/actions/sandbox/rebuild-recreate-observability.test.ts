@@ -56,6 +56,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   targetGatewayName: "nemoclaw",
   targetGatewayPort: 8080,
   onboardLockAlreadyHeld: true,
+  computeDriver: "docker",
   autoYes: true,
   toolDisclosure: "progressive",
   dcodeAutoApprovalMode: "disabled",

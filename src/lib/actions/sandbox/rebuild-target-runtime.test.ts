@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   enforceDockerGpuPatchPreserveNetwork: vi.fn(),
   ensureValidatedWebSearchCredential: vi.fn(),
   isDockerDesktopWslRuntime: vi.fn(),
-  isLinuxDockerDriverGatewayEnabled: vi.fn(),
   preflightRebuildCredentials: vi.fn(),
   readGatewayProviderMetadata: vi.fn(),
   runOpenshell: vi.fn(),
@@ -31,10 +30,6 @@ vi.mock("./rebuild-onboard-dependencies", () => ({
   rebuildOnboardDependencies: {
     ensureValidatedWebSearchCredential: mocks.ensureValidatedWebSearchCredential,
   },
-}));
-
-vi.mock("../../onboard/docker-driver-platform", () => ({
-  isLinuxDockerDriverGatewayEnabled: mocks.isLinuxDockerDriverGatewayEnabled,
 }));
 
 vi.mock("../../onboard/docker-gpu-local-inference", () => ({
@@ -75,6 +70,7 @@ const RECREATE_OPTIONS = {
   sandboxGpuDevice: null,
   controlUiPort: 18789,
   targetGatewayPort: 8080,
+  computeDriver: "docker",
 } as RebuildRecreateOnboardOpts;
 
 describe("preflightRebuildTargetRuntime GPU route", () => {
@@ -90,7 +86,6 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
       nimCapable: true,
       platform: "linux",
     });
-    mocks.isLinuxDockerDriverGatewayEnabled.mockReturnValue(true);
     mocks.isDockerDesktopWslRuntime.mockReturnValue(false);
     mocks.enforceDockerGpuPatchPreserveNetwork.mockResolvedValue(false);
     mocks.preflightRebuildCredentials.mockReturnValue(true);
@@ -139,6 +134,51 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
         gatewayPort: 8080,
         log,
       },
+    );
+    expect(bail).not.toHaveBeenCalled();
+  });
+
+  it("rejects persisted Podman GPU state without entering Docker network preflight", async () => {
+    const bail = vi.fn();
+
+    await expect(
+      preflightRebuildTargetRuntime(
+        TARGET,
+        ENTRY,
+        { ...RECREATE_OPTIONS, computeDriver: "podman" },
+        vi.fn(),
+        bail as never,
+        { skipImagePreflight: true },
+      ),
+    ).resolves.toEqual({ ok: false });
+
+    expect(bail).toHaveBeenCalledWith("Recorded Podman GPU state is unsupported");
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+  });
+
+  it("keeps a CPU-only Podman rebuild out of Docker-driver GPU routing", async () => {
+    const log = vi.fn();
+    const bail = vi.fn();
+
+    await expect(
+      preflightRebuildTargetRuntime(
+        TARGET,
+        ENTRY,
+        { ...RECREATE_OPTIONS, computeDriver: "podman", sandboxGpu: "disable" },
+        log,
+        bail as never,
+        { skipImagePreflight: true },
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      preparedImage: null,
+      requiresGatewayProviderReconfigure: false,
+    });
+
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
+      "ollama-local",
+      expect.objectContaining({ sandboxGpuEnabled: false }),
+      expect.objectContaining({ dockerDriverGateway: false, log }),
     );
     expect(bail).not.toHaveBeenCalled();
   });
@@ -215,7 +255,6 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
       nimCapable: true,
       platform: "linux",
     });
-    mocks.isLinuxDockerDriverGatewayEnabled.mockReturnValue(true);
     mocks.isDockerDesktopWslRuntime.mockReturnValue(false);
     mocks.enforceDockerGpuPatchPreserveNetwork.mockResolvedValue(false);
     mocks.preflightRebuildCredentials.mockReturnValue(true);

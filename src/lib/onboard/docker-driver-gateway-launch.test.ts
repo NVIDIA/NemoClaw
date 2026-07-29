@@ -11,6 +11,7 @@ import {
   buildDockerDriverGatewayConfigToml,
   buildDockerDriverGatewayLaunch,
   buildDockerDriverGatewayRuntimeIdentity,
+  buildHostManagedGatewayRuntimeIdentity,
   parseGlibcVersionsFromBinaryText,
   resolveDriftGatewayBin,
   shouldUseContainerizedGateway,
@@ -33,6 +34,35 @@ function withTempBinaries<T>(
 }
 
 describe("docker-driver-gateway-launch", () => {
+  it("builds a host-only runtime identity without incompatible driver environment", () => {
+    const identity = buildHostManagedGatewayRuntimeIdentity({
+      gatewayBin: "/tmp/openshell-gateway",
+      gatewayEnv: {
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      },
+      env: {
+        DOCKER_HOST: "unix:///var/run/docker.sock",
+        OPENSHELL_DOCKER_SUPERVISOR_BIN: "/tmp/openshell-sandbox",
+      },
+      removeEnvironmentKeys: ["DOCKER_HOST", "OPENSHELL_DOCKER_SUPERVISOR_BIN"],
+      runtimeEnvironmentKeys: ["OPENSHELL_PODMAN_SOCKET"],
+    });
+
+    expect(identity.launch).toMatchObject({
+      command: "/tmp/openshell-gateway",
+      args: [],
+      mode: "host",
+      processGatewayBin: "/tmp/openshell-gateway",
+    });
+    expect(identity.launch?.env).not.toHaveProperty("DOCKER_HOST");
+    expect(identity.launch?.env).not.toHaveProperty("OPENSHELL_DOCKER_SUPERVISOR_BIN");
+    expect(identity.desiredEnv).toMatchObject({
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+    });
+  });
+
   it("extracts GLIBC versions from binary text", () => {
     expect(parseGlibcVersionsFromBinaryText("GLIBC_2.35\0GLIBC_2.39\0GLIBC_2.39")).toEqual([
       "2.35",
@@ -210,13 +240,16 @@ describe("docker-driver-gateway-launch", () => {
     });
   });
 
-  it("scrubs stale auth-disable env from direct host gateway launches", () => {
+  it("scrubs stale TLS/auth-disable env from direct host gateway launches", () => {
     withTempBinaries(({ dir, gatewayBin }) => {
       const launch = buildDockerDriverGatewayLaunch({
         gatewayBin,
         stateDir: dir,
         platform: "linux",
-        env: { OPENSHELL_DISABLE_GATEWAY_AUTH: "true" },
+        env: {
+          OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
+          OPENSHELL_DISABLE_TLS: "true",
+        },
         hostGlibcVersion: "2.39",
         requiredGlibcVersions: ["2.39"],
         gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
@@ -224,6 +257,7 @@ describe("docker-driver-gateway-launch", () => {
 
       expect(launch.mode).toBe("host");
       expect(launch.env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+      expect(launch.env.OPENSHELL_DISABLE_TLS).toBeUndefined();
     });
   });
 });

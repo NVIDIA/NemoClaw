@@ -177,6 +177,8 @@ export interface AssessHostOpts {
   runCaptureImpl?: RunCaptureFn;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
+  /** Do not discover or invoke Docker when another qualified runtime owns compute. */
+  skipDockerProbe?: boolean;
 }
 
 function buildCommandVArgv(commandName: string): readonly string[] {
@@ -602,7 +604,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const readdirImpl = opts.readdirImpl ?? ((dir: string) => fs.readdirSync(dir));
   const dockerInstalled =
-    opts.commandExistsImpl?.("docker") ?? commandExists("docker", runCaptureImpl);
+    !opts.skipDockerProbe &&
+    (opts.commandExistsImpl?.("docker") ?? commandExists("docker", runCaptureImpl));
   const nodeInstalled = opts.commandExistsImpl?.("node") ?? commandExists("node", runCaptureImpl);
   const openshellInstalled =
     opts.commandExistsImpl?.("openshell") ?? commandExists("openshell", runCaptureImpl);
@@ -613,7 +616,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const systemctlAvailable =
     opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
 
-  let dockerInfoOutput = opts.dockerInfoOutput;
+  let dockerInfoOutput = opts.skipDockerProbe ? undefined : opts.dockerInfoOutput;
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && dockerInfoOutput === undefined) {

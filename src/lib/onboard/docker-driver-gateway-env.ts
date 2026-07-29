@@ -24,12 +24,14 @@ import {
   hasOpenShellGatewayUserService,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
+  startPackageManagedDriverGateway,
 } from "./docker-driver-gateway-service";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "DOCKER_HOST",
+  "OPENSHELL_PODMAN_SOCKET",
   "OPENSHELL_DRIVERS",
   "OPENSHELL_BIND_ADDRESS",
   "OPENSHELL_SERVER_PORT",
@@ -43,7 +45,9 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DOCKER_NETWORK_NAME",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
   "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+  "OPENSHELL_SUPERVISOR_IMAGE",
   "OPENSHELL_GATEWAY_CONFIG",
+  "NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256",
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
 ] as const;
@@ -61,6 +65,9 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   PackageManagedDockerDriverGatewayOptions,
   "prepareOpenShellGatewayUserServiceEnv"
 > & {
+  allowWildcardBind?: boolean;
+  driverLabel?: string;
+  driverName?: string;
   env?: NodeJS.ProcessEnv;
   gatewayEnv: Record<string, string>;
   home?: string;
@@ -167,10 +174,22 @@ function assertGatewayJwtFile(key: string, filePath: string): void {
 }
 
 export function assertDockerDriverGatewayAuthConfigSafe(gatewayEnv: Record<string, string>): void {
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
+  assertManagedDriverGatewayAuthConfigSafe(gatewayEnv, {
+    allowWildcardBind: false,
+    driverName: "Docker",
+  });
+}
+
+export function assertManagedDriverGatewayAuthConfigSafe(
+  gatewayEnv: Record<string, string>,
+  options: { allowWildcardBind: boolean; driverName: string },
+): void {
+  if (!options.allowWildcardBind) assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
-    throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
+    throw new Error(
+      `OpenShell ${options.driverName}-driver gateway requires OPENSHELL_GATEWAY_CONFIG`,
+    );
   }
   const toml = fs.readFileSync(configPath, "utf-8");
   const values = parseTomlScalarValues(toml);
@@ -250,6 +269,15 @@ function formatEnvironmentFileAssignment(key: string, value: string): string {
     const dockerHost = normalizePackageServiceDockerHost(value);
     if (!dockerHost) throw new Error("Invalid empty DOCKER_HOST for the OpenShell gateway service");
     return `${key}='${dockerHost}'`;
+  }
+  if (key === "OPENSHELL_PODMAN_SOCKET") {
+    const socketPath = value.trim();
+    if (!path.isAbsolute(socketPath) || /[\0\r\n']/.test(socketPath)) {
+      throw new Error(
+        "Invalid OPENSHELL_PODMAN_SOCKET for the OpenShell gateway service; expected a safely serializable absolute path.",
+      );
+    }
+    return `${key}='${socketPath}'`;
   }
   return `${key}=${value}`;
 }
@@ -337,22 +365,42 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
 export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
 ): Promise<boolean> {
-  const { env: _env, gatewayEnv, home, ...options } = optionsWithEnv;
+  return startPackageManagedDriverGatewayWithEnvOverride(optionsWithEnv);
+}
+
+export function startPackageManagedDriverGatewayWithEnvOverride(
+  optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
+): Promise<boolean> {
+  const {
+    driverName = "docker",
+    driverLabel = driverName === "podman" ? "Podman" : "Docker",
+    allowWildcardBind = driverName === "podman",
+    env: _env,
+    gatewayEnv,
+    home,
+    ...options
+  } = optionsWithEnv;
   const env = optionsWithEnv.env ?? process.env;
   const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
-  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
+  assertManagedDriverGatewayAuthConfigSafe(gatewayEnv, {
+    allowWildcardBind,
+    driverName: driverLabel,
+  });
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
-  return startPackageManagedDockerDriverGateway({
+  return startPackageManagedDriverGateway({
     ...options,
+    driverLabel,
     hasOpenShellGatewayUserService:
       options.hasOpenShellGatewayUserService ??
       (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
     prepareOpenShellGatewayUserServiceEnv: () => {
       const serviceGatewayEnv = { ...gatewayEnv };
       delete serviceGatewayEnv.DOCKER_HOST;
-      const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
-      if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+      if (driverName === "docker") {
+        const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+        if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+      }
       writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
         env,
         home: effectiveHome,

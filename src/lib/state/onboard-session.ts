@@ -98,6 +98,8 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  /** Durable OpenShell compute identity selected before gateway or sandbox mutation. */
+  openshellDriver?: string | null;
 }
 
 export type SessionRecoveryReceiptReason =
@@ -272,7 +274,11 @@ export interface SessionUpdates {
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
-  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  metadata?: {
+    gatewayName?: string;
+    fromDockerfile?: string | null;
+    openshellDriver?: string | null;
+  };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
 }
@@ -470,6 +476,7 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    openshellDriver: readString(value.openshellDriver),
   };
 }
 
@@ -698,6 +705,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      openshellDriver: overrides.metadata?.openshellDriver?.trim() || null,
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined, sessionId) ??
@@ -1363,6 +1371,10 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
       fromDockerfile:
         typeof updates.metadata.fromDockerfile === "string"
           ? updates.metadata.fromDockerfile
+          : null,
+      openshellDriver:
+        typeof updates.metadata.openshellDriver === "string"
+          ? updates.metadata.openshellDriver.trim() || null
           : null,
     };
   }

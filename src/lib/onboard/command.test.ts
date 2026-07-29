@@ -39,6 +39,7 @@ describe("onboard command options", () => {
           "non-interactive": true,
           resume: true,
           "recreate-sandbox": true,
+          "compute-driver": "podman",
           from: dockerfilePath,
           name: "second-assistant",
           "sandbox-gpu": true,
@@ -59,6 +60,7 @@ describe("onboard command options", () => {
       resume: true,
       fresh: false,
       recreateSandbox: true,
+      computeDriver: "podman",
       fromDockerfile: dockerfilePath,
       sandboxName: "second-assistant",
       sandboxGpu: "enable",
@@ -82,6 +84,7 @@ describe("onboard command options", () => {
       resume: false,
       fresh: false,
       recreateSandbox: false,
+      computeDriver: "auto",
       fromDockerfile: null,
       sandboxName: null,
       sandboxGpu: null,
@@ -129,6 +132,28 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors.join("\n")).toContain("must be one of: progressive, direct");
+  });
+
+  it("uses the explicit compute driver before the environment and rejects unknown values", () => {
+    expect(
+      resolve({ "compute-driver": "podman" }, { env: { NEMOCLAW_COMPUTE_DRIVER: "docker" } })
+        .computeDriver,
+    ).toBe("podman");
+    expect(resolve({}, { env: { NEMOCLAW_COMPUTE_DRIVER: " PODMAN " } }).computeDriver).toBe(
+      "podman",
+    );
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {},
+        {
+          env: { NEMOCLAW_COMPUTE_DRIVER: "container" },
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("must be one of: auto, docker, podman");
   });
 
   it("preserves the requested Dockerfile path after validating the resolved file", () => {
