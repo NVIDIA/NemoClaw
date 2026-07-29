@@ -137,6 +137,7 @@ export type RebuildFlowOverrides = {
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
+  rebuildImagePreflightResult?: { ok: false; detail: string } | { ok: true; imageTag: null };
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -162,6 +163,7 @@ export type RebuildFlowHarness = {
   openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
   preflightAuthoritativeRebuildTargetSpy: MockInstance;
+  preflightRebuildImageSpy: MockInstance;
   preflightMessagingConflictsSpy: MockInstance;
   preflightDcodeRouteSpy: MockInstance;
   prepareManagedDcodeRebuildImageSpy: MockInstance;
@@ -313,10 +315,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
-  vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue({
-    ok: true,
-    imageTag: null,
-  });
+  const preflightRebuildImageSpy = vi
+    .spyOn(rebuildCustomImagePreflight, "preflightRebuildImage")
+    .mockResolvedValue(overrides.rebuildImagePreflightResult ?? { ok: true, imageTag: null });
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -743,6 +744,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     openShieldsSpy,
     onboardSpy,
     preflightAuthoritativeRebuildTargetSpy,
+    preflightRebuildImageSpy,
     preflightMessagingConflictsSpy,
     preflightDcodeRouteSpy,
     prepareManagedDcodeRebuildImageSpy,

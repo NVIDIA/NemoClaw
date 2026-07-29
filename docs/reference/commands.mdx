@@ -2702,10 +2702,12 @@ A rebuild preserves the recorded Deep Agents Code auto-approval capability unles
 A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 Auto-mode sandboxes remain auto.
 
+<AgentOnly variant="openclaw,hermes">
 Before backup or deletion, `rebuild` builds and validates the replacement image with Docker Buildx.
 If Buildx is missing or broken, NemoClaw stops and leaves the existing sandbox intact.
 Install or repair Docker Buildx, then verify it with `docker buildx version`.
 Rerun the rebuild after that command succeeds.
+</AgentOnly>
 
 ```bash
 $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability]
