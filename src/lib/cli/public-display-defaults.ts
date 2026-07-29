@@ -244,6 +244,54 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quiet|-q]",
     },
   ],
+  "sandbox:cua:target:attach": [
+    {
+      group: "Sandbox Management",
+      order: 6.1,
+      description: "Attach and verify one disposable CUA desktop target",
+      flags: "--adapter <absolute-path> --target-manifest <path> [--json]",
+    },
+  ],
+  "sandbox:cua:target:status": [
+    {
+      group: "Sandbox Management",
+      order: 6.2,
+      description: "Show the secret-free CUA target attachment state",
+      flags: "[--json]",
+    },
+  ],
+  "sandbox:cua:target:health": [
+    {
+      group: "Sandbox Management",
+      order: 6.3,
+      description: "Verify CUA target identity and capability health",
+      flags: "--adapter <absolute-path> [--json]",
+    },
+  ],
+  "sandbox:cua:target:reset": [
+    {
+      group: "Sandbox Management",
+      order: 6.4,
+      description: "Reset and verify the disposable CUA target",
+      flags: "--adapter <absolute-path> [--json]",
+    },
+  ],
+  "sandbox:cua:target:detach": [
+    {
+      group: "Sandbox Management",
+      order: 6.5,
+      description: "Revoke CUA target reachability and clear attachment state",
+      flags: "--adapter <absolute-path> [--json]",
+    },
+  ],
+  "sandbox:cua:target:destroy": [
+    {
+      group: "Sandbox Management",
+      order: 6.6,
+      description: "Destroy the disposable CUA target and clear attachment state",
+      flags: "--adapter <absolute-path> [--json]",
+    },
+  ],
   "sandbox:destroy": [
     {
       group: "Sandbox Management",

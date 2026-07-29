@@ -1521,6 +1521,135 @@ $$nemoclaw my-assistant doctor [--json]
 
 </AgentOnly>
 
+## CUA target lifecycle
+
+These commands attach one CUA sandbox to one dedicated disposable desktop target.
+The target must expose `browser`, `computer`, and `terminal` services.
+NemoClaw verifies each service before it records the attachment.
+
+Target provisioning stays outside NemoClaw.
+An operator-owned adapter controls the target and retains all cloud, host administration, SSH, VNC, and service credentials.
+NemoClaw does not pass those credentials to the sandbox or store them in its registry.
+
+The adapter must be an absolute executable path.
+NemoClaw starts it without a shell, writes one `target-adapter-request` JSON object to standard input, and accepts one record from `schemas/cua-lifecycle.schema.json` on standard output.
+The adapter must return a `target-attachment` record after success or a `failure` record after failure.
+NemoClaw does not copy adapter standard error into public output.
+
+Attachment also requires a secret-free JSON manifest that matches `schemas/cua-target-manifest.schema.json`.
+The manifest contains immutable target, image, service-bundle, and protocol identities.
+It must not contain endpoints, credentials, host names, instance IDs, transport handles, or administration data.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "kind": "target-manifest",
+  "identityDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "platform": "desktop-linux-amd64",
+  "image": {
+    "name": "desktop-image",
+    "version": "1.0.0",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "owner": "target-owner"
+  },
+  "serviceBundle": {
+    "name": "desktop-services",
+    "version": "1.0.0",
+    "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "owner": "target-owner"
+  },
+  "capabilities": [
+    { "id": "browser", "protocolVersion": "1.0.0" },
+    { "id": "computer", "protocolVersion": "1.0.0" },
+    { "id": "terminal", "protocolVersion": "1.0.0" }
+  ]
+}
+```
+
+All commands support `--json`.
+Successful commands exit `0`.
+Validation failures exit `2`, target or task conflicts exit `3`, unavailable lifecycle components exit `4`, and target health or compatibility failures exit `5`.
+Failure output uses the versioned `failure` record and does not include raw adapter diagnostics.
+
+### `$$nemoclaw <name> cua target attach`
+
+Attach one target after its manifest, image, service bundle, and three capability checks match.
+A worker that already has a target returns `target_conflict` without invoking the adapter.
+
+```bash
+$$nemoclaw my-cua cua target attach \
+  --adapter /absolute/path/to/target-adapter \
+  --target-manifest ./target-manifest.json \
+  --json
+```
+
+### `$$nemoclaw <name> cua target status`
+
+Read the recorded secret-free attachment projection without invoking the adapter.
+The output includes bounded target identity, capability protocol and health, and active-task state.
+It contains no endpoint or credential material.
+
+```bash
+$$nemoclaw my-cua cua target status --json
+```
+
+The same bounded projection appears as `cuaTarget` in `$$nemoclaw <name> status --json`.
+`$$nemoclaw <name> doctor` reports the attachment state and the three capability health results.
+
+### `$$nemoclaw <name> cua target health`
+
+Recover fresh authority through the host adapter.
+The command compares the observed target with the recorded identity and checks all three services.
+It records `unreachable`, `incompatible`, or `replaced` without accepting the target when validation fails.
+
+```bash
+$$nemoclaw my-cua cua target health \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+### `$$nemoclaw <name> cua target reset`
+
+Ask the adapter to reconstruct the disposable target, browser profile, and fixture state.
+NemoClaw accepts the reset target only after its declared components and all three services pass.
+A reset can produce a new target identity.
+The command rejects reset while a task is active.
+
+```bash
+$$nemoclaw my-cua cua target reset \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+### `$$nemoclaw <name> cua target detach`
+
+Ask the adapter to revoke target reachability.
+NemoClaw clears the attachment projection only after the adapter returns a detached record.
+The command rejects detach while a task is active.
+
+```bash
+$$nemoclaw my-cua cua target detach \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+### `$$nemoclaw <name> cua target destroy`
+
+Ask the adapter to destroy the disposable target.
+NemoClaw clears the attachment projection only after the adapter confirms that the target is detached.
+The command rejects destroy while a task is active.
+
+```bash
+$$nemoclaw my-cua cua target destroy \
+  --adapter /absolute/path/to/target-adapter \
+  --json
+```
+
+Normal backups retain only the secret-free attachment projection.
+They exclude the target, browser profile, mutable desktop state, adapter state, and administration material.
+Recovery never reuses an attachment handle.
+The host adapter obtains fresh authority and NemoClaw validates the immutable identities again.
+
 ### `$$nemoclaw <name> exec`
 
 Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.

@@ -445,6 +445,36 @@ function baselineExclusionDoctorChecks(sandboxName: string): DoctorCheck[] {
   return checks;
 }
 
+export function buildCuaTargetDoctorCheck(
+  sandboxName: string,
+  sb: SandboxEntry,
+): DoctorCheck | null {
+  if (!sb.cuaRuntimeReadiness) return null;
+  const attachment = sb.cuaTarget;
+  if (!attachment || attachment.status === "detached" || !attachment.target) {
+    return {
+      group: "Sandbox",
+      label: "CUA target",
+      status: "info",
+      detail: "no target attached",
+      hint: `run \`${CLI_NAME} ${sandboxName} cua target attach\` with an operator-owned adapter`,
+    };
+  }
+  const capabilities = attachment.target.capabilities
+    .map((capability) => `${capability.id}=${capability.health}`)
+    .join(", ");
+  return {
+    group: "Sandbox",
+    label: "CUA target",
+    status: attachment.status === "attached" ? "ok" : "fail",
+    detail: `${attachment.status}; ${attachment.target.identityDigest}; ${capabilities}`,
+    hint:
+      attachment.status === "attached"
+        ? undefined
+        : `run \`${CLI_NAME} ${sandboxName} cua target health\` with the operator-owned adapter`,
+  };
+}
+
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -453,6 +483,8 @@ function collectRegisteredSandboxChecks(
 ): DoctorCheck[] {
   if (!sb) return [];
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  const cuaTargetCheck = buildCuaTargetDoctorCheck(sandboxName, sb);
+  if (cuaTargetCheck) checks.push(cuaTargetCheck);
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
