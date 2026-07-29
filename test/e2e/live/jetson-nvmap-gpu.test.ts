@@ -251,7 +251,7 @@ exit "$status"`,
 
   // A4: the Jetson recreate must grant Tegra device-node groups via --group-add.
   expect(resultText(install)).toContain(
-    "Granting sandbox user access to Jetson Tegra GPU device nodes via --group-add",
+    "Granting sandbox user the detected Jetson GPU device groups via --group-add",
   );
 
   // A5: the sandbox user must be in the host /dev/nvmap owning GID.
