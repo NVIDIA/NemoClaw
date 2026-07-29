@@ -50,7 +50,7 @@ export async function assertHermesConfig(
  * restart the real gateway, and prove the locked files and transaction state
  * remain current.
  */
-export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
+export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
@@ -90,6 +90,9 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
         "set -eu",
         "test \"$(stat -c '%a %U:%G' /sandbox)\" = '1775 root:sandbox'",
         "test \"$(stat -c '%a %U:%G' /sandbox/.hermes)\" = '755 root:root'",
+        "for path in /sandbox/.hermes/gateway /sandbox/.hermes/cron; do",
+        "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '2770 gateway:sandbox'",
+        "done",
         "for path in /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do",
         "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '444 root:root'",
         "done",
