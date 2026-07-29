@@ -513,7 +513,24 @@ describe("inference setup navigation", () => {
       encoding: "utf8",
       env: { ...process.env, NVIDIA_API_KEY: "test-api-key" },
       input: JSON.stringify({
-        agents: { defaults: {} },
+        agents: {
+          defaults: {},
+          list: [
+            {
+              id: "main",
+              model: { primary: "inference/custom-primary" },
+              tools: { profile: "minimal" },
+            },
+            {
+              id: "researcher",
+              model: { primary: "inference/custom-researcher" },
+            },
+            {
+              id: "vision-operator",
+              model: { primary: "stale/vision-model" },
+            },
+          ],
+        },
         models: { providers: {} },
       }),
     });
@@ -526,6 +543,18 @@ describe("inference setup navigation", () => {
     expect(
       config.agents.list.find((agent: { id: string }) => agent.id === "vision-operator"),
     ).toHaveProperty("model.primary", "nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning");
+    expect(
+      config.agents.list.filter((agent: { id: string }) => agent.id === "vision-operator"),
+    ).toHaveLength(1);
+    expect(config.agents.list.find((agent: { id: string }) => agent.id === "main")).toMatchObject({
+      model: { primary: "inference/custom-primary" },
+      subagents: { allowAgents: ["vision-operator"] },
+      tools: { profile: "minimal" },
+    });
+    expect(config.agents.list.find((agent: { id: string }) => agent.id === "researcher")).toEqual({
+      id: "researcher",
+      model: { primary: "inference/custom-researcher" },
+    });
     expect(markdown).toContain("nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning");
     expect(markdown).not.toContain(
       "nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",

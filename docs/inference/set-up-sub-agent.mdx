@@ -143,24 +143,31 @@ config["agents"]["defaults"]["subagents"] = {
     "maxSpawnDepth": 1,
 }
 config["agents"]["defaults"]["timeoutSeconds"] = 300
-config["agents"]["list"] = [
+agents_by_id = {
+    agent["id"]: agent for agent in config["agents"].get("list", [])
+}
+main_agent = agents_by_id.setdefault(
+    "main",
     {
         "id": "main",
         "model": {
             "primary": "inference/nvidia/nemotron-3-super-120b-a12b",
         },
-        "subagents": {"allowAgents": ["vision-operator"]},
         "tools": {"profile": "full"},
     },
-    {
-        "id": "vision-operator",
-        "model": {"primary": model_ref},
-        "tools": {
-            "profile": "full",
-            "deny": ["message", "sessions_spawn"],
-        },
+)
+allowed_agents = main_agent.setdefault("subagents", {}).setdefault("allowAgents", [])
+if "vision-operator" not in allowed_agents:
+    allowed_agents.append("vision-operator")
+agents_by_id["vision-operator"] = {
+    "id": "vision-operator",
+    "model": {"primary": model_ref},
+    "tools": {
+        "profile": "full",
+        "deny": ["message", "sessions_spawn"],
     },
-]
+}
+config["agents"]["list"] = list(agents_by_id.values())
 
 json.dump(config, sys.stdout, indent=2)
 ' < "$OPENCLAW_CONFIG_FILE" > "$OPENCLAW_UPDATED_FILE"
@@ -333,6 +340,12 @@ Tell the sub-agent to read the image path it receives.
 Adapt that file for other task-specific models.
 
 ## Remove or Rotate the Credential
+
+These procedures reuse the shell variables and temporary files from the earlier configuration update.
+For rotation in a new shell or after host cleanup, rerun [Export the Current Config](#export-the-current-config) before you prepare the replacement configuration.
+For removal, restore `OPENCLAW_CONFIG_FILE` only when it still identifies the export captured before you added the direct provider.
+In a new shell, rerun only the container-discovery commands from that section, and use the manual-removal fallback below.
+Do not restore a new export as though it were the pre-change configuration.
 
 To rotate the key, repeat [Prepare the Updated Config](#prepare-the-updated-config) and [Add Sub-Agent Credentials](#add-sub-agent-credentials) with the replacement key.
 Upload both files before you revoke the old key.
