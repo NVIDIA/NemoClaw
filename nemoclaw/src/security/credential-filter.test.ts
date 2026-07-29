@@ -8,6 +8,7 @@ import {
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
+  sanitizeEnvFileContent,
   stripCredentials,
   valueLooksLikeSecret,
 } from "./credential-filter.js";
@@ -84,6 +85,23 @@ describe("plugin credential-filter", () => {
     expect(result.apiKey).toBeNull();
     expect(result.token).toBeUndefined();
     expect(result.model).toBe("keep");
+  });
+
+  it("strips secret-shaped env values stored under benign keys", () => {
+    const result = sanitizeEnvFileContent(
+      [
+        "MODEL=keep-me",
+        "CUSTOM=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "ENDPOINT=Bearer opaque-migration-secret",
+        "SAFE=openshell:resolve:env:SAFE",
+        "",
+      ].join("\n"),
+    );
+
+    expect(result).toContain("MODEL=keep-me");
+    expect(result).toContain("CUSTOM=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("ENDPOINT=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("SAFE=openshell:resolve:env:SAFE");
   });
 
   it("excludes auth state basenames from migration copies", () => {

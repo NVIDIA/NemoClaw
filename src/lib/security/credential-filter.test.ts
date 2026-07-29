@@ -272,6 +272,18 @@ describe("sanitizeConfigFile", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(source);
   });
 
+  it("preserves empty and comment-only YAML documents", () => {
+    for (const [name, source] of [
+      ["empty.yaml", ""],
+      ["comments.yaml", "# nothing to sanitize\n"],
+    ]) {
+      const configPath = join(tmpDir, name);
+      writeFileSync(configPath, source);
+      expect(sanitizeYamlConfigFile(configPath)).toBe(true);
+      expect(readFileSync(configPath, "utf-8")).toBe(source);
+    }
+  });
+
   it("sanitizes valid JSON arrays instead of treating them as failures", () => {
     const configPath = join(tmpDir, "config.json");
     writeFileSync(configPath, JSON.stringify([{ apiKey: "sk-secret-value-long-enough" }]));
@@ -320,6 +332,22 @@ describe("sanitizeEnvFileContent", () => {
     expect(result).toContain("export  GITHUB_TOKEN=[STRIPPED_BY_MIGRATION]");
     expect(result).not.toContain("super-secret");
     expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+
+  it("strips secret-shaped values stored under benign keys", () => {
+    const input = [
+      "MODEL=keep-me",
+      "CUSTOM=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      "ENDPOINT=Bearer opaque-migration-secret",
+      "SAFE=openshell:resolve:env:SAFE",
+      "",
+    ].join("\n");
+
+    const result = sanitizeEnvFileContent(input);
+    expect(result).toContain("MODEL=keep-me");
+    expect(result).toContain("CUSTOM=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("ENDPOINT=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("SAFE=openshell:resolve:env:SAFE");
   });
 });
 

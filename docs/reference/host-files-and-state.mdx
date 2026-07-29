@@ -45,13 +45,17 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/state/` | Operational coordination and history for lifecycle locks, shields transitions, timers, and audit events, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard security or recovery context. |
-| `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential values from `openclaw.json`. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
+| `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state and configured external roots created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential values from copied JSON, YAML, and `.env` files. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
 | `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
 | `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
 
 ## Migration Snapshot Retention
+
+Before NemoClaw retains a migration snapshot, it recursively sanitizes the copied OpenClaw state and every configured external root.
+It preserves empty or comment-only YAML files and omits copied JSON, YAML, or `.env` files that it cannot sanitize.
+If NemoClaw cannot remove an unsafe copied artifact, snapshot creation fails and attempts to delete the incomplete snapshot directory.
 
 The direct blueprint runner accepts these action arguments for migration snapshots:
 

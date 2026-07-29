@@ -1,21 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginLogger } from "../index.js";
 import { setConfigValue } from "./migration-state.js";
 
-// ---------------------------------------------------------------------------
 // fs mock — thin in-memory store keyed by absolute path
-// ---------------------------------------------------------------------------
 
 interface FsEntry {
   type: "file" | "dir" | "symlink";
   content?: string;
 }
-
 const store = new Map<string, FsEntry>();
-
 function addDir(p: string): void {
   store.set(p, { type: "dir" });
 }
@@ -60,7 +56,7 @@ vi.mock("node:fs", async (importOriginal) => {
         }
       }
     }),
-    rmSync: vi.fn(),
+    rmSync: vi.fn((p: string) => store.delete(p)),
     renameSync: vi.fn((oldPath: string, newPath: string) => {
       for (const [k, v] of store) {
         if (k === oldPath || k.startsWith(oldPath + "/")) {
@@ -103,13 +99,13 @@ vi.mock("tar", () => ({
 }));
 
 import {
-  detectHostOpenClaw,
-  createSnapshotBundle,
   cleanupSnapshotBundle,
   createArchiveFromDirectory,
+  createSnapshotBundle,
+  detectHostOpenClaw,
+  type HostOpenClawState,
   loadSnapshotManifest,
   restoreSnapshotToHost,
-  type HostOpenClawState,
   type SnapshotManifest,
 } from "./migration-state.js";
 
@@ -579,6 +575,8 @@ describe("commands/migration-state", () => {
       const logger = makeLogger();
       addDir("/home/user/.openclaw");
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
+      addDir("/home/user/.openclaw/agents");
+      addDir("/home/user/.openclaw/agents/main");
       addDir("/home/user/.openclaw/agents/main/agent");
       addFile(
         "/home/user/.openclaw/agents/main/agent/auth-profiles.json",

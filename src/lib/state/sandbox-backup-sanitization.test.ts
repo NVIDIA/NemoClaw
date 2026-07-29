@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,6 +32,19 @@ afterEach(() => {
 });
 
 describe("rebuild backup credential sanitization", () => {
+  it("sanitizes a real env file and restricts its mode", () => {
+    const backupPath = createBackup();
+    const envPath = join(backupPath, "state", ".env");
+    writeFileSync(envPath, "CUSTOM=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nLOG_LEVEL=info\n", {
+      mode: 0o644,
+    });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(envPath, "utf-8")).toBe("CUSTOM=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n");
+    expect(statSync(envPath).mode & 0o777).toBe(0o600);
+  });
+
   it("omits unsanitizable config and env artifacts", () => {
     const backupPath = createBackup();
     const yamlPath = join(backupPath, "state", "config.yaml");
@@ -58,5 +79,22 @@ describe("rebuild backup credential sanitization", () => {
       }),
     ).toThrow("Credential sanitization failed; removed the incomplete backup");
     expect(existsSync(backupPath)).toBe(false);
+  });
+
+  it("reports when cleanup leaves an incomplete backup behind", () => {
+    const backupPath = createBackup();
+    const yamlPath = join(backupPath, "state", "config.yaml");
+    writeFileSync(yamlPath, "api_key: [unclosed\n");
+
+    expect(() =>
+      sanitizeBackupDirectory(backupPath, {
+        unlinkFile: () => {
+          throw new Error("injected unlink failure");
+        },
+        removeBackup: () => undefined,
+        backupExists: () => true,
+      }),
+    ).toThrow("Credential sanitization failed and the incomplete backup remains");
+    expect(existsSync(backupPath)).toBe(true);
   });
 });

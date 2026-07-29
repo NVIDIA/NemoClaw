@@ -378,9 +378,10 @@ export function sanitizeEnvFileContent(content: string): string {
       const rawKey = line.slice(0, eq).trim();
       // Shell-sourced .env files often use `export KEY=value`.
       const key = rawKey.replace(/^export\s+/i, "").trim();
-      if (!key || !isCredentialField(key)) return line;
       const value = line.slice(eq + 1);
       if (isSafeCredentialPlaceholder(value)) return line;
+      if (!key) return line;
+      if (!isCredentialField(key) && !valueLooksLikeSecret(value)) return line;
       return `${line.slice(0, eq)}=${CREDENTIAL_PLACEHOLDER}`;
     })
     .join("\n");
@@ -442,6 +443,9 @@ export function sanitizeYamlConfigFile(
   if (rawConfig === null) return false;
   try {
     const parsed = parseYaml(rawConfig);
+    // Empty and comment-only YAML documents contain no credentials. Preserve
+    // them instead of misclassifying the parser's null result as unsafe.
+    if (parsed === null || parsed === undefined) return true;
     const configValue = toConfigValue(parsed);
     if (configValue === UNREPRESENTABLE_CONFIG_VALUE || !isConfigObject(configValue)) {
       return false;

@@ -191,6 +191,31 @@ export function stripCredentials(obj: unknown): unknown {
   return result;
 }
 
+/**
+ * Strip credentials from a shell-style environment file body.
+ *
+ * Field-name matching handles ordinary secret variables while the value-shape
+ * backstop catches provider tokens stored under an otherwise benign key.
+ */
+export function sanitizeEnvFileContent(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (trimmed === "" || trimmed.startsWith("#")) return line;
+      const eq = line.indexOf("=");
+      if (eq <= 0) return line;
+      const rawKey = line.slice(0, eq).trim();
+      const key = rawKey.replace(/^export\s+/i, "").trim();
+      const value = line.slice(eq + 1);
+      if (isSafeCredentialPlaceholder(value)) return line;
+      if (!key) return line;
+      if (!isCredentialField(key) && !valueLooksLikeSecret(value)) return line;
+      return `${line.slice(0, eq)}=${CREDENTIAL_PLACEHOLDER}`;
+    })
+    .join("\n");
+}
+
 export function isSensitiveFile(filename: string): boolean {
   return CREDENTIAL_SENSITIVE_BASENAMES.has(filename.toLowerCase());
 }
