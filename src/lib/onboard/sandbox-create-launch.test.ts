@@ -65,8 +65,9 @@ describe("buildSandboxRuntimeEnvArgs", () => {
   // OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to sandbox processes,
   // so this injection is the sandbox's only source for its own name. Without it
   // the in-sandbox hints print a `<name>` placeholder instead of a copyable
-  // host-side command. It used to be injected for the deepagents image only.
-  it("injects NEMOCLAW_SANDBOX_NAME for every agent, not just deepagents (#7795)", () => {
+  // host-side command. It used to be injected only for LangChain Deep Agents
+  // Code.
+  it("injects NEMOCLAW_SANDBOX_NAME for every agent (#7795)", () => {
     const base = {
       chatUiUrl: "http://127.0.0.1:19000/",
       manageDashboard: true,

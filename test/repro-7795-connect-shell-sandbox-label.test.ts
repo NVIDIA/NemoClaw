@@ -15,9 +15,9 @@
  *
  * The fix injects the host's already-validated sandbox name as
  * `NEMOCLAW_SANDBOX_NAME` for every sandbox at create time (it was previously
- * injected for the deepagents image only), and the entrypoint bakes it into the
- * generated /tmp/nemoclaw-proxy-env.sh as `_NEMOCLAW_SANDBOX_LABEL` for the
- * renderer to fall back to.
+ * injected only for LangChain Deep Agents Code), and the entrypoint bakes it
+ * into the generated /tmp/nemoclaw-proxy-env.sh as
+ * `_NEMOCLAW_SANDBOX_LABEL` for the renderer to fall back to.
  *
  * These tests run the real generator (`write_runtime_shell_env`) under the env
  * the entrypoint actually gets, then source its output in a shell where
@@ -173,15 +173,15 @@ describe("connect-shell sandbox label for host-side hints (#7795)", () => {
     });
   });
 
-  // Regression lock: with no usable name from either source the placeholder must
-  // still be what the user sees — the pre-#7795 behavior for older OpenShell.
+  // With no usable name from either source, keep the placeholder used before
+  // #7795.
   it.each([
     "1",
     "true",
     "0",
     "false",
     "",
-  ])("falls back to <name> when the injected name is the boolean %j", (containerValue) => {
+  ])("falls back to <name> for the unusable injected value %j", (containerValue) => {
     withTmpDir((tmpDir) => {
       const envFile = generateConnectEnv(tmpDir, containerValue);
       expect(envFile).toContain("unset _NEMOCLAW_SANDBOX_LABEL");
@@ -211,7 +211,7 @@ describe("connect-shell sandbox label for host-side hints (#7795)", () => {
     ["digit leading", "9abc"],
     ["underscore", "qa_7795"],
     ["trailing hyphen", "qa-7795-"],
-  ])("rejects a hostile injected name (%s) instead of interpolating it", (_label, value) => {
+  ])("rejects an invalid injected sandbox name (%s) instead of interpolating it", (_label, value) => {
     withTmpDir((tmpDir) => {
       const envFile = generateConnectEnv(tmpDir, value);
       expect(envFile).toContain("unset _NEMOCLAW_SANDBOX_LABEL");
