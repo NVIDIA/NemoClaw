@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Publish complete managed images from exact base-image contracts. A later
-# onboarding slice will apply runtime profiles and consume their public release
-# aliases or exact digests. The initial platform is Linux x86_64; the OCI image
-# contract remains neutral across Podman, Docker, and future compute drivers.
+# Publish complete managed images from exact base-image contracts. Each matrix
+# lane pushes and validates only an immutable digest, then exports its contract.
+# A later aggregate publisher will apply runtime profiles and move consumer
+# aliases only after the complete all-agent cohort passes. The initial platform
+# is Linux x86_64; the OCI image contract remains neutral across Podman, Docker,
+# and future compute drivers.
 
 name: Images / Managed Images
 
@@ -19,8 +21,8 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-validate-and-promote:
-    name: Build, validate, and promote ${{ matrix.display_name }} managed image
+  build-and-validate:
+    name: Build and validate ${{ matrix.display_name }} managed image
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -151,7 +153,7 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Validate exact managed image before promotion
+      - name: Validate exact managed image
         id: validate
         shell: bash
         env:
@@ -256,56 +258,9 @@ jobs:
           fi
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
 
-      - name: Promote validated managed image aliases
-        id: promote
-        shell: bash
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
-          REFERENCE: ${{ steps.validate.outputs.reference }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "ERROR: source revision must be a full 40-character SHA." >&2
-            exit 1
-          fi
-          aliases=("${IMAGE}:${GITHUB_SHA}")
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            release_tag="${GITHUB_REF#refs/tags/}"
-            if [[ ! "$release_tag" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-              echo "ERROR: release tag is not a supported version alias: $release_tag" >&2
-              exit 1
-            fi
-            aliases+=("${IMAGE}:${release_tag}")
-          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "ERROR: managed images may only be promoted from main or a v* release tag." >&2
-            exit 1
-          fi
-
-          tag_args=()
-          for alias in "${aliases[@]}"; do
-            tag_args+=(--tag "$alias")
-          done
-          docker buildx imagetools create "${tag_args[@]}" "$REFERENCE"
-
-          exact_raw="$RUNNER_TEMP/managed-image-exact.raw"
-          docker buildx imagetools inspect "$REFERENCE" --raw > "$exact_raw"
-          for alias in "${aliases[@]}"; do
-            alias_raw="$RUNNER_TEMP/managed-image-alias-${alias##*:}.raw"
-            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
-            if ! cmp -s "$exact_raw" "$alias_raw"; then
-              echo "ERROR: promoted alias does not resolve to the validated raw manifest: $alias" >&2
-              exit 1
-            fi
-          done
-
-          aliases_file="$RUNNER_TEMP/managed-image-aliases.json"
-          printf '%s\n' "${aliases[@]}" | jq -R . | jq -s . > "$aliases_file"
-          printf 'aliases_file=%s\n' "$aliases_file" >> "$GITHUB_OUTPUT"
-
       - name: Export managed image contract
         env:
           AGENT: ${{ matrix.agent }}
-          ALIASES_FILE: ${{ steps.promote.outputs.aliases_file }}
           BASE_REFERENCE: ${{ steps.base.outputs.ref }}
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
@@ -324,7 +279,6 @@ jobs:
             --arg reference "$REFERENCE" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg revision "$GITHUB_SHA" \
-            --argjson aliases "$(cat "$ALIASES_FILE")" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
             '{
@@ -342,8 +296,7 @@ jobs:
               run: {
                 id: $runId,
                 attempt: $runAttempt
-              },
-              aliases: $aliases
+              }
             }' > "$contract_dir/contract.json"
           jq -e \
             --arg revision "$GITHUB_SHA" \
@@ -355,10 +308,7 @@ jobs:
              and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
              and .source.revision == $revision
              and .run == {id: $runId, attempt: $runAttempt}
-             and (
-               (.image + ":" + $revision) as $revisionAlias
-               | (.aliases | index($revisionAlias)) != null
-             )' \
+             and (has("aliases") | not)' \
             "$contract_dir/contract.json" >/dev/null
 
       - name: Upload managed image contract

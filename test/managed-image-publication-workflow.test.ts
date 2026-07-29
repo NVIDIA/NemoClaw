@@ -99,7 +99,7 @@ function step(job: Job, name: string): Step {
 
 function managedPublisher(workflow: Workflow): Job {
   return required(
-    workflow.jobs?.["build-validate-and-promote"],
+    workflow.jobs?.["build-and-validate"],
     "managed-image workflow is missing its publisher",
   );
 }
@@ -114,8 +114,7 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
   const steps = publisher.steps ?? [];
   const build = step(publisher, "Build and push managed image by digest");
   const base = step(publisher, "Validate exact base image contract");
-  const validate = step(publisher, "Validate exact managed image before promotion");
-  const promote = step(publisher, "Promote validated managed image aliases");
+  const validate = step(publisher, "Validate exact managed image");
   const workflowSource = JSON.stringify(managedWorkflow);
   const validationMarkers = [
     'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
@@ -131,17 +130,15 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     '--entrypoint "$REQUIRED_BINARY"',
     "io.nvidia.nemoclaw.managed-image.contract",
   ];
-  const promotionMarkers = [
+  const forbiddenPerLanePromotionMarkers = [
     'aliases=("${IMAGE}:${GITHUB_SHA}")',
     'release_tag="${GITHUB_REF#refs/tags/}"',
-    'docker buildx imagetools create "${tag_args[@]}" "$REFERENCE"',
-    'docker buildx imagetools inspect "$REFERENCE" --raw',
-    'docker buildx imagetools inspect "$alias" --raw',
-    'cmp -s "$exact_raw" "$alias_raw"',
+    "docker buildx imagetools create",
+    "docker tag ",
+    "docker push ",
   ];
   const buildIndex = steps.indexOf(build);
   const validateIndex = steps.indexOf(validate);
-  const promoteIndex = steps.indexOf(promote);
 
   return [
     ...managedInputPaths
@@ -174,12 +171,12 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     ...validationMarkers
       .filter((marker) => !validate.run?.includes(marker))
       .map((marker) => `exact managed image validation is missing ${marker}`),
-    ...promotionMarkers
-      .filter((marker) => !promote.run?.includes(marker))
-      .map((marker) => `managed image promotion is missing ${marker}`),
-    ...(buildIndex >= 0 && buildIndex < validateIndex && validateIndex < promoteIndex
+    ...forbiddenPerLanePromotionMarkers
+      .filter((marker) => workflowSource.includes(marker))
+      .map((marker) => `per-agent lane must not publish mutable alias with ${marker}`),
+    ...(buildIndex >= 0 && buildIndex < validateIndex
       ? []
-      : ["managed image validation must finish before alias promotion"]),
+      : ["managed image validation must follow its immutable digest build"]),
   ];
 }
 
@@ -278,7 +275,7 @@ describe("complete managed-image publication workflow", () => {
     ]);
   });
 
-  it("pins actions, validates exact digests, and records the promoted image contract (#7744)", () => {
+  it("pins actions, validates exact digests, and records the immutable image contract (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const publisher = managedPublisher(workflow);
     const steps = publisher.steps ?? [];
@@ -328,5 +325,24 @@ describe("complete managed-image publication workflow", () => {
       "if-no-files-found": "error",
       "retention-days": 90,
     });
+  });
+
+  it("cannot publish a public mutable alias from an individual agent lane (#7744)", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const publisher = managedPublisher(workflow);
+    const steps = publisher.steps ?? [];
+    const source = steps.map((candidate) => candidate.run ?? "").join("\n");
+    const contract = step(publisher, "Export managed image contract");
+
+    expect(publisher.strategy?.matrix?.include).toHaveLength(3);
+    expect(steps.map((candidate) => candidate.name)).not.toContain(
+      "Promote validated managed image aliases",
+    );
+    expect(source).not.toContain('aliases=("${IMAGE}:${GITHUB_SHA}")');
+    expect(source).not.toContain('release_tag="${GITHUB_REF#refs/tags/}"');
+    expect(source).not.toContain("docker buildx imagetools create");
+    expect(source).not.toMatch(/(?:^|\s)docker\s+(?:tag|push)\s/u);
+    expect(contract.run).toContain('(has("aliases") | not)');
+    expect(contract.run).not.toContain("aliases:");
   });
 });
