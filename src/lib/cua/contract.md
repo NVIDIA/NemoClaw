@@ -108,8 +108,8 @@ an unlisted optional operation returns `lifecycle_unavailable`; it is never
 silently accepted.
 
 Public command names, arguments, output envelopes, and exit codes are owned by
-the target and task implementation issues. They must produce records that
-conform to this contract without reading runtime-private files.
+the target, task, and security implementation issues. They must produce records
+that conform to this contract without reading runtime-private files.
 
 Active task commands return the target attachment with its bounded
 `activeTask` projection. Terminal commands return `task-result`.
@@ -171,7 +171,7 @@ identities.
 
 | Class | State |
 | --- | --- |
-| NemoClaw persistent | Selected agent, compatibility identities, managed inference selection, policy identity, secret-free target attachment projection, and bounded completed-task metadata and evidence references. |
+| NemoClaw persistent | Selected agent, compatibility identities, managed inference selection, policy identity, secret-free target attachment projection, content-free security attestation, and bounded completed-task metadata and evidence references. |
 | User managed | Explicit onboarding choices and supported agent preferences. Secret values remain in their supported credential boundary. |
 | Reconstructible | CUA sandbox, desktop target, browser profile, mutable fixture data, service sessions, and runtime caches. |
 | Private | Screenshots, page and screen content, documents, downloads, detailed logs, task input, runtime observations, and detailed verification output. |
@@ -247,10 +247,12 @@ The verifier must prove all of these conditions:
   output expand authority.
 
 The verifier owns any private endpoint and credential inspection needed to
-make those assertions. Neither its request nor its attestation contains those
-values. NemoClaw rejects malformed, incomplete, or identity-stale
-attestations. Target reset, detach, destroy, identity change, or failed health
-validation clears the recorded attestation, so task execution remains
+make those assertions. Its request contains the sandbox name and public
+runtime-readiness and target-attachment records, but no private verifier
+authority; its attestation contains none of those private values. NemoClaw
+rejects malformed, incomplete, or identity-stale attestations. Identity drift
+makes an attestation stale and blocks task execution. Target reset, detach,
+destroy, or failed health validation clears it, so task execution remains
 fail-closed until verification succeeds again.
 
 ## Failure families

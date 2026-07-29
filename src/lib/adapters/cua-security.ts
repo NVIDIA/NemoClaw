@@ -133,7 +133,9 @@ function parseAdapterResult(
  * Invoke the trusted host-side CUA security verifier without a shell.
  *
  * The verifier owns private endpoint and authority inspection. NemoClaw sends
- * only public component identities and accepts only a content-free attestation.
+ * the sandbox name plus public runtime-readiness and target-attachment records;
+ * it sends no private verifier authority and accepts only a content-free
+ * attestation.
  */
 export class ProcessCuaSecurityAdapter implements CuaSecurityAdapter {
   readonly timeoutMs: number;

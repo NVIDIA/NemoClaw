@@ -1664,7 +1664,8 @@ Private service endpoints, host names, transport details, paths, and credentials
 
 The verifier must be an absolute executable path.
 NemoClaw starts it without a shell, with a fixed credential-free environment, and writes one `security-adapter-request` JSON object to standard input.
-The request contains only the recorded runtime, policy, inference, target, and capability identities.
+The request contains the sandbox name plus the public runtime-readiness and target-attachment records.
+It contains no private verifier authority, service endpoint, host name, transport detail, path, or credential.
 NemoClaw accepts one `security-attestation` or `failure` record from `schemas/cua-lifecycle.schema.json` on standard output and never copies verifier standard error into public output.
 
 A valid attestation proves that:
@@ -1677,7 +1678,8 @@ A valid attestation proves that:
 - synthetic local fixtures cannot produce external side effects, and untrusted task or runtime content cannot expand authority.
 
 The attestation is valid only for the exact recorded runtime, sandbox image, target image, service bundle, policy, task protocol, inference route, capability protocols, and target identity.
-NemoClaw clears it after target reset, detach, destroy, identity change, or failed target health validation.
+Identity drift makes the recorded attestation stale and blocks status validation and task execution.
+NemoClaw clears it after target reset, detach, destroy, or failed target health validation.
 Every task operation requires a current matching attestation before it invokes the task adapter.
 
 Successful commands exit `0`.
