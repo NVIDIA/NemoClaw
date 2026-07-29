@@ -104,14 +104,14 @@ const SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES = new Set([
  * Credential field names that MUST be stripped from config files.
  */
 const CREDENTIAL_FIELDS = new Set([
-  "apiKey",
+  "apikey",
   "api_key",
   "token",
   "secret",
   "password",
   "pass",
   "passwd",
-  "resolvedKey",
+  "resolvedkey",
 ]);
 
 /**
@@ -121,7 +121,7 @@ const CREDENTIAL_FIELDS = new Set([
  * (`botToken`, `appToken`) used by Slack/Telegram accounts.
  */
 const CREDENTIAL_FIELD_PATTERN =
-  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session|bot|app)(?:Token|Key|Secret|Password)$/;
+  /^(?:(?:personal[._-]?)?access|refresh|client|bearer|oauth|auth|api|private|public|signing|session|bot|app|resolved)[._-]?(?:tokens?|keys?|secrets?|passwords?|passphrases?|credentials?)$/i;
 
 /**
  * Environment-variable-style secret names (SCREAMING_SNAKE_CASE) such as an MCP
@@ -161,7 +161,7 @@ const HEADER_CREDENTIAL_PATTERN = /-(?:key|token|secret|password|passphrase|cred
  * `PUBLIC_KEY`, `public-key`, and prefixed forms like `X-Public-Key` /
  * `GITHUB_PUBLIC_KEY`. Checked before the secret patterns below.
  */
-const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[-_])public[-_]?keys?$/i;
+const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[._-])public[._-]?keys?$/i;
 
 /**
  * Check whether a field name should be treated as credential-bearing.
@@ -169,7 +169,7 @@ const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[-_])public[-_]?keys?$/i;
 export function isCredentialField(key: string): boolean {
   if (PUBLIC_KEY_FIELD_PATTERN.test(key)) return false;
   return (
-    CREDENTIAL_FIELDS.has(key) ||
+    CREDENTIAL_FIELDS.has(key.toLowerCase()) ||
     CREDENTIAL_FIELD_PATTERN.test(key) ||
     hasPassCredentialSegment(key) ||
     ENV_SECRET_FIELD_PATTERN.test(key) ||

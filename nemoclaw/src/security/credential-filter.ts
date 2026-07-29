@@ -19,18 +19,18 @@ export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
 ]);
 
 const CREDENTIAL_FIELDS = new Set([
-  "apiKey",
+  "apikey",
   "api_key",
   "token",
   "secret",
   "password",
   "pass",
   "passwd",
-  "resolvedKey",
+  "resolvedkey",
 ]);
 
 const CREDENTIAL_FIELD_PATTERN =
-  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session|bot|app)(?:Token|Key|Secret|Password)$/;
+  /^(?:(?:personal[._-]?)?access|refresh|client|bearer|oauth|auth|api|private|public|signing|session|bot|app|resolved)[._-]?(?:tokens?|keys?|secrets?|passwords?|passphrases?|credentials?)$/i;
 
 const ENV_SECRET_FIELD_PATTERN =
   /^(?:[A-Z0-9]+_)*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|PASSPHRASE|CREDENTIAL)S?$/;
@@ -44,7 +44,7 @@ const CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set([
 
 const HEADER_CREDENTIAL_PATTERN = /-(?:key|token|secret|password|passphrase|credential|auth)s?$/i;
 
-const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[-_])public[-_]?keys?$/i;
+const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[._-])public[._-]?keys?$/i;
 
 const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /^openshell:resolve:env:[A-Za-z0-9_]+$/,
@@ -105,7 +105,7 @@ function hasPassCredentialSegment(key: string): boolean {
 export function isCredentialField(key: string): boolean {
   if (PUBLIC_KEY_FIELD_PATTERN.test(key)) return false;
   return (
-    CREDENTIAL_FIELDS.has(key) ||
+    CREDENTIAL_FIELDS.has(key.toLowerCase()) ||
     CREDENTIAL_FIELD_PATTERN.test(key) ||
     hasPassCredentialSegment(key) ||
     ENV_SECRET_FIELD_PATTERN.test(key) ||

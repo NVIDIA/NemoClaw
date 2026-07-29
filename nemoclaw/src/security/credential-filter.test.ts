@@ -14,13 +14,23 @@ import {
 } from "./credential-filter.js";
 
 describe("plugin credential-filter", () => {
-  it("treats Slack botToken, Authorization, and GITHUB_TOKEN as credential fields", () => {
+  it("treats channel, OAuth, header, and env credential names as sensitive", () => {
     expect(isCredentialField("botToken")).toBe(true);
+    expect(isCredentialField("bot_token")).toBe(true);
     expect(isCredentialField("appToken")).toBe(true);
+    expect(isCredentialField("access_token")).toBe(true);
+    expect(isCredentialField("personal_access_token")).toBe(true);
+    expect(isCredentialField("refresh-token")).toBe(true);
+    expect(isCredentialField("client_secret")).toBe(true);
+    expect(isCredentialField("auth_token")).toBe(true);
+    expect(isCredentialField("oauth_token")).toBe(true);
+    expect(isCredentialField("apikey")).toBe(true);
+    expect(isCredentialField("Token")).toBe(true);
     expect(isCredentialField("Authorization")).toBe(true);
     expect(isCredentialField("GITHUB_TOKEN")).toBe(true);
     expect(isCredentialField("DB_PASS")).toBe(true);
     expect(isCredentialField("publicKey")).toBe(false);
+    expect(isCredentialField("public.key")).toBe(false);
     expect(isCredentialField("NODE_ENV")).toBe(false);
   });
 
@@ -40,6 +50,11 @@ describe("plugin credential-filter", () => {
         headers: { Authorization: "Bearer sk-abcdefghijklmnopqrstuvwxyz" },
         env: { GITHUB_TOKEN: "ghp_abcdefghijklmnopqrstuvwxyz0123456789", NODE_ENV: "test" },
         args: ["--api-key", "opaque-secret-value", "--verbose"],
+      },
+      oauth: {
+        access_token: "opaque-access-value",
+        refresh_token: "opaque-refresh-value",
+        client_secret: "opaque-client-value",
       },
       customHeader: "Bearer opaque-migration-secret",
       model: "keep-me",
@@ -62,6 +77,11 @@ describe("plugin credential-filter", () => {
     expect(mcp.env.GITHUB_TOKEN).toBe(CREDENTIAL_PLACEHOLDER);
     expect(mcp.env.NODE_ENV).toBe("test");
     expect(mcp.args).toEqual(["--api-key", CREDENTIAL_PLACEHOLDER, "--verbose"]);
+    expect(result.oauth).toEqual({
+      access_token: CREDENTIAL_PLACEHOLDER,
+      refresh_token: CREDENTIAL_PLACEHOLDER,
+      client_secret: CREDENTIAL_PLACEHOLDER,
+    });
     expect(result.customHeader).toBe(CREDENTIAL_PLACEHOLDER);
     expect(result.model).toBe("keep-me");
     expect(result.publicKey).toBe("verify-me");

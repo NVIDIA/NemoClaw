@@ -22,7 +22,16 @@ describe("credential filter parity", () => {
   it("keeps plugin and shared classification rules aligned", () => {
     const fields = [
       "botToken",
+      "bot_token",
       "appToken",
+      "access_token",
+      "personal_access_token",
+      "refresh-token",
+      "client_secret",
+      "auth_token",
+      "oauth_token",
+      "apikey",
+      "Token",
       "GITHUB_TOKEN",
       "Authorization",
       "X-API-Key",
@@ -64,6 +73,11 @@ describe("credential filter parity", () => {
         headers: { Authorization: "Bearer opaque-migration-secret" },
         env: { GITHUB_TOKEN: "ghp_abcdefghijklmnopqrstuvwxyz0123456789", NODE_ENV: "test" },
         args: ["--api-key", "opaque-secret-value", "--verbose"],
+      },
+      oauth: {
+        access_token: "opaque-access-value",
+        refresh_token: "opaque-refresh-value",
+        client_secret: "opaque-client-value",
       },
       model: "keep-me",
     };
