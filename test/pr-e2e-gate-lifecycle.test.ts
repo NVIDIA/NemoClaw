@@ -1290,7 +1290,7 @@ describe("PR E2E controller lifecycle", () => {
     const supersededCheck = exactPrGateCheck({
       head_sha: SUPERSEDED_HEAD_SHA,
       external_id: prGateExternalId(42, SUPERSEDED_HEAD_SHA, BASE_SHA),
-      output: { title: "E2E maintainer authorization required to run E2E" },
+      output: { title: "Maintainer approval required to run E2E" },
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(

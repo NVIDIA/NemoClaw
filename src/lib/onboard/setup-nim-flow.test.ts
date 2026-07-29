@@ -626,6 +626,58 @@ describe("createSetupNim", () => {
     });
   });
 
+  it("ignores recorded provider state when fresh setup disables recovery (#6237)", async () => {
+    const prompt = vi.fn(async () => unexpected("interactive provider prompt"));
+    const note = vi.fn();
+    const readRecordedProvider = vi.fn(() => "ollama-local");
+    const readRecordedNimContainer = vi.fn(() => null);
+    const readRecordedModel = vi.fn(() => "llama3.1");
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args).toMatchObject({
+          selected: { key: "build", label: "NVIDIA Endpoints" },
+          requestedModel: null,
+          recoveredFromSandbox: false,
+          recoveredModel: null,
+          sandboxName: "dcode-station",
+        });
+        state.model = "nvidia/test-model";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        prompt,
+        note,
+        readRecordedProvider,
+        readRecordedNimContainer,
+        readRecordedModel,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "dcode-station", null, false);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(readRecordedProvider).not.toHaveBeenCalled();
+    expect(readRecordedNimContainer).not.toHaveBeenCalled();
+    expect(readRecordedModel).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledTimes(1);
+    expect(note).toHaveBeenCalledWith("  [non-interactive] Provider: build");
+    expect(result).toMatchObject({
+      model: "nvidia/test-model",
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
   it("honors a rebuild route and preserves credential-reuse return contracts (#6245)", async () => {
     const agent = { name: "langchain-deepagents-code" } as AgentDefinition;
     const recoveredRegistryRoute = {

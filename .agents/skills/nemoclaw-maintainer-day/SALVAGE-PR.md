@@ -61,7 +61,7 @@ Stop and report a conflict that can change behavior.
 npm test                          # root integration tests
 cd nemoclaw && npm test           # plugin tests
 npm run typecheck:cli             # CLI type check
-npm run check                     # all repository checks
+npm run check                     # broad repo-wide pre-commit and coverage baseline
 ```
 
 Use only commands matching the changed area.
