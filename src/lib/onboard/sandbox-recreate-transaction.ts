@@ -142,6 +142,13 @@ function phaseIndex(phase: CheckpointSandboxRecreatePhase): number {
   return ORDERED_PHASES.indexOf(phase);
 }
 
+export function sandboxRecreatePhaseReached(
+  phase: CheckpointSandboxRecreatePhase,
+  target: CheckpointSandboxRecreatePhase,
+): boolean {
+  return phaseIndex(phase) >= phaseIndex(target);
+}
+
 export function advanceSandboxRecreateTransaction(
   session: Session,
   id: string,

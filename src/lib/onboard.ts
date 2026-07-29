@@ -4380,6 +4380,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
       authoritativePolicyTier:
         opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+      recreateJournalTargetIntentFingerprint: opts.recreateJournalTargetIntentFingerprint ?? null,
       resumeAgentChanged,
       requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,

@@ -31,6 +31,10 @@ import {
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
+import {
+  fingerprintRebuildRecreateTargetIntent,
+  openRebuildRecreateJournal,
+} from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
@@ -210,10 +214,22 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const recreateJournal = openRebuildRecreateJournal({
+        target: {
+          sandboxName,
+          gatewayName: recreateOptions.targetGatewayName,
+          gatewayPort: recreateOptions.targetGatewayPort,
+        },
+        agentName: rebuildAgent || "openclaw",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+        log,
+      });
+
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
         staleRecovery,
+        recreateJournal,
         backupManifest: backup.backupManifest,
         force: normalized.force,
         log,
@@ -272,6 +288,7 @@ async function rebuildSandboxUnlocked(
           durableConfig,
           resumeConfig,
           recreateOptions,
+          recreateJournal,
           fromDockerfile,
           rebuildAgent,
           messagingPlan,
