@@ -2687,11 +2687,12 @@ It re-resolves the Docker-driver GPU route from the current host and current `NE
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
 A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them.
 A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it.
+A rebuild preserves the recorded Deep Agents Code validation profile unless `--dcode-validation-profile` installs a replacement profile or explicitly disables it.
 A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 Auto-mode sandboxes remain auto.
 
 ```bash
-$$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability]
+$$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--dcode-validation-profile <absolute-path|disabled>] [--observability|--no-observability]
 ```
 
 | Flag | Description |
@@ -2701,6 +2702,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
+| `--dcode-validation-profile <absolute-path\|disabled>` | Install a bounded managed headless validation-command profile from a normalized absolute host path, or pass `disabled` to remove the recorded profile; this option is accepted only for managed Deep Agents Code sandboxes. |
 | `--observability`, `--no-observability` | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state. |
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
