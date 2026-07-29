@@ -15,6 +15,7 @@ import YAML from "yaml";
 import {
   activeChannelsFromDockerfile,
   encodeTestMessagingPlan,
+  inlineMessagingPlanHelper,
 } from "./helpers/messaging-plan-fixtures";
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
@@ -43,13 +44,6 @@ const yamlModulePath = requireForTest.resolve("yaml");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
-const inlineMessagingPlanHelper = String.raw`
-function makeMessagingPlan(channelIds, disabledChannels = []) {
-  const disabled = new Set(disabledChannels);
-  return { schemaVersion: 1, sandboxName: "my-assistant", agent: "openclaw", workflow: "onboard", channels: channelIds.map((channelId) => ({ channelId, displayName: channelId, authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste", active: !disabled.has(channelId), selected: true, configured: true, disabled: disabled.has(channelId), inputs: [], hooks: [] })), disabledChannels, credentialBindings: [], networkPolicy: { presets: [], entries: [] }, agentRender: [], buildSteps: [], stateUpdates: [], healthChecks: [] };
-}
-`.trim();
-
 describe("onboard messaging", () => {
   it("creates providers for messaging tokens and attaches them to the sandbox", {
     timeout: 60_000,

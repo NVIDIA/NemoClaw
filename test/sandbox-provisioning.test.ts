@@ -1121,6 +1121,8 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "patch-hermes-session-list-preview.py"),
+      path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
+      path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1412,7 +1414,12 @@ describe("Hermes sandbox provisioning", () => {
           "runtime/gateway_state.json",
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
-        expect(run.calls).toContain(`chown gateway:sandbox ${path.join(hermesDir, "runtime")}`);
+        expect(run.calls).toContain(
+          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+            hermesDir,
+            "gateway",
+          )} ${path.join(hermesDir, "runtime")}`,
+        );
       }
     } finally {
       for (const run of runs) {

@@ -397,14 +397,14 @@ jobs:
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
 
-  approve-e2e:
-    name: Approve credentialed E2E for reviewed PR
+  approve-fork-e2e:
+    name: Approve credentialed E2E for fork PR
     needs: coordinate
-    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode != '' && github.run_attempt == 1 }}
+    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode == 'start-approved-fork' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 330
     environment:
-      name: ${{ needs.coordinate.outputs.approval_environment }}
+      name: approve-credentialed-e2e-for-fork-pr
       deployment: false
     permissions:
       actions: write
@@ -440,9 +440,8 @@ jobs:
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
       - id: start
-        name: Start approved E2E
+        name: Start approved fork E2E
         env:
-          APPROVAL_MODE: ${{ needs.coordinate.outputs.approval_mode }}
           APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
           APPROVAL_RUN_ID: ${{ github.run_id }}
           EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.approval_base_sha }}
@@ -455,15 +454,8 @@ jobs:
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: |
           set -euo pipefail
-          case "$APPROVAL_MODE" in
-            start-approved-control-plane | start-approved-fork) ;;
-            *)
-              echo "::error::approval mode is invalid" >&2
-              exit 1
-              ;;
-          esac
           node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
-            --mode "$APPROVAL_MODE" \
+            --mode start-approved-fork \
             --pr "$PR_NUMBER" \
             --head "$EXPECTED_HEAD_SHA" \
             --base "$EXPECTED_BASE_SHA" \

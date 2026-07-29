@@ -168,7 +168,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
-    runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status (non-zero on unfixed)
+    runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate("post-reboot-recovery", instance());
 
@@ -198,7 +198,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     ]);
   });
 
-  it("tolerates a non-zero status exit (the bug succeeds at destroying state)", async () => {
+  it("fails when status cannot prove post-reboot recovery", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup);
@@ -212,11 +212,9 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status non-zero
 
-    const result = await prepared.simulate("post-reboot-recovery", instance());
-
-    // simulate() does not throw; the post-status invariants belong
-    // to the state-validation phase that runs after.
-    expect(result.steps.find((step) => step.id.startsWith("nemoclaw-status:"))).toBeTruthy();
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /nemoclaw e2e-ubuntu-repo-cloud-openclaw status failed: Removed stale local registry entry/,
+    );
   });
 
   it("fails when no Docker container carries the OpenShell sandbox-name label", async () => {
@@ -277,7 +275,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
-    runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status
+    runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate(
       "post-reboot-recovery",

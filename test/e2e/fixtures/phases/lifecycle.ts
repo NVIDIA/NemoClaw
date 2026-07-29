@@ -30,9 +30,8 @@ export {
 // probe.
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const DOCKER_PROBE_TIMEOUT_MS = 15_000;
-// Status invocation can take several minutes on unfixed code while
-// the gateway recovery path retries. Keep the budget generous; the
-// bug is independent of latency.
+// Recovery can take several minutes while gateway and host-forward
+// readiness converge, so keep the status budget generous.
 const STATUS_TIMEOUT_MS = 5 * 60_000;
 const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
@@ -355,10 +354,9 @@ export class LifecyclePhaseFixture {
    *      make `openshell status` report the named gateway connected
    *      without running `nemoclaw onboard --resume`.
    *
-   *   We deliberately do NOT assert on the status exit code here
-   *   because the bug is precisely that status "succeeds" at
-   *   destroying state. The state-validation phase that follows is
-   *   what catches the regression via the
+   *   Status must exit zero to prove that the restored sandbox delivery
+   *   path is ready. The state-validation phase that follows additionally
+   *   verifies preservation via the
    *   `local-registry-entry-present` and `docker-sandbox-container-present`
    *   probes.
    *
@@ -444,10 +442,9 @@ export class LifecyclePhaseFixture {
     // We invoke status through the host CLI client so artifacts are
     // captured and the command goes through the same
     // shellProbe/redaction layer the rest of the fixture code uses.
-    // Status is allowed to fail (exit non-zero) because on unfixed
-    // code it intentionally fails after destroying state — the
-    // post-action invariants are checked by state-validation.
-    const statusResult = await this.host.nemoclaw([instance.sandboxName, "status"], {
+    // Status must exit zero to prove the restored delivery path is ready;
+    // state-validation still verifies registry and container preservation.
+    const statusResult = await this.host.expectStatus(instance.sandboxName, {
       artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: STATUS_TIMEOUT_MS,

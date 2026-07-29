@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import os
 import sys
+import asyncio
 from types import SimpleNamespace
 
 
@@ -62,6 +63,12 @@ class Parser:
     def parse_args(self):
         argv = sys.argv[1:]
         command = next((arg for arg in argv if not arg.startswith("-") and arg != "none"), None)
+        non_interactive_message = None
+        for index, arg in enumerate(argv):
+            if arg in {"-n", "--non-interactive"} and index + 1 < len(argv):
+                non_interactive_message = argv[index + 1]
+            elif arg.startswith("--non-interactive="):
+                non_interactive_message = arg.split("=", 1)[1]
         tools_command = None
         if command == "tools":
             index = argv.index("tools")
@@ -89,6 +96,11 @@ class Parser:
             no_mcp=False,
             trust_project_mcp=True,
             shell_allow_list=["bash"],
+            non_interactive_message=non_interactive_message,
+            output_format=("json" if "--json" in argv else "text"),
+            quiet=("-q" in argv or "--quiet" in argv),
+            no_stream=("--no-stream" in argv),
+            timeout=None,
         )
 
     def error(self, message):
@@ -119,6 +131,22 @@ def cli_main():
     assert all(os.environ.get(name) == "false" for name in tracing_flags)
     assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["HOME"] == "/sandbox"
+    output_format = getattr(args, "output_format", "text")
+    if args.non_interactive_message:
+        from deepagents_code.client.non_interactive import run_non_interactive
+
+        timeout = getattr(args, "timeout", None)
+        exit_code = asyncio.run(
+            asyncio.wait_for(
+                run_non_interactive(
+                            message=args.non_interactive_message,
+                            quiet=args.quiet,
+                            stream=not args.no_stream,
+                ),
+                        timeout=timeout,
+            )
+        )
+        raise SystemExit(exit_code)
     print(f"managed-posture-ok auto_approve={args.auto_approve}")
 `,
   );
@@ -450,16 +478,31 @@ def generate_thread_id():
     return "thread-1"
 
 
+def _write_text(text):
+    print(text, end="", flush=True)
+
+
+def _write_newline():
+    print()
+
+
 async def _run_non_interactive_impl(*args, **kwargs):
     del args
+    if kwargs.get("message") == "fixture-json-task":
+        return 0
     return kwargs
+
+
+async def _run_agent_loop(*args, **kwargs):
+    return await _run_non_interactive_impl(*args, **kwargs)
 
 
 async def run_non_interactive(*args, **kwargs):
     console = _Console()
     thread_id = generate_thread_id()
     try:
-        return await _run_non_interactive_impl(*args, **kwargs)
+        result = await _run_agent_loop(*args, **kwargs)
+        return result
     except Exception as e:
         logger.exception("Unexpected error during non-interactive execution")
         console.print(
