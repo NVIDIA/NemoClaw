@@ -30,14 +30,16 @@ async function listen(server: http.Server): Promise<number> {
     });
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Test server did not bind TCP.");
-  return address.port;
+  return address !== null && typeof address !== "string"
+    ? address.port
+    : Promise.reject(new Error("Test server did not bind TCP."));
 }
 
 async function close(server: http.Server): Promise<void> {
   openServers.delete(server);
-  if (!server.listening) return;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await (server.listening
+    ? new Promise<void>((resolve) => server.close(() => resolve()))
+    : Promise.resolve());
 }
 
 async function request(
@@ -412,10 +414,16 @@ describe("voice access gateway request boundary", () => {
   });
 
   it.each([
-    { method: "GET", path: "/api/ice-servers", body: "" },
-    { method: "PATCH", path: "/api/offer", body: '{"candidate":"candidate:1"}' },
+    { method: "GET", path: "/api/ice-servers", body: "", cacheControl: "no-store" },
+    {
+      method: "PATCH",
+      path: "/api/offer",
+      body: '{"candidate":"candidate:1"}',
+      cacheControl: undefined,
+    },
   ])("forwards an authorized $method signaling operation (#7781)", async ({
     body,
+    cacheControl,
     method,
     path,
   }) => {
@@ -447,7 +455,7 @@ describe("voice access gateway request boundary", () => {
     expect(result.status).toBe(200);
     expect(result.body.toString("utf8")).toBe('{"ok":true}');
     expect(seen).toEqual([{ body, method, url: path }]);
-    if (method === "GET") expect(result.headers["cache-control"]).toBe("no-store");
+    expect(result.headers["cache-control"]).toBe(cacheControl);
   });
 
   it("rejects an oversized body from its declared length before reaching Talker (#7781)", async () => {
