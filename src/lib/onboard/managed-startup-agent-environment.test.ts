@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 
 import { describe, expect, it } from "vitest";
 
@@ -111,6 +111,7 @@ function openClawProfile(): ManagedStartupProfile {
       contextWindow: 131_072,
       maxTokens: 8192,
       reasoning: true,
+      reasoningEffort: "high",
     },
     corporateCa: { bundleSha256: CA_SHA256 },
   };
@@ -159,6 +160,7 @@ function hermesProfile(): ManagedStartupProfile {
       contextWindow: 65_536,
       maxTokens: null,
       reasoning: null,
+      reasoningEffort: null,
     },
     corporateCa: { bundleSha256: CA_SHA256 },
   };
@@ -204,6 +206,7 @@ function dcodeProfile(): ManagedStartupProfile {
       contextWindow: null,
       maxTokens: null,
       reasoning: null,
+      reasoningEffort: null,
     },
     corporateCa: { bundleSha256: CA_SHA256 },
   };
@@ -260,6 +263,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_PROXY_HOST: "10.200.0.1",
       NEMOCLAW_PROXY_PORT: "3128",
       NEMOCLAW_REASONING: "true",
+      NEMOCLAW_REASONING_EFFORT: "high",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
@@ -656,7 +660,12 @@ describe("managed startup agent environment", () => {
         internalPort: null,
         tuiEnabled: false,
       },
-      tuning: { contextWindow: null, maxTokens: null, reasoning: null },
+      tuning: {
+        contextWindow: null,
+        maxTokens: null,
+        reasoning: null,
+        reasoningEffort: null,
+      },
     };
     const hermesResult = mapManagedStartupProfileToAgentEnvironment(hermes);
     expect(hermesResult.configurationEnvironment.NEMOCLAW_CONTEXT_WINDOW).toBe("");

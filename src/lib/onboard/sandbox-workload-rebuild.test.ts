@@ -531,6 +531,7 @@ describe("managed workload rebuild handoff", () => {
     previous.tuning.contextWindow = 196_608;
     previous.tuning.maxTokens = 16_384;
     previous.tuning.reasoning = true;
+    previous.tuning.reasoningEffort = "high";
     previous.inference.inputModalities = ["text", "image"];
     previous.agentConfig.agentTimeoutSeconds = 777;
     previous.agentConfig.heartbeatEvery = "45s";
@@ -562,7 +563,12 @@ describe("managed workload rebuild handoff", () => {
       },
       tools: { disclosure: "direct" },
       proxy: { managedHost: "10.44.0.9", managedPort: 4312 },
-      tuning: { contextWindow: 196_608, maxTokens: 16_384, reasoning: true },
+      tuning: {
+        contextWindow: 196_608,
+        maxTokens: 16_384,
+        reasoning: true,
+        reasoningEffort: "high",
+      },
       agentConfig: {
         agent: "openclaw",
         agentTimeoutSeconds: 777,
@@ -602,7 +608,12 @@ describe("managed workload rebuild handoff", () => {
       inference: { model: "nvidia/new-model" },
       tools: { disclosure: "direct", enabledGateways: ["nous-image"] },
       proxy: { managedHost: "10.55.0.7", managedPort: 5312 },
-      tuning: { contextWindow: 262_144, maxTokens: null, reasoning: null },
+      tuning: {
+        contextWindow: 262_144,
+        maxTokens: null,
+        reasoning: null,
+        reasoningEffort: null,
+      },
       agentConfig: {
         agent: "hermes",
         webSearch: { enabled: true, provider: "tavily" },

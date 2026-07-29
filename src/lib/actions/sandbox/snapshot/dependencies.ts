@@ -26,12 +26,21 @@ export {
   withDashboardPortReservationLock,
 } from "../../../onboard/dashboard-port";
 export { isValidForwardPort } from "../../../onboard/dashboard-runtime";
+export {
+  createDockerGpuSandboxCreatePatch,
+  type DockerGpuSandboxCreatePatch,
+} from "../../../onboard/docker-gpu-sandbox-create";
 export { resolveSandboxGatewayName } from "../../../onboard/gateway-binding";
 export { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
+export { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../../onboard/managed-startup/hold";
 export type {
   ManagedStartupAgent,
   ManagedStartupProfile,
 } from "../../../onboard/managed-startup/profile";
+export {
+  createManagedStartupRootApplyRequest,
+  type ManagedStartupRootApplyRequest,
+} from "../../../onboard/managed-startup/root-apply";
 export {
   MANAGED_STARTUP_CA_ENV,
   MANAGED_STARTUP_PROFILE_ENV,

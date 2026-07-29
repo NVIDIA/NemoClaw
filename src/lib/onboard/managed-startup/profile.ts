@@ -73,6 +73,8 @@ export const MANAGED_STARTUP_INFERENCE_APIS = [
 ] as const;
 export type ManagedStartupInferenceApi = (typeof MANAGED_STARTUP_INFERENCE_APIS)[number];
 export type ManagedStartupToolDisclosure = "progressive" | "direct";
+export const MANAGED_STARTUP_REASONING_EFFORTS = ["default", "low", "medium", "high"] as const;
+export type ManagedStartupReasoningEffort = (typeof MANAGED_STARTUP_REASONING_EFFORTS)[number];
 export const MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES = ["disabled", "thread-opt-in"] as const;
 export type ManagedStartupDcodeAutoApprovalMode =
   (typeof MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES)[number];
@@ -204,6 +206,7 @@ export interface ManagedStartupTuning {
   readonly contextWindow: number | null;
   readonly maxTokens: number | null;
   readonly reasoning: boolean | null;
+  readonly reasoningEffort: ManagedStartupReasoningEffort | null;
 }
 
 /**
@@ -286,7 +289,12 @@ export interface ManagedStartupAgentCapabilities {
   readonly inputModalities: readonly ManagedStartupInputModality[];
   readonly webSearchProviders: readonly ManagedStartupWebSearchProvider[];
   readonly toolGateways: readonly ManagedStartupHermesToolGateway[];
-  readonly tuningFields: readonly ("contextWindow" | "maxTokens" | "reasoning")[];
+  readonly tuningFields: readonly (
+    | "contextWindow"
+    | "maxTokens"
+    | "reasoning"
+    | "reasoningEffort"
+  )[];
   readonly supportsMessaging: boolean;
   readonly supportsInferenceCompatibility: boolean;
   readonly supportsUpstreamEndpoint: boolean;
@@ -312,7 +320,7 @@ export const MANAGED_STARTUP_PROFILE_CAPABILITIES = {
     inputModalities: ["text", "image"],
     webSearchProviders: ["brave", "tavily"],
     toolGateways: [],
-    tuningFields: ["contextWindow", "maxTokens", "reasoning"],
+    tuningFields: ["contextWindow", "maxTokens", "reasoning", "reasoningEffort"],
     supportsMessaging: true,
     supportsInferenceCompatibility: true,
     supportsUpstreamEndpoint: false,
@@ -411,6 +419,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_CONTEXT_WINDOW", "tuning.contextWindow"),
     affordance("NEMOCLAW_MAX_TOKENS", "tuning.maxTokens"),
     affordance("NEMOCLAW_REASONING", "tuning.reasoning"),
+    affordance("NEMOCLAW_REASONING_EFFORT", "tuning.reasoningEffort"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
     affordance("NEMOCLAW_AGENT_TIMEOUT", "agentConfig.agentTimeoutSeconds"),
     affordance("NEMOCLAW_AGENT_HEARTBEAT_EVERY", "agentConfig.heartbeatEvery"),
@@ -608,7 +617,7 @@ const HERMES_DASHBOARD_KEYS = new Set([
 const DCODE_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const TOOLS_KEYS = new Set(["disclosure", "enabledGateways"]);
 const MESSAGING_KEYS = new Set(["plan"]);
-const TUNING_KEYS = new Set(["contextWindow", "maxTokens", "reasoning"]);
+const TUNING_KEYS = new Set(["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]);
 const CORPORATE_CA_KEYS = new Set(["bundleSha256"]);
 const OPENCLAW_CONFIG_KEYS = new Set([
   "agent",
@@ -629,6 +638,7 @@ const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
 const INFERENCE_API_SET = new Set<string>(MANAGED_STARTUP_INFERENCE_APIS);
+const REASONING_EFFORT_SET = new Set<string>(MANAGED_STARTUP_REASONING_EFFORTS);
 const HERMES_GATEWAY_SET = new Set<string>(MANAGED_STARTUP_HERMES_TOOL_GATEWAYS);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1312,19 +1322,33 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
     contextWindow: requireNullablePositiveInteger(tuning.contextWindow, "tuning.contextWindow"),
     maxTokens: requireNullablePositiveInteger(tuning.maxTokens, "tuning.maxTokens"),
     reasoning: requireNullableBoolean(tuning.reasoning, "tuning.reasoning"),
+    reasoningEffort:
+      tuning.reasoningEffort === null
+        ? null
+        : requireStringEnum<ManagedStartupReasoningEffort>(
+            tuning.reasoningEffort,
+            REASONING_EFFORT_SET,
+            "tuning.reasoningEffort",
+          ),
   };
   if (agent === "openclaw") {
-    if (result.contextWindow === null || result.maxTokens === null || result.reasoning === null) {
-      invalid("openclaw requires contextWindow, maxTokens, and reasoning tuning");
+    if (
+      result.contextWindow === null ||
+      result.maxTokens === null ||
+      result.reasoning === null ||
+      result.reasoningEffort === null
+    ) {
+      invalid("openclaw requires contextWindow, maxTokens, reasoning, and reasoningEffort tuning");
     }
   } else if (agent === "hermes") {
-    if (result.maxTokens !== null || result.reasoning !== null) {
+    if (result.maxTokens !== null || result.reasoning !== null || result.reasoningEffort !== null) {
       invalid("hermes supports only contextWindow tuning");
     }
   } else if (
     result.contextWindow !== null ||
     result.maxTokens !== null ||
-    result.reasoning !== null
+    result.reasoning !== null ||
+    result.reasoningEffort !== null
   ) {
     invalid("langchain-deepagents-code does not support startup tuning fields");
   }

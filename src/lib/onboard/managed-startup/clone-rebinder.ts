@@ -37,6 +37,7 @@ export interface ManagedStartupCloneCurrentState {
   readonly endpointUrl?: string | null;
   readonly preferredInferenceApi?: string | null;
   readonly compatibleEndpointReasoning?: "true" | "false" | string | null;
+  readonly compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | string | null;
   readonly toolDisclosure?: "progressive" | "direct" | string;
   readonly webSearchEnabled?: boolean;
   readonly webSearchProvider?: "brave" | "tavily" | string | null;
@@ -284,6 +285,7 @@ function reconcileCurrentSourceProfile(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
 ): ManagedStartupProfile {
+  const inference = currentInference(profile, current);
   const hermesToolGateways = current.hermesToolGateways ?? [];
   if (
     !Array.isArray(hermesToolGateways) ||
@@ -292,6 +294,7 @@ function reconcileCurrentSourceProfile(
     fail("current Hermes tool gateways are invalid");
   }
   let reasoning = profile.tuning.reasoning;
+  let reasoningEffort = profile.tuning.reasoningEffort;
   let contextWindow = profile.tuning.contextWindow;
   if (profile.agent === "openclaw") {
     const currentReasoning = current.compatibleEndpointReasoning;
@@ -304,6 +307,20 @@ function reconcileCurrentSourceProfile(
       fail("current compatible-endpoint reasoning state is invalid");
     }
     reasoning = current.provider === "compatible-endpoint" ? currentReasoning === "true" : false;
+    const currentReasoningEffort = current.compatibleEndpointReasoningEffort;
+    if (
+      currentReasoningEffort !== undefined &&
+      currentReasoningEffort !== null &&
+      currentReasoningEffort !== "low" &&
+      currentReasoningEffort !== "medium" &&
+      currentReasoningEffort !== "high"
+    ) {
+      fail("current compatible-endpoint reasoning-effort state is invalid");
+    }
+    reasoningEffort =
+      inference.upstreamProvider === "compatible-endpoint" && inference.api === "openai-completions"
+        ? (currentReasoningEffort ?? "default")
+        : "default";
     if (
       profile.inference.upstreamProvider !== current.provider ||
       profile.inference.model !== current.model
@@ -320,14 +337,14 @@ function reconcileCurrentSourceProfile(
   return validateManagedStartupProfile({
     ...profile,
     agentConfig: currentAgentConfig(profile, current),
-    inference: currentInference(profile, current),
+    inference,
     dashboard: currentSourceDashboard(profile, current),
     tools: {
       disclosure: currentToolDisclosure(current),
       enabledGateways: profile.agent === "hermes" ? [...hermesToolGateways] : [],
     },
     messaging: { plan: currentMessagingPlan(current) },
-    tuning: { ...profile.tuning, contextWindow, reasoning },
+    tuning: { ...profile.tuning, contextWindow, reasoning, reasoningEffort },
   });
 }
 

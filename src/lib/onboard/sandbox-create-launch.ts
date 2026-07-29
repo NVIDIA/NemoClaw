@@ -9,6 +9,7 @@ import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
+import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "./managed-startup/hold";
 import {
   createManagedStartupRootApplyRequest,
   type ManagedStartupRootApplyRequest,
@@ -28,8 +29,6 @@ type OpenshellShellCommand = (args: string[]) => string;
 type OpenshellArgv = (args: string[]) => string[];
 
 export type SandboxWorkloadStartupRequirement = "sandbox-command" | "trusted-image-init";
-
-export const MANAGED_STARTUP_HOLD_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-startup-hold";
 
 export {
   assertSandboxCreateArgvWithinTransportLimit,

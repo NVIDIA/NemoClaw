@@ -117,6 +117,7 @@ export function managedStartupE2eProfile(
           contextWindow: 131_072,
           maxTokens: 8192,
           reasoning: false,
+          reasoningEffort: "default",
         },
       };
     case "hermes":
@@ -145,6 +146,7 @@ export function managedStartupE2eProfile(
           contextWindow: 131_072,
           maxTokens: null,
           reasoning: null,
+          reasoningEffort: null,
         },
       };
     case "langchain-deepagents-code":
@@ -171,6 +173,7 @@ export function managedStartupE2eProfile(
           contextWindow: null,
           maxTokens: null,
           reasoning: null,
+          reasoningEffort: null,
         },
       };
   }

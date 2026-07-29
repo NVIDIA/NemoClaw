@@ -19,6 +19,7 @@ import {
   encodeManagedStartupProfile,
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+  MANAGED_STARTUP_REASONING_EFFORTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
   type ManagedStartupDcodeAutoApprovalMode,
@@ -27,6 +28,7 @@ import {
   type ManagedStartupInputModality,
   type ManagedStartupJsonObject,
   type ManagedStartupProfile,
+  type ManagedStartupReasoningEffort,
   type ManagedStartupToolDisclosure,
   type ManagedStartupWebSearch,
   validateManagedStartupProfile,
@@ -52,7 +54,7 @@ const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0
  * change; otherwise construction fails before a sandbox is launched.
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
-  openclaw: "f91c16c66240e947603b89647fc1ffba5a97cc04ddd08d349f8e280619d47598",
+  openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "eb3c3a42395256d6228a828a483362b6534b4774be515f14fa3b5c936d00c6d6",
   "langchain-deepagents-code": "780ec15dd97efaea5b75614d657a4baf93cba4c7933e50f78fb72814cb427c85",
 } as const satisfies Record<ManagedStartupAgent, string>;
@@ -186,6 +188,15 @@ function parseReasoning(environment: NodeJS.ProcessEnv): boolean {
   if (raw === "true") return true;
   if (raw === "false") return false;
   fail('NEMOCLAW_REASONING must be "true" or "false"');
+}
+
+function parseReasoningEffort(environment: NodeJS.ProcessEnv): ManagedStartupReasoningEffort {
+  const raw = presentEnvironmentValue(environment, "NEMOCLAW_REASONING_EFFORT");
+  const normalized = raw === null ? "default" : raw.toLowerCase();
+  if ((MANAGED_STARTUP_REASONING_EFFORTS as readonly string[]).includes(normalized)) {
+    return normalized as ManagedStartupReasoningEffort;
+  }
+  fail(`NEMOCLAW_REASONING_EFFORT must be one of: ${MANAGED_STARTUP_REASONING_EFFORTS.join(", ")}`);
 }
 
 function parseInputModalities(
@@ -634,6 +645,14 @@ function assertEnvironmentConsistency(
       if (raw === null) continue;
       assertEquivalent(name, typeof expected === "number" ? Number(raw) : raw, expected);
     }
+    const reasoningEffort = presentEnvironmentValue(environment, "NEMOCLAW_REASONING_EFFORT");
+    if (reasoningEffort !== null) {
+      assertEquivalent(
+        "NEMOCLAW_REASONING_EFFORT",
+        reasoningEffort.toLowerCase(),
+        profile.tuning.reasoningEffort,
+      );
+    }
     if (presentEnvironmentValue(environment, "NEMOCLAW_OPENCLAW_OTEL") !== null) {
       assertEquivalent(
         "NEMOCLAW_OPENCLAW_OTEL",
@@ -810,6 +829,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
           DEFAULT_OPENCLAW_MAX_TOKENS,
         ) ?? DEFAULT_OPENCLAW_MAX_TOKENS,
       reasoning: parseReasoning(input.environment),
+      reasoningEffort: parseReasoningEffort(input.environment),
     };
   } else if (input.agent === "hermes") {
     if (!webSearch) fail("Hermes web-search state is missing");
@@ -821,6 +841,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       }),
       maxTokens: null,
       reasoning: null,
+      reasoningEffort: null,
     };
   } else {
     if (input.dcodeAutoApprovalMode === null || input.observabilityEnabled === null) {
@@ -831,7 +852,12 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       autoApprovalMode: input.dcodeAutoApprovalMode,
       observabilityEnabled: input.observabilityEnabled,
     };
-    tuning = { contextWindow: null, maxTokens: null, reasoning: null };
+    tuning = {
+      contextWindow: null,
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    };
   }
 
   const candidate: ManagedStartupProfile = {

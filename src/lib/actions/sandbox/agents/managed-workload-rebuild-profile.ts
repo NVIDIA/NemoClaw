@@ -25,6 +25,16 @@ export function resolveManagedRebuildOpenClawReasoning(
   return provider === "compatible-endpoint" && compatibleEndpointReasoning === "true";
 }
 
+export function resolveManagedRebuildOpenClawReasoningEffort(
+  provider: string,
+  inferenceApi: string,
+  compatibleEndpointReasoningEffort: "low" | "medium" | "high" | null,
+): "default" | "low" | "medium" | "high" {
+  return provider === "compatible-endpoint" && inferenceApi === "openai-completions"
+    ? (compatibleEndpointReasoningEffort ?? "default")
+    : "default";
+}
+
 /**
  * Overlay mutable authoritative rebuild state onto receipt-owned managed-image
  * affordances and render the exact replacement profile before destructive work.
@@ -113,6 +123,11 @@ export function prepareManagedRebuildProfileHandoff(input: {
           openClawReasoning: resolveManagedRebuildOpenClawReasoning(
             resumeConfig.provider,
             resumeConfig.compatibleEndpointReasoning,
+          ),
+          openClawReasoningEffort: resolveManagedRebuildOpenClawReasoningEffort(
+            resumeConfig.provider,
+            inference.inferenceApi,
+            resumeConfig.compatibleEndpointReasoningEffort,
           ),
         }
       : {},

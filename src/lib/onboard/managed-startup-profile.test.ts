@@ -110,6 +110,7 @@ const OPENCLAW_PROFILE = {
     contextWindow: 131_072,
     maxTokens: 8192,
     reasoning: true,
+    reasoningEffort: "high",
   },
   corporateCa: { bundleSha256: CA_SHA256 },
 } as const satisfies ManagedStartupProfile;
@@ -156,6 +157,7 @@ const HERMES_PROFILE = {
     contextWindow: 65_536,
     maxTokens: null,
     reasoning: null,
+    reasoningEffort: null,
   },
   corporateCa: { bundleSha256: CA_SHA256 },
 } as const satisfies ManagedStartupProfile;
@@ -199,6 +201,7 @@ const DCODE_PROFILE = {
     contextWindow: null,
     maxTokens: null,
     reasoning: null,
+    reasoningEffort: null,
   },
   corporateCa: { bundleSha256: CA_SHA256 },
 } as const satisfies ManagedStartupProfile;
@@ -255,7 +258,12 @@ describe("managed startup profile", () => {
         bindAddress: "0.0.0.0",
         wslExposure: true,
       },
-      tuning: { contextWindow: 131_072, maxTokens: 8192, reasoning: true },
+      tuning: {
+        contextWindow: 131_072,
+        maxTokens: 8192,
+        reasoning: true,
+        reasoningEffort: "high",
+      },
     });
     expect(profile.agentConfig.agent === "openclaw" && profile.agentConfig.extraAgents).toEqual(
       OPENCLAW_PROFILE.agentConfig.extraAgents,
@@ -272,7 +280,12 @@ describe("managed startup profile", () => {
         tuiEnabled: true,
       },
       agentConfig: { webSearch: { enabled: true, provider: "tavily" } },
-      tuning: { contextWindow: 65_536, maxTokens: null, reasoning: null },
+      tuning: {
+        contextWindow: 65_536,
+        maxTokens: null,
+        reasoning: null,
+        reasoningEffort: null,
+      },
     });
     expect(profile.tools.enabledGateways).toEqual([
       "nous-audio",

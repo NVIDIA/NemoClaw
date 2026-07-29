@@ -430,7 +430,7 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Validate exact managed image
+      - name: Validate exact managed image before promotion
         id: validate
         shell: bash
         env:

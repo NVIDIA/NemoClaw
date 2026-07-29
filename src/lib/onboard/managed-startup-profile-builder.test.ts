@@ -168,6 +168,7 @@ describe("buildManagedStartupProfile", () => {
         NEMOCLAW_CONTEXT_WINDOW: "262144",
         NEMOCLAW_MAX_TOKENS: "8192",
         NEMOCLAW_REASONING: "true",
+        NEMOCLAW_REASONING_EFFORT: " HIGH ",
         NEMOCLAW_TOOL_DISCLOSURE: "direct",
         NEMOCLAW_AGENT_TIMEOUT: "900",
         NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
@@ -244,6 +245,7 @@ describe("buildManagedStartupProfile", () => {
       contextWindow: 262_144,
       maxTokens: 8192,
       reasoning: true,
+      reasoningEffort: "high",
     });
     expect(built.corporateCaB64).toBeUndefined();
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
@@ -324,6 +326,7 @@ describe("buildManagedStartupProfile", () => {
       contextWindow: 65_536,
       maxTokens: null,
       reasoning: null,
+      reasoningEffort: null,
     });
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
   });
@@ -378,7 +381,12 @@ describe("buildManagedStartupProfile", () => {
         mode: "disabled",
       },
       messaging: { plan: null },
-      tuning: { contextWindow: null, maxTokens: null, reasoning: null },
+      tuning: {
+        contextWindow: null,
+        maxTokens: null,
+        reasoning: null,
+        reasoningEffort: null,
+      },
     });
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
   });
@@ -430,6 +438,7 @@ describe("buildManagedStartupProfile", () => {
       contextWindow: 131_072,
       maxTokens: 4096,
       reasoning: false,
+      reasoningEffort: "default",
     });
   });
 
@@ -477,6 +486,11 @@ describe("buildManagedStartupProfile", () => {
       "malformed reasoning",
       openClawInput({ environment: { NEMOCLAW_REASONING: "sometimes" } }),
       /NEMOCLAW_REASONING/,
+    ],
+    [
+      "malformed reasoning effort",
+      openClawInput({ environment: { NEMOCLAW_REASONING_EFFORT: "maximum" } }),
+      /NEMOCLAW_REASONING_EFFORT/,
     ],
     [
       "conflicting proxy aliases",

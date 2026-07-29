@@ -53,6 +53,9 @@ import {
 import {
   assertSandboxCreateArgvWithinTransportLimit,
   captureOpenshell,
+  createDockerGpuSandboxCreatePatch,
+  createManagedStartupRootApplyRequest,
+  type DockerGpuSandboxCreatePatch,
   dockerCapture,
   findAvailableDashboardPort,
   formatSnapshotBaselineExclusionSummary,
@@ -64,9 +67,11 @@ import {
   HERMES_DASHBOARD_TUI_ENV,
   isValidForwardPort,
   MANAGED_STARTUP_CA_ENV,
+  MANAGED_STARTUP_HOLD_EXECUTABLE,
   MANAGED_STARTUP_PROFILE_ENV,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
+  type ManagedStartupRootApplyRequest,
   type PreparedManagedCloneProvider,
   printHermesGatewayRestoreHint,
   resolveHermesDashboardOnboardState,
@@ -280,6 +285,7 @@ function resolveCloneDashboardEnvArgs(
 
 interface PreparedManagedSnapshotClone {
   readonly envArgs: readonly string[];
+  readonly rootApplyRequest: ManagedStartupRootApplyRequest;
   readonly workload: Extract<NonNullable<SandboxEntry["workload"]>, { kind: "managed-image" }>;
   readonly messaging: SandboxEntry["messaging"];
   readonly registryFields: Partial<SandboxEntry>;
@@ -311,6 +317,13 @@ function managedCloneRegistryFields(
         ? profile.tuning.reasoning === true
           ? "true"
           : "false"
+        : null,
+    compatibleEndpointReasoningEffort:
+      profile.agent === "openclaw" &&
+      profile.inference.upstreamProvider === "compatible-endpoint" &&
+      profile.inference.api === "openai-completions" &&
+      profile.tuning.reasoningEffort !== "default"
+        ? profile.tuning.reasoningEffort
         : null,
     toolDisclosure: profile.tools.disclosure,
     webSearchEnabled: webSearch?.enabled === true,
@@ -397,13 +410,12 @@ async function prepareManagedSnapshotClone(
         };
   const { prepareManagedCloneProviders } = await import("./snapshot/managed-clone-providers");
   return {
-    envArgs: [
-      ...credentialProxyEnvArgs,
-      `${MANAGED_STARTUP_PROFILE_ENV}=${rebound.encodedProfile}`,
-      ...(rebound.corporateCaB64 === undefined
-        ? []
-        : [`${MANAGED_STARTUP_CA_ENV}=${rebound.corporateCaB64}`]),
-    ],
+    envArgs: credentialProxyEnvArgs,
+    rootApplyRequest: createManagedStartupRootApplyRequest({
+      agent: rebound.profile.agent,
+      encodedProfile: rebound.encodedProfile,
+      ...(rebound.corporateCaB64 === undefined ? {} : { corporateCaB64: rebound.corporateCaB64 }),
+    }),
     workload: targetWorkload,
     registryFields: managedCloneRegistryFields(rebound.profile, source),
     messaging,
@@ -458,6 +470,7 @@ interface PreparedSnapshotCloneLaunch {
   readonly sourceObservabilityEnabled: boolean;
   readonly managedClone: PreparedManagedSnapshotClone | null;
   readonly destinationDashboardPort: number | null;
+  readonly startupCommand: readonly string[];
 }
 
 function prepareSnapshotCloneLaunch(
@@ -477,7 +490,15 @@ function prepareSnapshotCloneLaunch(
     ...(managedClone
       ? managedClone.envArgs
       : [`NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`, ...dashboardEnvArgs]),
-    "nemoclaw-start",
+    ...(managedClone
+      ? [
+          MANAGED_STARTUP_HOLD_EXECUTABLE,
+          "--agent",
+          managedClone.rootApplyRequest.agent,
+          "--profile-fingerprint",
+          managedClone.rootApplyRequest.profileFingerprint,
+        ]
+      : ["nemoclaw-start"]),
   ];
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
@@ -513,7 +534,46 @@ function prepareSnapshotCloneLaunch(
     sourceObservabilityEnabled,
     managedClone,
     destinationDashboardPort: dstDashboardPort,
+    startupCommand,
   };
+}
+
+function createManagedSnapshotStartupPatch(
+  dstName: string,
+  launch: PreparedSnapshotCloneLaunch,
+): DockerGpuSandboxCreatePatch | null {
+  const managedClone = launch.managedClone;
+  if (!managedClone) return null;
+  const sourceDriver = (launch.sourceEntry as SandboxEntry).openshellDriver;
+  if (
+    sourceDriver !== undefined &&
+    sourceDriver !== null &&
+    sourceDriver !== "docker" &&
+    sourceDriver !== "vm"
+  ) {
+    throw new Error(
+      `managed snapshot clone startup is unsupported for OpenShell driver '${sourceDriver}'`,
+    );
+  }
+  return createDockerGpuSandboxCreatePatch({
+    route: "native",
+    managedStartupRootApplyRequest: managedClone.rootApplyRequest,
+    sandboxName: dstName,
+    openshellSandboxCommand: launch.startupCommand,
+    timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
+    backend: "generic",
+    deps: {
+      dockerCapture,
+      runOpenshell,
+      runCaptureOpenshell: (args, options) =>
+        captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "",
+    },
+    overrides: {
+      onPatchFailureExit: (_sandboxName, error) => {
+        throw error instanceof Error ? error : new Error(String(error));
+      },
+    },
+  });
 }
 
 async function autoCreateSandboxFromSource(
@@ -531,6 +591,7 @@ async function autoCreateSandboxFromSource(
     managedClone,
     destinationDashboardPort,
   } = launch;
+  const managedStartupPatch = createManagedSnapshotStartupPatch(dstName, launch);
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
   const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
@@ -544,21 +605,33 @@ async function autoCreateSandboxFromSource(
       if (list.status !== 0) return false;
       return isSandboxReady(list.output || "", dstName);
     },
+    ...(managedStartupPatch
+      ? {
+          onPoll: managedStartupPatch.maybeApplyDuringCreate,
+          failureCheck: managedStartupPatch.createFailureMessage,
+        }
+      : {}),
   });
+  managedStartupPatch?.exitOnPatchError();
 
   if (createResult.status !== 0 && !createResult.forcedReady) {
+    managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
     snapshotExit(1);
   }
+  managedStartupPatch?.ensureApplied();
+  managedStartupPatch?.waitForSupervisorReconnectIfNeeded();
 
   // Double-check Ready after stream exit.
   const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
+    managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
     console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
     snapshotExit(1);
   }
+  managedStartupPatch?.commitAfterReady();
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");

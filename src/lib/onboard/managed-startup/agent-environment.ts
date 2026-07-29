@@ -281,7 +281,8 @@ function mapOpenClawProfile(profile: ManagedStartupProfile): ManagedStartupAgent
     profile.inference.inputModalities === null ||
     profile.tuning.contextWindow === null ||
     profile.tuning.maxTokens === null ||
-    profile.tuning.reasoning === null
+    profile.tuning.reasoning === null ||
+    profile.tuning.reasoningEffort === null
   ) {
     throw new ManagedStartupAgentEnvironmentError("OpenClaw profile state is inconsistent");
   }
@@ -309,6 +310,7 @@ function mapOpenClawProfile(profile: ManagedStartupProfile): ManagedStartupAgent
     NEMOCLAW_PROXY_HOST: profile.proxy.managedHost,
     NEMOCLAW_PROXY_PORT: String(profile.proxy.managedPort),
     NEMOCLAW_REASONING: String(profile.tuning.reasoning),
+    NEMOCLAW_REASONING_EFFORT: profile.tuning.reasoningEffort,
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE: booleanFlag(profile.dashboard.wslExposure),

@@ -22,7 +22,10 @@ import {
   type ShippedManagedImageAgent,
 } from "../../onboard/managed-image/contract";
 import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
-import { resolveManagedRebuildOpenClawReasoning } from "./agents/managed-workload-rebuild-profile";
+import {
+  resolveManagedRebuildOpenClawReasoning,
+  resolveManagedRebuildOpenClawReasoningEffort,
+} from "./agents/managed-workload-rebuild-profile";
 
 const OLD_RELEASE = "v0.0.97";
 const NEW_RELEASE = "v0.0.98";
@@ -226,6 +229,21 @@ describe("managed workload rebuild buildless boundary", () => {
     ["nvidia-prod", "true", false],
   ] as const)("derives current OpenClaw reasoning for %s/%s instead of retaining receipt state", (provider, compatibleReasoning, expected) => {
     expect(resolveManagedRebuildOpenClawReasoning(provider, compatibleReasoning)).toBe(expected);
+  });
+
+  it.each([
+    ["compatible-endpoint", "openai-completions", "high", "high"],
+    ["compatible-endpoint", "openai-completions", null, "default"],
+    ["compatible-endpoint", "openai-responses", "high", "default"],
+    ["nvidia-prod", "openai-completions", "high", "default"],
+  ] as const)("derives current OpenClaw reasoning effort for %s/%s/%s", (provider, inferenceApi, compatibleReasoningEffort, expected) => {
+    expect(
+      resolveManagedRebuildOpenClawReasoningEffort(
+        provider,
+        inferenceApi,
+        compatibleReasoningEffort,
+      ),
+    ).toBe(expected);
   });
 
   it("fails profile rendering before registry update, shields, backup, or deletion", async () => {

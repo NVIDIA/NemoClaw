@@ -56,7 +56,12 @@ function managedProfileForAgent(
     },
     tools: { disclosure: "progressive" as const, enabledGateways: [] },
     messaging: { plan: null },
-    tuning: { contextWindow: null, maxTokens: null, reasoning: null },
+    tuning: {
+      contextWindow: null,
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    },
     corporateCa: { bundleSha256 },
   };
   switch (agent) {
@@ -88,6 +93,7 @@ function managedProfileForAgent(
           contextWindow: 131_072,
           maxTokens: 8192,
           reasoning: false,
+          reasoningEffort: "default",
         },
         dashboard: {
           agent,

@@ -261,6 +261,7 @@ describe("buildManagedStartupOnboardProfile", () => {
       contextWindow: 65_536,
       maxTokens: null,
       reasoning: null,
+      reasoningEffort: null,
     });
   });
 
@@ -289,7 +290,12 @@ describe("buildManagedStartupOnboardProfile", () => {
       },
       tools: { disclosure: "progressive", enabledGateways: [] },
       messaging: { plan: null },
-      tuning: { contextWindow: null, maxTokens: null, reasoning: null },
+      tuning: {
+        contextWindow: null,
+        maxTokens: null,
+        reasoning: null,
+        reasoningEffort: null,
+      },
     });
   });
 
@@ -406,6 +412,7 @@ describe("buildManagedStartupOnboardProfile", () => {
       contextWindow: 262_144,
       maxTokens: 8192,
       reasoning: false,
+      reasoningEffort: "default",
     });
     expect(built.profile.proxy).toMatchObject({
       managedHost: "host.containers.internal",

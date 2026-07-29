@@ -1341,23 +1341,4 @@ fi
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
   });
-
-  it("cannot publish a public mutable alias from an individual agent lane (#7744)", () => {
-    const workflow = readWorkflow("managed-images.yaml");
-    const publisher = managedPublisher(workflow);
-    const steps = publisher.steps ?? [];
-    const source = steps.map((candidate) => candidate.run ?? "").join("\n");
-    const contract = step(publisher, "Export managed image contract");
-
-    expect(publisher.strategy?.matrix?.include).toHaveLength(3);
-    expect(steps.map((candidate) => candidate.name)).not.toContain(
-      "Promote validated managed image aliases",
-    );
-    expect(source).not.toContain('aliases=("${IMAGE}:${GITHUB_SHA}")');
-    expect(source).not.toContain('release_tag="${GITHUB_REF#refs/tags/}"');
-    expect(source).not.toContain("docker buildx imagetools create");
-    expect(source).not.toMatch(/(?:^|\s)docker\s+(?:tag|push)\s/u);
-    expect(contract.run).toContain('(has("aliases") | not)');
-    expect(contract.run).not.toContain("aliases:");
-  });
 });

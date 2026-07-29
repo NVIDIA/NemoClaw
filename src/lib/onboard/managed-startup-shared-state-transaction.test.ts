@@ -21,6 +21,16 @@ function mode(target: string): number {
   return fs.lstatSync(target).mode & 0o7777;
 }
 
+function effectiveUid(): number {
+  if (!process.geteuid) throw new Error("effective uid is unavailable");
+  return process.geteuid();
+}
+
+function effectiveGid(): number {
+  if (!process.getegid) throw new Error("effective gid is unavailable");
+  return process.getegid();
+}
+
 describe("managed startup shared-state transaction", () => {
   let temporaryRoot = "";
   let sandboxRoot = "";
@@ -38,8 +48,8 @@ describe("managed startup shared-state transaction", () => {
     options = {
       sandboxRoot,
       transactionDirectory,
-      trustedUid: process.geteuid(),
-      trustedGid: process.getegid(),
+      trustedUid: effectiveUid(),
+      trustedGid: effectiveGid(),
     };
   });
 
@@ -96,8 +106,8 @@ describe("managed startup shared-state transaction", () => {
       const target = path.join(root, name);
       expect(fs.readFileSync(target, "utf8")).toBe(contents);
       expect(mode(target)).toBe(fileMode);
-      expect(fs.lstatSync(target).uid).toBe(process.geteuid());
-      expect(fs.lstatSync(target).gid).toBe(process.getegid());
+      expect(fs.lstatSync(target).uid).toBe(effectiveUid());
+      expect(fs.lstatSync(target).gid).toBe(effectiveGid());
     }
     expect(mode(root)).toBe(0o750);
     if (agent === "openclaw" || agent === "hermes") {
@@ -122,7 +132,7 @@ describe("managed startup shared-state transaction", () => {
         {
           channelId: "wechat",
           displayName: "WeChat",
-          authMode: "qr-login",
+          authMode: "host-qr",
           active: true,
           selected: true,
           configured: true,

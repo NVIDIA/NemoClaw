@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
 import {
+  type ManagedStartupCloneCurrentState,
   ManagedStartupCloneRebindError,
   rebindManagedStartupProfileForClone,
 } from "./managed-startup/clone-rebinder";
@@ -135,6 +136,7 @@ function rebind(
   built: ReturnType<typeof buildManagedStartupProfile>,
   expectedAgent: ManagedStartupProfileBuilderInput["agent"],
   destinationDashboardPort: number | null,
+  currentOverrides: Partial<ManagedStartupCloneCurrentState> = {},
 ) {
   const profile = built.profile;
   const webSearch =
@@ -163,6 +165,12 @@ function rebind(
             ? "true"
             : "false"
           : null,
+      compatibleEndpointReasoningEffort:
+        profile.agent === "openclaw" &&
+        profile.inference.upstreamProvider === "compatible-endpoint" &&
+        profile.tuning.reasoningEffort !== "default"
+          ? profile.tuning.reasoningEffort
+          : null,
       toolDisclosure: profile.tools.disclosure,
       webSearchEnabled: webSearch?.enabled,
       webSearchProvider: webSearch?.provider,
@@ -190,6 +198,7 @@ function rebind(
           : undefined,
       dcodeAutoApprovalMode: dcodeConfig?.autoApprovalMode,
       observabilityEnabled: dcodeConfig?.observabilityEnabled,
+      ...currentOverrides,
     },
   });
 }
@@ -227,6 +236,32 @@ describe("rebindManagedStartupProfileForClone", () => {
         ? Reflect.deleteProperty(process.env, "TELEGRAM_BOT_TOKEN")
         : Reflect.set(process.env, "TELEGRAM_BOT_TOKEN", previousToken);
     }
+  });
+
+  it("rebinds the current compatible-endpoint reasoning effort instead of stale receipt tuning", () => {
+    const built = buildManagedStartupProfile({
+      ...openClawInput(),
+      inference: {
+        ...openClawInput().inference,
+        upstreamProvider: "compatible-endpoint",
+        api: "openai-completions",
+      },
+      environment: {
+        NEMOCLAW_REASONING: "true",
+        NEMOCLAW_REASONING_EFFORT: "low",
+      },
+    });
+
+    const rebound = rebind(built, "openclaw", 20_789, {
+      compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
+    });
+
+    expect(built.profile.tuning.reasoningEffort).toBe("low");
+    expect(rebound.profile.tuning).toMatchObject({
+      reasoning: true,
+      reasoningEffort: "high",
+    });
   });
 
   it("rebinds Hermes public dashboard and provider identity while retaining its internal port", () => {

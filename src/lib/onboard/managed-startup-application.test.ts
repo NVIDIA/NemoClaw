@@ -126,6 +126,7 @@ function profileFor(
       contextWindow: agent === "langchain-deepagents-code" ? null : 65_536,
       maxTokens: agent === "openclaw" ? 8192 : null,
       reasoning: agent === "openclaw" ? true : null,
+      reasoningEffort: agent === "openclaw" ? "default" : null,
     },
     corporateCa: {
       bundleSha256: corporateCa === null ? null : sha256(corporateCa),

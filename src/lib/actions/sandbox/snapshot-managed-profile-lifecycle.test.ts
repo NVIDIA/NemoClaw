@@ -109,6 +109,25 @@ function managedOpenClawProfile() {
   });
 }
 
+function capturedManagedStartupRootApplyRequest(): {
+  readonly agent: "openclaw" | "hermes" | "langchain-deepagents-code";
+  readonly encodedProfile: string;
+  readonly profileFingerprint: string;
+} {
+  const options = f.createDockerGpuSandboxCreatePatchMock.mock.calls.at(-1)?.[0] as
+    | {
+        managedStartupRootApplyRequest?: {
+          agent: "openclaw" | "hermes" | "langchain-deepagents-code";
+          encodedProfile: string;
+          profileFingerprint: string;
+        };
+      }
+    | undefined;
+  const request = options?.managedStartupRootApplyRequest;
+  expect(request).toBeDefined();
+  return request!;
+}
+
 beforeEach(() => {
   f.resetSnapshotRestoreMocks();
 });
@@ -247,11 +266,17 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         (argument) => Buffer.byteLength(argument, "utf8") + 1 <= SANDBOX_CREATE_MAX_ARGUMENT_BYTES,
       ),
     ).toBe(true);
+    const rootApplyRequest = capturedManagedStartupRootApplyRequest();
+    expect(rootApplyRequest.encodedProfile).toBe(built.encodedProfile);
     expect(createArgs.slice(createArgs.lastIndexOf("--") + 1)).toEqual([
       "env",
-      `NEMOCLAW_STARTUP_PROFILE_B64=${built.encodedProfile}`,
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "langchain-deepagents-code",
+      "--profile-fingerprint",
+      rootApplyRequest.profileFingerprint,
     ]);
+    expect(createArgs.join(" ")).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(createEnv?.NEMOCLAW_STARTUP_PROFILE_B64).toBeUndefined();
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -260,6 +285,87 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         messaging: undefined,
       }),
     );
+  });
+
+  it("routes managed root-apply failures through snapshot clone cleanup", async () => {
+    const built = managedOpenClawProfile();
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    const source = {
+      name: "alpha",
+      agent: "openclaw",
+      dashboardPort: 18_789,
+      imageTag: reference,
+      openshellDriver: "docker",
+      provider: "openai-api",
+      model: "gpt-5.4",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-responses",
+      compatibleEndpointReasoning: null,
+      toolDisclosure: "progressive",
+      workload: {
+        schemaVersion: 1,
+        kind: "managed-image",
+        reference,
+        release: "v0.0.99",
+        sourceRevision: "b".repeat(40),
+        sourceCohort: "ghrun-123456-1",
+        capabilityContractVersion: 1,
+        startupProfileContractVersion: 1,
+        encodedProfile: built.encodedProfile,
+        startupProfileSha256: built.startupProfileSha256,
+        credentialProxyReplayRequired: false,
+        shared: true,
+      },
+    } as const;
+    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? (source as never) : null));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.createDockerGpuSandboxCreatePatchMock.mockImplementation((rawOptions) => {
+      const options = rawOptions as {
+        overrides?: {
+          onPatchFailureExit?: (
+            sandboxName: string,
+            error: unknown,
+            deps: Record<string, unknown>,
+          ) => void;
+        };
+      };
+      return {
+        maybeApplyDuringCreate: vi.fn(),
+        createFailureMessage: vi.fn(() => null),
+        exitOnPatchError: vi.fn(),
+        rollbackManagedStartupAfterCreateFailure: vi.fn(),
+        ensureApplied: vi.fn(() =>
+          options.overrides?.onPatchFailureExit?.(
+            "beta",
+            new Error("managed root apply failed"),
+            {},
+          ),
+        ),
+        waitForSupervisorReconnectIfNeeded: vi.fn(),
+        commitAfterReady: vi.fn(),
+        selectedMode: vi.fn(() => null),
+        printReadinessFailureIfEnabled: vi.fn(),
+        verifyGpuOrExit: vi.fn(),
+      };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
+      "managed root apply failed",
+    );
+
+    expect(f.runOpenshellMock).toHaveBeenCalledWith(
+      ["sandbox", "delete", "beta"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
   it("reconciles a stale OpenClaw receipt to current inference and messaging before clone launch", async () => {
@@ -308,11 +414,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       dashboardRemoteBindPrepared: false,
       imageTag: reference,
       openshellDriver: "docker",
-      provider: "openai-api",
+      provider: "compatible-endpoint",
       model: "gpt-5.5",
-      endpointUrl: null,
-      preferredInferenceApi: "openai-responses",
-      compatibleEndpointReasoning: null,
+      endpointUrl: "https://compatible.example.test/v1",
+      endpointSource: "explicit",
+      preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
       toolDisclosure: "direct",
       webSearchEnabled: true,
       webSearchProvider: "brave",
@@ -413,19 +521,20 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         env: { BRAVE_API_KEY: "clone-only-brave-key" },
       }),
     );
-    const encodedProfile =
-      createArgs
-        .find((argument) => argument.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))
-        ?.slice("NEMOCLAW_STARTUP_PROFILE_B64=".length) ?? "";
+    expect(createArgs.join(" ")).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
+    const encodedProfile = capturedManagedStartupRootApplyRequest().encodedProfile;
     expect(encodedProfile).not.toBe(built.encodedProfile);
     const profile = decodeManagedStartupProfile(encodedProfile);
     expect(profile.inference).toMatchObject({
-      upstreamProvider: "openai-api",
+      upstreamProvider: "compatible-endpoint",
       model: "gpt-5.5",
-      api: "openai-responses",
-      primaryModelRef: "openai/gpt-5.5",
+      api: "openai-completions",
     });
     expect(profile.tuning.contextWindow).toBe(131_072);
+    expect(profile.tuning).toMatchObject({
+      reasoning: true,
+      reasoningEffort: "high",
+    });
     expect(profile.tools.disclosure).toBe("direct");
     expect(profile.agentConfig).toMatchObject({
       agent: "openclaw",
@@ -446,9 +555,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "beta",
-        provider: "openai-api",
+        provider: "compatible-endpoint",
         model: "gpt-5.5",
-        preferredInferenceApi: "openai-responses",
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: "high",
         toolDisclosure: "direct",
         webSearchEnabled: true,
         webSearchProvider: "brave",
@@ -566,10 +677,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] as readonly string[];
-    const encodedProfile =
-      createArgs
-        .find((argument) => argument.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))
-        ?.slice("NEMOCLAW_STARTUP_PROFILE_B64=".length) ?? "";
+    expect(createArgs.join(" ")).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
+    const encodedProfile = capturedManagedStartupRootApplyRequest().encodedProfile;
     const profile = decodeManagedStartupProfile(encodedProfile);
     expect(profile.inference).toMatchObject({
       upstreamProvider: "hermes-provider",
@@ -707,6 +816,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const createCall = f.streamSandboxCreateMock.mock.calls[0] ?? [];
     const createArgs = createCall[1] as readonly string[];
     const startupArgs = createArgs.slice(createArgs.lastIndexOf("--") + 1);
+    const rootApplyRequest = capturedManagedStartupRootApplyRequest();
     expect(startupArgs).toEqual([
       "env",
       "HTTP_PROXY=http://upper-http:upper-pass@upper-http.example.test:18080",
@@ -715,13 +825,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       "http_proxy=http://lower-http:lower-pass@lower-http.example.test:28080",
       "https_proxy=http://lower-https:lower-pass@lower-https.example.test:28443",
       expect.stringMatching(/^no_proxy=lower\.internal,localhost,/u),
-      expect.stringMatching(/^NEMOCLAW_STARTUP_PROFILE_B64=/u),
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "openclaw",
+      "--profile-fingerprint",
+      rootApplyRequest.profileFingerprint,
     ]);
-    const encodedProfile =
-      startupArgs
-        .find((argument) => argument.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))
-        ?.slice("NEMOCLAW_STARTUP_PROFILE_B64=".length) ?? "";
+    expect(startupArgs.join(" ")).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
+    const encodedProfile = rootApplyRequest.encodedProfile;
     const reboundDashboard = decodeManagedStartupProfile(encodedProfile).dashboard;
     expect(reboundDashboard).toMatchObject({ agent: "openclaw" });
     s.assertOpenClawDashboard(reboundDashboard);

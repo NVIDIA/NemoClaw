@@ -61,6 +61,17 @@ interface ChildPayload {
   agent: ShippedManagedImageAgent;
   catalogCalls: CatalogCall[];
   forbiddenCalls: string[];
+  managedStartupRootExecCalls: Array<{
+    args: string[];
+    input: string;
+  }>;
+  managedStartupPatchCalls: Array<{
+    agent?: string;
+    encodedProfile?: string;
+    profileFingerprint?: string;
+    schemaVersion?: number;
+    sandboxName?: string;
+  }>;
   registerCalls: Array<{
     agent?: string;
     imageTag?: string | null;
@@ -127,6 +138,8 @@ const model = ${JSON.stringify(MODEL)};
 const provider = ${JSON.stringify(PROVIDER)};
 const catalogCalls = [];
 const forbiddenCalls = [];
+const managedStartupRootExecCalls = [];
+const managedStartupPatchCalls = [];
 const registerCalls = [];
 const runnerCommands = [];
 const spawnCalls = [];
@@ -158,6 +171,21 @@ const poison = (name) => {
 const replace = (target, name, value) => {
   target[name] = value;
   if (target[name] !== value) throw new Error("could not install test boundary for " + name);
+};
+const childProcess = require("node:child_process");
+const nativeSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (command, args = [], options = {}) => {
+  const argv = Array.isArray(args) ? args.map(String) : [];
+  if (
+    path.basename(String(command)) === "docker" &&
+    argv.includes("--apply-root-stdin")
+  ) {
+    managedStartupRootExecCalls.push({
+      args: argv,
+      input: String(options.input ?? ""),
+    });
+  }
+  return nativeSpawnSync(command, args, options);
 };
 
 const catalogResolver = require(${source("src/lib/onboard/managed-image/catalog.ts")});
@@ -217,6 +245,53 @@ replace(baseImage, "pullAndResolveBaseImageDigest", () =>
 // source selection or the sandbox-create transport asserted here.
 const dockerDriverPlatform = require(${source("src/lib/onboard/docker-driver-platform.ts")});
 replace(dockerDriverPlatform, "isLinuxDockerDriverGatewayEnabled", () => false);
+const dockerSandboxCreatePatch = require(
+  ${source("src/lib/onboard/docker-gpu-sandbox-create.ts")},
+);
+const createDockerGpuSandboxCreatePatch =
+  dockerSandboxCreatePatch.createDockerGpuSandboxCreatePatch;
+replace(dockerSandboxCreatePatch, "createDockerGpuSandboxCreatePatch", (options) => {
+  const containerId = "a".repeat(64);
+  const imageId = "b".repeat(64);
+  managedStartupPatchCalls.push({
+    agent: options.managedStartupRootApplyRequest?.agent,
+    encodedProfile: options.managedStartupRootApplyRequest?.encodedProfile,
+    profileFingerprint: options.managedStartupRootApplyRequest?.profileFingerprint,
+    schemaVersion: options.managedStartupRootApplyRequest?.schemaVersion,
+    sandboxName: options.sandboxName,
+  });
+  return createDockerGpuSandboxCreatePatch({
+    ...options,
+    deps: {
+      ...options.deps,
+      dockerCapture(args, captureOptions) {
+        if (args[0] === "inspect") {
+          return JSON.stringify([
+            {
+              Id: containerId,
+              Image: "sha256:" + imageId,
+              State: {
+                Running: true,
+                Paused: false,
+                Restarting: false,
+                Dead: false,
+              },
+            },
+          ]);
+        }
+        return options.deps.dockerCapture?.(args, captureOptions) ?? "";
+      },
+    },
+    overrides: {
+      ...options.overrides,
+      findContainerIds: () => [containerId],
+      finalizeManagedStartupSharedState: ({ supervisorReady }) => ({
+        supervisorReady,
+        failure: null,
+      }),
+    },
+  });
+});
 
 const runner = require(${source("src/lib/runner.ts")});
 runner.run = (command, options = {}) => {
@@ -274,7 +349,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 const credentials = require(${source("src/lib/credentials/store.ts")});
 credentials.prompt = async () => "";
 
-const childProcess = require("node:child_process");
 childProcess.spawn = (command, args = [], options = {}) => {
   const argv = Array.isArray(args) ? args.map(String) : [];
   const normalized = normalize([command, ...argv]);
@@ -315,6 +389,8 @@ const { createSandbox } = require(${source("src/lib/onboard.ts")});
     agent: agentName,
     catalogCalls,
     forbiddenCalls,
+    managedStartupRootExecCalls,
+    managedStartupPatchCalls,
     registerCalls,
     runnerCommands,
     spawnCalls,
@@ -425,6 +501,43 @@ function assertManagedLaunch(
   const expectedContract = contractFor(agent);
   expect(result.payload.agent).toBe(agent);
   expect(result.payload.forbiddenCalls).toEqual([]);
+  expect(result.payload.managedStartupPatchCalls).toHaveLength(1);
+  expect(result.payload.managedStartupRootExecCalls).toHaveLength(1);
+  expect(result.payload.managedStartupPatchCalls[0]).toMatchObject({
+    agent,
+    schemaVersion: 1,
+    sandboxName: expect.stringMatching(/^managed-/u),
+    profileFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+  const rootExec = result.payload.managedStartupRootExecCalls[0];
+  expect(rootExec?.args).toEqual([
+    "exec",
+    "--interactive",
+    "--user",
+    "0:0",
+    "--workdir",
+    "/",
+    "a".repeat(64),
+    "/usr/bin/env",
+    "-i",
+    "HOME=/root",
+    "LANG=C.UTF-8",
+    "LC_ALL=C.UTF-8",
+    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "/usr/local/bin/node",
+    "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
+    "--apply-root-stdin",
+    "--agent",
+    agent,
+  ]);
+  expect(rootExec?.input.endsWith("\n")).toBe(true);
+  expect(JSON.parse(rootExec?.input ?? "{}")).toMatchObject({
+    agent,
+    encodedProfile: result.payload.managedStartupPatchCalls[0]?.encodedProfile,
+    profileFingerprint: result.payload.managedStartupPatchCalls[0]?.profileFingerprint,
+    schemaVersion: 1,
+  });
   expect(result.payload.catalogCalls).toHaveLength(1);
   expect(result.payload.catalogCalls[0]?.release).toMatch(/^v[0-9]/u);
   expect(result.payload.catalogCalls[0]?.references).toEqual(
@@ -446,11 +559,8 @@ function assertManagedLaunch(
   expect(createArgs[fromIndex + 1]).toBe(expectedContract.reference);
   expect(createArgs.join(" ")).not.toContain("Dockerfile");
 
-  const profileArguments = createArgs.filter((arg) =>
-    arg.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="),
-  );
-  expect(profileArguments).toHaveLength(1);
-  const encodedProfile = profileArguments[0]?.slice("NEMOCLAW_STARTUP_PROFILE_B64=".length) ?? "";
+  expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))).toEqual([]);
+  const encodedProfile = result.payload.managedStartupPatchCalls[0]?.encodedProfile ?? "";
   const profile = decodeManagedStartupProfile(encodedProfile);
   expect(encodeManagedStartupProfile(profile)).toBe(encodedProfile);
   expect(profile).toMatchObject({

@@ -187,6 +187,25 @@ export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(as
   sawProgress: false,
   forcedReady: false,
 }));
+function managedStartupPatchFixture() {
+  return {
+    maybeApplyDuringCreate: vi.fn(),
+    createFailureMessage: vi.fn(() => null),
+    exitOnPatchError: vi.fn(),
+    rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    ensureApplied: vi.fn(),
+    waitForSupervisorReconnectIfNeeded: vi.fn(),
+    commitAfterReady: vi.fn(),
+    selectedMode: vi.fn(() => null),
+    printReadinessFailureIfEnabled: vi.fn(),
+    verifyGpuOrExit: vi.fn((verifyDirectSandboxGpu: (sandboxName: string) => unknown) =>
+      verifyDirectSandboxGpu("beta"),
+    ),
+  };
+}
+export const createDockerGpuSandboxCreatePatchMock = vi.fn((_options?: unknown) =>
+  managedStartupPatchFixture(),
+);
 export const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
@@ -199,6 +218,10 @@ vi.mock("../../adapters/docker", () => ({
   dockerForceRm: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
   dockerInspect: dockerInspectMock,
   dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+}));
+
+vi.mock("../../onboard/docker-gpu-sandbox-create", () => ({
+  createDockerGpuSandboxCreatePatch: createDockerGpuSandboxCreatePatchMock,
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -368,6 +391,8 @@ export function resetSnapshotRestoreMocks(): void {
     sawProgress: false,
     forcedReady: false,
   }));
+  createDockerGpuSandboxCreatePatchMock.mockReset();
+  createDockerGpuSandboxCreatePatchMock.mockImplementation(() => managedStartupPatchFixture());
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
 }
 

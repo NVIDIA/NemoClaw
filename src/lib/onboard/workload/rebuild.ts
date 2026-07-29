@@ -28,6 +28,7 @@ import {
 import {
   decodeManagedStartupProfile,
   type ManagedStartupProfile,
+  type ManagedStartupReasoningEffort,
 } from "../managed-startup/profile";
 import {
   type PreparedSandboxWorkloadSource,
@@ -276,6 +277,12 @@ export function managedWorkloadRebuildHandoffMatchesEntry(
   }
 }
 
+export interface ManagedWorkloadRebuildProfileOverrides {
+  readonly openClawContextWindow?: number;
+  readonly openClawReasoning?: boolean;
+  readonly openClawReasoningEffort?: ManagedStartupReasoningEffort;
+}
+
 /**
  * Keep the source sandbox's proxy contract while allowing every other
  * profile-backed rebuild setting to be resolved from current authoritative
@@ -285,10 +292,7 @@ export function managedWorkloadRebuildHandoffMatchesEntry(
 export function managedWorkloadRebuildProfileEnvironment(
   handoff: ManagedWorkloadRebuildCatalogHandoff,
   environment: NodeJS.ProcessEnv,
-  overrides: {
-    readonly openClawContextWindow?: number;
-    readonly openClawReasoning?: boolean;
-  } = {},
+  overrides: ManagedWorkloadRebuildProfileOverrides = {},
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {
     NEMOCLAW_PROXY_HOST: handoff.previousProfile.proxy.managedHost,
@@ -307,6 +311,10 @@ export function managedWorkloadRebuildProfileEnvironment(
     const reasoning = overrides.openClawReasoning ?? previous.tuning.reasoning;
     if (reasoning !== null) {
       result.NEMOCLAW_REASONING = String(reasoning);
+    }
+    const reasoningEffort = overrides.openClawReasoningEffort ?? previous.tuning.reasoningEffort;
+    if (reasoningEffort !== null) {
+      result.NEMOCLAW_REASONING_EFFORT = reasoningEffort;
     }
     if (previous.inference.inputModalities !== null) {
       result.NEMOCLAW_INFERENCE_INPUTS = previous.inference.inputModalities.join(",");
@@ -357,10 +365,7 @@ export function stageManagedWorkloadRebuildProfile(
   handoff: ManagedWorkloadRebuildCatalogHandoff,
   input: ManagedWorkloadRebuildProfileInput,
   environment: NodeJS.ProcessEnv = process.env,
-  overrides: {
-    readonly openClawContextWindow?: number;
-    readonly openClawReasoning?: boolean;
-  } = {},
+  overrides: ManagedWorkloadRebuildProfileOverrides = {},
 ): ManagedWorkloadRebuildHandoff {
   let replacementProfile: BuiltManagedStartupOnboardProfile;
   try {
