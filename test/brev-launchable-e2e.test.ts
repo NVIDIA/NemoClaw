@@ -34,6 +34,8 @@ function fixture(
     repoClean?: boolean;
     repoSha?: string;
     runtimeOverrides?: boolean;
+    schemaVersion?: number;
+    sourceRepository?: string;
     sourcePath?: string;
   } = {},
 ) {
@@ -100,9 +102,11 @@ case "$1" in
         printf 'NEMOCLAW_IDENTITY='
         jq -cn --arg bootImage "$FAKE_BOOT_IMAGE" --arg sourcePath "$FAKE_SOURCE_PATH" \
           --arg repo "$FAKE_REPO_SHA" --arg provision "$FAKE_PROVISION_SHA" \
+          --arg sourceRepository "$FAKE_SOURCE_REPOSITORY" \
           --arg imageRepositorySha "$FAKE_PROVISION_IMAGE_REPOSITORY_SHA" \
-          --argjson clean "$FAKE_REPO_CLEAN" --argjson overrides "$FAKE_RUNTIME_OVERRIDES" \
-          '{bootImage:$bootImage,schemaVersion:1,sourceRepository:"NVIDIA/NemoClaw",
+          --argjson schemaVersion "$FAKE_SCHEMA_VERSION" --argjson clean "$FAKE_REPO_CLEAN" \
+          --argjson overrides "$FAKE_RUNTIME_OVERRIDES" \
+          '{bootImage:$bootImage,schemaVersion:$schemaVersion,sourceRepository:$sourceRepository,
             sourcePath:$sourcePath,repoSha:$repo,provisionSha:$provision,
             imageRepositorySha:$imageRepositorySha,repoClean:$clean,runtimeOverrides:$overrides}'
         printf '%s\\n' "$INSTANCE_NAME" ;;
@@ -151,6 +155,8 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_REPO_CLEAN: options.repoClean === false ? "false" : "true",
     FAKE_REPO_SHA: options.repoSha ?? candidateSha,
     FAKE_RUNTIME_OVERRIDES: options.runtimeOverrides ? "true" : "false",
+    FAKE_SCHEMA_VERSION: String(options.schemaVersion ?? 1),
+    FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
     FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
     FAKE_STATE: state,
     GH_TOKEN: "github-test-token",
@@ -241,6 +247,8 @@ describe("focused staging Brev Launchable lane", () => {
       fixture({ provisionImageRepositorySha: "c".repeat(40) }),
       fixture({ repoClean: false }),
       fixture({ runtimeOverrides: true }),
+      fixture({ schemaVersion: 2 }),
+      fixture({ sourceRepository: "example/NemoClaw" }),
       fixture({ sourcePath: "/home/ubuntu/NemoClaw" }),
     ]) {
       const bootResult = run(boot.env);
