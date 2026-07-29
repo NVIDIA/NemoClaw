@@ -384,6 +384,9 @@ navigation:
               - page: "Troubleshoot MCP Servers"
                 path: _build/agent-variants/reference/troubleshoot-mcp-servers.openclaw.generated.mdx
                 slug: troubleshoot-mcp-servers
+              - page: "System Readiness"
+                path: _build/agent-variants/reference/system-readiness.openclaw.generated.mdx
+                slug: system-readiness
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.openclaw.generated.mdx
                 slug: troubleshooting
@@ -685,6 +688,9 @@ navigation:
               - page: "Troubleshoot MCP Servers"
                 path: _build/agent-variants/reference/troubleshoot-mcp-servers.deepagents.generated.mdx
                 slug: troubleshoot-mcp-servers
+              - page: "System Readiness"
+                path: _build/agent-variants/reference/system-readiness.deepagents.generated.mdx
+                slug: system-readiness
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.deepagents.generated.mdx
                 slug: troubleshooting
@@ -1055,6 +1061,9 @@ navigation:
               - page: "Troubleshoot MCP Servers"
                 path: _build/agent-variants/reference/troubleshoot-mcp-servers.hermes.generated.mdx
                 slug: troubleshoot-mcp-servers
+              - page: "System Readiness"
+                path: _build/agent-variants/reference/system-readiness.hermes.generated.mdx
+                slug: system-readiness
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.hermes.generated.mdx
                 slug: troubleshooting

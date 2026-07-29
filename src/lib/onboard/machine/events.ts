@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { JsonObject, JsonValue } from "../../core/json-types";
-import { getActiveChannelsFromPlan } from "../messaging-plan-session";
+import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { redactSensitiveText, redactUrl } from "../../security/redact";
 import type { HermesAuthMethod, Session } from "../../state/onboard-session";
+import { getActiveChannelsFromPlan } from "../messaging-plan-session";
 import {
   ONBOARD_MACHINE_STATE_DEFINITIONS,
   type OnboardMachineStateWithStepDefinition,
@@ -118,6 +119,7 @@ export function sanitizeOnboardMachineEventMetadata(
 }
 
 export function buildOnboardMachineContext(session: Session): OnboardMachineContext {
+  const reasoningEffort = getEffectiveReasoningEffort(session);
   return {
     agent: nullableString(session.agent),
     sandboxName: nullableString(session.sandboxName),
@@ -126,6 +128,7 @@ export function buildOnboardMachineContext(session: Session): OnboardMachineCont
     endpointOrigin: endpointOrigin(session.endpointUrl),
     credentialEnv: nullableString(session.credentialEnv),
     preferredInferenceApi: nullableString(session.preferredInferenceApi),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     hermesAuthMethod: hermesAuthMethod(session.hermesAuthMethod),
     hermesToolGateways: stringArray(session.hermesToolGateways),
     policyPresets: stringArray(session.policyPresets),

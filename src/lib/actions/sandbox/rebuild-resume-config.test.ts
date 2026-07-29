@@ -596,6 +596,53 @@ describe("prepareRebuildResumeConfig", () => {
     expect(config?.compatibleEndpointReasoning).toBe("false");
   });
 
+  it("treats an explicit null registry reasoning effort as authoritative", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
+      endpointUrl: "https://example.test/v1",
+      compatibleEndpointReasoningEffort: "low",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://example.test/v1",
+        compatibleEndpointReasoningEffort: null,
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config?.compatibleEndpointReasoningEffort).toBeNull();
+  });
+
+  it("uses the target session effort only when the registry field is absent", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
+      endpointUrl: "https://example.test/v1",
+      compatibleEndpointReasoningEffort: "low",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://example.test/v1",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config?.compatibleEndpointReasoningEffort).toBe("low");
+  });
+
   it("fails closed for invalid durable custom endpoint metadata before delete", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
     expect(() =>

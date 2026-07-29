@@ -160,6 +160,57 @@ $$nemoclaw onboard
 
 If the probe cannot run because the host uses another routing model, onboarding continues and relies on the regular proxy health check.
 
+<AgentOnly variant="openclaw">
+
+## Point Memory Search at a Host Ollama Container
+
+On DGX Spark and other local-inference hosts, you can use one local server for chat and a separate Ollama container for OpenClaw memory-search embeddings.
+For example, managed vLLM can serve the chat model while a host-side Ollama container serves `qwen3-embedding:4b` on port `11434`.
+
+The sandbox reaches that container through `http://host.openshell.internal:11434`.
+The `local-inference` policy preset allows that egress path, while `config set` separately validates that the bridge URL is written only to supported provider `baseUrl` fields.
+
+First make sure the embedding server is reachable from the sandbox:
+
+```bash
+$$nemoclaw my-assistant policy add local-inference --yes
+$$nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11434/api/tags
+```
+
+Then define an OpenClaw provider for the embedding model and point memory search at it:
+
+```bash
+$$nemoclaw my-assistant shields down
+
+$$nemoclaw my-assistant config set \
+  --key models.providers.ollama-mem \
+  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:11434","apiKey":"x","models":[{"id":"qwen3-embedding:4b","name":"Qwen3 embedding 4B"}]}' \
+  --config-accept-new-path
+
+$$nemoclaw my-assistant config set \
+  --key agents.defaults.memorySearch.provider \
+  --value ollama-mem \
+  --config-accept-new-path \
+  --restart
+
+$$nemoclaw my-assistant shields up
+```
+
+If your memory index already contains documents, check whether OpenClaw reports an index-identity mismatch, rebuild the index, then verify the configured memory provider:
+
+```bash
+$$nemoclaw my-assistant exec -- openclaw memory status --index
+$$nemoclaw my-assistant exec -- openclaw memory index --force
+$$nemoclaw my-assistant exec -- openclaw memory status --deep
+```
+
+Add `--agent <id>` to those `openclaw memory` commands when you are configuring a specific non-default OpenClaw agent.
+
+Keep the Ollama container bound only to the local host or a reviewed host interface.
+Port `11434` is commonly unauthenticated, so allow it only from the OpenShell Docker bridge or the equivalent local container network path.
+
+</AgentOnly>
+
 ## Run Non-Interactive Onboarding
 
 Use this configuration to onboard with Ollama without prompts.
