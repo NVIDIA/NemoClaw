@@ -753,6 +753,23 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     },
   );
   expect(waitForExec.exitCode, resultText(waitForExec)).toBe(0);
+  // Direct Docker start proves only container exec; status restores and verifies the delivery chain (#7824).
+  const recoveryStatus = await host.command("nemoclaw", [SANDBOX_NAME, "status", "--json"], {
+    artifactName: "phase-10-recover-restarted-sandbox-delivery",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
+  expect(JSON.parse(recoveryStatus.stdout)).toMatchObject({
+    found: true,
+    phase: "Ready",
+    gatewayState: "present",
+    inferenceHealth: {
+      ok: true,
+      probed: true,
+    },
+    failureLayer: null,
+  });
   const perturbAfterStoppedBackup = await sandbox.exec(
     SANDBOX_NAME,
     ["sh", "-lc", `printf '%s' 'BROKEN_AFTER_STOPPED_BACKUP' > ${MARKER_FILE}`],
