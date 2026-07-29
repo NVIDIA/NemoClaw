@@ -260,6 +260,14 @@ managed._VALIDATION_INVOCATION_BUDGET_ROOT = root / "invocation-budget"
 managed._VALIDATION_INVOCATION_BUDGET_OWNER_UID = os.getuid()
 managed._VALIDATION_INVOCATION_BUDGET_GROUP_GID = os.getgid()
 managed.initialize_managed_validation_invocation_budget()
+for command in profile["commands"]:
+    command_directory = managed._validation_invocation_command_path(profile, command)
+    os.link(
+        command_directory / managed._VALIDATION_INVOCATION_ANCHOR,
+        command_directory
+        / managed._VALIDATION_INVOCATION_CLAIMS
+        / managed._VALIDATION_INVOCATION_SANDBOX_PROBE,
+    )
 managed.finalize_managed_validation_invocation_budget()
 
 def run(command):
