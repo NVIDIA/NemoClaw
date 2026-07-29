@@ -92,7 +92,8 @@ Legacy entries without credential hashes count as incomplete.
 An unreadable messaging registry also causes onboarding and rebuild to abort.
 Onboarding and rebuild have no conflict override.
 
-For `channels add` only, pass `--force` to accept the duplicate-consumer or shared-resource risk.
+For `channels add` only, `--force` overrides conflict and incomplete-check aborts.
+Use it only when you accept the duplicate-consumer or shared-resource risk.
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 
 Before a rebuild, NemoClaw checks the messaging plan before backup or deletion.
