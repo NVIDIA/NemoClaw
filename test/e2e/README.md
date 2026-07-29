@@ -581,10 +581,11 @@ An internal revision whose matched control-plane files are drawn only from the
 trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
 `tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
 dispatches those selected jobs.
-Any other or mixed internal control-plane revision requires an authorized E2E
-reviewer to approve the PR SHA before credentialed execution begins. If no job
-or target is selected, coordination passes without an E2E run and the native
-required job mirrors that success.
+Any other or mixed internal control-plane revision requires a repository
+maintainer or administrator to authorize the exact PR SHA and base SHA through
+the trusted `run-control-plane` workflow dispatch before credentialed execution
+begins. If no job or target is selected, coordination passes without an E2E run
+and the native required job mirrors that success.
 
 Before dispatch, the controller verifies that the live PR still matches the CI
 run's PR SHA and base SHA. It uses its own workflow commit when that commit is
@@ -648,49 +649,42 @@ terminal result.
 
 An internal revision whose control-plane matches include a file outside the
 trusted controller and observer boundaries leaves coordination in progress
-with `E2E reviewer authorization required to run E2E`. The native required job
-keeps waiting for the authorization flow. No selected job or target runs and no
-repository secret is exposed. The same controller run starts `Approve
-credentialed E2E for reviewed PR`, which waits on the protected
-`approve-credentialed-e2e-for-internal-pr` environment. With `deployment:
-false`, the job does not create a deployment record. After reviewing the exact
-head SHA, base SHA, and risk plan as described below, an environment reviewer
-opens the linked run, chooses **Review deployments**, selects that environment,
-and approves it. GitHub records the reviewer and optional comment. The
-protected approval job uses the exact-revision FIFO concurrency group without
-in-progress cancellation. A newer revision uses a distinct group and can
-become available for review without waiting on the obsolete request. The
-synchronization controller cancels active child runs and closes coordination
-checks for the old revision. If an old approval job later starts, exact live
-PR SHA and base SHA validation rejects it. The controller reads the approval
-history and requires one approved review naming only the exact environment in
-the first attempt of the trusted `workflow_run` controller. It then revalidates
-the internal repository origin, open PR, PR SHA and base SHA, risk plan,
-matching pending coordination state, compatible trusted controller commit, and
-final live revision. It updates coordination to `Running <count> E2E check(s)`
-and dispatches the selected jobs and targets in one workflow run. The child
+with `E2E maintainer authorization required to run E2E`. The native required
+job keeps waiting for the authorization flow. No selected job or target runs
+and no repository secret is exposed.
+
+Any repository maintainer or administrator can authorize the exact internal
+plan by dispatching the trusted controller on `main`:
+
+```bash
+gh workflow run .github/workflows/pr-e2e-gate.yaml \
+  --repo NVIDIA/NemoClaw \
+  --ref main \
+  -f operation=run-control-plane \
+  -f pr_number=<pr-number> \
+  -f expected_head_sha=<40-character-pr-head-sha> \
+  -f expected_base_sha=<40-character-base-sha> \
+  -f review_reason="<specific 10-500 character reason>"
+```
+
+The dispatch itself is the authorization; internal PRs do not require a
+separate protected-environment review. The controller revalidates the
+triggering actor's `maintain` or `admin` permission, internal repository
+origin, open PR, PR SHA and base SHA, deterministic risk plan, matching pending
+coordination state, compatible trusted controller commit, and final live
+revision. It then updates coordination to `Running <count> E2E check(s)` and
+dispatches the selected jobs and targets in one workflow run. The child
 workflow receives the controller-owned coordination check ID. Before checking
 out the PR revision, it requires a GitHub Actions dispatch and verifies that
-the exact check is owned by the GitHub Actions app, matches the PR head and base
-identity, names the selected plan, and binds the exact current child Actions run
-in the controller-owned output summary. The child requests uncached check-run
-state up to 45 times with two-second delays, which spans GitHub's 60-second
-check cache, before failing closed. It does not use the check details URL for
-this binding because GitHub may canonicalize that field to the check's own
-`/runs/<check-id>` URL. A direct manual dispatch that supplies otherwise-valid
-PR inputs cannot forge that one-run authorization and fails before checkout.
+the exact check is owned by the GitHub Actions app, matches the PR head and
+base identity, names the selected plan, and binds the exact current child
+Actions run in the controller-owned output summary. A direct dispatch of
+`e2e.yaml` cannot forge that one-run authorization and fails before checkout.
 
-The manual maintainer path remains available as a fallback. A repository
-maintainer or administrator chooses **Run workflow** on `main`, selects
-`run-control-plane`, and supplies the PR number, current 40-character head SHA
-as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
-and a specific 10–500-character `review_reason`. This path additionally
-revalidates the triggering actor's `maintain` or `admin` permission and uses the
-same exact-revision and deterministic-plan checks. An ordinary validation
-failure before dispatch restores the authorization title and leaves
-coordination in progress. A maintainer can then launch a fresh first-attempt
-manual authorization. To use the protected path again, correct its environment
-configuration, update the PR to create a new head, and trigger fresh PR CI.
+An ordinary validation failure before child dispatch restores the maintainer
+authorization title and leaves coordination in progress. A maintainer can then
+launch a fresh first-attempt `run-control-plane` dispatch for the same exact
+PR/base SHA pair.
 
 An uncertain dispatch that completes the bounded window with zero correlated
 runs instead completes coordination as `Workflow dispatch was not observed`
@@ -747,7 +741,7 @@ links to the same `E2E / PR Gate Controller` run and publishes the exact PR
 number, head repository, head SHA, base SHA, plan, jobs, and targets under
 review.
 
-That controller run starts `Approve credentialed E2E for reviewed PR`, which
+That controller run starts `Approve credentialed E2E for fork PR`, which
 waits on the protected `approve-credentialed-e2e-for-fork-pr` environment.
 With `deployment: false`, the job does not create a deployment record. A
 maintainer or delegated E2E reviewer reviews the exact repository, head SHA,
@@ -758,16 +752,15 @@ and cannot make the gate pass by itself. The workflow reads the reviewer and
 optional comment from GitHub's run approval history rather than accepting an
 actor supplied by the job.
 
-Before rollout, create both `approve-credentialed-e2e-for-internal-pr` and
-`approve-credentialed-e2e-for-fork-pr` in the repository. Configure each
-environment with one or more required reviewers. Protected-environment
-reviewers are the authorization allowlist and may have repository read access
-without merge rights. Do not add environment secrets, variables, or custom
-protection apps. Enable **Prevent self-review** and prefer disabling
-administrator bypass so every decision is independent and appears in the
-approval history. Restrict deployment branches to protected `main`. Before
-either decision, verify the exact head SHA, base SHA, and selected jobs and
-targets in the coordination check summary and the
+Before rollout, create `approve-credentialed-e2e-for-fork-pr` in the
+repository and configure it with one or more required reviewers.
+Protected-environment reviewers are the fork authorization allowlist and may
+have repository read access without merge rights. Do not add environment
+secrets, variables, or custom protection apps. Enable **Prevent self-review**
+and prefer disabling administrator bypass so every fork decision is
+independent and appears in the approval history. Restrict deployment branches
+to protected `main`. Before approval, verify the exact head SHA, base SHA, and
+selected jobs and targets in the coordination check summary and the
 `pr-e2e-risk-plan-<head-sha>` artifact from the linked controller run. The
 approval job receives only its job-scoped token after approval and executes the
 trusted controller from `main`. The trusted E2E workflow definition stays on

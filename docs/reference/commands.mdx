@@ -1354,7 +1354,11 @@ For cloud-only providers, the output omits the NIM status line unless a NIM cont
 
 When the sandbox's recorded driver is `docker` and the host Docker daemon is not reachable, the command prints the `docker_unreachable` failure layer with the message `Docker daemon is not reachable.` as the first line of stdout, suppresses the host-side `Inference` probe (which otherwise hits the remote provider directly and is misleading when the local stack is down), and exits with a non-zero status.
 
-When the host Docker daemon is reachable but the per-sandbox container is stopped, the command prints the `sandbox_container_stopped` failure layer with the message `sandbox container exists but is not running.` as the first line of stdout, suppresses the host-side `Inference` probe, and exits with a non-zero status.
+When the host Docker daemon is reachable but the per-sandbox container is stopped, the initial preflight records the `sandbox_container_stopped` failure layer and suppresses the host-side `Inference` probe.
+If the owning OpenShell gateway is healthy but no longer lists the registered Docker-driver sandbox, status attempts post-reboot recovery from the labeled container.
+It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference.
+A successful recovery clears the stale stopped-container failure.
+If Docker readiness or the agent delivery chain cannot be proven, status exits non-zero and reports the failed recovery layer.
 <AgentOnly variant="openclaw,hermes">
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to the `sandbox_dashboard_port_conflict` failure layer with the message `sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 </AgentOnly>

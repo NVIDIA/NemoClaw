@@ -181,6 +181,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/",
           "COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts",
           "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
+          "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
