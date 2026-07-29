@@ -51,7 +51,8 @@ This check applies across gateways.
 NemoClaw also aborts when another Slack sandbox uses the same gateway, even when the credentials differ.
 
 `channels add slack` does not offer an interactive conflict override.
-Stop or remove Slack from the other sandbox, use a different gateway with different credentials, or pass `--force` to accept the conflict risk explicitly.
+Stop or remove Slack from the other sandbox, or use a different gateway with different credentials.
+For `channels add slack` only, pass `--force` to accept the conflict risk explicitly; onboarding and rebuild have no override.
 
 ## Enable Slack
 
