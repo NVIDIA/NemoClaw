@@ -80,11 +80,15 @@ function generateConnectEnv(tmpDir: string, injectedName: string | undefined): s
     ].join("\n"),
     { mode: 0o700 },
   );
-  const env: NodeJS.ProcessEnv = { ...process.env, OPENSHELL_SANDBOX: "1" };
-  delete env.NEMOCLAW_SANDBOX_NAME;
-  if (injectedName !== undefined) {
-    env.NEMOCLAW_SANDBOX_NAME = injectedName;
-  }
+  // Drop any inherited value first so `undefined` faithfully models the
+  // "host injected no name" case; spread the injected one back in branch-free.
+  const hostEnv: NodeJS.ProcessEnv = { ...process.env };
+  delete hostEnv.NEMOCLAW_SANDBOX_NAME;
+  const env: NodeJS.ProcessEnv = {
+    ...hostEnv,
+    OPENSHELL_SANDBOX: "1",
+    ...(injectedName === undefined ? {} : { NEMOCLAW_SANDBOX_NAME: injectedName }),
+  };
   const result = spawnSync("bash", [writer], { encoding: "utf8", timeout: 5_000, env });
   expect(result.status, result.stderr).toBe(0);
   return fs.readFileSync(proxyEnv, "utf8");
