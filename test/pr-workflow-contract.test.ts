@@ -636,6 +636,7 @@ describe("pull request and main workflow contracts", () => {
       "agents/hermes/mcp-config-transaction.py",
       "nemoclaw-blueprint/blueprint.yaml",
       "nemoclaw/package.json",
+      "package.json",
       "scripts/brev-launchable-ci-cpu.sh",
       "scripts/check-installer-hash.sh",
       "scripts/install-openshell.sh",

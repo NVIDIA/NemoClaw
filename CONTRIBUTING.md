@@ -354,8 +354,7 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
-If hooks were skipped, missing, failed, or uncertain, run `npm run validate:pr` once to reproduce those checks for the diff from `origin/main`.
-Refresh that remote-tracking base with `git fetch origin main` before relying on the fallback.
+If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
 
 Pre-push selects the root TypeScript, checked-JavaScript, and plugin type checks from the paths changed relative to the push base, and uses incremental compilation for the TypeScript projects.
 The `validate:pr` command applies the same path selection, so do not rerun type checks separately solely to prepare a PR.
