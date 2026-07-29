@@ -126,6 +126,63 @@ describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#
     expect(promptContinue).not.toHaveBeenCalled();
   });
 
+  it("aborts when the credential conflict registry read fails (#7808)", async () => {
+    const promptContinue = vi.fn(async () => true);
+    const { deps, error, exit } = makeDeps({
+      registry: {
+        listSandboxes: () => {
+          throw new Error("registry unavailable");
+        },
+        updateSandbox: vi.fn(() => true),
+      },
+      isNonInteractive: () => false,
+      promptContinue,
+    });
+
+    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
+      AbortError,
+    );
+    expect(error).toHaveBeenCalledWith(
+      "  Could not verify messaging channel conflicts: registry unavailable",
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Onboarding and rebuild do not support a conflict override"),
+    );
+    expect(promptContinue).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("aborts when the pre-enable registry read fails (#7808)", async () => {
+    const planWithoutCredentials = {
+      ...slackPlan("bob"),
+      credentialBindings: [],
+    };
+    const promptContinue = vi.fn(async () => true);
+    const { deps, error, exit } = makeDeps({
+      currentPlan: planWithoutCredentials,
+      registry: {
+        listSandboxes: () => {
+          throw new Error("registry unavailable");
+        },
+        updateSandbox: vi.fn(() => true),
+      },
+      isNonInteractive: () => false,
+      promptContinue,
+    });
+
+    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
+      AbortError,
+    );
+    expect(error).toHaveBeenCalledWith(
+      "  Could not verify messaging pre-enable checks: registry unavailable",
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Onboarding and rebuild do not support a conflict override"),
+    );
+    expect(promptContinue).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("does not warn when the only other Slack sandbox is on a different gateway", async () => {
     const otherSlack = { ...planEntry("alice", slackPlan("alice")), gatewayName: "nemoclaw-9090" };
     const { deps, log, error } = makeDeps({

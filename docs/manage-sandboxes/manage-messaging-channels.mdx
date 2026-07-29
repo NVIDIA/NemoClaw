@@ -94,6 +94,7 @@ It also rejects another Slack sandbox on the same gateway, even when the credent
 
 For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share it.
 If NemoClaw has only legacy metadata and cannot compare credential hashes, it treats the active channel as a conflict and aborts.
+If onboarding or rebuild cannot read the messaging registry required for a conflict check, it aborts; neither operation has a conflict override.
 If `channels add` cannot complete a required conflict check, it also aborts unless you pass `--force`.
 
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.

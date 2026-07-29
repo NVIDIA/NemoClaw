@@ -57,6 +57,19 @@ function abort(deps: MessagingConflictGuardDeps): never {
   return (deps.exit ?? ((code: number) => process.exit(code)))(1);
 }
 
+function abortIncompleteConflictCheck(
+  deps: MessagingConflictGuardDeps,
+  check: string,
+  error: unknown,
+): never {
+  const message = error instanceof Error ? error.message : String(error);
+  deps.error(`  Could not verify ${check}: ${message}`);
+  deps.error(
+    "  Aborting: restore messaging registry access and rerun. Onboarding and rebuild do not support a conflict override.",
+  );
+  return abort(deps);
+}
+
 /**
  * Run both conflict axes and abort when a hard conflict is found. Calls the
  * injected `exit` and never returns when a credential conflict or an
@@ -88,7 +101,12 @@ export async function enforceMessagingChannelConflicts(
   const hasPlanCredentials =
     currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
   if (currentPlan && hasPlanCredentials) {
-    const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan, registry);
+    let conflicts: ReturnType<typeof findChannelConflictsFromPlan>;
+    try {
+      conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan, registry);
+    } catch (error) {
+      abortIncompleteConflictCheck(deps, "messaging channel conflicts", error);
+    }
     if (conflicts.length > 0) {
       for (const { channel, sandbox, reason } of conflicts) {
         const detail =
@@ -121,10 +139,16 @@ async function enforceMessagingPreEnableHooks(
   if (requests.length === 0) return;
 
   const hookRegistry = createBuiltInMessagingHookRegistry();
+  let registryEntries: ConflictRegistryEntry[];
+  try {
+    registryEntries = deps.registry.listSandboxes().sandboxes;
+  } catch (error) {
+    abortIncompleteConflictCheck(deps, "messaging pre-enable checks", error);
+  }
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: deps.sandboxName,
     currentGatewayName: deps.gatewayName,
-    registryEntries: deps.registry.listSandboxes().sandboxes,
+    registryEntries,
   });
 
   try {
