@@ -20,6 +20,7 @@ type LaunchableIdentity = {
     driverVersion: string;
     cudaVersion: string;
     containerToolkitVersion: string;
+    probeImageDigest: string;
   };
 };
 

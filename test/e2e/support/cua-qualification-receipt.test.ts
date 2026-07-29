@@ -21,8 +21,13 @@ function receipt(): Record<string, unknown> {
       driverVersion: "1",
       cudaVersion: "1",
       containerToolkitVersion: "1",
+      probeImageDigest: DIGEST,
     },
     nemoclawCommit: "b".repeat(40),
+    inference: {
+      provider: "managed",
+      model: "model",
+    },
     components: {
       openshell: DIGEST,
       runtime: DIGEST,
@@ -30,8 +35,10 @@ function receipt(): Record<string, unknown> {
       targetImage: DIGEST,
       serviceBundle: DIGEST,
       policy: DIGEST,
+      taskProtocol: DIGEST,
       fixture: DIGEST,
       oracle: DIGEST,
+      verifier: DIGEST,
     },
     scenarios: CUA_QUALIFICATION_SCENARIOS.map((id, index) => ({
       id,
@@ -67,6 +74,14 @@ describe("CUA GPU qualification receipt (#7753)", () => {
     const missingGpu = receipt();
     (missingGpu.gpu as Record<string, unknown>).count = 0;
     expect(() => parseCuaQualificationReceipt(missingGpu)).toThrow(/positive integer/);
+
+    const missingInference = receipt();
+    delete missingInference.inference;
+    expect(() => parseCuaQualificationReceipt(missingInference)).toThrow(/contain exactly/);
+
+    const missingVerifier = receipt();
+    delete (missingVerifier.components as Record<string, unknown>).verifier;
+    expect(() => parseCuaQualificationReceipt(missingVerifier)).toThrow(/contain exactly/);
 
     const authorityBearing = receipt();
     authorityBearing.endpoint = "private.example";

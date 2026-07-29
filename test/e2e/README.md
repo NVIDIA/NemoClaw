@@ -27,7 +27,8 @@ before those targets run; local runners must provide it themselves.
 
 `scripts/brev-launchable-cua-gpu.sh` is the versioned startup script for the
 GPU-backed CUA qualification environment. Set `NEMOCLAW_REF` to the exact
-lowercase 40-hex candidate commit in the Launchable configuration. The
+lowercase 40-hex candidate commit and `NEMOCLAW_CUA_GPU_PROBE_IMAGE` to an
+exact `nvidia/cuda@sha256:...` identity in the Launchable configuration. The
 selected GPU image must already provide a working NVIDIA driver and NVIDIA
 Container Toolkit; the script fails before readiness if either is absent.
 
@@ -37,13 +38,19 @@ contains only the Launchable version and digest, candidate commit, GPU model,
 driver, CUDA, and container-toolkit versions. It contains no Brev authority,
 host address, service endpoint, or credential.
 
-The qualification runner must emit a
+This change is qualification scaffolding. It does not demonstrate a passing
+CUA qualification and must not close #7753 until a public pinned runtime and
+live evidence are available.
+
+An operator-owned qualification runner must use NemoClaw's public CUA
+lifecycle and independent fixture oracles, then emit a
 `cua-qualification-receipt` accepted by
-`tools/e2e/cua-qualification-receipt.mts`. The receipt passes only with all
-four independently verified browser, terminal, computer, and integrated
-scenarios; exact component digests; a repeated run after recreation; the
-security negative suite; and cleanup. Screenshots, documents, task content,
-and detailed oracle output remain private. A fixture or runtime that cannot
+`tools/e2e/cua-qualification-receipt.mts`. The parser requires claims for all
+four browser, terminal, computer, and integrated scenarios; exact component
+and inference identities; a repeated run after recreation; the security
+negative suite; and cleanup. The runner's independent oracles provide the
+evidence behind those claims. Screenshots, documents, task content, and
+detailed oracle output remain private. A fixture or runtime that cannot
 produce every required identity and result must fail closed instead of
 publishing a partial receipt.
 
@@ -57,9 +64,11 @@ npx vitest run --project e2e-live test/e2e/live/cua-gpu-qualification.test.ts
 ```
 
 The gate compares the receipt with the Launchable identity file, the checked
-out candidate commit, and the live GPU count. The runner itself must use
-NemoClaw's public CUA lifecycle and independent fixture oracles; an adapter's
-or agent's own success claim is not qualification evidence.
+out candidate commit, and the live GPU count. It validates structure and those
+bindings; it does not independently prove component identities, scenario
+outcomes, recreation, negative tests, cleanup, or evidence. Those proofs
+remain the responsibility of the runner and its independent oracles. An
+adapter's or agent's own success claim is not qualification evidence.
 
 ## CI execution shape
 

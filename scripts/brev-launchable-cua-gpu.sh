@@ -6,6 +6,8 @@
 #
 # Required Launchable variables:
 #   NEMOCLAW_REF  Exact lowercase 40-hex NemoClaw candidate commit.
+#   NEMOCLAW_CUA_GPU_PROBE_IMAGE
+#                  Exact nvidia/cuda@sha256:... image used to prove GPU access.
 #
 # The Brev image owns GPU hardware, driver, and NVIDIA Container Toolkit
 # provisioning. This script verifies those prerequisites, installs the exact
@@ -17,7 +19,11 @@ set -euo pipefail
 readonly CUA_LAUNCHABLE_VERSION="1.0.0"
 readonly CUA_SENTINEL="/var/run/nemoclaw-cua-launchable-ready"
 readonly IDENTITY_FILE="/var/lib/nemoclaw/cua-launchable-identity.json"
-readonly BASE_SCRIPT="/tmp/nemoclaw-brev-launchable-base.sh"
+BASE_DIR="$(mktemp -d)"
+readonly BASE_DIR
+BASE_SCRIPT="${BASE_DIR}/nemoclaw-brev-launchable-base.sh"
+readonly BASE_SCRIPT
+trap 'rm -rf "$BASE_DIR"' EXIT
 
 fail() {
   printf 'brev-launchable-cua-gpu: %s\n' "$1" >&2
@@ -26,6 +32,9 @@ fail() {
 
 [[ "${NEMOCLAW_REF:-}" =~ ^[0-9a-f]{40}$ ]] \
   || fail "NEMOCLAW_REF must be an exact lowercase 40-hex commit"
+[[ "${NEMOCLAW_CUA_GPU_PROBE_IMAGE:-}" =~ ^nvidia/cuda@sha256:[0-9a-f]{64}$ ]] \
+  || fail "NEMOCLAW_CUA_GPU_PROBE_IMAGE must be an exact nvidia/cuda@sha256 digest"
+[[ -f "$0" ]] || fail "the Launchable startup script must be a regular file"
 
 command -v nvidia-smi >/dev/null 2>&1 \
   || fail "the selected Brev Launchable image does not expose nvidia-smi"
@@ -42,18 +51,21 @@ launchable_digest="$(sha256sum "$0" | awk '{print $1}')"
 target_user="${SUDO_USER:-$(id -un)}"
 target_home="$(getent passwd "$target_user" | cut -d: -f6)"
 clone_dir="${NEMOCLAW_CLONE_DIR:-${target_home}/NemoClaw}"
-[[ ! -e "$clone_dir" ]] || fail "the fresh Launchable clone path already exists"
+[[ ! -e "$clone_dir" && ! -L "$clone_dir" ]] \
+  || fail "the fresh Launchable clone path already exists"
 git clone --filter=blob:none --no-checkout \
   "https://github.com/NVIDIA/NemoClaw.git" "$clone_dir"
 git -C "$clone_dir" fetch --depth 1 origin "$NEMOCLAW_REF"
 git -C "$clone_dir" checkout --detach "$NEMOCLAW_REF"
+cmp -s "$BASE_SCRIPT" "$clone_dir/scripts/brev-launchable-ci-cpu.sh" \
+  || fail "downloaded base bootstrap does not match the exact candidate checkout"
 
 NEMOCLAW_REF="$NEMOCLAW_REF" bash "$BASE_SCRIPT"
 sudo rm -f /var/run/nemoclaw-launchable-ready
 
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
-sg docker -c 'docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi'
+sg docker -c "docker run --rm --gpus all '$NEMOCLAW_CUA_GPU_PROBE_IMAGE' nvidia-smi"
 
 gpu_names="$(nvidia-smi --query-gpu=name --format=csv,noheader | tr -d '\r')"
 gpu_count="$(printf '%s\n' "$gpu_names" | awk 'NF { count++ } END { print count + 0 }')"
@@ -81,6 +93,7 @@ jq -n \
   --arg driverVersion "$driver_version" \
   --arg cudaVersion "$cuda_version" \
   --arg toolkitVersion "$toolkit_version" \
+  --arg probeImageDigest "${NEMOCLAW_CUA_GPU_PROBE_IMAGE#nvidia/cuda@}" \
   '{
     schemaVersion: $schemaVersion,
     kind: "cua-launchable-identity",
@@ -92,7 +105,8 @@ jq -n \
       model: $gpuModel,
       driverVersion: $driverVersion,
       cudaVersion: $cudaVersion,
-      containerToolkitVersion: $toolkitVersion
+      containerToolkitVersion: $toolkitVersion,
+      probeImageDigest: $probeImageDigest
     }
   }' \
   | sudo tee "$IDENTITY_FILE" >/dev/null

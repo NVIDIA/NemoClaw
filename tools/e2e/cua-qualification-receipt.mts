@@ -26,8 +26,13 @@ export interface CuaQualificationReceipt {
     driverVersion: string;
     cudaVersion: string;
     containerToolkitVersion: string;
+    probeImageDigest: string;
   };
   nemoclawCommit: string;
+  inference: {
+    provider: string;
+    model: string;
+  };
   components: {
     openshell: string;
     runtime: string;
@@ -35,8 +40,10 @@ export interface CuaQualificationReceipt {
     targetImage: string;
     serviceBundle: string;
     policy: string;
+    taskProtocol: string;
     fixture: string;
     oracle: string;
+    verifier: string;
   };
   scenarios: Array<{
     id: (typeof CUA_QUALIFICATION_SCENARIOS)[number];
@@ -89,6 +96,7 @@ export function parseCuaQualificationReceipt(value: unknown): CuaQualificationRe
       "launchable",
       "gpu",
       "nemoclawCommit",
+      "inference",
       "components",
       "scenarios",
       "recreated",
@@ -116,7 +124,14 @@ export function parseCuaQualificationReceipt(value: unknown): CuaQualificationRe
   const gpu = object(receipt.gpu, "gpu");
   exactKeys(
     gpu,
-    ["count", "model", "driverVersion", "cudaVersion", "containerToolkitVersion"],
+    [
+      "count",
+      "model",
+      "driverVersion",
+      "cudaVersion",
+      "containerToolkitVersion",
+      "probeImageDigest",
+    ],
     "gpu",
   );
   if (!Number.isInteger(gpu.count) || (gpu.count as number) < 1) {
@@ -125,6 +140,12 @@ export function parseCuaQualificationReceipt(value: unknown): CuaQualificationRe
   for (const key of ["model", "driverVersion", "cudaVersion", "containerToolkitVersion"]) {
     string(gpu[key], `gpu.${key}`);
   }
+  digest(gpu.probeImageDigest, "gpu.probeImageDigest");
+
+  const inference = object(receipt.inference, "inference");
+  exactKeys(inference, ["provider", "model"], "inference");
+  string(inference.provider, "inference.provider");
+  string(inference.model, "inference.model");
 
   const components = object(receipt.components, "components");
   exactKeys(
@@ -136,8 +157,10 @@ export function parseCuaQualificationReceipt(value: unknown): CuaQualificationRe
       "targetImage",
       "serviceBundle",
       "policy",
+      "taskProtocol",
       "fixture",
       "oracle",
+      "verifier",
     ],
     "components",
   );

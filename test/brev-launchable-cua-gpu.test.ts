@@ -20,6 +20,24 @@ describe("CUA GPU Brev Launchable (#7753)", () => {
     expect(result.stderr).not.toContain("does not expose nvidia-smi");
   });
 
+  it("rejects a mutable GPU probe image before invoking Launchable prerequisites", () => {
+    const result = spawnSync("bash", [SCRIPT], {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        NEMOCLAW_REF: "a".repeat(40),
+        NEMOCLAW_CUA_GPU_PROBE_IMAGE: "nvidia/cuda:latest",
+      },
+      timeout: 10_000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "NEMOCLAW_CUA_GPU_PROBE_IMAGE must be an exact nvidia/cuda@sha256 digest",
+    );
+    expect(result.stderr).not.toContain("does not expose nvidia-smi");
+  });
+
   it("is valid shell syntax", () => {
     const result = spawnSync("bash", ["-n", SCRIPT], {
       encoding: "utf8",
