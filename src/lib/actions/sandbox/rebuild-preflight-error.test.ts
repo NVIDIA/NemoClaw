@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 
-describe("printRebuildPreflightFailure", () => {
+describe("printRebuildPreflightFailure (#7794)", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -19,6 +19,7 @@ describe("printRebuildPreflightFailure", () => {
       .map((c) => c[0])
       .join("\n");
     expect(output).toMatch(/Aborting rebuild/i);
+    expect(output).toContain("sandbox is untouched, no data was lost.");
     expect(bail).toHaveBeenCalledWith("policy error");
   });
 
