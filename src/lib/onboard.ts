@@ -2383,6 +2383,20 @@ async function createSandboxWithBaseImageResolution(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
   );
+  // If NEMOCLAW_GATEWAY_PORT is not currently set and the existing sandbox was
+  // onboarded with a different (override) gateway port, migrate the registry
+  // entry to the current default gateway before any lifecycle operations run.
+  // This ensures gateway recovery selects the default gateway, not the old
+  // override port, when the user re-onboards without the env var set.
+  if (!process.env.NEMOCLAW_GATEWAY_PORT) {
+    const existingEntry = registry.getSandbox(sandboxName);
+    if (existingEntry?.gatewayPort != null && existingEntry.gatewayPort !== GATEWAY_PORT) {
+      registry.updateSandbox(sandboxName, {
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+      });
+    }
+  }
   preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
