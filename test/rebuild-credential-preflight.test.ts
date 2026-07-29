@@ -179,7 +179,11 @@ if (a[0] === "sandbox" && a[1] === "get") {
   process.stdout.write("Sandbox: ${sandboxName}\\nPhase: Ready\\n");
   process.exit(0);
 }
-if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(${sandboxDeleteExitCode}); }
+if (a[0] === "sandbox" && a[1] === "delete") {
+  const exitCode = ${sandboxDeleteExitCode};
+  if (exitCode === 0) fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n");
+  process.exit(exitCode);
+}
 if (a[0] === "sandbox" && a[1] === "get") {
   if (fs.existsSync(${JSON.stringify(deleteMarker)})) { process.stderr.write("sandbox ${sandboxName} not found\\n"); process.exit(1); }
   process.stdout.write("${sandboxName} Ready\\n");
@@ -405,7 +409,7 @@ describe("atomic rebuild process contracts (#2273)", () => {
         key: "NVIDIA_INFERENCE_API_KEY",
         value: "nvapi-test-key-for-rebuild",
       },
-      // This contract ends at backup; stop before recreation.
+      // This contract ends at backup; preserve the sandbox when delete fails.
       sandboxDeleteExitCode: 1,
     });
 
@@ -416,6 +420,8 @@ describe("atomic rebuild process contracts (#2273)", () => {
     expect(output).not.toContain("Cancelled.");
     expect(output).not.toContain("preflight failed");
     expect(output).toContain("Backing up sandbox state");
+    expect(output).not.toContain("Creating new sandbox with current image");
+    expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
   });
 
   it("prints an active SSH session warning before interactive confirmation and cancel", () => {
