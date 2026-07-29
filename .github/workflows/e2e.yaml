@@ -178,6 +178,12 @@ jobs:
             ubuntu-repo-cloud-langchain-deepagents-code)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
               ;;
+            ubuntu-repo-docker-post-reboot-recovery)
+              matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
+              ;;
+            ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
+              ;;
             *)
               echo "::error::PR E2E target is not approved by the trusted controller" >&2
               exit 1
@@ -346,7 +352,10 @@ jobs:
           [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
           [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::PR E2E runs require controller-selected jobs or targets"; exit 1; }
-          [[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]] || { echo "::error::PR E2E target is not approved by the trusted controller"; exit 1; }
+          case "$TARGETS" in
+            ""|ubuntu-repo-cloud-langchain-deepagents-code|ubuntu-repo-docker-post-reboot-recovery|ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery) ;;
+            *) echo "::error::PR E2E target is not approved by the trusted controller"; exit 1 ;;
+          esac
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
