@@ -1979,7 +1979,11 @@ A repeating line like the following confirms the conflict:
 [telegram] getUpdates conflict: 409: Conflict: terminated by other getUpdates request; retrying in 30s.
 ```
 
-To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled. Current NemoClaw warns at `$$nemoclaw onboard` time when another sandbox already has the same channel enabled, but sandboxes created before that check was added may still be in a conflict loop.
+To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled.
+The same fail-closed policy applies to every supported messaging channel.
+Onboarding, rebuild, and `channels add` abort on a conflict or an incomplete required check, including unavailable credential hashes.
+Only `channels add <channel> --force` can accept the duplicate-consumer or shared-resource risk.
+Sandboxes created before these checks were added may still be in a conflict loop.
 
 </AgentOnly>
 
