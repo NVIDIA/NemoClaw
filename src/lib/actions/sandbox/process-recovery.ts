@@ -39,6 +39,8 @@ import {
   type GatewayRestartDeps,
   type GatewayRestartFailureLayer,
   type GatewayRestartResult,
+  gatewayIntegrityRepairLines,
+  isGatewayIntegrityRepairLayer,
   printGatewayRestartFailure,
   type RestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
@@ -838,6 +840,15 @@ function printHostManagedGatewayRecoveryHints(
     console.error("  If rebuild is blocked, destroy and re-onboard the sandbox to restore it.");
     return;
   }
+  // A drifted protected config and a quarantined supervisor both refuse every
+  // relaunch deterministically, so the generic "retry the managed restart" hint
+  // below would send the operator into a loop that cannot succeed (#7801).
+  if (isGatewayIntegrityRepairLayer(failureLayer)) {
+    for (const line of gatewayIntegrityRepairLines(quotedSandboxName, failureLayer)) {
+      console.error(`  ${line}`);
+    }
+    return;
+  }
   let agentName = agent?.name ?? null;
   if (!agentName) {
     try {
@@ -1010,7 +1021,10 @@ function isHermesAgent(
  * whose OpenClaw processes are not running. Also re-establishes the
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, secretBoundaryRefused?, secretBoundaryReason? }`.
+ * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, secretBoundaryRefused?, secretBoundaryReason?, recoveryFailureLayer? }`.
+ * `recoveryFailureLayer` carries the classified managed-restart failure so a
+ * quiet caller (`recover`, `connect`) can still report why recovery is not
+ * retryable instead of printing a generic "check the gateway log".
  */
 function checkAndRecoverSandboxProcessesWithoutHostLock(
   sandboxName: string,
@@ -1273,7 +1287,13 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           managedRecoveryFailureLayer,
         );
       }
-      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureLayer: managedRecoveryFailureLayer,
+      };
     }
     if (relaunch) {
       try {
@@ -1395,7 +1415,13 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent, managedRecoveryFailureLayer);
   }
 
-  return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+  return {
+    checked: true,
+    wasRunning: false,
+    recovered: false,
+    forwardRecovered: false,
+    recoveryFailureLayer: managedRecoveryFailureLayer,
+  };
 }
 
 export function checkAndRecoverSandboxProcesses(

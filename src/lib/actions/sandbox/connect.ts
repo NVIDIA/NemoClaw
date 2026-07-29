@@ -62,6 +62,7 @@ import {
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
+  printGatewayIntegrityRepairGuidance,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -296,6 +297,15 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
+  // Recovery ran with quiet=true, so its classified failure layer is the only
+  // way this path can tell a retryable wedge apart from a deterministic
+  // integrity refusal. Without it the operator is sent to the gateway log for a
+  // state that no restart, recover, or connect can clear (#7801).
+  const recoveryFailureLayer =
+    "recoveryFailureLayer" in processCheck ? processCheck.recoveryFailureLayer : null;
+  if (printGatewayIntegrityRepairGuidance(sandboxName, recoveryFailureLayer)) {
+    process.exit(1);
+  }
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
   // is the operator's only window into a gateway that served briefly and
   // then dropped its listener.
