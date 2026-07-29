@@ -223,6 +223,20 @@ function hasChatCompletionsToolCallLeak(body) {
   return false;
 }
 
+function explainDisabledToolParsing(result) {
+  const detail = `${result.message ?? ""}\n${result.body ?? ""}`;
+  if (!/tool parsing is disabled by frontend configuration/i.test(detail)) {
+    return result;
+  }
+  return {
+    ...result,
+    message:
+      `HTTP ${result.httpStatus}: Chat Completions tool parsing is disabled. ` +
+      "Start vLLM with --enable-auto-tool-choice and a --tool-call-parser " +
+      "that the selected frontend registers for this model.",
+  };
+}
+
 function shouldRequireResponsesToolCalling(provider) {
   return (
     provider === "nvidia-prod" || provider === "gemini-api" || provider === "compatible-endpoint"
@@ -470,7 +484,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     });
 
     if (!result.ok) {
-      return result;
+      return explainDisabledToolParsing(result);
     }
     if (hasChatCompletionsToolCall(result.body)) {
       return result;
