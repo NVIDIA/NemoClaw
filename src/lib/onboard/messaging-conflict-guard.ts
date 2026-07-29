@@ -17,14 +17,16 @@ import type { ConflictRegistry, ConflictRegistryEntry } from "../messaging/appli
 import {
   createMessagingPreEnableHookInputs,
   findChannelConflictsFromPlan,
+  getActiveChannelIdsFromPlan,
   MessagingSetupApplier,
 } from "../messaging/applier";
+import { createBuiltInChannelManifestRegistry } from "../messaging/channels/built-ins";
 import {
   createBuiltInMessagingHookRegistry,
   isMessagingHookConflictError,
   runMessagingHook,
 } from "../messaging/hooks";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
+import type { MessagingChannelId, SandboxMessagingPlan } from "../messaging/manifest";
 
 export interface MessagingConflictGuardDeps {
   readonly sandboxName: string;
@@ -70,6 +72,22 @@ function abortIncompleteConflictCheck(
   return abort(deps);
 }
 
+function findChannelsWithIncompleteCredentialHashes(plan: SandboxMessagingPlan): string[] {
+  const activeChannelIds = new Set(getActiveChannelIdsFromPlan(plan));
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+
+  return [...activeChannelIds].filter((channelId) => {
+    const manifest = manifestRegistry.get(channelId as MessagingChannelId);
+    return manifest?.credentials.some((credential) => {
+      const binding = plan.credentialBindings.find(
+        (entry) =>
+          entry.channelId === channelId && entry.providerEnvKey === credential.providerEnvKey,
+      );
+      return !binding?.credentialHash;
+    });
+  });
+}
+
 /**
  * Run both conflict axes and abort when a hard conflict is found. Calls the
  * injected `exit` and never returns when a credential conflict or an
@@ -96,11 +114,20 @@ export async function enforceMessagingChannelConflicts(
       }
     : null;
 
-  // Axis 1: credential-scoped conflict (#1953). Only runs when the plan carries
-  // an available credential hash to compare.
-  const hasPlanCredentials =
-    currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
-  if (currentPlan && hasPlanCredentials) {
+  // Axis 1: credential-scoped conflict (#1953). Every active credential-bearing
+  // channel must carry complete hashes so onboarding and rebuild fail closed.
+  if (currentPlan) {
+    const incompleteChannels = findChannelsWithIncompleteCredentialHashes(currentPlan);
+    if (incompleteChannels.length > 0) {
+      deps.error(
+        `  Could not verify messaging channel conflicts: credential hashes are unavailable for ${incompleteChannels.join(", ")}`,
+      );
+      deps.error(
+        "  Aborting: provide the intended channel credentials and rerun. Onboarding and rebuild do not support a conflict override.",
+      );
+      abort(deps);
+    }
+
     let conflicts: ReturnType<typeof findChannelConflictsFromPlan>;
     try {
       conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan, registry);
