@@ -664,7 +664,8 @@ NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
-Onboarding detects those hosts separately and propagates the supplementary groups required for `/dev/nvmap` and `/dev/nvhost-*`; if that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
+Onboarding detects those hosts separately and propagates eligible host group IDs for selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
+If that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
 
 ### Colima socket not detected (macOS)
 
@@ -2458,7 +2459,7 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 #### Jetson and Tegra compatibility default
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
-The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates the supplementary groups required for `/dev/nvmap` and `/dev/nvhost-*` access.
+The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
 
 #### Common compatibility-path recovery

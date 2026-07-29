@@ -11,7 +11,7 @@ import {
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
-import type { HttpsPinProviderBinding } from "./inference-set-route-containment";
+import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
 
 type CaptureProviderCommand = (
   args: string[],
@@ -38,7 +38,7 @@ type ProviderObservation =
     }
   | { kind: "error"; status: number | null };
 
-function providerSurface(binding: HttpsPinProviderBinding): ProviderSurface {
+function providerSurface(binding: InferenceSetProviderBinding): ProviderSurface {
   return binding.providerType === "anthropic"
     ? { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" }
     : { type: "openai", configKey: "OPENAI_BASE_URL" };
@@ -80,7 +80,7 @@ function inspectProvider(
   });
   const output = resultText(result);
   if (result.status !== 0) {
-    return openshellReportsProviderNotFound(output, providerName)
+    return providerLookupReportsNotFound(output, providerName)
       ? { kind: "absent" }
       : { kind: "error", status: result.status };
   }
@@ -88,6 +88,21 @@ function inspectProvider(
   const version = parseProviderVersion(output);
   if (!metadata || !version) return { kind: "error", status: result.status };
   return { kind: "present", ...version, metadata };
+}
+
+function providerLookupReportsNotFound(output: string, providerName: string): boolean {
+  if (openshellReportsProviderNotFound(output, providerName)) return true;
+  // OpenShell 0.0.85 omits the name only from this exact-name `provider get`
+  // command. Keep the route-update parser strict because its output can name
+  // a different missing provider.
+  return stripAnsi(output)
+    .toLowerCase()
+    .split("\n")
+    .some(
+      (line) =>
+        /code:\s*['"]some requested entity was not found['"]/u.test(line) &&
+        /message:\s*['"]provider not found['"]/u.test(line),
+    );
 }
 
 function expectedShape(providerName: string, surface: ProviderSurface, credentialEnv: string) {
@@ -103,7 +118,7 @@ function assertProviderOwnership(options: {
   observation: ProviderObservation;
   providerName: string;
   surface: ProviderSurface;
-  binding: HttpsPinProviderBinding;
+  binding: InferenceSetProviderBinding;
 }): "create" | "update" {
   const { observation, providerName, surface, binding } = options;
   if (observation.kind === "absent") return "create";
@@ -157,10 +172,10 @@ function mutationArgs(options: {
   return args;
 }
 
-export function prepareHttpsPinProviderBinding(options: {
+export function prepareInferenceSetProviderBinding(options: {
   gatewayName: string;
   providerName: string;
-  binding: HttpsPinProviderBinding;
+  binding: InferenceSetProviderBinding;
   captureOpenshell: CaptureProviderCommand;
 }): { action: "create" | "update"; commit: () => void; rollback: () => void } {
   const { gatewayName, providerName, binding, captureOpenshell } = options;
@@ -193,8 +208,8 @@ export function prepareHttpsPinProviderBinding(options: {
     const after = inspectProvider(captureOpenshell, gatewayName, providerName);
     if (result.status !== 0) {
       throw new InferenceSetError(
-        `Failed to ${action} HTTPS-pinned provider '${providerName}' on gateway '${gatewayName}' (status ${result.status ?? "unknown"}). ` +
-          `The provider command may have partially applied; retry this command or re-run onboarding to converge the safe adapter binding.`,
+        `Failed to ${action} provider '${providerName}' on gateway '${gatewayName}' (status ${result.status ?? "unknown"}). ` +
+          `The provider command may have partially applied; retry this command or re-run onboarding to converge the requested binding.`,
         1,
       );
     }
@@ -210,7 +225,7 @@ export function prepareHttpsPinProviderBinding(options: {
       )
     ) {
       throw new InferenceSetError(
-        `Provider '${providerName}' did not converge to the expected HTTPS-pinned type and binding-key shape after ${action}. ` +
+        `Provider '${providerName}' did not converge to the expected type and binding-key shape after ${action}. ` +
           `Provider state may be partial; retry this command or re-run onboarding to reconcile it.`,
         1,
       );
@@ -250,5 +265,6 @@ export const __test = {
   inspectProvider,
   parseProviderVersion,
   providerSurface,
+  providerLookupReportsNotFound,
   mutationArgs,
 };

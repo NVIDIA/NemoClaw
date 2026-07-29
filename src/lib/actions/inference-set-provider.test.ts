@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InferenceSetDeps } from "./inference-set";
-import { __test, prepareHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
+import { __test, prepareInferenceSetProviderBinding } from "./inference-set-provider";
 import type { HttpsPinProviderBinding } from "./inference-set-route-containment";
 
 const PROVIDER_ID = "11111111-2222-4333-8444-555555555555";
@@ -48,7 +48,7 @@ function captureSequence(
   ) as InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn>;
 }
 
-describe("HTTPS-pin provider binding", () => {
+describe("inference set provider binding", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("updates an owned provider with only the route token in invocation-local env", () => {
@@ -61,7 +61,7 @@ describe("HTTPS-pin provider binding", () => {
       { status: 0, stdout: after, stderr: "", output: after },
     ]);
 
-    const mutation = prepareHttpsPinProviderBinding({
+    const mutation = prepareInferenceSetProviderBinding({
       gatewayName: "nemoclaw",
       providerName: "compatible-endpoint",
       binding: binding(),
@@ -97,13 +97,37 @@ describe("HTTPS-pin provider binding", () => {
     ]);
 
     expect(() =>
-      prepareHttpsPinProviderBinding({
+      prepareInferenceSetProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
         captureOpenshell: capture,
       }),
     ).not.toThrow();
+    expect(capture.mock.calls[1][0]).toContain("create");
+  });
+
+  it("creates a provider after the OpenShell 0.0.85 generic lookup miss (#7725)", () => {
+    const after = providerOutput({ resourceVersion: 1 });
+    const capture = captureSequence([
+      {
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+      },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: after, stderr: "" },
+    ]);
+
+    const mutation = prepareInferenceSetProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      captureOpenshell: capture,
+    });
+
+    expect(mutation.action).toBe("create");
     expect(capture.mock.calls[1][0]).toContain("create");
   });
 
@@ -117,7 +141,7 @@ describe("HTTPS-pin provider binding", () => {
       { status: 1, stdout: "", stderr: "Provider 'compatible-endpoint' not found" },
     ]);
 
-    const mutation = prepareHttpsPinProviderBinding({
+    const mutation = prepareInferenceSetProviderBinding({
       gatewayName: "nemoclaw",
       providerName: "compatible-endpoint",
       binding: binding(),
@@ -146,7 +170,7 @@ describe("HTTPS-pin provider binding", () => {
     ]);
 
     expect(() =>
-      prepareHttpsPinProviderBinding({
+      prepareInferenceSetProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
@@ -160,7 +184,7 @@ describe("HTTPS-pin provider binding", () => {
     const capture = captureSequence([{ status: 0, stdout: malformed, stderr: "" }]);
 
     expect(() =>
-      prepareHttpsPinProviderBinding({
+      prepareInferenceSetProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
@@ -180,7 +204,7 @@ describe("HTTPS-pin provider binding", () => {
     ]);
 
     expect(() =>
-      prepareHttpsPinProviderBinding({
+      prepareInferenceSetProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
@@ -207,13 +231,13 @@ describe("HTTPS-pin provider binding", () => {
       };
     };
 
-    prepareHttpsPinProviderBinding({
+    prepareInferenceSetProviderBinding({
       gatewayName: "gateway-a",
       providerName: "compatible-endpoint",
       binding: binding({ token: "route-token-a" }),
       captureOpenshell: makeCapture("aaaaaaaa-2222-4333-8444-555555555555"),
     }).commit();
-    prepareHttpsPinProviderBinding({
+    prepareInferenceSetProviderBinding({
       gatewayName: "gateway-b",
       providerName: "compatible-endpoint",
       binding: binding({ token: "route-token-b", routeId: "route-b" }),
