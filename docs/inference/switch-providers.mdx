@@ -106,13 +106,16 @@ Supported API-family values are `openai-completions`, `anthropic-messages`, and 
 For a Hermes `compatible-anthropic-endpoint` target, omit `--inference-api` because NemoClaw selects `openai-completions`.
 An explicit different API family is rejected for that route.
 
-To point a sandbox at a different custom endpoint, re-run onboarding with the new endpoint.
+To switch only the model for an existing compatible provider, omit the endpoint options.
+NemoClaw reuses the endpoint in the sandbox registry and verifies the selected route.
+To change a direct compatible provider's custom endpoint or credential binding, re-run onboarding with the requested binding.
+`inference set` refuses to replace an existing direct binding because OpenShell does not expose the previous provider configuration required for rollback.
 A rebuild reuses the recorded endpoint and cannot change it.
 
-If updating an existing compatible provider fails after OpenShell selects the new route, NemoClaw attempts to restore the previously recorded provider and model.
-The command still exits nonzero because the provider binding might be partially updated.
-Retry the switch or re-run onboarding to reconcile the provider.
-If NemoClaw reports that it could not restore the previous selection, do not use the route until you re-run onboarding.
+DNS-backed HTTPS routes use an HTTPS Pin Runtime binding.
+If that binding update fails after OpenShell selects the new route, NemoClaw attempts to restore the previously recorded provider and model.
+The command still exits nonzero because the binding might be partially updated.
+If NemoClaw cannot restore the previous selection, do not use the route until you re-run onboarding.
 
 </AgentOnly>
 

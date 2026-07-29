@@ -26,8 +26,8 @@ import {
 } from "./inference-set";
 import {
   baseSession,
+  createCompatibleProviderCapture,
   createDeps,
-  createExistingCompatibleProviderCapture,
 } from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
@@ -352,7 +352,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     // onboarding. DNS re-resolution is not required for that exact identity.
     const guard = ssrfGuard();
     const adapterGuard = httpsPinAdapterGuard();
-    const captureOpenshell = createExistingCompatibleProviderCapture({
+    const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-anthropic-endpoint",
       type: "anthropic",
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
@@ -396,7 +396,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
   it("accepts the same onboard-provenanced internal endpoint after canonicalization (#6321)", async () => {
     const guard = ssrfGuard();
     const adapterGuard = httpsPinAdapterGuard();
-    const captureOpenshell = createExistingCompatibleProviderCapture({
+    const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
       credentialEnv: "COMPATIBLE_API_KEY",
