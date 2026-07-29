@@ -29,7 +29,7 @@ const RESTORED_CLONE_PAIRING_BUDGET = {
   timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } as const;
 
-const RESTORED_CLONE_APPROVE_FAILURE_ATTEMPTS = 2;
+const RESTORED_CLONE_PAIRING_ATTEMPTS = 2;
 
 class RestoreGatewayPairingClassifiedError extends Error {}
 
@@ -81,7 +81,7 @@ export async function establishRestoredSandboxGatewayPairing(
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
   try {
-    for (let attempt = 1; attempt <= RESTORED_CLONE_APPROVE_FAILURE_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; attempt <= RESTORED_CLONE_PAIRING_ATTEMPTS; attempt += 1) {
       deps.restartRestoredSandboxGateway(targetSandbox);
       deps.warmupScopeUpgrade(targetSandbox);
       const approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
@@ -92,12 +92,12 @@ export async function establishRestoredSandboxGatewayPairing(
       if (verification.ok) {
         return;
       }
-      // The canonical approval command can create its own local scope-upgrade
-      // request and report approve-failed. Retry that exact pending transition
-      // once with the same local-device and one-request bounds.
+      // The bounded approval pass can fail while listing or approving the
+      // clone's local request. Retry once only when the authenticated verifier
+      // independently proves that exact scope-upgrade transition is pending.
       if (
-        attempt < RESTORED_CLONE_APPROVE_FAILURE_ATTEMPTS &&
-        approvalReceipt === "approve-failed" &&
+        attempt < RESTORED_CLONE_PAIRING_ATTEMPTS &&
+        (approvalReceipt === "list-failed" || approvalReceipt === "approve-failed") &&
         verification.failureLayer === "scope-upgrade-pending"
       ) {
         continue;

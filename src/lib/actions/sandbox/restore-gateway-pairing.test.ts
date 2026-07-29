@@ -249,6 +249,128 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
   });
 
+  it("retries one failed clone list when verification reports a pending scope upgrade (#7431)", async () => {
+    const order: string[] = [];
+    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
+    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
+    const approveRestoredClonePairing = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        order.push("approve:list-failed");
+        return "list-failed" as const;
+      })
+      .mockImplementationOnce(() => {
+        order.push("approve:succeeded");
+        return "approved-one" as const;
+      });
+    const verifyGatewayPairing = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        order.push("verify:pending");
+        return {
+          ok: false as const,
+          failureLayer: "scope-upgrade-pending" as const,
+        };
+      })
+      .mockImplementationOnce(() => {
+        order.push("verify:authenticated");
+        return { ok: true as const };
+      });
+
+    await establishRestoredSandboxGatewayPairing("beta", {
+      restartRestoredSandboxGateway,
+      warmupScopeUpgrade,
+      approveRestoredClonePairing,
+      verifyGatewayPairing,
+    });
+
+    expect(order).toEqual([
+      "restart",
+      "warmup",
+      "approve:list-failed",
+      "restart",
+      "verify:pending",
+      "restart",
+      "warmup",
+      "approve:succeeded",
+      "restart",
+      "verify:authenticated",
+    ]);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
+    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
+    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries one failed clone list for a pending scope upgrade, then fails closed (#7431)", async () => {
+    const order: string[] = [];
+    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
+    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
+    const approveRestoredClonePairing = vi.fn(() => {
+      order.push("approve:list-failed");
+      return "list-failed" as const;
+    });
+    const verifyGatewayPairing = vi.fn(() => {
+      order.push("verify:pending");
+      return {
+        ok: false as const,
+        failureLayer: "scope-upgrade-pending" as const,
+      };
+    });
+
+    await expect(
+      establishRestoredSandboxGatewayPairing("beta", {
+        restartRestoredSandboxGateway,
+        warmupScopeUpgrade,
+        approveRestoredClonePairing,
+        verifyGatewayPairing,
+      }),
+    ).rejects.toThrow(
+      "authenticated gateway verification run failed (scope-upgrade-pending; approval=list-failed)",
+    );
+    expect(order).toEqual([
+      "restart",
+      "warmup",
+      "approve:list-failed",
+      "restart",
+      "verify:pending",
+      "restart",
+      "warmup",
+      "approve:list-failed",
+      "restart",
+      "verify:pending",
+    ]);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
+    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
+    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a failed clone list for an unrelated verifier failure (#7431)", async () => {
+    const restartRestoredSandboxGateway = vi.fn();
+    const warmupScopeUpgrade = vi.fn();
+    const approveRestoredClonePairing = vi.fn(() => "list-failed" as const);
+    const verifyGatewayPairing = vi.fn(() => ({
+      ok: false as const,
+      failureLayer: "gateway-connect-failure" as const,
+    }));
+
+    await expect(
+      establishRestoredSandboxGatewayPairing("beta", {
+        restartRestoredSandboxGateway,
+        warmupScopeUpgrade,
+        approveRestoredClonePairing,
+        verifyGatewayPairing,
+      }),
+    ).rejects.toThrow(
+      "authenticated gateway verification run failed (gateway-connect-failure; approval=list-failed)",
+    );
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
+    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
+  });
+
   it("does not retry a failed clone approval for an unrelated verifier failure (#7431)", async () => {
     const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
