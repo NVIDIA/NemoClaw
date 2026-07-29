@@ -25,13 +25,20 @@ function fakeRename(
 function fakeCapture(
   output: string,
   inspectOutputs: string[] = ["running\thealthy"],
-): (args: readonly string[]) => string {
+  onInspect: (opts?: Record<string, unknown>) => void = () => undefined,
+): (args: readonly string[], opts?: Record<string, unknown>) => string {
   let inspectIndex = 0;
-  return (args) => {
-    if (args[0] !== "inspect") return output;
-    const index = Math.min(inspectIndex, inspectOutputs.length - 1);
-    inspectIndex += 1;
-    return inspectOutputs[index] ?? "";
+  return (args, opts) => {
+    switch (args[0]) {
+      case "inspect": {
+        onInspect(opts);
+        const index = Math.min(inspectIndex, inspectOutputs.length - 1);
+        inspectIndex += 1;
+        return inspectOutputs[index] ?? "";
+      }
+      default:
+        return output;
+    }
   };
 }
 
@@ -235,22 +242,21 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     let currentMs = 0;
     const inspectStartTimes: number[] = [];
     const inspectTimeouts: number[] = [];
-    const capture = fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
-      "running\tstarting",
-    ]);
+    const capture = fakeCapture(
+      "openshell-e2e-x\tExited (137) 30 seconds ago\n",
+      ["running\tstarting"],
+      (opts) => {
+        inspectStartTimes.push(currentMs);
+        const timeout = Number(opts?.timeout);
+        inspectTimeouts.push(timeout);
+        currentMs += Math.min(4_900, timeout);
+      },
+    );
     const sleep = vi.fn((ms: number) => {
       currentMs += ms;
     });
     const result = recoverDockerDriverSandbox("e2e-x", {
-      dockerCapture: (args, opts) => {
-        if (args[0] === "inspect") {
-          inspectStartTimes.push(currentMs);
-          const timeout = Number(opts?.timeout);
-          inspectTimeouts.push(timeout);
-          currentMs += Math.min(4_900, timeout);
-        }
-        return capture(args);
-      },
+      dockerCapture: capture,
       dockerStart: fakeStart(0),
       now: () => currentMs,
       sleep,
