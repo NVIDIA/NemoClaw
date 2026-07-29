@@ -59,13 +59,15 @@ function runCrossUidParentRepair(name: "gateway" | "cron", kind: "symlink" | "fi
   const stateDir = path.join(hermesHome, name);
   const script = path.join(fixture, "repair.sh");
   fs.mkdirSync(hermesHome);
-  if (kind === "symlink") {
-    const target = path.join(fixture, `${name}-target`);
-    fs.mkdirSync(target);
-    fs.symlinkSync(target, stateDir);
-  } else {
-    fs.writeFileSync(stateDir, "unsafe\n");
-  }
+  const setup: Record<typeof kind, () => void> = {
+    symlink: () => {
+      const target = path.join(fixture, `${name}-target`);
+      fs.mkdirSync(target);
+      fs.symlinkSync(target, stateDir);
+    },
+    file: () => fs.writeFileSync(stateDir, "unsafe\n"),
+  };
+  setup[kind]();
   fs.writeFileSync(
     script,
     [
