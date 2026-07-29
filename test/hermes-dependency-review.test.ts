@@ -57,7 +57,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(config).toMatch(/display:\s*\{\s*[\s\S]*?show_commentary: false/u);
     expect(config).toMatch(/updates:\s*\{\s*[\s\S]*?pre_update_backup: false/u);
     expect(config).toMatch(/updates:\s*\{\s*[\s\S]*?refresh_cua_driver: false/u);
-    expect(manifest).toContain("path: cron/executions.db\n    strategy: sqlite_backup");
+    expect(manifest).toContain("path: runtime/cron-executions.db\n    strategy: sqlite_backup");
     expect(manifest).toContain(
       "path: gateway/discord_message_recovery.db\n    strategy: sqlite_backup",
     );
