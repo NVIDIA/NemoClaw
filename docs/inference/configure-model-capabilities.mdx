@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure OpenClaw Model Capabilities"
 sidebar-title: "Configure Model Capabilities"
-description: "Declare reasoning mode and input modalities for an OpenClaw model in a NemoClaw sandbox."
-description-agent: "Configures OpenClaw reasoning mode and text or image input support. Use when onboarding a reasoning or vision-capable model."
-keywords: ["nemoclaw reasoning model", "nemoclaw vision model", "NEMOCLAW_INFERENCE_INPUTS"]
+description: "Declare reasoning mode, reasoning effort, and input modalities for an OpenClaw model in a NemoClaw sandbox."
+description-agent: "Configures OpenClaw reasoning mode, reasoning effort, and text or image input support. Use when onboarding a reasoning or vision-capable model."
+keywords: ["nemoclaw reasoning model", "nemoclaw reasoning effort", "nemoclaw vision model"]
 content:
   type: "how_to"
 ---
@@ -26,6 +26,39 @@ nemoclaw onboard
 For a compatible Anthropic endpoint, reasoning mode also skips the onboarding streaming check intended for models that emit normal response content.
 Agent requests still use the streaming path, so confirm the endpoint's runtime behavior separately.
 
+## Configure Reasoning Effort
+
+Set `NEMOCLAW_REASONING_EFFORT` only when the provider is `compatible-endpoint` and the selected API is `openai-completions`.
+The endpoint must accept an explicit reasoning budget.
+The variable accepts `low`, `medium`, `high`, or `default`.
+The default is unset, which leaves the endpoint's own default in place.
+
+```bash
+export NEMOCLAW_REASONING_EFFORT=high
+nemoclaw onboard
+```
+
+During onboarding, NemoClaw parses every explicit value before provider recovery or selection.
+A value outside `low`, `medium`, `high`, and `default` fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
+After provider selection, NemoClaw also rejects every explicit value, including `default`, unless the resulting route uses the `compatible-endpoint` provider with the `openai-completions` API.
+
+`default` names the unset state, which is useful to clear an effort that a sandbox already records.
+
+NemoClaw writes `params.extra_body.reasoning_effort` on the model entry in the built OpenClaw config.
+OpenClaw merges that field into the request body.
+NemoClaw does not add the field for another API family.
+Reasoning effort is independent of `NEMOCLAW_REASONING`.
+`NEMOCLAW_REASONING` declares that the model reasons, and `NEMOCLAW_REASONING_EFFORT` declares how much.
+
+## Verify Reasoning Effort
+
+NemoClaw reports the effective non-secret setting for a `compatible-endpoint` route that uses `openai-completions`.
+During onboarding, `nemoclaw onboard --events=jsonl` includes `reasoningEffort` in each applicable event context.
+The sandbox status output prints `Reasoning effort`, and `nemoclaw <sandbox-name> doctor --json` includes an informational `Inference` check labeled `Reasoning effort`.
+An explicit override appears as `low`, `medium`, or `high`.
+When the route uses the endpoint's own setting, these diagnostics report `endpoint-default`.
+They omit the field or check for another provider or API family and never include endpoint credentials.
+
 ## Configure Image Input
 
 Set `NEMOCLAW_INFERENCE_INPUTS=text,image` only when the model accepts image input through the selected provider.
@@ -42,14 +75,29 @@ Non-interactive onboarding uses the environment value or the default `text` sett
 ## Apply Capability Changes
 
 These settings are build-time inputs.
-Recreate an existing sandbox after changing either value.
+Recreate an existing sandbox after changing any of these values.
 
 ```bash
 nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
-Onboarding records the reasoning flag in the sandbox's session and registry entry.
-A resumed onboard and `nemoclaw <sandbox-name> rebuild` both replay that recorded value, so exporting `NEMOCLAW_REASONING` before either command does not change the flag.
-When a resumed onboard sees an explicit `NEMOCLAW_REASONING` that disagrees with the recorded value, it reports the recorded value and the recreate command instead of applying the variable.
+Onboarding records the reasoning flag and the reasoning effort in the sandbox's session and registry entry.
+A resumed onboard and `nemoclaw <sandbox-name> rebuild` both replay those recorded values, so exporting `NEMOCLAW_REASONING` or `NEMOCLAW_REASONING_EFFORT` before either command does not change them.
+When a resumed onboard on the `compatible-endpoint` provider sees an explicit `NEMOCLAW_REASONING` or `NEMOCLAW_REASONING_EFFORT` that disagrees with the recorded value, it reports the recorded value and the recreate command instead of applying the variable.
+
+To change the reasoning effort on a running sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
+
+```bash
+nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --endpoint-url <recorded-url> --reasoning-effort high
+```
+
+Pass `--reasoning-effort default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort.
+An ordinary sandbox restart preserves this runtime value or endpoint-default state; startup does not reapply the image's original onboarding value.
+`--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
+When you omit the flag, `inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
+For either explicit input, `inference set` parses the value and resolves the provider and API before any mutation.
+It rejects every explicit value, including `default`, unless the resulting route uses `compatible-endpoint` and `openai-completions`.
+When neither is set, the sandbox keeps the recorded effort only while the resulting route still uses `compatible-endpoint` and `openai-completions`.
+Without an explicit effort input, switching to another provider or API family clears the recorded effort.
 
 For context-window and output-token settings, refer to [Configure Model Limits](configure-model-limits).

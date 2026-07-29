@@ -17,7 +17,14 @@ import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/o
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
-import { describeIgnoredReasoningEnv } from "../../reasoning-mode";
+import {
+  describeIgnoredReasoningEffortEnv,
+  describeIgnoredReasoningEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+  type ReasoningEffortRequest,
+  resolveReasoningEffortRequest,
+} from "../../reasoning-mode";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -71,6 +78,7 @@ export interface ProviderSelectionResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -111,6 +119,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
     compatibleEndpointReasoning: string | null;
+    compatibleEndpointReasoningEffort: string | null;
     nimContainer: string | null;
     webSearchConfig: WebSearchConfig | null;
   };
@@ -189,6 +198,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hydrateCredentialEnv(credentialEnv: string | null): string | null | undefined;
     configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
     clearCompatibleEndpointReasoning(): null;
+    configureCompatibleEndpointReasoningEffort(
+      storedValue?: unknown,
+      env?: NodeJS.ProcessEnv,
+      allowRequestFallback?: boolean,
+    ): Promise<ReasoningEffort | null>;
+    clearCompatibleEndpointReasoningEffort(): null;
     repairLocalInferenceSystemdOverrideOrExit(
       options: RepairLocalInferenceSystemdOverrideOptions,
     ): void;
@@ -257,6 +272,7 @@ export interface ProviderInferenceStateResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
@@ -327,6 +343,22 @@ function shouldRefreshCompatibleEndpointRouteForMessaging(
   );
 }
 
+function assertOnboardReasoningEffortRoute(
+  request: ReasoningEffortRequest,
+  provider: string | null,
+  inferenceApi: string | null,
+): void {
+  if (!request.explicit) return;
+  if (provider !== "compatible-endpoint") {
+    throw new Error(`${REASONING_EFFORT_ENV} applies only to the compatible-endpoint provider.`);
+  }
+  if (inferenceApi !== "openai-completions") {
+    throw new Error(
+      `${REASONING_EFFORT_ENV} applies only to compatible-endpoint routes using openai-completions.`,
+    );
+  }
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -346,6 +378,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   constants,
   deps,
 }: ProviderInferenceStateOptions<Gpu, Agent, Host>): Promise<ProviderInferenceStateResult> {
+  // Parse the ambient request before provider selection, recovery, or route
+  // mutation. Every provider must reject malformed input even though only a
+  // compatible OpenAI Completions route can apply it.
+  const reasoningEffortRequest = resolveReasoningEffortRequest(null, env);
   let model = initial.model;
   let provider = initial.provider;
   let endpointUrl = initial.endpointUrl;
@@ -368,6 +404,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     initial.preferredInferenceApi,
   );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
+  let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
@@ -411,6 +448,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       typeof model === "string";
     let shouldRecordProviderSelection = false;
     if (resumeProviderSelection) {
+      assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
         provider,
         model,
@@ -499,11 +537,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.cliName(),
         );
         if (ignoredReasoning) deps.log(ignoredReasoning);
+        const ignoredReasoningEffort = describeIgnoredReasoningEffortEnv(
+          compatibleEndpointReasoningEffort,
+          deps.cliName(),
+          env,
+        );
+        if (ignoredReasoningEffort) deps.log(ignoredReasoningEffort);
         compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
           compatibleEndpointReasoning,
         );
+        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
+          compatibleEndpointReasoningEffort,
+          env,
+          false,
+        );
       } else {
         compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
+        compatibleEndpointReasoningEffort = deps.clearCompatibleEndpointReasoningEffort();
       }
       const localInferenceRepairOptions = {
         provider,
@@ -577,6 +627,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hermesToolGateways = selection.hermesToolGateways;
       preferredInferenceApi = selection.preferredInferenceApi;
       compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
+      compatibleEndpointReasoningEffort = selection.compatibleEndpointReasoningEffort;
       nimContainer = selection.nimContainer;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
@@ -610,6 +661,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       preferredInferenceApi,
     );
     if (!resumeProviderSelection) {
+      assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
         provider,
         model,
@@ -638,6 +690,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ? initial.preferredInferenceApi
             : preferredInferenceApi,
           compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
           nimContainer,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
@@ -716,6 +769,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             model,
             hermesAuthMethod,
             compatibleEndpointReasoning,
+            compatibleEndpointReasoningEffort,
             nimContainer,
             hermesToolGateways,
           }),
@@ -829,6 +883,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           model,
           hermesAuthMethod,
           compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
           nimContainer,
           hermesToolGateways,
         }),
@@ -922,6 +977,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         model,
         hermesAuthMethod,
         compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
         nimContainer,
         hermesToolGateways,
         // The forced #6294/#6289 heal succeeded: the gateway registration now
@@ -949,6 +1005,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     hermesToolGateways,
     preferredInferenceApi,
     compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort,
     nimContainer,
     webSearchConfig,
     session,

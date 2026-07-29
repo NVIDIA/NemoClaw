@@ -40,6 +40,7 @@ const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 const onboardSession = requireDist("../../state/onboard-session.js");
 const registry = requireDist("../../state/registry.js");
+const registryPersistence = requireDist("../../state/registry/persistence.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
@@ -243,7 +244,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return true;
     });
   let registryLoadCount = 0;
-  vi.spyOn(registry, "load").mockImplementation(() => {
+  vi.spyOn(registryPersistence, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
     const defaultSandbox = isPreDeleteRead ? preDeleteDefaultSandbox : initialDefaultSandbox;
