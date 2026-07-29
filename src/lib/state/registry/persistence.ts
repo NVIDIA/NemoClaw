@@ -4,6 +4,7 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
+import { parseCuaRuntimeReadiness, parseCuaTargetAttachment } from "../../cua/schema";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
 import { normalizeSandboxMcpState, serializeSandboxMcpStateForDisk } from "../registry-mcp";
@@ -88,11 +89,19 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
     entry.baselineExclusionTransition,
   );
+  const cuaRuntimeReadiness =
+    entry.cuaRuntimeReadiness === undefined
+      ? undefined
+      : parseCuaRuntimeReadiness(entry.cuaRuntimeReadiness);
+  const cuaTarget =
+    entry.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(entry.cuaTarget);
   const {
     messaging: _messaging,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
+    cuaRuntimeReadiness: _cuaRuntimeReadiness,
+    cuaTarget: _cuaTarget,
     ...rest
   } = entry;
   return {
@@ -101,6 +110,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
+    ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
+    ...(cuaTarget ? { cuaTarget } : {}),
   };
 }
 
@@ -130,11 +141,19 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
     durable.baselineExclusionTransition,
   );
+  const cuaRuntimeReadiness =
+    durable.cuaRuntimeReadiness === undefined
+      ? undefined
+      : parseCuaRuntimeReadiness(durable.cuaRuntimeReadiness);
+  const cuaTarget =
+    durable.cuaTarget === undefined ? undefined : parseCuaTargetAttachment(durable.cuaTarget);
   const {
     messaging: _messaging,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
+    cuaRuntimeReadiness: _cuaRuntimeReadiness,
+    cuaTarget: _cuaTarget,
     ...rest
   } = durable;
   return {
@@ -144,5 +163,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
+    ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
+    ...(cuaTarget ? { cuaTarget } : {}),
   };
 }

@@ -167,6 +167,8 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /** Secret-free CUA target attachment and capability-health projection. */
+  cuaTarget: registry.SandboxEntry["cuaTarget"] | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -523,6 +525,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    cuaTarget: sb?.cuaTarget ?? null,
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,
