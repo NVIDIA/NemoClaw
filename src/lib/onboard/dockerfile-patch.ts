@@ -16,7 +16,7 @@ import {
 } from "../sandbox-base-image";
 import {
   mergeHermesPreservedEnvIntoMessagingPlan,
-  readPreservedEnvFilesFromEnv,
+  type PreservedEnvFile,
 } from "../state/preserved-env/index";
 import {
   DEFAULT_TOOL_DISCLOSURE,
@@ -99,6 +99,7 @@ export interface PatchStagedDockerfileOptions {
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   upstreamEndpointUrl?: string | null;
   wslDashboardExposure?: boolean;
+  rebuildPreservedEnv?: readonly PreservedEnvFile[];
 }
 
 export function patchDcodeAutoApprovalDockerArg(
@@ -421,7 +422,7 @@ export function patchStagedDockerfile(
     );
     const imageMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
       baseMessagingPlan,
-      readPreservedEnvFilesFromEnv(),
+      options.rebuildPreservedEnv,
     );
     const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
     if (!messagingPlanArgPattern.test(dockerfile)) {

@@ -106,6 +106,42 @@ describe("prepareSandboxDockerfilePatch", () => {
     });
   });
 
+  it("passes rebuild-preserved environment assignments to the Dockerfile patch (#7803)", async () => {
+    const patchStagedDockerfile = vi.fn();
+    const rebuildPreservedEnv = [
+      {
+        path: ".env",
+        assignments: ["SLACK_HOME_CHANNEL=C0123"],
+      },
+    ];
+
+    await prepareSandboxDockerfilePatch({
+      agent: { name: "hermes", displayName: "Hermes" } as never,
+      fromDockerfile: null,
+      sandboxBaseImage: resolutionMetadata.imageName,
+      sandboxBaseTag: "latest",
+      stagedDockerfile: "/tmp/Dockerfile",
+      model: "model-a",
+      chatUiUrl: "http://127.0.0.1:7000",
+      provider: null,
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      rebuildPreservedEnv,
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      deps: {
+        isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+        patchStagedDockerfile,
+        now: () => 1,
+      },
+    });
+
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toMatchObject({
+      rebuildPreservedEnv,
+    });
+  });
+
   it("pins a resolved base image and patches the staged Dockerfile with the build id", async () => {
     const log = vi.fn();
     const patchStagedDockerfile = vi.fn();

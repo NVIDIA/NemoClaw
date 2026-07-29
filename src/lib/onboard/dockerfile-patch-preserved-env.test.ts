@@ -6,8 +6,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, expect, it } from "vitest";
-
-import { encodePreservedEnvFiles, PRESERVED_ENV_REBUILD_KEY } from "../state/preserved-env/index";
 import { patchStagedDockerfile } from "./dockerfile-patch";
 
 let tmpRoot: string;
@@ -15,13 +13,11 @@ let tmpRoot: string;
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preserved-env-patch-"));
   delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
-  delete process.env[PRESERVED_ENV_REBUILD_KEY];
 });
 
 afterEach(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
-  delete process.env[PRESERVED_ENV_REBUILD_KEY];
 });
 
 it("adds preserved Hermes home channels at the Dockerfile patch boundary (#7803)", () => {
@@ -56,12 +52,6 @@ it("adds preserved Hermes home channels at the Dockerfile patch boundary (#7803)
     }),
     "utf8",
   ).toString("base64");
-  process.env[PRESERVED_ENV_REBUILD_KEY] = encodePreservedEnvFiles([
-    {
-      path: ".env",
-      assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
-    },
-  ]);
   const dockerfilePath = path.join(tmpRoot, "Dockerfile");
   fs.writeFileSync(
     dockerfilePath,
@@ -92,6 +82,20 @@ it("adds preserved Hermes home channels at the Dockerfile patch boundary (#7803)
     "https://chat.example",
     "build-1",
     "compatible-endpoint",
+    null,
+    null,
+    null,
+    false,
+    null,
+    [],
+    {
+      rebuildPreservedEnv: [
+        {
+          path: ".env",
+          assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+        },
+      ],
+    },
   );
 
   const planArg = fs
