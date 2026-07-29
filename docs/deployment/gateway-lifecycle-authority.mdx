@@ -69,7 +69,7 @@ The declaration uses the following fields.
 | `version` | Contract version. Only `1` is supported. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
 | `endpoint` | Exact bare origin for an externally supervised gateway. Use `http` or `https`, host `127.0.0.1` or `[::1]`, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
-| `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`; uninstall removes those owned paths and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
+| `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`. While the external gateway process remains, uninstall preserves the selected local gateway state and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
 | `supervisor` | Required for `externally-supervised` and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` names one `.service` unit, and `execPath` is the absolute gateway executable path. |
 | `requiredCapabilities` | Capabilities onboarding needs. Supported values are `gateway.health`, `sandbox.create`, `sandbox.exec`, and `gpu.passthrough`. |
 

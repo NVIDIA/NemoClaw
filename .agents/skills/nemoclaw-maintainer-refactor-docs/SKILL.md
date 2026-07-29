@@ -16,10 +16,13 @@ Improve findability while preserving every useful fact, one canonical owner per 
 ## Prerequisites
 
 - Work from the NemoClaw repository root.
-- Read `docs/CONTRIBUTING.md` before planning or editing.
+- Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
+  contract before planning or editing.
 - Treat `docs/` as the user-facing source of truth.
 - Read the full target pages, their navigation entries in `docs/index.yml`, their redirects in `fern/docs.yml`, and their inbound links before editing.
-- Read the authoritative code, tests, issue, or PR when the refactor might alter behavior claims rather than only move existing prose.
+- Verify behavior claims against checked-in source, tests, or scripts.
+- Verify support claims against an accepted issue or accepted design decision.
+- Use other issues and PRs to locate rationale, not as authority for behavior or support.
 
 ## Choose the Deliverable
 
@@ -142,7 +145,9 @@ Those generated files are ignored build output. Edit the source page and navigat
 Follow the documentation style guide and these refactor-specific rules:
 
 - Start each page with a concise statement of its purpose.
-- Keep one sentence per source line.
+- Put one prose sentence per source line where practical.
+- Exempt frontmatter, headings, navigation labels, diagrams, code, output, UI labels, and compact
+  table fragments from the prose sentence rules.
 - Keep consecutive items in a simple Markdown list compact, with no blank lines between items.
 - Add **Related Topics** or **Next Steps** only when the links help readers continue the journey.
 - Use `$$nemoclaw` for shared host CLI examples.
@@ -160,7 +165,7 @@ Long single sentences and paragraphs joined across conditional blocks still requ
 - Add a descriptive H2 or H3 when a block contains distinct tasks, decisions, phases, or operational concerns.
 - Do not add a heading for a single thin paragraph or rewrite facts merely to shorten the text.
 - Preserve commands, links, callout meaning, technical claims, route ownership, and agent applicability.
-- Keep one sentence per source line and keep simple lists compact.
+- Keep simple lists compact.
 - Review prose inside callouts, but exclude frontmatter, code fences, tables, headings, JSX tags, and individual list items from mechanical paragraph-size counts.
 
 Regenerate the agent variants after this edit.
@@ -202,8 +207,11 @@ Missing anchors can still be real even when the page route exists.
 
 ## Step 8: Run an Independent Docs Review
 
-When subagents are available, give a documentation reviewer the changed files, the old-to-new ownership map, and test evidence.
-Ask it to check for content loss, duplicate ownership, variant drift, bad redirects, oversized paragraph blocks, generated paragraph joins, and style regressions without telling it the expected verdict.
+Follow the shared independent documentation-writer review contract.
+In addition to its required inputs, give the reviewer the old-to-new ownership map.
+Ask it to check for content loss, duplicate ownership, variant drift, bad redirects, oversized
+paragraph blocks, generated paragraph joins, and style regressions without telling it the expected
+verdict.
 Apply valid findings and rerun affected checks.
 
 ## Completion Contract

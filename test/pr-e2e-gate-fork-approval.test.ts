@@ -7,11 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  approvePrE2E,
   type PullRequest,
   parseControllerCommand,
   prGateExternalId,
-  startApprovedForkPrGate,
-  startControlPlanePrGate,
   startPrGate,
 } from "../tools/e2e/pr-e2e-gate.mts";
 import {
@@ -27,7 +26,6 @@ const ADVANCED_WORKFLOW_SHA = "e".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
 const GATE_RUN_ID = 77;
-const APPROVAL_RUN_ID = 123;
 const DCODE_PATCH = "agents/langchain-deepagents-code/patch-managed-deepagents-code.py";
 afterEach(() => {
   vi.useRealTimers();
@@ -170,10 +168,10 @@ function startCommand(workDir: string) {
   return command as Extract<ReturnType<typeof parseControllerCommand>, { mode: "start" }>;
 }
 
-function startControlPlaneCommand(workDir: string) {
+function approvalCommand(workDir: string) {
   const command = parseControllerCommand([
     "--mode",
-    "start-control-plane",
+    "approve-e2e",
     "--pr",
     "42",
     "--head",
@@ -193,91 +191,19 @@ function startControlPlaneCommand(workDir: string) {
     "--work-dir",
     workDir,
   ]);
-  expect(command.mode).toBe("start-control-plane");
-  return command as Extract<
-    ReturnType<typeof parseControllerCommand>,
-    { mode: "start-control-plane" }
-  >;
+  expect(command.mode).toBe("approve-e2e");
+  return command as Extract<ReturnType<typeof parseControllerCommand>, { mode: "approve-e2e" }>;
 }
 
-function approvalWorkflowRun(overrides: Record<string, unknown> = {}) {
-  return {
-    id: APPROVAL_RUN_ID,
-    name: `E2E Gate workflow_run ${APPROVAL_RUN_ID}`,
-    path: ".github/workflows/pr-e2e-gate.yaml",
-    event: "workflow_run",
-    head_sha: WORKFLOW_SHA,
-    head_branch: "main",
-    status: "in_progress",
-    conclusion: null,
-    run_attempt: 1,
-    html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}`,
-    ...overrides,
-  };
-}
-
-function approvalReview(comment: string | null = null, overrides: Record<string, unknown> = {}) {
-  return {
-    state: "approved",
-    comment,
-    environments: [{ name: "approve-credentialed-e2e-for-fork-pr" }],
-    user: { login: "e2e-reviewer" },
-    ...overrides,
-  };
-}
-
-function approvedForkCommand(workDir: string) {
-  const command = parseControllerCommand([
-    "--mode",
-    "start-approved-fork",
-    "--pr",
-    "42",
-    "--head",
-    HEAD_SHA,
-    "--base",
-    BASE_SHA,
-    "--workflow-sha",
-    WORKFLOW_SHA,
-    "--approval-run-id",
-    String(APPROVAL_RUN_ID),
-    "--approval-run-attempt",
-    "1",
-    "--gate-run-id",
-    String(APPROVAL_RUN_ID),
-    "--workflow-run-attempt",
-    "1",
-    "--work-dir",
-    workDir,
-  ]);
-  expect(command.mode).toBe("start-approved-fork");
-  return command as Extract<
-    ReturnType<typeof parseControllerCommand>,
-    { mode: "start-approved-fork" }
-  >;
-}
-
-function approvalRunRoute(value: unknown) {
-  return githubFetchRoute(
-    ({ url, method }) => url.endsWith(`/actions/runs/${APPROVAL_RUN_ID}`) && method === "GET",
-    () => githubResponse(value),
-  );
-}
-
-function approvalHistoryRoute(value: unknown) {
-  return githubFetchRoute(
-    ({ url, method }) =>
-      url.endsWith(`/actions/runs/${APPROVAL_RUN_ID}/approvals`) && method === "GET",
-    () => githubResponse(value),
-  );
-}
-
-function successfulApprovedForkRoutes(approvals: unknown, requests: RecordedGitHubRequest[]) {
+function successfulMaintainerForkRoutes(requests: RecordedGitHubRequest[]) {
   let check = exactPrGateCheck({
-    output: { title: "E2E reviewer authorization required to run fork E2E" },
+    output: { title: "Maintainer approval required to run fork E2E" },
   });
   return [
-    approvalRunRoute(approvalWorkflowRun()),
-    approvalHistoryRoute(approvals),
+    githubFetchRoute(
+      ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+      () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+    ),
     githubFetchRoute(
       ({ url }) => url.endsWith("/pulls/42"),
       () => githubResponse(forkPullRequest()),
@@ -360,7 +286,7 @@ function reconciledForkRun(runId: number, correlationId: string) {
 }
 
 describe("PR E2E controller fork credentialed E2E approval safety", () => {
-  it("requires the selected DCode target and protected approval before a risky fork can run credentialed E2E (#7463)", async () => {
+  it("requires the selected DCode target and maintainer approval before a risky fork can run credentialed E2E (#7463)", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -406,36 +332,35 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(pending?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "E2E reviewer authorization required to run fork E2E",
+          title: "Maintainer approval required to run fork E2E",
           summary: expect.stringContaining(
             "No selected E2E job or target ran. No repository credential was exposed to fork code.",
           ),
         },
       });
-      expect(JSON.stringify(pending?.body)).toContain("Review deployments");
       expect(JSON.stringify(pending?.body)).toContain(
         `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
       );
-      expect(JSON.stringify(pending?.body)).toContain("approve-credentialed-e2e-for-fork-pr");
       expect(JSON.stringify(pending?.body)).toContain(
-        "Approval authorizes the selected fork code to run with E2E credentials.",
+        "[E2E / PR Gate Controller](https://github.com/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml)",
       );
+      expect(JSON.stringify(pending?.body)).toContain("`approve-e2e`");
+      expect(JSON.stringify(pending?.body)).toContain("`pr_number=42`");
+      expect(JSON.stringify(pending?.body)).toContain(`\`expected_head_sha=${HEAD_SHA}\``);
+      expect(JSON.stringify(pending?.body)).toContain(`\`expected_base_sha=${BASE_SHA}\``);
+      expect(JSON.stringify(pending?.body)).toContain("specific `review_reason`");
       expect(JSON.stringify(pending?.body)).toContain("Review scope: PR #42");
       expect(JSON.stringify(pending?.body)).toContain("head repository `contributor/NemoClaw`");
       expect(JSON.stringify(pending?.body)).toContain(`head SHA \`${HEAD_SHA}\``);
       expect(JSON.stringify(pending?.body)).toContain(`base SHA \`${BASE_SHA}\``);
       expect(JSON.stringify(pending?.body)).toContain("targets:");
       expect(JSON.stringify(pending?.body)).toContain("deterministic plan");
-      expect(fs.readFileSync(outputPath, "utf8")).toContain(
-        [
-          "approval_mode=start-approved-fork",
-          "approval_environment=approve-credentialed-e2e-for-fork-pr",
-          "approval_pr_number=42",
-          `approval_head_sha=${HEAD_SHA}`,
-          `approval_base_sha=${BASE_SHA}`,
-        ].join("\n"),
+      expect(JSON.stringify(pending?.body)).toContain(
+        "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
       );
-      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+      const outputs = fs.readFileSync(outputPath, "utf8");
+      expect(outputs).not.toContain("approval_");
+      expect(outputs).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -609,7 +534,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(completion?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "E2E maintainer authorization required to run E2E",
+          title: "Maintainer approval required to run E2E",
           summary: expect.stringContaining(
             "No selected E2E job or target ran and no repository secret was exposed",
           ),
@@ -617,11 +542,16 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       });
       const summary = JSON.stringify(completion?.body);
       expect(summary).not.toContain("conclusion");
-      expect(summary).toContain("repository maintainer or administrator");
-      expect(summary).toContain("operation=run-control-plane");
-      expect(summary).not.toContain("Review deployments");
-      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("approval_mode=");
-      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+      expect(summary).toContain(
+        "[E2E / PR Gate Controller](https://github.com/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml)",
+      );
+      expect(summary).toContain("`approve-e2e`");
+      expect(summary).toContain("`pr_number=42`");
+      expect(summary).toContain(`\`expected_head_sha=${HEAD_SHA}\``);
+      expect(summary).toContain(`\`expected_base_sha=${BASE_SHA}\``);
+      const outputs = fs.readFileSync(outputPath, "utf8");
+      expect(outputs).not.toContain("approval_");
+      expect(outputs).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -670,7 +600,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     }
   });
 
-  it("dispatches the exact fork repository and PR SHA after protected approval", async () => {
+  it("dispatches the exact fork repository and PR SHA after maintainer approval", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-approved-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -679,19 +609,18 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        successfulApprovedForkRoutes(
-          [approvalReview("Reviewed the exact fork PR and selected E2E plan.")],
-          requests,
-        ),
-        requests,
-      ),
+      createGitHubFetchRouter(successfulMaintainerForkRoutes(requests), requests),
     );
 
     try {
-      await expect(startApprovedForkPrGate(approvedForkCommand(workDir))).resolves.toBeUndefined();
+      await expect(
+        approvePrE2E({
+          ...approvalCommand(workDir),
+          reason: "Reviewed the exact fork PR and selected E2E plan.",
+        }),
+      ).resolves.toBeUndefined();
 
-      expect(requests.some((request) => request.url.includes("/collaborators/"))).toBe(false);
+      expect(requests.some((request) => request.url.includes("/collaborators/"))).toBe(true);
       expect(requests.find((request) => request.url.endsWith("/dispatches"))?.body).toMatchObject({
         ref: "main",
         inputs: {
@@ -707,7 +636,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         (request) =>
           request.url.endsWith("/check-runs/17") &&
           (request.body as { output?: { title?: string } } | undefined)?.output?.title ===
-            "E2E execution authorized by @e2e-reviewer",
+            "E2E execution authorized by @maintainer",
       );
       expect(authorization?.body).toMatchObject({
         status: "in_progress",
@@ -721,7 +650,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     }
   });
 
-  it("cancels ambiguous fork candidates and does not restore protected authorization", async () => {
+  it("cancels ambiguous fork candidates and does not restore maintainer approval", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-26T18:00:00.000Z"));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -733,13 +662,15 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     let check = exactPrGateCheck({
-      output: { title: "E2E reviewer authorization required to run fork E2E" },
+      output: { title: "Maintainer approval required to run fork E2E" },
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
-          approvalRunRoute(approvalWorkflowRun()),
-          approvalHistoryRoute([approvalReview("Reviewed exact fork code and risk plan.")]),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
           githubFetchRoute(
             ({ url }) => url.endsWith("/pulls/42"),
             () => githubResponse(forkPullRequest()),
@@ -799,7 +730,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     );
 
     try {
-      const attempt = startApprovedForkPrGate(approvedForkCommand(workDir));
+      const attempt = approvePrE2E({
+        ...approvalCommand(workDir),
+        reason: "Reviewed exact fork code and risk plan.",
+      });
       const result = expect(attempt).rejects.toThrow(/multiple correlated runs/u);
       await vi.runAllTimersAsync();
       await result;
@@ -820,70 +754,9 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           (request) =>
             request.method === "PATCH" &&
             (request.body as { output?: { title?: string } } | undefined)?.output?.title ===
-              "E2E reviewer authorization required to run fork E2E",
+              "Maintainer approval required to run fork E2E",
         ),
       ).toHaveLength(0);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("fails closed when the fork approval environment did not record an approval", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-no-review-"));
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [approvalRunRoute(approvalWorkflowRun()), approvalHistoryRoute([])],
-        requests,
-      ),
-    );
-
-    try {
-      await expect(startApprovedForkPrGate(approvedForkCommand(workDir))).rejects.toThrow(
-        /No required-reviewer approval was recorded for approve-credentialed-e2e-for-fork-pr/u,
-      );
-      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
-      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("parses only first-attempt protected fork execution", () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-command-"));
-    try {
-      const command = approvedForkCommand(workDir);
-      expect(command).toMatchObject({
-        mode: "start-approved-fork",
-        approvalRunAttempt: 1,
-        workflowRunAttempt: 1,
-      });
-      expect(() =>
-        parseControllerCommand([
-          "--mode",
-          "start-approved-fork",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--approval-run-id",
-          String(APPROVAL_RUN_ID),
-          "--approval-run-attempt",
-          "2",
-          "--gate-run-id",
-          String(APPROVAL_RUN_ID),
-          "--workflow-run-attempt",
-          "1",
-          "--work-dir",
-          workDir,
-        ]),
-      ).toThrow(/must be exactly 1/u);
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -901,7 +774,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       id: 18,
       status: "in_progress",
       conclusion: null,
-      output: { title: "E2E maintainer authorization required to run E2E" },
+      output: { title: "Maintainer approval required to run E2E" },
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -1002,9 +875,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     );
 
     try {
-      await expect(
-        startControlPlanePrGate(startControlPlaneCommand(workDir)),
-      ).resolves.toBeUndefined();
+      await expect(approvePrE2E(approvalCommand(workDir))).resolves.toBeUndefined();
 
       const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
       expect(dispatch?.body).toMatchObject({
@@ -1057,7 +928,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     let check = exactPrGateCheck({
-      output: { title: "E2E maintainer authorization required to run E2E" },
+      output: { title: "Maintainer approval required to run E2E" },
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -1116,7 +987,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     );
 
     try {
-      await expect(startControlPlanePrGate(startControlPlaneCommand(workDirs[0]!))).rejects.toThrow(
+      await expect(approvePrE2E(approvalCommand(workDirs[0]!))).rejects.toThrow(
         /child cancellation failed/u,
       );
       expect(check).toMatchObject({
@@ -1127,7 +998,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           summary: expect.stringContaining("cannot be retried"),
         },
       });
-      await expect(startControlPlanePrGate(startControlPlaneCommand(workDirs[1]!))).rejects.toThrow(
+      await expect(approvePrE2E(approvalCommand(workDirs[1]!))).rejects.toThrow(
         /matching pending E2E authorization state/u,
       );
       expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
@@ -1161,43 +1032,11 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
 
     try {
       await expect(
-        startControlPlanePrGate({
-          ...startControlPlaneCommand(workDir),
+        approvePrE2E({
+          ...approvalCommand(workDir),
           maintainer: "contributor",
         }),
       ).rejects.toThrow(/maintainer or administrator/u);
-      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects control-plane authorization for a fork pull request", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
-            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () => githubResponse(forkPullRequest()),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    try {
-      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
-        /requires an internal pull request/u,
-      );
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
     } finally {
@@ -1228,7 +1067,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           existingPrGateCheckRunsRoute({
             status: "completed",
             conclusion: "failure",
-            output: { title: "E2E maintainer authorization required to run E2E" },
+            output: { title: "Maintainer approval required to run E2E" },
           }),
         ],
         requests,
@@ -1236,7 +1075,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     );
 
     try {
-      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+      await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
         /matching pending E2E authorization state/u,
       );
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
@@ -1253,7 +1092,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
-    let checkTitle = "E2E maintainer authorization required to run E2E";
+    let checkTitle = "Maintainer approval required to run E2E";
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -1301,7 +1140,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
 
     try {
       for (const workDir of workDirs) {
-        await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+        await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
           /main advanced through trusted E2E control-plane changes/u,
         );
       }
@@ -1310,18 +1149,18 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           request.url.endsWith("/check-runs/17") &&
           request.method === "PATCH" &&
           (request.body as { output?: { title?: string } } | undefined)?.output?.title ===
-            "E2E maintainer authorization required to run E2E",
+            "Maintainer approval required to run E2E",
       );
       expect(restoredAuthorizations).toHaveLength(2);
       expect(restoredAuthorizations[0]?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "E2E maintainer authorization required to run E2E",
-          summary: expect.stringContaining("launch a first-attempt `run-control-plane`"),
+          title: "Maintainer approval required to run E2E",
+          summary: expect.stringContaining("launch a fresh first-attempt `approve-e2e`"),
         },
       });
       expect(restoredAuthorizations[0]?.body).not.toHaveProperty("conclusion");
-      expect(checkTitle).toBe("E2E maintainer authorization required to run E2E");
+      expect(checkTitle).toBe("Maintainer approval required to run E2E");
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
     } finally {
       for (const workDir of workDirs) fs.rmSync(workDir, { recursive: true, force: true });
@@ -1365,7 +1204,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     );
 
     try {
-      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+      await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
         /Superseded by PR update/u,
       );
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
@@ -1408,7 +1247,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           existingPrGateCheckRunsRoute({
             status: "in_progress",
             conclusion: null,
-            output: { title: "E2E maintainer authorization required to run E2E" },
+            output: { title: "Maintainer approval required to run E2E" },
           }),
           mainWorkflowRefRoute(),
         ],
@@ -1417,7 +1256,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     );
 
     try {
-      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+      await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
         /Superseded by PR update/u,
       );
       expect(pullReads).toBe(3);
