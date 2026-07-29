@@ -76,7 +76,7 @@ export function classifyWebSearchEnvBoundary(
  * config file. Classification runs in-sandbox and only a marked sentinel
  * returns, so the raw value never reaches the host. On a raw-secret exposure it
  * surfaces a prominent, actionable alert. Returns true when a raw credential was
- * detected. Best-effort and non-fatal, matching the surrounding verification.
+ * detected so finalization can refuse a successful handoff.
  */
 function checkWebSearchEnvSecretBoundary(
   sandboxName: string,
@@ -207,13 +207,14 @@ function hasTavilyResult(body: string): boolean {
  * rewriting and egress with a real search request.
  * For OpenClaw: checks the tools.web.search block, then proves provider egress.
  *
- * This is a best-effort warning — it does not abort onboarding.
+ * Ordinary probe failures remain best-effort warnings. A confirmed raw
+ * credential returns false so onboarding cannot report the sandbox as ready.
  */
 export function verifyWebSearchInsideSandbox(
   sandboxName: string,
   agent: WebSearchVerifyAgent,
   deps: WebSearchVerifyDeps,
-): void {
+): boolean {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const agentName = agent?.name || "openclaw";
@@ -231,14 +232,14 @@ export function verifyWebSearchInsideSandbox(
       );
       if (!configText) {
         warn("  ⚠ Could not read Hermes config to verify Tavily Search.");
-        return;
+        return true;
       }
       let config: { web?: { backend?: unknown } };
       try {
         config = YAML.parse(configText) as { web?: { backend?: unknown } };
       } catch {
         warn("  ⚠ Could not parse Hermes config to verify Tavily Search.");
-        return;
+        return true;
       }
       if (config?.web?.backend !== "tavily") {
         warn(
@@ -248,10 +249,10 @@ export function verifyWebSearchInsideSandbox(
         warn(
           `    Check: ${deps.cliName()} ${sandboxName} exec -- cat /sandbox/.hermes/config.yaml`,
         );
-        return;
+        return true;
       }
 
-      checkWebSearchEnvSecretBoundary(sandboxName, "tavily", deps, warn);
+      if (checkWebSearchEnvSecretBoundary(sandboxName, "tavily", deps, warn)) return false;
 
       const placeholder = "openshell:resolve:env:TAVILY_API_KEY";
       const probe = deps.runCaptureOpenshell(
@@ -269,7 +270,7 @@ export function verifyWebSearchInsideSandbox(
       );
       if (!probe) {
         warn("  ⚠ Tavily Search config exists, but the egress verification request failed.");
-        return;
+        return true;
       }
       const statusMatch = probe.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
       const status = statusMatch?.[1] || "unknown";
@@ -288,7 +289,7 @@ export function verifyWebSearchInsideSandbox(
       );
       if (!configCheck) {
         warn("  ⚠ Could not verify web search config inside sandbox.");
-        return;
+        return true;
       }
       try {
         const parsed = JSON.parse(configCheck);
@@ -297,14 +298,14 @@ export function verifyWebSearchInsideSandbox(
           warn(
             "  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.",
           );
-          return;
+          return true;
         }
         const provider = search.provider;
         if (provider !== "brave" && provider !== "tavily") {
           warn(`  ⚠ Web search provider '${String(provider)}' cannot be verified.`);
-          return;
+          return true;
         }
-        checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn);
+        if (checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn)) return false;
         const providerLabel = provider === "tavily" ? "Tavily Search" : "Brave Search";
         // Current OpenClaw schema keeps the provider-owned apiKey under
         // plugins.entries.<provider>.config.webSearch; older configs carried
@@ -314,7 +315,7 @@ export function verifyWebSearchInsideSandbox(
         const apiKey = typeof pluginApiKey === "string" ? pluginApiKey : search.apiKey;
         if (typeof apiKey !== "string" || apiKey.trim() === "") {
           warn(`  ⚠ ${providerLabel} is enabled but openclaw.json has no API key placeholder.`);
-          return;
+          return true;
         }
         // Refuse to interpolate raw secrets into the curl argv. The probe
         // only proves the L7 proxy rewrites a placeholder, so a literal key
@@ -324,7 +325,7 @@ export function verifyWebSearchInsideSandbox(
           warn(
             `  ⚠ ${providerLabel} apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.`,
           );
-          return;
+          return true;
         }
         const probeCommand =
           provider === "tavily"
@@ -336,7 +337,7 @@ export function verifyWebSearchInsideSandbox(
         );
         if (!probe) {
           warn(`  ⚠ ${providerLabel} config exists, but the egress verification request failed.`);
-          return;
+          return true;
         }
         const statusMatch = probe.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
         const status = statusMatch?.[1] || "unknown";
@@ -369,4 +370,5 @@ export function verifyWebSearchInsideSandbox(
     // Best-effort — don't let probe failures derail onboarding.
     warn("  ⚠ Web search verification probe failed (non-fatal).");
   }
+  return true;
 }

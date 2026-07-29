@@ -63,12 +63,11 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     isDeploymentHealthy(result: VerificationResult): boolean;
     reportDeploymentReadiness(healthy: boolean): void;
     /**
-     * Best-effort probe that confirms the agent runtime actually accepted the
-     * web-search config and (for Brave) that the L7 proxy rewrites the
-     * `X-Subscription-Token` header at egress. Called after the post-policy
-     * sandbox-process recovery so the final policy/gateway state is live.
+     * Confirms the live sandbox does not expose a raw web-search credential.
+     * Other web-search diagnostics remain best-effort. Returns false only for
+     * a confirmed exposure so finalization cannot report the sandbox as ready.
      */
-    verifyWebSearchInsideSandbox(sandboxName: string, agent: Agent): void;
+    verifyWebSearchInsideSandbox(sandboxName: string, agent: Agent): boolean;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -173,11 +172,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.autoPairScopeApproval(sandboxName);
   }
 
-  // Probe Brave Search egress through the L7 proxy now that the final
-  // policy and provider state are live — earlier probes would race the
-  // not-yet-applied `brave` preset (#3626). Best-effort; never blocks.
+  // Probe web-search credential isolation and egress now that the final policy
+  // and provider state are live. Egress diagnostics remain best-effort, but a
+  // confirmed raw credential must prevent a successful handoff (#7425).
+  let webSearchCredentialBoundarySafe = true;
   if (webSearchEnabled && manageDashboard) {
-    deps.verifyWebSearchInsideSandbox(sandboxName, agent);
+    webSearchCredentialBoundarySafe = deps.verifyWebSearchInsideSandbox(sandboxName, agent);
   }
 
   if (manageDashboard) {
@@ -197,7 +197,8 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
-    deploymentHealthy = deps.isDeploymentHealthy(verificationResult);
+    deploymentHealthy =
+      webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
     deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);

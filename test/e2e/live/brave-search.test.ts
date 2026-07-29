@@ -16,6 +16,7 @@ import {
   commandEnv,
   extractOpenClawAgentText,
   onboardBrave,
+  runBraveAgentWithSecretBoundaryCheck,
   SANDBOX_NAME,
   sandboxShell,
   uploadSecretForLeakCheck,
@@ -118,10 +119,10 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   assertOptionalBraveEnv(envCheck.stdout, braveKey);
 
   progress.phase("run Brave-backed OpenClaw search");
-  const agent = await sandboxShell(
+  const agent = await runBraveAgentWithSecretBoundaryCheck(
     sandbox,
-    `openclaw agent --agent main --json --session-id e2e-brave-agent-$$ -m 'Use the web search tool to find one result for the query: NVIDIA. Reply with only the title of the top result.'`,
-    { artifactName: "phase-4a-agent-web-search", timeoutMs: 150_000, redactionValues },
+    remoteSecretFile,
+    redactionValues,
   );
   expect(resultText(agent)).not.toMatch(
     /SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error/i,

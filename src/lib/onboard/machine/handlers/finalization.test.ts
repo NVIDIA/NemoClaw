@@ -40,7 +40,7 @@ function createDeps(
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
-    verifyWebSearch: vi.fn(),
+    verifyWebSearch: vi.fn(() => true),
     dashboard: vi.fn(),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
@@ -334,6 +334,34 @@ describe("handleFinalizationState", () => {
     expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
       callsOn.verify.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not complete when web-search credentials are exposed in the sandbox (#7425)", async () => {
+    const { deps, calls } = createDeps({
+      verifyWebSearchInsideSandbox: vi.fn(() => false),
+    });
+    const agent = { name: "openclaw" };
+
+    const result = await handleFinalizationState({
+      ...baseOptions(deps),
+      agent,
+      webSearchEnabled: true,
+    });
+
+    expect(result.deploymentHealthy).toBe(false);
+    expect(result.stateResult).toMatchObject({
+      type: "pause",
+      metadata: { reason: "deployment_not_ready" },
+    });
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      agent,
+      false,
+    );
+    expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
   // Scenario A (#4504): the auto-pair scope-approval sweep runs against the

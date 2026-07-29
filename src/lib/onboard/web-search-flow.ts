@@ -103,7 +103,7 @@ export interface WebSearchFlowHelpers {
   verifyWebSearchInsideSandbox(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
-  ): void;
+  ): boolean;
 }
 
 export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFlowHelpers {
@@ -479,8 +479,8 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
   function verifyWebSearchInsideSandbox(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
-  ): void {
-    verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, {
+  ): boolean {
+    return verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, {
       runCaptureOpenshell: deps.runCaptureOpenshell,
       cliName: deps.cliName,
     });

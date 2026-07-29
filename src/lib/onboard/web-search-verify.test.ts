@@ -71,6 +71,18 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(d.warn).not.toHaveBeenCalled();
   });
 
+  it("blocks Hermes handoff when the sandbox env exposes a raw Tavily key (#7425)", () => {
+    const d = deps(["web:\n  backend: tavily\n", "__nemoclaw_wsenv__:raw-secret"]);
+
+    const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
+
+    expect(credentialBoundarySafe).toBe(false);
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.warn).toHaveBeenCalledWith(
+      "  ✗ SECURITY: the Tavily Search credential is exposed in the sandbox environment.",
+    );
+  });
+
   it("does not treat pinned Hermes dump-shaped output as an active Tavily backend", () => {
     const d = deps("active toolsets: web, shell\n");
 
@@ -118,8 +130,9 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+    const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
+    expect(credentialBoundarySafe).toBe(true);
     expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
     expect(d.runCaptureOpenshell.mock.calls[1][0].slice(0, 7)).toEqual([
       "sandbox",
@@ -161,8 +174,9 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+    const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
+    expect(credentialBoundarySafe).toBe(true);
     expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
     expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
       "sandbox",
@@ -195,8 +209,9 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ results: [] }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+    const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
+    expect(credentialBoundarySafe).toBe(true);
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Tavily Search config exists, but egress verification returned HTTP 200.",
     );
@@ -341,14 +356,15 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+    const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
     expect(d.warn).toHaveBeenCalledWith(
       "  ✗ SECURITY: the Brave Search credential is exposed in the sandbox environment.",
     );
     expect(d.warn).toHaveBeenCalledWith("      nemoclaw onboard --recreate-sandbox");
-    // Non-fatal: egress verification still runs after the alert.
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(credentialBoundarySafe).toBe(false);
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.log).not.toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 
   it("accepts a resolve:env placeholder sentinel without a security alert", () => {

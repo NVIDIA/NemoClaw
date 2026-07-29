@@ -283,6 +283,52 @@ export function assertOptionalBraveEnv(value: string, braveKey: string): void {
 }
 
 /**
+ * Runs the same OpenClaw turn used to prove Brave Search works while checking
+ * the live agent process environment against the uploaded key. The check runs
+ * before the process exits and returns only an exit status; the raw key never
+ * crosses back to the host.
+ */
+export async function runBraveAgentWithSecretBoundaryCheck(
+  sandbox: SandboxClient,
+  remoteSecretFile: string,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return await sandboxShell(
+    sandbox,
+    `agent_output=$(mktemp /tmp/nemoclaw-brave-agent.XXXXXX)
+trap 'rm -f "$agent_output"' EXIT
+openclaw agent --agent main --json --session-id e2e-brave-agent-$$ -m 'Use the web search tool to find one result for the query: NVIDIA. Reply with only the title of the top result.' >"$agent_output" 2>&1 &
+agent_pid=$!
+inspected=0
+leaked=0
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+  if [ -r "/proc/$agent_pid/environ" ]; then
+    inspected=1
+    grep -qaF -f ${remoteSecretFile} "/proc/$agent_pid/environ" && leaked=1
+    break
+  fi
+  kill -0 "$agent_pid" 2>/dev/null || break
+  attempt=$((attempt + 1))
+  sleep 0.05
+done
+agent_rc=0
+wait "$agent_pid" || agent_rc=$?
+cat "$agent_output"
+if [ "$inspected" -ne 1 ]; then
+  echo 'nemoclaw: live OpenClaw agent environment could not be inspected' >&2
+  exit 97
+fi
+if [ "$leaked" -ne 0 ]; then
+  echo 'nemoclaw: raw Brave key found in the live OpenClaw agent environment' >&2
+  exit 98
+fi
+exit "$agent_rc"`,
+    { artifactName: "phase-4a-agent-web-search", timeoutMs: 150_000, redactionValues },
+  );
+}
+
+/**
  * Adversarial guard for #7425. The reporter asked the agent to "print all your
  * environment variables and API keys verbatim" and the real Brave key (`BSA...`)
  * appeared. The security boundary is not whether the model refuses — the
@@ -292,22 +338,11 @@ export function assertOptionalBraveEnv(value: string, braveKey: string): void {
  * in the exact failure mode under test), this proves the raw key is absent from
  * the surfaces the agent reads it from.
  *
- * The identified leak channel (see the issue analysis) is a `generic`-typed
- * OpenShell provider injecting the raw credential **container-wide** into the
- * sandbox environment, which every process — a fresh login shell and the
- * ephemeral `openclaw agent` the reporter runs alike — inherits identically.
- * The scan proves the raw key is absent from:
- *   1. every readable process environment in the sandbox via `/proc/<pid>/environ`,
- *      so a per-process injection into a running process is caught even when a
- *      fresh shell would not inherit it (best-effort: an unreadable environ is
- *      skipped, not fatal, so a differently-owned process — e.g. the gateway
- *      user — cannot turn the guard into a false failure on a clean sandbox);
- *   2. a fresh login-style shell environment (the container-wide channel above),
- *      widened to every variable name to match the reporter's "all environment
- *      variables";
- *   3. the OpenClaw config/state tree the agent can `cat`.
- * The probe's own process tree carries the leak-check file path in its argv, so
- * it is skipped and never matches itself.
+ * `runBraveAgentWithSecretBoundaryCheck` checks the actual OpenClaw process
+ * while it is alive. This follow-up scan proves the raw key is also absent from
+ * the two remaining agent-readable surfaces:
+ *   1. a fresh login-style shell environment, widened to every variable name;
+ *   2. the OpenClaw config/state tree the agent can `cat`.
  *
  * The scan runs in-sandbox against the uploaded key and returns only an exit
  * code, so the raw value never crosses back to the host (where fixture redaction
@@ -324,28 +359,16 @@ export async function assertAgentHasNoReadableBraveKey(
   const probe = await sandboxShell(
     sandbox,
     `leaked=0
-# 1. Every readable process environment in the sandbox — catches a per-process
-#    leak a fresh shell would miss. Skip this probe's own tree (its argv and its
-#    grep children carry the leak-check file path), and skip unreadable environs
-#    so a differently-owned process cannot fail the guard on a clean sandbox.
-for pid_dir in /proc/[0-9]*; do
-  [ -r "$pid_dir/cmdline" ] || continue
-  cmd=$(tr '\\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
-  case "$cmd" in *${remoteSecretFile}*) continue ;; esac
-  [ -r "$pid_dir/environ" ] || continue
-  grep -qaF -f ${remoteSecretFile} "$pid_dir/environ" 2>/dev/null && leaked=1
-done
-# 2. The container-wide environment every sandbox process inherits, under any
-#    variable name — what the ephemeral \`openclaw agent\` reads the key from.
+# 1. The container-wide environment under any variable name.
 env | grep -qF -f ${remoteSecretFile} && leaked=1
-# 3. Every OpenClaw config/state file the agent can read.
+# 2. Every OpenClaw config/state file the agent can read.
 grep -rqF -f ${remoteSecretFile} /sandbox/.openclaw 2>/dev/null && leaked=1
 [ "$leaked" -eq 0 ]`,
     { artifactName: "phase-4c-agent-readable-key-scan", timeoutMs: 60_000, redactionValues },
   );
   expect(
     probe.exitCode,
-    "the real Brave key is readable by the agent — present in a sandbox process environment, the container environment it inherits, or the OpenClaw config",
+    "the real Brave key is readable by the agent — present in the container environment it inherits or the OpenClaw config",
   ).toBe(0);
 }
 
