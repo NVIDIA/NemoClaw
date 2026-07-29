@@ -117,6 +117,11 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 | `Dockerfile` | `docs/reference/architecture.mdx` |
 | Inference-related changes | Start at `docs/inference/how-inference-routing-works.mdx`, then update the focused provider, model, setup, management, or validation page that owns the behavior. |
 
+For every target page, determine which agent runtimes execute the behavior and which guide variants must publish it.
+Use implementation gates, tests, or accepted product scope as evidence for each inclusion or exclusion.
+Do not infer applicability from the page's current navigation placement.
+Host-side NemoClaw and OpenShell behavior is not OpenClaw-only unless the implementation or accepted scope establishes that restriction.
+
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
 If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
 Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
@@ -201,7 +206,9 @@ When updating an existing page:
 When creating a new page:
 
 - Follow the frontmatter template from existing pages in `docs/`.
-- Add the page to the appropriate navigation entry in `docs/index.yml`.
+- Add the page to every applicable navigation variant in `docs/index.yml`.
+- Use generated navigation targets when the page applies to more than one variant.
+- Declare the exact `agent-variants` subset in frontmatter when the page intentionally applies to fewer than OpenClaw, Hermes, and Deep Agents.
 
 ## Step 6: Present the Results
 
