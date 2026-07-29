@@ -37,9 +37,9 @@ export interface PreparedManagedCloneProvider {
   readonly providerEnvKey: string;
   readonly source: ManagedCloneProviderSource;
   /**
-   * Only a force-replaced destination authorizes rotation of an existing
-   * destination-named provider. An absent destination cannot prove that an
-   * orphan provider's secret belongs to the source being cloned.
+   * Only a force-replaced destination authorizes replacement of an existing
+   * destination-named provider. Provisioning must still prove that no other
+   * sandbox is attached before it deletes and recreates the provider.
    */
   readonly replaceExistingCredential: boolean;
 }
@@ -279,9 +279,9 @@ export function provisionManagedCloneProviders(
   },
 ): string[] {
   const environment = input.environment ?? process.env;
-  // Updates are authorized only for a force-replaced destination that is
-  // already gone. Track them exactly like creates so a later provider or
-  // sandbox-create failure cannot leave a rotated credential-bearing orphan.
+  // A force-replaced destination authorizes deletion and recreation, never a
+  // gateway-wide credential update. The bounded delete helper proves that no
+  // unrelated sandbox is attached before the new credential is introduced.
   const mutated: string[] = [];
   try {
     for (const provider of prepared) {
@@ -297,6 +297,25 @@ export function provisionManagedCloneProviders(
             "refusing unproven credential reuse",
         );
       }
+      if (current.kind === "exact") {
+        const authorizedSandboxName = input.rollbackSandboxName;
+        if (!authorizedSandboxName) {
+          throw new Error(
+            `managed clone provider '${provider.providerName}' cannot be replaced without ` +
+              "an exact destination sandbox",
+          );
+        }
+        const replacementDelete = deleteProviderWithRecovery(provider.providerName, {
+          runOpenshell: input.runOpenshell,
+          allowedSandboxes: [authorizedSandboxName],
+        });
+        if (!replacementDelete.ok) {
+          throw new Error(
+            `managed clone provider '${provider.providerName}' is still attached outside ` +
+              `destination '${authorizedSandboxName}'`,
+          );
+        }
+      }
 
       const credential = environment[provider.providerEnvKey]?.replace(/\r/gu, "").trim();
       if (!credential) {
@@ -304,27 +323,25 @@ export function provisionManagedCloneProviders(
           `managed clone credential ${provider.providerEnvKey} disappeared before provider creation`,
         );
       }
-      const action = current.kind === "exact" ? "update" : "create";
-      const args =
-        action === "update"
-          ? ["provider", "update", provider.providerName, "--credential", provider.providerEnvKey]
-          : [
-              "provider",
-              "create",
-              "--name",
-              provider.providerName,
-              "--type",
-              provider.providerType,
-              "--credential",
-              provider.providerEnvKey,
-            ];
-      const result = input.runOpenshell(args, {
-        ignoreError: true,
-        env: { [provider.providerEnvKey]: credential },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = input.runOpenshell(
+        [
+          "provider",
+          "create",
+          "--name",
+          provider.providerName,
+          "--type",
+          provider.providerType,
+          "--credential",
+          provider.providerEnvKey,
+        ],
+        {
+          ignoreError: true,
+          env: { [provider.providerEnvKey]: credential },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       if (result.status !== 0) {
-        throw new Error(`failed to ${action} managed clone provider '${provider.providerName}'`);
+        throw new Error(`failed to create managed clone provider '${provider.providerName}'`);
       }
       mutated.push(provider.providerName);
       if (inspectProvider(provider, input.runOpenshell).kind !== "exact") {

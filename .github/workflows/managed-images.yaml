@@ -1156,6 +1156,63 @@ jobs:
           fi
           printf 'candidate_set=%s\n' "$candidate_set" >> "$GITHUB_OUTPUT"
 
+      - name: Verify release tag before managed image promotion
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REVISION: ${{ github.sha }}
+        with:
+          script: |
+            const releaseTag = process.env.RELEASE_TAG ?? '';
+            const releaseRevision = process.env.RELEASE_REVISION ?? '';
+            if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
+              throw new Error(`Refusing to verify non-semver tag: ${releaseTag}`);
+            }
+            if (!/^[0-9a-f]{40}$/.test(releaseRevision)) {
+              throw new Error(`Refusing release promotion with invalid revision: ${releaseRevision}`);
+            }
+
+            const { owner, repo } = context.repo;
+            const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${releaseTag}` });
+            if (ref.data.object.type !== 'tag') {
+              throw new Error(`Release tag ${releaseTag} must be annotated`);
+            }
+
+            const tagObjectSha = ref.data.object.sha;
+            let tagObject;
+            for (let attempt = 1; attempt <= 10; attempt += 1) {
+              ({ data: tagObject } = await github.rest.git.getTag({
+                owner,
+                repo,
+                tag_sha: tagObjectSha,
+              }));
+              if (tagObject.verification?.verified === true) break;
+              if (attempt < 10) {
+                core.info(`Waiting for GitHub tag verification (${attempt}/10)`);
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+              }
+            }
+
+            if (tagObject.tag !== releaseTag) {
+              throw new Error(`Tag object ${tagObjectSha} names ${tagObject.tag}, expected ${releaseTag}`);
+            }
+            if (tagObject.object.type !== 'commit') {
+              throw new Error(`Release tag ${releaseTag} must point directly to a commit`);
+            }
+            if (tagObject.object.sha !== releaseRevision) {
+              throw new Error(
+                `Release tag ${releaseTag} points to ${tagObject.object.sha}, expected ${releaseRevision}`,
+              );
+            }
+            if (tagObject.verification?.verified !== true) {
+              throw new Error(
+                `Release tag ${releaseTag} is not GitHub-Verified (${tagObject.verification?.reason ?? 'unknown'})`,
+              );
+            }
+
+            core.info(`Verified signed release tag ${releaseTag} (${tagObjectSha})`);
+
       - name: Set up Docker Buildx for promotion
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 

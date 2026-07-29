@@ -22,6 +22,8 @@ export type SandboxBuildEstimateHost = {
   dockerMemTotalBytes?: number;
 };
 
+export type SandboxLocalBuildKind = "custom-dockerfile" | "trusted-dockerfile-fallback";
+
 export type OnboardConfigSummary = {
   provider: string | null;
   model: string | null;
@@ -55,10 +57,13 @@ function normalizeHermesAuthMethod(value: string | null | undefined): HermesAuth
   return null;
 }
 
-export function formatSandboxBuildEstimateNote(host: SandboxBuildEstimateHost): string | null {
+export function formatSandboxBuildEstimateNote(
+  host: SandboxBuildEstimateHost,
+  buildKind: SandboxLocalBuildKind,
+): string | null {
   if (host.isContainerRuntimeUnderProvisioned) {
     return (
-      "Container runtime is under-provisioned; the sandbox build may take 30+ minutes " +
+      `Container runtime is under-provisioned; the ${buildKind === "custom-dockerfile" ? "custom Dockerfile" : "trusted Dockerfile fallback"} build may take 30+ minutes ` +
       "or stall. See preflight warning above."
     );
   }
@@ -67,9 +72,9 @@ export function formatSandboxBuildEstimateNote(host: SandboxBuildEstimateHost): 
   if (typeof cpus === "number" && typeof memBytes === "number") {
     const memGiB = memBytes / 1024 ** 3;
     if (cpus >= 8 && memGiB >= 16) {
-      return "Sandbox build typically takes 3–8 minutes on this host.";
+      return "Local Dockerfile build typically takes 3–8 minutes on this host.";
     }
-    return "Sandbox build typically takes 5–15 minutes on this host.";
+    return "Local Dockerfile build typically takes 5–15 minutes on this host.";
   }
   return null;
 }

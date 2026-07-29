@@ -16,7 +16,7 @@ describe("onboard summary helpers", () => {
       webSearchConfig: { fetchEnabled: true },
       enabledChannels: ["telegram", "slack"],
       sandboxName: "my-assistant",
-      notes: ["Sandbox build typically takes 5–15 minutes on this host."],
+      notes: ["Local Dockerfile build typically takes 5–15 minutes on this host."],
     });
 
     assert.ok(summary.includes("Review configuration"), "summary has review heading");
@@ -31,7 +31,9 @@ describe("onboard summary helpers", () => {
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
     assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
     assert.ok(
-      summary.includes("Note:          Sandbox build typically takes 5–15 minutes on this host."),
+      summary.includes(
+        "Note:          Local Dockerfile build typically takes 5–15 minutes on this host.",
+      ),
       "summary renders notes under sandbox name",
     );
 
@@ -81,30 +83,39 @@ describe("onboard summary helpers", () => {
     assert.ok(tavilySummary.includes("enabled (Tavily Search)"));
   });
 
-  it("formatSandboxBuildEstimateNote warns when runtime is under-provisioned (#2514)", () => {
-    const note = formatSandboxBuildEstimateNote({
-      isContainerRuntimeUnderProvisioned: true,
-      dockerCpus: 2,
-      dockerMemTotalBytes: 2 * 1024 ** 3,
-    });
+  it("formatSandboxBuildEstimateNote warns for an under-provisioned custom build (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote(
+      {
+        isContainerRuntimeUnderProvisioned: true,
+        dockerCpus: 2,
+        dockerMemTotalBytes: 2 * 1024 ** 3,
+      },
+      "custom-dockerfile",
+    );
     assert.ok(note != null && note.length > 0, "returns a note");
-    assert.match(note as string, /under-provisioned/i, "note flags under-provisioned host");
+    assert.match(note as string, /custom Dockerfile build/u);
   });
 
-  it("formatSandboxBuildEstimateNote returns a tighter range on a generous host (#2514)", () => {
-    const note = formatSandboxBuildEstimateNote({
-      isContainerRuntimeUnderProvisioned: false,
-      dockerCpus: 12,
-      dockerMemTotalBytes: 32 * 1024 ** 3,
-    });
+  it("formatSandboxBuildEstimateNote returns a range for a trusted fallback build (#7744)", () => {
+    const note = formatSandboxBuildEstimateNote(
+      {
+        isContainerRuntimeUnderProvisioned: false,
+        dockerCpus: 12,
+        dockerMemTotalBytes: 32 * 1024 ** 3,
+      },
+      "trusted-dockerfile-fallback",
+    );
     assert.ok(note != null, "returns a note");
     assert.match(note ?? "", /\b3[–-]\d+\s+minutes\b/, "tight range starts at 3 minutes");
   });
 
-  it("formatSandboxBuildEstimateNote returns null when no runtime resource signal is available (#2514)", () => {
-    const note = formatSandboxBuildEstimateNote({
-      isContainerRuntimeUnderProvisioned: false,
-    });
+  it("formatSandboxBuildEstimateNote returns null without a resource signal (#2514)", () => {
+    const note = formatSandboxBuildEstimateNote(
+      {
+        isContainerRuntimeUnderProvisioned: false,
+      },
+      "trusted-dockerfile-fallback",
+    );
     assert.strictEqual(note, null);
   });
 });
