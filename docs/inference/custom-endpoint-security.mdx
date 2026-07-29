@@ -17,10 +17,12 @@ The agent inside the sandbox sends requests to `inference.local` instead of conn
 OpenShell forwards the traffic and injects the provider credential at egress.
 The sandbox does not receive the raw API key.
 
-Use `COMPATIBLE_API_KEY` for a custom OpenAI-compatible endpoint.
+Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
+For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, you can select no authentication.
+For non-interactive onboarding of that OpenAI-compatible endpoint, set `NEMOCLAW_COMPATIBLE_AUTH_MODE=none`.
 Use `COMPATIBLE_ANTHROPIC_API_KEY` for a custom Anthropic-compatible endpoint.
-Both onboarding flows require a non-empty value, even when the upstream server does not authenticate requests.
-Use a non-empty placeholder such as `dummy` for an unauthenticated local server.
+Anthropic-compatible onboarding requires a non-empty value even when the upstream server does not authenticate requests.
+Use a non-empty placeholder such as `dummy` for an unauthenticated Anthropic-compatible endpoint.
 
 ## Understand URL Validation
 
