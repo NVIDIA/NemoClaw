@@ -92,8 +92,8 @@ function targetAttachment(): CuaTargetAttachment {
 }
 
 function attachedTarget(record: CuaTargetAttachment): NonNullable<CuaTargetAttachment["target"]> {
-  if (record.target === null) throw new Error("test fixture must contain an attached target");
-  return record.target;
+  expect(record.target).not.toBeNull();
+  return record.target as NonNullable<CuaTargetAttachment["target"]>;
 }
 
 function taskResult(): CuaTaskResult {
