@@ -1543,6 +1543,7 @@ NemoClaw does not copy adapter standard error into public output.
 Attachment also requires a secret-free JSON manifest that matches `schemas/cua-target-manifest.schema.json`.
 The manifest contains immutable target, image, service-bundle, and protocol identities.
 It must not contain endpoints, credentials, host names, instance IDs, transport handles, or administration data.
+The manifest path must directly name a regular file no larger than 64 KiB; NemoClaw does not follow symbolic links.
 
 ```json
 {
