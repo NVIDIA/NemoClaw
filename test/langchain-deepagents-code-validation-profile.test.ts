@@ -383,6 +383,7 @@ try:
 finally:
     managed.subprocess.Popen = original_popen
 results["raceEscaped"] = (root / "race-escaped").exists()
+managed._VALIDATION_EXECUTABLE_OWNER_UID = Path(executables["echo"]).stat().st_uid
 def mutate_source_before_spawn(*args, **kwargs):
     if args[0] == [executables["echo"], "source-race"]:
         (workspace / "tracked.txt").write_text(
@@ -408,7 +409,6 @@ for worker in workers:
 for worker in workers:
     worker.join(timeout=10)
 results["concurrent"] = sorted(queue.get(timeout=1) for _index in workers)
-managed._VALIDATION_EXECUTABLE_OWNER_UID = Path(executables["echo"]).stat().st_uid
 subprocess.run(
     [
         git_executable,
