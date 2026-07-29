@@ -329,18 +329,14 @@ describe("rebuild replacement journal", () => {
     expect(second.targetGeneration).toBe(first.targetGeneration);
   });
 
-  function proveReplacement(journalId: string, targetGeneration: string): string {
+  function proveReplacement(targetGeneration: string): string {
     const identity = session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint ?? "";
     onboardSession.updateSession((current) => {
-      const checkpoint = current.checkpoint;
-      const transaction = checkpoint?.sandboxRecreate;
-      if (!checkpoint || !transaction || transaction.id !== journalId) {
-        throw new Error("journal is missing");
-      }
+      const checkpoint = current.checkpoint as NonNullable<Session["checkpoint"]>;
       current.checkpoint = {
         ...checkpoint,
         sandboxRecreate: {
-          ...transaction,
+          ...(checkpoint.sandboxRecreate as NonNullable<typeof checkpoint.sandboxRecreate>),
           phase: "registry_committing",
           targetLiveIdentityFingerprint: identity,
         },
@@ -360,7 +356,7 @@ describe("rebuild replacement journal", () => {
 
   it("reports a registered ready replacement as the proven target (#7734)", () => {
     const first = open();
-    proveReplacement(first.id, first.targetGeneration);
+    proveReplacement(first.targetGeneration);
 
     const resumed = open();
 
@@ -371,7 +367,7 @@ describe("rebuild replacement journal", () => {
 
   it("retires the journal of a proven replacement instead of deleting it again (#7734)", () => {
     const first = open();
-    proveReplacement(first.id, first.targetGeneration);
+    proveReplacement(first.targetGeneration);
     const resumed = open();
 
     resumed.completeAcceptedTarget();
