@@ -79,23 +79,29 @@ If policy restoration fails, the command keeps the channel disabled and exits wi
 
 ## Avoid Cross-Sandbox Conflicts
 
-Telegram, Discord, Slack, and WeChat allow one active consumer per channel credential.
-Multiple sandboxes can use the same channel type when each uses a distinct token or WeChat bot account.
-Slack sandboxes must also use different gateways.
+NemoClaw applies the same fail-closed conflict policy to every supported messaging channel.
+The policy checks for these conditions:
 
-For WeChat, each sandbox must own a distinct iLink `accountId`.
-Running two sandboxes against the same account causes one to lose messages.
+- Another registered sandbox uses the same channel credential.
+- A channel-owned pre-enable check finds a shared resource conflict.
+- NemoClaw cannot complete a required conflict check.
 
-If another sandbox already uses the same credential, onboarding, rebuild, and `channels add` exit nonzero without an interactive confirmation.
-Channel-owned pre-enable conflicts that declare abort behavior also exit without an interactive confirmation.
+Onboarding, rebuild, and `channels add` exit nonzero when a required check reports a conflict.
+Onboarding and rebuild do not have a conflict override.
 Pass `--force` to `channels add <channel>` only when you explicitly accept the duplicate-consumer or shared-resource risk.
-For Slack, NemoClaw checks both bot and Socket Mode app tokens across gateways.
-It also rejects another Slack sandbox on the same gateway, even when the credentials differ.
 
-For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share it.
-If NemoClaw has only legacy metadata and cannot compare credential hashes, it treats the active channel as a conflict and aborts.
-If onboarding or rebuild cannot read the messaging registry required for a conflict check, it aborts; neither operation has a conflict override.
-If `channels add` cannot complete a required conflict check, it also aborts unless you pass `--force`.
+Channel manifests define the credential and resource checks for each channel.
+The built-in checks include these channel-specific rules:
+
+- Each active sandbox must use distinct credentials for a credential-backed channel.
+- WeChat requires a distinct iLink `accountId` for each active sandbox.
+- Slack checks both bot and Socket Mode app tokens across gateways.
+- Slack also requires each active sandbox to use a different gateway.
+- Microsoft Teams requires each active sandbox to use a different local webhook port.
+
+If NemoClaw has only legacy metadata and cannot compare credential hashes, it treats the active channel as a conflict.
+If onboarding or rebuild cannot read the messaging registry, the operation aborts.
+If `channels add` cannot complete a required check, it aborts unless you pass `--force`.
 
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 

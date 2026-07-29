@@ -2046,7 +2046,7 @@ $$nemoclaw my-assistant channels add telegram
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Validate the channel name and matching policy preset without prompting for credentials, contacting the gateway, or rebuilding |
-| `--force` | Add the channel when another sandbox uses the same messaging credential, a required conflict check cannot complete, or a channel-owned check requires abort. Conflicts that require abort do not offer an interactive override. Examples include Slack on a shared gateway and Microsoft Teams on a shared webhook port. |
+| `--force` | Add any supported channel when another sandbox uses the same messaging credential, a required conflict check cannot complete, or a channel-owned check requires abort. This flag is the only conflict override. Examples include Slack on a shared gateway and Microsoft Teams on a shared webhook port. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.

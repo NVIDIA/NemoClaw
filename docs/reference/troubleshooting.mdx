@@ -1980,12 +1980,10 @@ A repeating line like the following confirms the conflict:
 ```
 
 To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled.
-NemoClaw aborts Slack onboarding, rebuild, and `channels add slack` when another sandbox uses the same Slack bot or app token.
-The Slack check applies across gateways.
-NemoClaw also aborts when another Slack sandbox uses the same gateway, even when the credentials differ.
-Pass `--force` to `channels add slack` only when you explicitly accept either conflict risk.
-Other credential-backed channels also abort credential conflicts without an interactive override.
-Pass `--force` to `channels add <channel>` only when you explicitly accept the duplicate-consumer risk.
+NemoClaw applies the same fail-closed conflict policy to every supported messaging channel during onboarding, rebuild, and `channels add`.
+It rejects reused channel credentials and channel-owned shared-resource conflicts without an interactive override.
+Channel-specific examples include Slack gateway conflicts and Microsoft Teams webhook port conflicts.
+Pass `--force` to `channels add <channel>` only when you explicitly accept the duplicate-consumer or shared-resource risk.
 Sandboxes created before these checks were added may still be in a conflict loop.
 
 </AgentOnly>

@@ -45,6 +45,7 @@ This uses the existing Slack credentials and does not require additional scopes 
 
 ## Avoid Duplicate Socket Mode Sessions
 
+These Slack checks are part of the [cross-sandbox conflict policy](manage-messaging-channels) for all supported messaging channels.
 Slack Socket Mode allows one active connection per app-level token.
 By default, onboarding, rebuild, and `channels add slack` abort when another sandbox uses the same Slack bot or app token.
 This check applies across gateways.
