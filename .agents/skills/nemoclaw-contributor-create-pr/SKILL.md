@@ -183,7 +183,8 @@ If an issue exists, use `Fixes #NNN` or `Closes #NNN`.
 Read the PR template from the trusted base branch. Use it as the source of truth.
 Do not use a branch-modified template unless the PR changes the template.
 Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers.
-Follow the [NemoClaw Writing Guide](../../../WRITING.md) for the PR body and other explanatory text that this workflow changes.
+Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
+contract for the PR body, other changed explanatory text, and the final review receipt.
 
 Complete each section from the diff against the same base ref.
 Select the applicable boxes and leave the other boxes clear.
