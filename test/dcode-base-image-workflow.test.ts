@@ -472,6 +472,8 @@ describe("base-image publication behavior", () => {
     expect(lock).toMatch(/^deepagents-code==[^\s\\]+\s+\\\n\s+--hash=sha256:[0-9a-f]{64}/m);
     expect(lockedVersion).toBeDefined();
     expect(agent.expectedVersion).toBe(lockedVersion);
-    expect(resolution?.validationDescription).toBe(`deepagents-code==${lockedVersion}`);
+    expect(resolution?.validationDescription).toBe(
+      `deepagents-code==${lockedVersion} and the immutable security package inventory`,
+    );
   });
 });
