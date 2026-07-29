@@ -182,6 +182,9 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain(
       "Launchable and full runs do not require separate environment approval",
     );
+    expect(skill).toContain(
+      "repository `maintain` or `admin` permission before the Launchable path's source",
+    );
     expect(skill).not.toMatch(/variable (?:set|delete) NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED/u);
   });
 

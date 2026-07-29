@@ -97,7 +97,9 @@ gh workflow run .github/workflows/e2e.yaml \
 Do not set `jobs=staging-brev-launchable` for full mode.
 Empty `jobs` and `targets` select the default suite.
 The boolean input adds the Launchable E2E job to that same run.
-The trusted `main` workflow dispatch is the authorization.
+The trusted `main` workflow verifies that the dispatching and rerunning actors have
+repository `maintain` or `admin` permission before the Launchable path's source
+checkout. That role check is the authorization.
 Launchable and full runs do not require separate environment approval.
 
 ### Release Coverage Dispatch Group
