@@ -8,6 +8,8 @@ import { join } from "node:path";
 type PackageInfo = { version?: string };
 const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40,64}$/;
 const DESCRIBED_REVISION_PATTERN = /-\d+-g([0-9a-f]{7,64})$/;
+const PUBLIC_VERSION_PATTERN =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 const BUILD_IDENTITY_FILE = "build-identity.json";
 
 export interface BuildIdentity {
@@ -99,8 +101,8 @@ function resolveSourceRevision(root: string): string {
 export function validateBuildIdentity(identity: Readonly<BuildIdentity>): BuildIdentity {
   if (
     typeof identity.nemoclawVersion !== "string" ||
-    identity.nemoclawVersion.length === 0 ||
-    identity.nemoclawVersion.length > 128
+    identity.nemoclawVersion.length > 128 ||
+    !PUBLIC_VERSION_PATTERN.test(identity.nemoclawVersion)
   ) {
     throw new Error("NemoClaw build identity has an invalid version.");
   }

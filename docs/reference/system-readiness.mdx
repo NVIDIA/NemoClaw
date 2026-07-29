@@ -64,6 +64,8 @@ The identity is present for `supported`, `incompatible`, and `inconclusive` repo
 | `provenance.observedAt` | Time when the host observation started. |
 
 A Git-described version can use a value such as `0.0.96-35-g8bfff4526`.
+The version must begin with three dot-separated digit groups.
+It can add an alphanumeric prerelease suffix after `-` and an alphanumeric build suffix after `+`; each suffix can also contain `.` and `-` separators.
 The revision after `g` must match the leading characters of `sourceRevision`.
 Packaged releases retain the full revision in their compiled build identity when Git metadata is unavailable at runtime.
 

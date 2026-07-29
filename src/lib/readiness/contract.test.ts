@@ -65,6 +65,17 @@ describe("system readiness contract", () => {
     ).toBe(true);
   });
 
+  it("rejects an invalid public producer version (#7777)", async () => {
+    const validate = await createValidator();
+    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
+    const provenance = {
+      ...(fixture.provenance as Record<string, unknown>),
+      nemoclawVersion: `nvapi-${"a".repeat(24)}`,
+    };
+
+    expect(validate({ ...fixture, provenance })).toBe(false);
+  });
+
   it("accepts optional fields in schema major 1 (#7409)", async () => {
     const validate = await createValidator();
     const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;

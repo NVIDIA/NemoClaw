@@ -112,6 +112,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$",
           "description": "Public version identity of the executing NemoClaw CLI build."
         },
         "sourceRevision": {

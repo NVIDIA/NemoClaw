@@ -257,7 +257,7 @@ export function createPublicReadinessReport(
     "evidence",
   );
   const buildIdentity = validateBuildIdentity({
-    nemoclawVersion: bounded(report.provenance.nemoclawVersion, 128),
+    nemoclawVersion: report.provenance.nemoclawVersion,
     sourceRevision: report.provenance.sourceRevision,
   });
   return {

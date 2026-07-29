@@ -115,6 +115,19 @@ describe("lib/version", () => {
     ).toThrow("NemoClaw build identity version and source revision do not match.");
   });
 
+  it.each([
+    `nvapi-${"a".repeat(24)}`,
+    "[REDACTED]",
+    "1.2",
+  ])("rejects the invalid public version %s (#7777)", (nemoclawVersion) => {
+    expect(() =>
+      validateBuildIdentity({
+        nemoclawVersion,
+        sourceRevision: "9".repeat(40),
+      }),
+    ).toThrow("NemoClaw build identity has an invalid version.");
+  });
+
   it("ignores inherited Git hook environment for explicit roots", () => {
     const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], {
       cwd: repoRoot,
