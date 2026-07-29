@@ -302,6 +302,27 @@ describe("CUA security lifecycle (#7754)", () => {
     ).toMatchObject({ kind: "failure", family: "validation_failed" });
   });
 
+  it("revokes a prior attestation when explicit verification fails", () => {
+    const { registry, deps } = harness(attestation());
+    const adapter = fakeAdapter(() => ({
+      schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
+      kind: "failure",
+      operation: "security.verify",
+      family: "policy_invalid",
+      retryable: false,
+      component: "policy",
+    }));
+
+    expect(
+      executeCuaSecurityLifecycle(
+        { operation: "security.verify", sandboxName: "alpha", adapter },
+        deps,
+      ).record,
+    ).toMatchObject({ kind: "failure", family: "policy_invalid" });
+    expect(registry.sandboxes.alpha?.cuaSecurityAttestation).toBeUndefined();
+    expect(deps.save).toHaveBeenCalledOnce();
+  });
+
   it("binds the attestation to every current runtime and target identity", () => {
     expect(cuaSecurityAttestationMatches(attestation(), runtime, target.target!)).toBe(true);
 

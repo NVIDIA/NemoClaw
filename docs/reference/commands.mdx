@@ -1680,6 +1680,7 @@ A valid attestation proves that:
 The attestation is valid only for the exact recorded runtime, sandbox image, target image, service bundle, policy, task protocol, inference route, capability protocols, and target identity.
 Identity drift makes the recorded attestation stale and blocks status validation and task execution.
 NemoClaw clears it after a successful target reset, detach, or destroy, or when target health records the target as unreachable, incompatible, or replaced.
+An explicit verification failure also clears any prior attestation.
 Every task operation requires a current matching attestation before it invokes the task adapter.
 
 Successful commands exit `0`.

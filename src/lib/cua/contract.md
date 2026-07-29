@@ -254,7 +254,8 @@ rejects malformed, incomplete, or identity-stale attestations. Identity drift
 makes an attestation stale and blocks task execution. Target reset, detach,
 or destroy clears it after the target operation succeeds. Target health also
 clears it when it records the target as unreachable, incompatible, or replaced,
-so task execution remains fail-closed until verification succeeds again.
+and an explicit verification failure clears any prior attestation, so task
+execution remains fail-closed until verification succeeds again.
 
 ## Failure families
 

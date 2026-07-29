@@ -81,6 +81,20 @@ function result(record: CuaSecurityAttestation | CuaFailure): CuaSecurityLifecyc
   return { record, exitCode };
 }
 
+function failClosed(
+  input: CuaSecurityLifecycleInput,
+  registry: SandboxRegistry,
+  deps: CuaSecurityLifecycleDeps,
+  record: CuaFailure,
+): CuaSecurityLifecycleResult {
+  const sandbox = registry.sandboxes[input.sandboxName];
+  if (input.operation === "security.verify" && sandbox?.cuaSecurityAttestation) {
+    delete sandbox.cuaSecurityAttestation;
+    deps.save(registry);
+  }
+  return result(record);
+}
+
 function capabilityIdentities(
   target: NonNullable<CuaTargetAttachment["target"]>,
 ): Array<{ id: CuaCapability; protocolVersion: string }> {
@@ -157,18 +171,38 @@ function executeLocked(
 
   const runtime = sandbox.cuaRuntimeReadiness;
   if (!runtime) {
-    return result(failure(input.operation, "lifecycle_unavailable", false, "runtime"));
+    return failClosed(
+      input,
+      registry,
+      deps,
+      failure(input.operation, "lifecycle_unavailable", false, "runtime"),
+    );
   }
   if (runtime.status === "incompatible") {
-    return result(failure(input.operation, "runtime_incompatible", false, "runtime"));
+    return failClosed(
+      input,
+      registry,
+      deps,
+      failure(input.operation, "runtime_incompatible", false, "runtime"),
+    );
   }
   if (runtime.status !== "available") {
-    return result(failure(input.operation, "runtime_unavailable", true, "runtime"));
+    return failClosed(
+      input,
+      registry,
+      deps,
+      failure(input.operation, "runtime_unavailable", true, "runtime"),
+    );
   }
 
   const target = sandbox.cuaTarget;
   if (!target?.target || target.status !== "attached") {
-    return result(failure(input.operation, "target_unreachable", true, "target"));
+    return failClosed(
+      input,
+      registry,
+      deps,
+      failure(input.operation, "target_unreachable", true, "target"),
+    );
   }
 
   if (input.operation === "security.status") {
@@ -182,19 +216,34 @@ function executeLocked(
   const adapterResult = invokeAdapter(input, runtime, target);
   if (adapterResult.kind === "failure") {
     if (adapterResult.operation !== input.operation || adapterResult.family !== "policy_invalid") {
-      return result(failure(input.operation, "validation_failed", false, "policy"));
+      return failClosed(
+        input,
+        registry,
+        deps,
+        failure(input.operation, "validation_failed", false, "policy"),
+      );
     }
-    return result(adapterResult);
+    return failClosed(input, registry, deps, adapterResult);
   }
 
   let attestation: CuaSecurityAttestation;
   try {
     attestation = parseCuaSecurityAttestation(adapterResult);
   } catch {
-    return result(failure(input.operation, "policy_invalid", false, "policy"));
+    return failClosed(
+      input,
+      registry,
+      deps,
+      failure(input.operation, "policy_invalid", false, "policy"),
+    );
   }
   if (!cuaSecurityAttestationMatches(attestation, runtime, target.target)) {
-    return result(failure(input.operation, "policy_invalid", false, "policy"));
+    return failClosed(
+      input,
+      registry,
+      deps,
+      failure(input.operation, "policy_invalid", false, "policy"),
+    );
   }
 
   sandbox.cuaSecurityAttestation = structuredClone(attestation);
