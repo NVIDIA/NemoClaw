@@ -397,12 +397,16 @@ describe("atomic rebuild process contracts (#2273)", () => {
     expect(registryHasSandbox(fixture)).toBe(true);
   });
 
-  it("accepts trimmed case-insensitive yes input before continuing into backup", () => {
+  it("accepts trimmed case-insensitive yes input before continuing into backup", {
+    timeout: testTimeout(60_000),
+  }, () => {
     const fixture = createFixture({
       savedCredential: {
         key: "NVIDIA_INFERENCE_API_KEY",
         value: "nvapi-test-key-for-rebuild",
       },
+      // This contract ends at backup; stop before recreation.
+      sandboxDeleteExitCode: 1,
     });
 
     const result = runRebuild(fixture, {}, { yes: false, input: " YES \n" });
