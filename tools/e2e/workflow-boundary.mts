@@ -109,8 +109,7 @@ export interface FocusedE2eJob {
 }
 
 export interface StagingBrevLaunchableDispatchEvaluation {
-  failReadiness: boolean;
-  runQualification: boolean;
+  runLaunchableE2e: boolean;
 }
 
 type CachedFreeStandingJobsInventory = {
@@ -696,7 +695,6 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
   eventName: "schedule" | "workflow_dispatch";
   includeStagingBrevLaunchable?: boolean;
   jobs?: string;
-  readinessEnabled?: boolean;
   targets?: string;
   trustedMain?: boolean;
 }): StagingBrevLaunchableDispatchEvaluation {
@@ -708,14 +706,12 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
     jobs === "" &&
     targets === "";
   const explicitlySelected =
-    input.eventName === "workflow_dispatch" &&
-    splitSelector(jobs).includes("staging-brev-launchable");
-  const requested = input.eventName === "schedule" || fullDispatch || explicitlySelected;
+    input.eventName === "workflow_dispatch" && jobs === "staging-brev-launchable" && targets === "";
+  const requested = fullDispatch || explicitlySelected;
   const trustedMain = input.trustedMain !== false;
 
   return {
-    failReadiness: fullDispatch && (input.readinessEnabled !== true || !trustedMain),
-    runQualification: requested && input.readinessEnabled === true && trustedMain,
+    runLaunchableE2e: requested && trustedMain,
   };
 }
 
@@ -3801,6 +3797,64 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
 }
 
+function validateDashboardRemoteBindJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "dashboard-remote-bind";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing dashboard-remote-bind job");
+    return;
+  }
+
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("dashboard-remote-bind job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 65) {
+    errors.push("dashboard-remote-bind job must keep the 65 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  const expectedEnv = {
+    E2E_TARGET_ID: "dashboard-remote-bind",
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
+    NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
+  };
+  for (const [key, value] of Object.entries(expectedEnv)) {
+    if (jobEnv[key] !== value) {
+      errors.push(`dashboard-remote-bind job must set ${key}=${value}`);
+    }
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, "dashboard-remote-bind job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  const runVitest = requireJobStep(errors, jobName, steps, "Run dashboard remote-bind live test");
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push("dashboard-remote-bind step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/dashboard-remote-bind.test.ts");
+
+  for (const step of steps) {
+    const stepName = `dashboard-remote-bind step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step !== runVitest) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+}
+
 function validateBedrockRuntimeCompatibleAnthropicJob(
   errors: string[],
   jobs: WorkflowRecord,
@@ -4109,23 +4163,69 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  const environment = asRecord(job.environment);
-  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
-    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  if (Object.hasOwn(job, "environment")) {
+    errors.push("staging-brev-launchable must not use a GitHub environment");
   }
   const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
   if (
     !stringValue(job.if).includes(trustedRun) ||
     stringValue(job.if).includes("checkout_sha == ''")
   ) {
-    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
+    errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (job.if !== expectedSelector) {
     errors.push(
-      "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+      "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
     );
+  }
+  const generateMatrix = asRecord(jobs["generate-matrix"]);
+  const generateSteps = asSteps(generateMatrix.steps);
+  const authorization = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Authorize Launchable E2E maintainer dispatch",
+  );
+  const expectedAuthorizationSelector =
+    "${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+  if (authorization?.if !== expectedAuthorizationSelector) {
+    errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
+  }
+  if (authorization?.shell !== "bash") {
+    errors.push("Launchable E2E maintainer authorization must use bash");
+  }
+  const authorizationEnv = asRecord(authorization?.env);
+  for (const [key, expected] of [
+    ["ACTOR", "${{ github.actor }}"],
+    ["GITHUB_TOKEN", "${{ github.token }}"],
+    ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
+  ] as const) {
+    if (authorizationEnv[key] !== expected) {
+      errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
+    }
+  }
+  for (const required of [
+    "/collaborators/${maintainer}/permission",
+    "'.user.login // \"\"'",
+    "'.role_name // \"\"'",
+    "maintain | admin",
+    'require_maintainer "$ACTOR"',
+    'require_maintainer "$TRIGGERING_ACTOR"',
+    "requires a repository maintainer or administrator",
+  ]) {
+    requireRunContains(errors, authorization, required);
+  }
+  const generateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  if (
+    authorization &&
+    generateCheckout &&
+    generateSteps.indexOf(authorization) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("Launchable E2E maintainer authorization must run before generate-matrix checkout");
   }
   const concurrency = asRecord(job.concurrency);
   if (
@@ -4134,7 +4234,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
+      "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
     );
   }
   const steps = asSteps(job.steps);
@@ -4184,7 +4284,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     )
   ) {
     errors.push(
-      "staging-brev-launchable must record dispatch identity after preparation and before qualification",
+      "staging-brev-launchable must record dispatch identity after preparation and before the Launchable E2E run",
     );
   }
   const runEnv = asRecord(run?.env);
@@ -4194,7 +4294,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
     [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
+    const expected = `\${{ ${trustedRun} && github.event_name == 'workflow_dispatch' && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
@@ -4215,35 +4315,12 @@ function validateStagingBrevLaunchableInput(
   if (
     !description.includes("Exact staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
-    !description.includes("persistent repository readiness gate")
+    !description.includes("full E2E run")
   ) {
     errors.push(
-      "workflow_dispatch include_staging_brev_launchable input must document qualification scope and readiness",
+      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable E2E scope",
     );
   }
-}
-
-function validateStagingBrevLaunchableReadinessJob(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["staging-brev-launchable-readiness"]);
-  if (job.needs !== "generate-matrix") {
-    errors.push("staging-brev-launchable-readiness must depend on generate-matrix");
-  }
-  const expectedIf =
-    "${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}";
-  if (job.if !== expectedIf) {
-    errors.push(
-      "staging-brev-launchable-readiness must fail only full dispatches with disabled readiness",
-    );
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("staging-brev-launchable-readiness must run on ubuntu-latest");
-  }
-  const steps = asSteps(job.steps);
-  const fail = namedStep(steps, "Fail when staging Brev Launchable is not ready");
-  requireRunContains(errors, fail, "NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true");
-  requireRunContains(errors, fail, "protected environment");
-  requireRunContains(errors, fail, "staging Launchable ID");
-  requireRunContains(errors, fail, "exit 1");
 }
 
 function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4361,6 +4438,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  if (Object.hasOwn(jobs, "staging-brev-launchable-readiness")) {
+    errors.push("workflow must not define superseded staging-brev-launchable-readiness job");
+  }
   validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
     "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
@@ -4420,8 +4500,38 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
   requireRunContains(errors, controllerMatrix, "matrix='[]'");
-  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
-  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+  const controllerMatrixScript = stringValue(controllerMatrix?.run);
+  const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
+  const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
+  const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  const trustedControllerMatrixScript = [
+    "set -euo pipefail",
+    'case "${TARGETS}" in',
+    '"")',
+    "matrix='[]'",
+    ";;",
+    `${deepAgentsTarget})`,
+    `matrix='[${deepAgentsMapping}]'`,
+    ";;",
+    `${postRebootTarget})`,
+    `matrix='[${postRebootMapping}]'`,
+    ";;",
+    `${deepAgentsTarget},${postRebootTarget})`,
+    `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
+    ";;",
+    "*)",
+    'echo "::error::PR E2E target is not approved by the trusted controller" >&2',
+    "exit 1",
+    ";;",
+    "esac",
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+  ];
+  const controllerMatrixLines = controllerMatrixScript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!isDeepStrictEqual(controllerMatrixLines, trustedControllerMatrixScript)) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
   requireRunContains(
@@ -4817,7 +4927,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   validateSharedE2eJob(errors, jobs);
   validateStagingBrevLaunchableJob(errors, jobs);
-  validateStagingBrevLaunchableReadinessJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
@@ -4879,6 +4988,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateOpenClawSlackPairingJob(errors, jobs);
   validateChannelsStopStartJob(errors, jobs);
   validateTelegramInjectionJob(errors, jobs);
+  validateDashboardRemoteBindJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {

@@ -10,6 +10,7 @@ content:
   type: "how_to"
 skill:
   priority: 10
+agent-variants: ["openclaw", "hermes"]
 ---
 Use Ollama when you want the default local inference setup path.
 NemoClaw detects Ollama on the host and can install, start, or upgrade it on supported systems.
@@ -71,6 +72,8 @@ $$nemoclaw onboard
 Select the Ollama entry for your host.
 The menu identifies a reachable daemon as running and labels an installed but stopped daemon **Start local Ollama**.
 NemoClaw lists installed models or offers starter models when none are installed.
+For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
+The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
 
 The starter list includes `qwen3.6:35b` and selects it by default when current GPU memory can accommodate it.
 When another GPU workload consumes most of the available memory, NemoClaw selects the largest starter model that still fits.
@@ -139,7 +142,7 @@ The wizard manages the proxy lifecycle:
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
 - It stops matching proxy processes during uninstall.
-- It reuses the persisted token after a host reboot.
+- It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
 
 All proxy endpoints require the token, including `GET /api/tags`.
 The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
@@ -159,6 +162,57 @@ $$nemoclaw onboard
 ```
 
 If the probe cannot run because the host uses another routing model, onboarding continues and relies on the regular proxy health check.
+
+<AgentOnly variant="openclaw">
+
+## Point Memory Search at a Host Ollama Container
+
+On DGX Spark and other local-inference hosts, you can use one local server for chat and a separate Ollama container for OpenClaw memory-search embeddings.
+For example, managed vLLM can serve the chat model while a host-side Ollama container serves `qwen3-embedding:4b` on port `11434`.
+
+The sandbox reaches that container through `http://host.openshell.internal:11434`.
+The `local-inference` policy preset allows that egress path, while `config set` separately validates that the bridge URL is written only to supported provider `baseUrl` fields.
+
+First make sure the embedding server is reachable from the sandbox:
+
+```bash
+$$nemoclaw my-assistant policy add local-inference --yes
+$$nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11434/api/tags
+```
+
+Then define an OpenClaw provider for the embedding model and point memory search at it:
+
+```bash
+$$nemoclaw my-assistant shields down
+
+$$nemoclaw my-assistant config set \
+  --key models.providers.ollama-mem \
+  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:11434","apiKey":"x","models":[{"id":"qwen3-embedding:4b","name":"Qwen3 embedding 4B"}]}' \
+  --config-accept-new-path
+
+$$nemoclaw my-assistant config set \
+  --key agents.defaults.memorySearch.provider \
+  --value ollama-mem \
+  --config-accept-new-path \
+  --restart
+
+$$nemoclaw my-assistant shields up
+```
+
+If your memory index already contains documents, check whether OpenClaw reports an index-identity mismatch, rebuild the index, then verify the configured memory provider:
+
+```bash
+$$nemoclaw my-assistant exec -- openclaw memory status --index
+$$nemoclaw my-assistant exec -- openclaw memory index --force
+$$nemoclaw my-assistant exec -- openclaw memory status --deep
+```
+
+Add `--agent <id>` to those `openclaw memory` commands when you are configuring a specific non-default OpenClaw agent.
+
+Keep the Ollama container bound only to the local host or a reviewed host interface.
+Port `11434` is commonly unauthenticated, so allow it only from the OpenShell Docker bridge or the equivalent local container network path.
+
+</AgentOnly>
 
 ## Run Non-Interactive Onboarding
 

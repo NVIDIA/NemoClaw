@@ -26,6 +26,7 @@ import { type McpBridgeShard, resolveMcpBridgeShard } from "./mcp-bridge-agent-s
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
+  assertHermesManagedAddSurvivesLockedGatewayRestart,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
@@ -1236,13 +1237,27 @@ mcpBridgeShardTest("hermes")(
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
+    progress.phase("restore Hermes shields, restart, and prove rollback");
+    await assertHermesManagedAddSurvivesLockedGatewayRestart(
+      host,
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      mcpUrl,
+    );
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      ["/sandbox/.hermes", "/tmp/nemoclaw-start.log"],
+      [HOST_SECRET],
+      "hermes-assert-secret-absent-after-add-gateway-restart",
+    );
+    progress.phase("exercise lifecycle and confirm Hermes bridge removal");
     await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
       artifactPrefix: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
     });
-    progress.phase("exercise lifecycle and confirm Hermes bridge removal");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,

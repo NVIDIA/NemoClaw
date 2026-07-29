@@ -102,6 +102,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -123,6 +124,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         config: { enabled: true, port: 18790, internalPort: 19123, tuiEnabled: true },
       },
       dashboardPort: 18789,
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
     });
@@ -150,6 +153,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       hermesDashboardInternalPort: 19123,
       hermesDashboardTui: true,
       dashboardPort: 18789,
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
       gpuEnabled: true,
@@ -181,6 +186,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: "",
         preferredInferenceApi: "",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: "",
       },
       runtimeFields,
@@ -249,6 +255,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -293,6 +300,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -327,6 +335,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "chat",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -355,6 +364,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -388,6 +398,7 @@ describe("selection", () => {
       endpointUrl: "https://wrong.test/v1",
       credentialEnv: "WRONG_KEY",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: null,
       nimContainer: "wrong",
     });
 
@@ -401,6 +412,7 @@ describe("selection", () => {
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
     });
   });
@@ -413,6 +425,7 @@ describe("selection", () => {
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
       nimContainer: "nim-right",
     });
 
@@ -426,6 +439,7 @@ describe("selection", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
       nimContainer: "nim-right",
     });
   });
@@ -444,6 +458,7 @@ describe("registerCreatedSandbox", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,

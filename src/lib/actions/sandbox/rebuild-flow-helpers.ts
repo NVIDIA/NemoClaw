@@ -39,7 +39,8 @@ import {
   type TrustedLocalBaseImageOverride,
 } from "../../sandbox-base-image";
 import * as shields from "../../shields";
-import * as registry from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
@@ -49,11 +50,11 @@ import {
 } from "./gateway-state";
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 
-export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] };
+export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
-  staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+  staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
 };
 
 export type RebuildAgentBaseImageOptions = {
@@ -224,7 +225,7 @@ export async function resolveRebuildLiveState(
     );
     return {
       staleRecovery: true,
-      staleRegistrySnapshot: JSON.parse(JSON.stringify(registry.load())),
+      staleRegistrySnapshot: JSON.parse(JSON.stringify(loadRegistry())),
     };
   }
 

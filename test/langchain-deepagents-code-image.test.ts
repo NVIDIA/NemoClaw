@@ -763,7 +763,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const expected of [
       'sandbox_exec "test -d /sandbox/.deepagents"',
       "command -v dcode",
-      "dcode -n 'Reply with exactly one word: PONG'",
+      "dcode -n 'Reply with exactly one word: PONG' --json",
       "sandbox_login_exec",
       "sandbox_login_proxy_contract",
       "-u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY",
@@ -822,6 +822,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "references_managed_placeholder_key",
       'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
       "classify_headless_output",
+      '"schema_version", "command", "data"',
+      '"status"',
+      '"exit_code"',
+      '"response"',
+      '"completion"',
+      '"thread_id"',
+      '"duration_ms"',
+      '"response_bytes"',
       "NEMOCLAW_DCODE_DNS_PROBE_MISSING_GETENT",
       "required DNS diagnostic tool getent is unavailable",
       "NEMOCLAW_DCODE_DNS_PROBE_MISSING_TIMEOUT",
@@ -1015,7 +1023,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
-    expect(review).toContain("Audit result: `No known vulnerabilities found`");
+    expect(review).toContain("Targeted audit result: `Pillow 12.3.0 has no known vulnerabilities`");
+    expect(review).toContain("Complete-lock audit result: `6 records in 3 unrelated packages`");
+    expect(requirementsLock).toContain("pillow==12.3.0");
+    expect(readAgentFile("Dockerfile.base")).toContain("assert version('pillow') == '12.3.0'");
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");

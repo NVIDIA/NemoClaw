@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { dockerCapture } from "../adapters/docker";
 import type { ResolveBaseImageOptions } from "../sandbox-base-image";
+import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
 import type { AgentDefinition } from "./defs";
 
 const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
@@ -73,7 +74,11 @@ export function createDeepAgentsCodeBaseImageResolutionOptions(
     // Retain the resolver's pre-existing global inputs alongside these agent
     // inputs. Per-agent cache-policy isolation is a separate cross-agent change.
     inputPaths: [path.join(agentRoot, "manifest.yaml"), path.join(agentRoot, "requirements.lock")],
-    validateImage: (imageRef) => deepAgentsCodeBaseImageMatchesVersion(imageRef, expectedVersion),
-    validationDescription: `${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion}`,
+    validateImage: (imageRef) =>
+      deepAgentsCodeBaseImageMatchesVersion(imageRef, expectedVersion) &&
+      sandboxBaseImageHasSecurityInventory(imageRef),
+    validationDescription:
+      `${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion} and ` +
+      "the immutable security package inventory",
   };
 }

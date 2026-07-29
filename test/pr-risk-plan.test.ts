@@ -28,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(7);
+    expect(first.version).toBe(8);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -150,8 +150,11 @@ describe("deterministic PR risk plan", () => {
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
     );
 
-    expect(PR_E2E_TYPED_TARGET_IDS).toEqual(["ubuntu-repo-cloud-langchain-deepagents-code"]);
-    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(PR_E2E_TYPED_TARGET_IDS).toEqual([
+      "ubuntu-repo-cloud-langchain-deepagents-code",
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
         id: PR_E2E_TYPED_TARGET_IDS[0],
@@ -162,7 +165,7 @@ describe("deterministic PR risk plan", () => {
     expect(result.families).toContainEqual(
       expect.objectContaining({
         id: "focused-e2e",
-        requiredTargets: [...PR_E2E_TYPED_TARGET_IDS],
+        requiredTargets: [PR_E2E_TYPED_TARGET_IDS[0]],
       }),
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
@@ -185,7 +188,7 @@ describe("deterministic PR risk plan", () => {
       "test/langchain-deepagents-code-managed-model-params.test.ts",
     );
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
         id: PR_E2E_TYPED_TARGET_IDS[0],
@@ -195,6 +198,24 @@ describe("deterministic PR risk plan", () => {
     ]);
     expect(result.tier).toBe(2);
     expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
+  });
+
+  it("selects post-reboot recovery for status delivery recovery changes (#7824)", () => {
+    const changedFile = "src/lib/actions/sandbox/status-snapshot.ts";
+    const result = plan(changedFile);
+    const adjacentStatusFile = plan("src/lib/actions/sandbox/status-text.ts");
+
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[1]]);
+    expect(result.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[1],
+        families: ["focused-e2e"],
+        matchedFiles: [changedFile],
+      }),
+    ]);
+    expect(riskPlanRequiredTargetIds(adjacentStatusFile)).toEqual([]);
+    expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
+    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
