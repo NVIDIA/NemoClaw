@@ -379,7 +379,7 @@ npm run docs
 ```
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
-If hooks were skipped or unavailable, run `npm run validate:pr` before opening the PR.
+If hooks were skipped or unavailable, refresh `origin/main`, then run `npm run validate:pr` before opening the PR.
 For code changes, map each success criterion to the narrowest stable test or other evidence that proves it, then run those targeted checks once per relevant change set and record the commands as evidence.
 Reproduce defects before fixing them when feasible; when reproduction is not feasible, record why and preserve the strongest available pre-fix evidence.
 Add regression coverage at the earliest stable behavior boundary that could have caught the defect, and add higher-level coverage only when it protects a distinct integration boundary.
@@ -559,7 +559,7 @@ Follow these steps to submit a pull request.
 2. Make your changes with tests.
 3. Run the relevant checks.
    Run targeted tests once per relevant change set, let normal hooks provide verification, and run `npm run docs` for doc changes.
-   Rerun targeted tests after later behavior-affecting edits or hook autofixes. If hooks were skipped or unavailable, run `npm run validate:pr` once instead of reproducing the checks separately.
+   Rerun targeted tests after later behavior-affecting edits or hook autofixes. If hooks were skipped or unavailable, refresh `origin/main`, then run `npm run validate:pr` once instead of reproducing the checks separately.
 4. Confirm the PR description includes the DCO declaration and every commit appears as `Verified` in GitHub.
 5. Open a PR.
 
