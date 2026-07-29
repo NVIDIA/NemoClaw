@@ -171,6 +171,12 @@ The source pages stay in their normal `docs/` locations, and generated pages are
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
 OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.
 
+Determine page applicability from the implementation, tests, or accepted product scope before adding or moving navigation entries.
+Do not use the current navigation tree as evidence that a page is agent-specific.
+Publish a shared source page through generated navigation targets in every applicable variant.
+When a page intentionally applies to fewer than all three variants, declare the exact subset in frontmatter, for example `agent-variants: ["openclaw", "hermes"]`.
+The sync command fails when a subset declaration is missing or differs from navigation membership.
+
 When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
 Do not duplicate fenced code blocks or inline command examples only to switch among `nemoclaw`,
 `nemohermes`, and `nemo-deepagents`.
@@ -222,7 +228,7 @@ Then complete the pull-request template's Documentation Writer Review receipt wi
 Rerun the review after any later commit because the receipt is tied to the exact pull-request head.
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
-If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks before opening the PR.
+If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run validate:pr` once to reproduce those checks before opening the PR.
 The command uses `origin/main`, so refresh it with `git fetch origin main` first.
 Run targeted tests once per relevant change set only when the change also touches code, generated behavior, or runtime behavior; rerun after later edits or hook autofixes that can affect it.
 Reserve `npm test` for broad runtime or test-harness changes.
@@ -260,6 +266,12 @@ description-agent: "Third-person verb summary for agent routing. Add 'Use when..
 keywords: "primary keyword, secondary keyword phrase"
 position: 1
 ---
+```
+
+When the page intentionally applies to fewer than OpenClaw, Hermes, and Deep Agents, add the exact subset to frontmatter:
+
+```yaml
+agent-variants: ["openclaw", "hermes"]
 ```
 
 ### Page Structure
