@@ -100,12 +100,16 @@ The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exp
 Deep Agents does not use the OpenClaw chat slash command.
 Use the host-side `nemo-deepagents` commands for lifecycle, status, policy, and inference operations.
 Inside the sandbox, use `dcode` for the interactive TUI and `dcode -n` for explicit headless automation.
+Add `--json` when automation needs the managed, versioned result envelope.
 
 ```bash
 dcode
 dcode -n "Summarize this repository"
+dcode -n "Summarize this repository" --json
 dcode status
 ```
+
+For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#use-the-harness).
 
 </AgentOnly>
 
@@ -1003,6 +1007,7 @@ $$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
 $$nemoclaw my-assistant agent --session-key intake-42 --json -m 'ping'
 $$nemoclaw dcode-sandbox agent --help
 $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
+$$nemoclaw dcode-sandbox agent -n "Summarize this repository" --json
 ```
 
 When post-command permission cleanup succeeds, the wrapper inherits the remote command's exit code so host-side pipelines can branch on it.
@@ -1047,6 +1052,9 @@ curl -sN http://127.0.0.1:8642/v1/chat/completions \
 For Deep Agents sandboxes, `agent` forwards to the manifest-declared terminal command.
 Bare invocations run `dcode`, and `--help` runs `dcode --help`.
 Use `dcode -n` for explicit headless automation when you are already connected to the sandbox, or use `$$nemoclaw <name> agent -n "<task>"` from the host.
+Add `--json` to either form for one managed, versioned JSON envelope on stdout.
+The host wrapper forwards the flag to `dcode`.
+For the schema, status and exit behavior, and 1 MiB output limit, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#use-the-harness).
 The host wrapper keeps `HOME=/sandbox`, the managed proxy environment, and the manifest-declared Deep Agents config path aligned with `connect`.
 Interactive `$$nemoclaw <name> agent` launches the same terminal TUI as `dcode`.
 Headless `$$nemoclaw <name> agent -n "<task>"` uses the managed headless boundary, where non-shell tools can auto-run without the interactive approval UI.
@@ -1354,7 +1362,15 @@ For cloud-only providers, the output omits the NIM status line unless a NIM cont
 
 When the sandbox's recorded driver is `docker` and the host Docker daemon is not reachable, the command prints the `docker_unreachable` failure layer with the message `Docker daemon is not reachable.` as the first line of stdout, suppresses the host-side `Inference` probe (which otherwise hits the remote provider directly and is misleading when the local stack is down), and exits with a non-zero status.
 
-When the host Docker daemon is reachable but the per-sandbox container is stopped, the command prints the `sandbox_container_stopped` failure layer with the message `sandbox container exists but is not running.` as the first line of stdout, suppresses the host-side `Inference` probe, and exits with a non-zero status.
+When the host Docker daemon is reachable but the per-sandbox container is stopped, the initial preflight records the `sandbox_container_stopped` failure layer and suppresses the host-side `Inference` probe.
+If the owning OpenShell gateway is healthy but no longer lists the registered Docker-driver sandbox, status attempts post-reboot recovery from the labeled container.
+It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference.
+A successful recovery clears the stale stopped-container failure.
+<AgentOnly variant="openclaw">
+If OpenShell already reports the registered Docker-driver sandbox as present and `Ready`, status verifies the OpenClaw gateway and host forward.
+It recovers either component when the verification reports it absent.
+</AgentOnly>
+If Docker readiness or the agent delivery chain cannot be proven, status exits non-zero and reports the failed recovery layer.
 <AgentOnly variant="openclaw,hermes">
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to the `sandbox_dashboard_port_conflict` failure layer with the message `sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 </AgentOnly>
@@ -2046,7 +2062,7 @@ $$nemoclaw my-assistant channels add telegram
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Validate the channel name and matching policy preset without prompting for credentials, contacting the gateway, or rebuilding |
-| `--force` | Add the channel even when another sandbox already uses the same messaging credential, bypassing the cross-sandbox conflict warning (otherwise `channels add` warns and, when non-interactive, aborts) |
+| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
@@ -3357,14 +3373,16 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains NemoClaw-owned Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+On Linux, uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell` or the gateway is externally supervised.
+That directory contains NemoClaw-owned Docker-driver gateway configuration and SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state.
 Keep a declared external gateway state directory outside that NemoClaw-owned path.
 Uninstall does not otherwise target the declared external directory.
 
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt |
-| `--keep-openshell` | Leave OpenShell binaries and NemoClaw-managed gateway service files in place, and do not stop the host gateway process |
+| `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 | `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
@@ -3380,7 +3398,8 @@ The compatibility `--gateway` flag cannot select another instance: when present,
 Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
 For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
 It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
-For an externally supervised authority, uninstall preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
+For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
+It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 
 ##### User-data preservation under `~/.nemoclaw/`

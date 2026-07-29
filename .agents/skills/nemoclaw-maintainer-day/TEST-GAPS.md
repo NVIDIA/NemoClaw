@@ -59,7 +59,7 @@ Do not use a test change to add a refactor that is not required.
 npm test                          # root tests
 cd nemoclaw && npm test           # plugin tests
 npm run typecheck:cli
-npm run check
+npm run check                     # broad repo-wide pre-commit and coverage baseline
 ```
 
 Run only the commands needed to validate the change.
