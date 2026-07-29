@@ -61,6 +61,29 @@ When the checks stop, inspect their status:
 gh pr view "$PR_NUMBER" --json url,statusCheckRollup,comments,reviews,reviewDecision
 ```
 
+### Dispatch credentialed PR E2E
+
+An explicit user request to run PR E2E, make a PR green, or make it ready for review authorizes
+the agent to dispatch the gate-selected credential-bearing E2E plan.
+Do not ask the user for a second confirmation or a prescribed reply.
+
+Before dispatch, review these exact inputs:
+
+- Head repository.
+- PR SHA and base SHA.
+- Risk plan artifact, selected jobs, and selected targets.
+- PR-controlled code that the selected jobs or targets execute with credentials.
+
+Do not dispatch when the coordination check already identifies an active child run or accepted
+evidence for the same PR SHA, base SHA, and plan. Monitor that run instead.
+
+If the PR SHA, base SHA, or plan changes during the task, review the new inputs and dispatch the
+new exact plan when the gate requires it. The original user request remains the authorization for
+that task. Do not request another confirmation.
+
+The trusted workflow must continue to enforce the maintainer role, exact revision, plan,
+coordination state, and live PR state. Report the dispatched plan, both SHAs, and workflow run URL.
+
 ## Review feedback
 
 Check PR comments and inline review comments from CodeRabbit and the PR Review Advisor:

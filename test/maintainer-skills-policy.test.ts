@@ -323,6 +323,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
   it("keeps PR workflow writes behind their safety checks", () => {
     const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
+    const followUp = read(".agents/skills/_shared/pr-follow-up.md");
     const judgment = read(
       ".agents/skills/nemoclaw-maintainer-cross-issue-sweep/checks/relationship-judgment.md",
     );
@@ -340,6 +341,22 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.",
     );
     expect(mergeGate).toContain("Approval cannot record success by itself.");
+    expect(followUp).toContain(
+      "An explicit user request to run PR E2E, make a PR green, or make it ready for review authorizes",
+    );
+    expect(followUp).toContain(
+      "Do not ask the user for a second confirmation or a prescribed reply.",
+    );
+    expect(followUp).toContain(
+      "PR-controlled code that the selected jobs or targets execute with credentials.",
+    );
+    expect(followUp).toContain(
+      "The trusted workflow must continue to enforce the maintainer role, exact revision, plan,",
+    );
+    expect(mergeGate).toContain(
+      "[PR follow-up authorization](../_shared/pr-follow-up.md#dispatch-credentialed-pr-e2e)",
+    );
+    expect(mergeGate).toContain("Do not request a second confirmation or a prescribed reply.");
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
     expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
     expect(salvage).toContain("If `maintainerCanModify` is false, do not push");

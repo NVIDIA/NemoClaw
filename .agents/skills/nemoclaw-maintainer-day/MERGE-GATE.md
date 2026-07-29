@@ -158,6 +158,11 @@ Use the maintainer workflow when coordination reports either of these states:
 5. Enter the exact `pr_number`, 40-character `expected_head_sha`, 40-character `expected_base_sha`, and a specific `review_reason` of 10 to 500 characters.
 6. Run the workflow.
 
+For an agent-operated task, follow the shared
+[PR follow-up authorization](../_shared/pr-follow-up.md#dispatch-credentialed-pr-e2e).
+A request to run PR E2E, make the PR green, or make it ready for review authorizes this dispatch.
+Do not request a second confirmation or a prescribed reply.
+
 The first attempt requires the triggering actor to have current `maintain` or `admin` access.
 The controller checks the PR number, head repository, PR SHA, base SHA, deterministic plan, matching pending coordination check, compatible `main`, and open PR state.
 Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.
