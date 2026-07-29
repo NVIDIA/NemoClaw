@@ -493,11 +493,12 @@ $$nemoclaw onboard --resume
 
 <AgentOnly variant="openclaw,hermes">
 
-### Web search verification reports a warning
+### Web search verification reports a warning or security error
 
 When web search is enabled, onboarding checks the selected agent configuration and sends a real search request through the sandbox egress path.
 Configuration and egress verification are best effort, so those failed checks print a warning and let onboarding finish.
-Credential isolation is different: if NemoClaw confirms that the raw Brave or Tavily key is visible in the sandbox environment, onboarding reports a security error and does not mark the sandbox as ready.
+If NemoClaw confirms that the raw Brave or Tavily key is visible in the sandbox environment, it reports a security error.
+The CLI pauses onboarding and exits with a nonzero status.
 Recreate that sandbox through the supported onboarding flow before using it:
 
 ```bash
