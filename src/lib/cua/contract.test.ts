@@ -30,6 +30,10 @@ const thirdDigest = `sha256:${"c".repeat(64)}`;
 const temporaryAgentName = `cua-contract-fixture-${String(process.pid)}`;
 const temporaryAgentDir = path.join(AGENTS_DIR, temporaryAgentName);
 
+type AttachedTargetAttachment = CuaTargetAttachment & {
+  target: NonNullable<CuaTargetAttachment["target"]>;
+};
+
 function component(name: string, componentDigest = digest): CuaComponentIdentity {
   return {
     name,
@@ -71,7 +75,7 @@ function runtimeReadiness(): CuaRuntimeReadiness {
   };
 }
 
-function targetAttachment(): CuaTargetAttachment {
+function targetAttachment(): AttachedTargetAttachment {
   return {
     schemaVersion: CUA_LIFECYCLE_SCHEMA_VERSION,
     kind: "target-attachment",
@@ -89,11 +93,6 @@ function targetAttachment(): CuaTargetAttachment {
     },
     activeTask: null,
   };
-}
-
-function attachedTarget(record: CuaTargetAttachment): NonNullable<CuaTargetAttachment["target"]> {
-  expect(record.target).not.toBeNull();
-  return record.target as NonNullable<CuaTargetAttachment["target"]>;
 }
 
 function taskResult(): CuaTaskResult {
@@ -250,7 +249,7 @@ describe("first-class CUA contract", () => {
     );
 
     const duplicate = targetAttachment();
-    const duplicateTarget = attachedTarget(duplicate);
+    const duplicateTarget = duplicate.target;
     duplicateTarget.capabilities = [
       ...duplicateTarget.capabilities.slice(0, 2),
       {
@@ -267,7 +266,7 @@ describe("first-class CUA contract", () => {
     );
 
     const unhealthy = targetAttachment();
-    const unhealthyTarget = attachedTarget(unhealthy);
+    const unhealthyTarget = unhealthy.target;
     unhealthyTarget.capabilities = unhealthyTarget.capabilities.map((capability) =>
       capability.id === "computer" ? { ...capability, health: "unhealthy" } : capability,
     );
@@ -320,7 +319,7 @@ describe("first-class CUA contract", () => {
     );
   });
 
-  it("rejects missing component digests and path-bearing evidence (#7750)", () => {
+  it("rejects missing component digests, duplicate capabilities, and path-bearing evidence (#7750)", () => {
     const validate = createValidator();
     const result = taskResult() as unknown as Record<string, unknown>;
     const components = { ...(result.components as Record<string, unknown>) };
@@ -333,6 +332,13 @@ describe("first-class CUA contract", () => {
       validate({
         ...result,
         capabilities: (result.capabilities as unknown[]).slice(0, 2),
+      }),
+    ).toBe(false);
+    const capabilities = result.capabilities as unknown[];
+    expect(
+      validate({
+        ...result,
+        capabilities: [capabilities[0], capabilities[0], capabilities[2]],
       }),
     ).toBe(false);
     expect(
