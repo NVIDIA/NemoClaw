@@ -9,7 +9,10 @@ import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
+import {
+  buildDashboardRemoteBindEnv,
+  dashboardRemoteBindConnectStarted,
+} from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
@@ -51,24 +54,6 @@ function remoteHostCandidate(): string {
     .flat()
     .find((iface) => iface && iface.family === "IPv4" && !iface.internal)?.address;
   return process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4 || os.hostname();
-}
-
-function stripAnsi(output: string): string {
-  return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function connectStartedDashboardForward(
-  result: { exitCode: number | null; stdout: string; stderr: string },
-  sandboxName: string,
-  dashboardPort: string,
-): boolean {
-  const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
-  return (
-    result.exitCode === 0 ||
-    (result.exitCode === null &&
-      output.includes(`Forwarding port ${dashboardPort}`) &&
-      output.includes(`sandbox ${sandboxName}`))
-  );
 }
 
 runDashboardRemoteBindTest(
@@ -204,7 +189,7 @@ runDashboardRemoteBindTest(
       timeoutMs: 120_000,
     });
     expect(
-      connectStartedDashboardForward(connect, sandboxName, dashboardPort),
+      dashboardRemoteBindConnectStarted(connect, sandboxName, dashboardPort),
       `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
     ).toBe(true);
 

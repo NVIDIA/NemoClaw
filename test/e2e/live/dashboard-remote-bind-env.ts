@@ -5,6 +5,10 @@ import os from "node:os";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
+function stripAnsi(output: string): string {
+  return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
 export function buildDashboardRemoteBindEnv(
   sandboxName: string,
   extra: NodeJS.ProcessEnv = {},
@@ -21,4 +25,19 @@ export function buildDashboardRemoteBindEnv(
     ...extra,
     NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
   };
+}
+
+export function dashboardRemoteBindConnectStarted(
+  result: { exitCode: number | null; stdout: string; stderr: string },
+  sandboxName: string,
+  dashboardPort: string,
+): boolean {
+  const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
+  return (
+    result.exitCode === 0 ||
+    (result.exitCode === null &&
+      (output.includes("Dashboard port forward re-established.") ||
+        (output.includes(`Forwarding port ${dashboardPort}`) &&
+          output.includes(`sandbox ${sandboxName}`))))
+  );
 }
