@@ -1937,7 +1937,7 @@ _VALIDATION_SOURCE_WATCH_MASK = (
 
 
 class _ValidationSourceWatch:
-    """Record every work-tree mutation from source verification through exit."""
+    """Record detected work-tree mutations from source verification through exit."""
 
     def __init__(self, descriptor: int) -> None:
         self.descriptor = descriptor
