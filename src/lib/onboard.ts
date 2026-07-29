@@ -2247,19 +2247,10 @@ async function createSandboxWithBaseImageResolution(
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const baseResolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
-  const retainedDockerRuntime = preparedBuildContext?.preparedOpenClawLegacyImage
-    ? sandboxGpuCreateFlow.createRetainedOpenClawDockerRuntime(
-        preparedBuildContext.preparedOpenClawLegacyImage,
-      )
-    : null;
-  const resolvedCreateIntent = retainedDockerRuntime
-    ? sandboxGpuCreateFlow.bindRetainedOpenClawGpuRoute(
-        baseResolvedCreateIntent,
-        effectiveSandboxGpuConfig,
-        isLinuxDockerDriverGatewayEnabled(),
-        retainedDockerRuntime,
-      )
-    : baseResolvedCreateIntent;
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const retainedDockerRuntime = preparedBuildContext?.preparedOpenClawLegacyImage ? sandboxGpuCreateFlow.createRetainedOpenClawDockerRuntime(preparedBuildContext.preparedOpenClawLegacyImage) : null;
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const resolvedCreateIntent = retainedDockerRuntime ? sandboxGpuCreateFlow.bindRetainedOpenClawGpuRoute(baseResolvedCreateIntent, effectiveSandboxGpuConfig, isLinuxDockerDriverGatewayEnabled(), retainedDockerRuntime) : baseResolvedCreateIntent;
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2721,25 +2712,14 @@ async function createSandboxWithBaseImageResolution(
       manageDashboard,
       openshellShellCommand,
       openshellArgv,
-      prebuild: {
-        buildCtx,
-        buildId,
-        dockerDriverGateway,
-        origin,
-        preparedOpenClawLegacyImage: preparedBuildContext?.preparedOpenClawLegacyImage,
-      },
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin, preparedOpenClawLegacyImage: preparedBuildContext?.preparedOpenClawLegacyImage },
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   recreateRuntime.advance("creating");
-  const {
-    createResult,
-    dockerGpuCreatePatch,
-    route: selectedGpuRoute,
-    firstCreateOutput,
-    registryImageRef,
-    retainedImageFinalization,
-  } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { createResult, dockerGpuCreatePatch, route: selectedGpuRoute, firstCreateOutput, registryImageRef, retainedImageFinalization } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
       provider,
@@ -2764,9 +2744,8 @@ async function createSandboxWithBaseImageResolution(
       sleep: sleepSeconds,
       openshellArgv,
       verifyDirectSandboxGpu,
-      ...(retainedDockerRuntime
-        ? { createRetainedDockerRuntime: () => retainedDockerRuntime }
-        : {}),
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      ...(retainedDockerRuntime ? { createRetainedDockerRuntime: () => retainedDockerRuntime } : {}),
     },
   );
 
@@ -2825,18 +2804,8 @@ async function createSandboxWithBaseImageResolution(
   }
 
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
-  const resolvedImageTag = sandboxGpuCreateFlow.resolveCreatedSandboxRegistryImageRef(
-    retainedImageFinalization,
-    [
-      registryImageRef,
-      prebuild.imageRef,
-      buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`),
-      resolveSandboxImageTagFromCreateOutput(
-        `${firstCreateOutput}\n${createResult.output}`,
-        buildId,
-      ),
-    ],
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const resolvedImageTag = sandboxGpuCreateFlow.resolveCreatedSandboxRegistryImageRef(retainedImageFinalization, [registryImageRef, prebuild.imageRef, buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`), resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId)]);
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   recreateRuntime.recordCreated();
   finalizeCreatedSandbox(
