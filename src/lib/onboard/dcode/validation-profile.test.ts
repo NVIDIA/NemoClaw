@@ -68,7 +68,7 @@ describe("DCode validation profiles", () => {
     [
       "path escape",
       (value: DcodeValidationProfile) => {
-        if (value.commands[0]) value.commands[0].workingDirectory = "/sandbox/elsewhere";
+        value.commands[0]!.workingDirectory = "/sandbox/elsewhere";
       },
     ],
     [
@@ -103,14 +103,14 @@ describe("DCode validation profiles", () => {
     [
       "command id",
       (value: DcodeValidationProfile, secret: string) => {
-        if (value.commands[0]) value.commands[0].id = secret;
+        value.commands[0]!.id = secret;
       },
     ],
     [
       "working directory",
       (value: DcodeValidationProfile, secret: string) => {
         value.workingDirectoryRoots = [`/sandbox/${secret}`];
-        if (value.commands[0]) value.commands[0].workingDirectory = `/sandbox/${secret}/repo`;
+        value.commands[0]!.workingDirectory = `/sandbox/${secret}/repo`;
       },
     ],
   ])("rejects a secret-shaped receipt-visible %s (#7774)", (_label, mutate) => {
@@ -123,7 +123,7 @@ describe("DCode validation profiles", () => {
 
   it("allows a command to inherit no ambient environment values (#7774)", () => {
     const value = profile();
-    if (value.commands[0]) value.commands[0].environment = [];
+    value.commands[0]!.environment = [];
     const { contentDigest: _contentDigest, ...content } = value;
     value.contentDigest = dcodeValidationProfileDigest(content);
     expect(parseDcodeValidationProfile(value).commands[0]?.environment).toEqual([]);

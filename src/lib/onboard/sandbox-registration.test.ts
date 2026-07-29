@@ -22,6 +22,8 @@ const {
   encodeDcodeValidationProfile,
 } = requireDist("./dcode/validation-profile.ts") as typeof import("./dcode/validation-profile");
 
+afterEach(() => vi.unstubAllEnvs());
+
 const runtimeFields = {
   gpuEnabled: true,
   hostGpuDetected: true,
@@ -52,25 +54,22 @@ describe("dcodeCreate", () => {
         },
       ],
     };
-    const previous = process.env[DCODE_VALIDATION_PROFILE_ENV];
-    process.env[DCODE_VALIDATION_PROFILE_ENV] = encodeDcodeValidationProfile({
-      ...content,
-      contentDigest: dcodeValidationProfileDigest(content),
+    vi.stubEnv(
+      DCODE_VALIDATION_PROFILE_ENV,
+      encodeDcodeValidationProfile({
+        ...content,
+        contentDigest: dcodeValidationProfileDigest(content),
+      }),
+    );
+    const managed = dcodeCreate("demo", "langchain-deepagents-code", null);
+    expect(managed.managed).toBe(true);
+    expect(managed.registrationFields("thread-opt-in")).toMatchObject({
+      dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeValidationProfile: { taskIdentity: "issue-7774" },
     });
-    try {
-      const managed = dcodeCreate("demo", "langchain-deepagents-code", null);
-      expect(managed.managed).toBe(true);
-      expect(managed.registrationFields("thread-opt-in")).toMatchObject({
-        dcodeAutoApprovalMode: "thread-opt-in",
-        dcodeValidationProfile: { taskIdentity: "issue-7774" },
-      });
-      expect(() => dcodeCreate("demo", "openclaw", null)).toThrow(
-        /supported only for managed LangChain Deep Agents Code/,
-      );
-    } finally {
-      if (previous === undefined) delete process.env[DCODE_VALIDATION_PROFILE_ENV];
-      else process.env[DCODE_VALIDATION_PROFILE_ENV] = previous;
-    }
+    expect(() => dcodeCreate("demo", "openclaw", null)).toThrow(
+      /supported only for managed LangChain Deep Agents Code/,
+    );
   });
 });
 
