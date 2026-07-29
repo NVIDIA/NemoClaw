@@ -66,13 +66,12 @@ const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
 const FORK_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-fork-pr";
-const INTERNAL_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-internal-pr";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
-const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
+const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E maintainer authorization required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
 const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
 const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
@@ -164,12 +163,6 @@ type ControlPlaneDispatchCommand = ControlPlaneCommandBase & {
   reason: string;
 };
 
-type ApprovedControlPlaneDispatchCommand = ControlPlaneCommandBase & {
-  mode: "start-approved-control-plane";
-  approvalRunId: number;
-  approvalRunAttempt: number;
-};
-
 type ApprovedForkE2EDispatchCommand = ControlPlaneCommandBase & {
   mode: "start-approved-fork";
   approvalRunId: number;
@@ -228,7 +221,6 @@ export type ControllerCommand =
       retryStatePath: string;
     }
   | ControlPlaneDispatchCommand
-  | ApprovedControlPlaneDispatchCommand
   | ApprovedForkE2EDispatchCommand;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
@@ -603,34 +595,6 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
-  if (args.mode === "start-approved-control-plane") {
-    const workflowRunAttempt = parsePositiveId(
-      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
-      "--workflow-run-attempt",
-    );
-    const approvalRunAttempt = parsePositiveId(
-      requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
-      "--approval-run-attempt",
-    );
-    if (workflowRunAttempt !== 1 || approvalRunAttempt !== 1) {
-      throw new Error("workflow and approval run attempts must be exactly 1");
-    }
-    return {
-      mode: "start-approved-control-plane",
-      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
-      headSha: requiredArgument(args.head, "head"),
-      baseSha: requiredArgument(args.base, "base"),
-      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
-      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
-      workflowRunAttempt,
-      approvalRunId: parsePositiveId(
-        requiredArgument(args.approvalRunId, "approval-run-id"),
-        "--approval-run-id",
-      ),
-      approvalRunAttempt,
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
-    };
-  }
   if (args.mode === "start-approved-fork") {
     const workflowRunAttempt = parsePositiveId(
       requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
@@ -660,7 +624,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
+    "--mode must be seed, start, start-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
   );
 }
 
@@ -929,12 +893,9 @@ function appendOutput(name: string, value: string): void {
   if (!output) return;
   const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
     approval_base_sha: (candidate) => SHA_PATTERN.test(candidate),
-    approval_environment: (candidate) =>
-      candidate === INTERNAL_E2E_APPROVAL_ENVIRONMENT ||
-      candidate === FORK_E2E_APPROVAL_ENVIRONMENT,
+    approval_environment: (candidate) => candidate === FORK_E2E_APPROVAL_ENVIRONMENT,
     approval_head_sha: (candidate) => SHA_PATTERN.test(candidate),
-    approval_mode: (candidate) =>
-      candidate === "start-approved-control-plane" || candidate === "start-approved-fork",
+    approval_mode: (candidate) => candidate === "start-approved-fork",
     approval_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
@@ -963,8 +924,8 @@ function appendOutput(name: string, value: string): void {
 }
 
 function emitE2EApprovalOutputs(
-  mode: "start-approved-control-plane" | "start-approved-fork",
-  environment: typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT | typeof FORK_E2E_APPROVAL_ENVIRONMENT,
+  mode: "start-approved-fork",
+  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT,
   prNumber: number,
   headSha: string,
   baseSha: string,
@@ -3237,8 +3198,6 @@ export async function startPrGate(
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
       const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
-      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
-      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await markCheckInProgress(
         {
           repository,
@@ -3252,17 +3211,10 @@ export async function startPrGate(
         [
           `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
           "No selected E2E job or target ran and no repository secret was exposed.",
-          `An authorized E2E reviewer must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\`. Open ${gateRunLink}, choose Review deployments, and approve the \`${INTERNAL_E2E_APPROVAL_ENVIRONMENT}\` environment. GitHub records the reviewer and optional comment, then the trusted controller dispatches this exact plan. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it, update the PR to create a new head, and trigger fresh PR CI.`,
-          `The manual maintainer fallback remains available from the [${WORKFLOW_NAME}](${workflowUrl}) workflow through \`run-control-plane\`. This gate passes only if the dispatched evidence references both SHAs and verifies successfully.`,
+          `Any repository maintainer or administrator can authorize this exact plan by dispatching [${WORKFLOW_NAME}](${workflowUrl}) on \`main\` with \`operation=run-control-plane\`, \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The controller verifies the triggering actor's repository role before dispatch.`,
+          "The authorization dispatch is the approval; no separate protected-environment review is required. This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
-      );
-      emitE2EApprovalOutputs(
-        "start-approved-control-plane",
-        INTERNAL_E2E_APPROVAL_ENVIRONMENT,
-        pull.number,
-        command.headSha,
-        ciIdentity.baseSha,
       );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
@@ -3513,48 +3465,6 @@ function approvedE2EReason(comment: string | null): string {
   const boundedComment = normalizedComment.slice(0, maxCommentChars);
   return normalizedWaiverReason(
     boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason,
-  );
-}
-
-export async function startApprovedControlPlanePrGate(
-  command: ApprovedControlPlaneDispatchCommand,
-): Promise<void> {
-  const { token, repository } = tokenAndRepository();
-  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
-    throw new Error("approval run ID is invalid");
-  }
-  if (command.approvalRunAttempt !== 1 || command.workflowRunAttempt !== 1) {
-    throw new Error("approval and workflow run attempts must be exactly 1");
-  }
-  if (command.gateRunId !== command.approvalRunId) {
-    throw new Error("approval run ID must match the gate run ID");
-  }
-  validateApprovalWorkflowRun(
-    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
-      userAgent: USER_AGENT,
-    }),
-    {
-      repository,
-      runId: command.approvalRunId,
-      runAttempt: command.approvalRunAttempt,
-      workflowSha: command.workflowSha,
-    },
-  );
-  const review = validateApprovalReview(
-    await githubApi<unknown>(
-      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
-      token,
-      { userAgent: USER_AGENT },
-    ),
-    INTERNAL_E2E_APPROVAL_ENVIRONMENT,
-  );
-  await startAuthorizedPrGate(
-    {
-      ...command,
-      maintainer: review.reviewer,
-      reason: approvedE2EReason(review.comment),
-    },
-    "internal-control-plane",
   );
 }
 
@@ -4009,7 +3919,7 @@ function validateApprovalWorkflowRun(
 
 function validateApprovalReview(
   value: unknown,
-  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT | typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT,
+  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT,
 ): { reviewer: string; comment: string | null } {
   if (!Array.isArray(value)) {
     throw new Error("GitHub returned malformed environment approval history");
@@ -4217,10 +4127,6 @@ async function main(): Promise<void> {
   }
   if (command.mode === "start-control-plane") {
     await startControlPlanePrGate(command);
-    return;
-  }
-  if (command.mode === "start-approved-control-plane") {
-    await startApprovedControlPlanePrGate(command);
     return;
   }
   if (command.mode === "start-approved-fork") {

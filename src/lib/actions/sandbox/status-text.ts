@@ -24,7 +24,7 @@ import {
 } from "../../state/sandbox-session";
 import type { SandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
 import {
   isInferenceHealthFailing,
   resolveSandboxStatusDcodeAutoApprovalMode,
