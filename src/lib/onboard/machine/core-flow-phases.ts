@@ -161,6 +161,7 @@ export function createProviderInferenceOnboardFlowPhase<
         webSearchConfig: context.webSearchConfig,
       },
       selectedMessagingChannels: context.selectedMessagingChannels,
+      customDockerfileRequested: context.fromDockerfile !== null,
       env: options.env,
       constants: options.constants,
       deps: options.deps,

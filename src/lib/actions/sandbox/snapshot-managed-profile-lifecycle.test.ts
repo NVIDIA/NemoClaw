@@ -118,6 +118,49 @@ afterEach(() => {
   }
 });
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
+  it("refuses provider replacement when an unrelated sandbox is attached", async () => {
+    const commands: Array<{ args: string[]; options?: Record<string, unknown> }> = [];
+    const runner = vi.fn((args: string[], options?: Record<string, unknown>) => {
+      commands.push({ args, options });
+      if (args.join(" ") === "provider get beta-telegram-bridge") {
+        return {
+          status: 0,
+          stdout: providerMetadata("beta-telegram-bridge", "generic", "TELEGRAM_BOT_TOKEN"),
+        };
+      }
+      if (args.join(" ") === "provider delete beta-telegram-bridge") {
+        return {
+          status: 1,
+          stderr: "provider 'beta-telegram-bridge' is attached to sandbox(es): beta, gamma",
+        };
+      }
+      return { status: 0 };
+    });
+    const { provisionManagedCloneProviders } = await import("./snapshot/managed-clone-providers");
+
+    expect(() =>
+      provisionManagedCloneProviders(
+        [
+          {
+            providerName: "beta-telegram-bridge",
+            providerType: "generic",
+            providerEnvKey: "TELEGRAM_BOT_TOKEN",
+            source: "messaging",
+            replaceExistingCredential: true,
+          },
+        ],
+        {
+          environment: { TELEGRAM_BOT_TOKEN: "replacement-secret" },
+          runOpenshell: runner,
+          rollbackSandboxName: "beta",
+        },
+      ),
+    ).toThrow("is still attached outside destination 'beta'");
+    expect(commands.some(({ args }) => args[0] === "sandbox")).toBe(false);
+    expect(commands.some(({ args }) => ["create", "update"].includes(args[1] ?? ""))).toBe(false);
+    expect(commands.every(({ options }) => options?.env === undefined)).toBe(true);
+  });
+
   it("starts and registers a managed DCode clone with its receipt-bound profile transport", async () => {
     const built = buildManagedStartupProfile({
       agent: "langchain-deepagents-code",

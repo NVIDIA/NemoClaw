@@ -7,12 +7,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 type Step = {
   env?: Record<string, unknown>;
   id?: string;
+  if?: string;
   name?: string;
   run?: string;
   uses?: string;
@@ -68,6 +69,9 @@ type Workflow = {
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
+const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
+  ...parameters: string[]
+) => (...args: unknown[]) => Promise<unknown>;
 const managedInputPaths = [
   ".dockerignore",
   ".github/workflows/managed-images.yaml",
@@ -132,6 +136,11 @@ function managedPrBuilder(workflow: Workflow): Job {
     "managed-image workflow is missing its pull-request build and entrypoint matrix",
   );
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Workflow): string[] {
   const triggerPaths = baseWorkflow.on?.push?.paths ?? [];
@@ -418,6 +427,65 @@ describe("complete managed-image publication workflow", () => {
       "timeout-minutes": 30,
     });
     expect(promoter.strategy).toBeUndefined();
+  });
+
+  it("rejects lightweight and unverified release tags before managed alias promotion", async () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const promoter = managedPromoter(workflow);
+    const promoteSteps = promoter.steps ?? [];
+    const verify = step(promoter, "Verify release tag before managed image promotion");
+    const barrier = step(promoter, "Validate complete managed image candidate set");
+    const login = step(promoter, "Log in to GHCR for promotion");
+    const promotion = step(promoter, "Promote validated managed image aliases");
+    const script = required(verify.with?.script as string | undefined, "tag verifier is missing");
+    const releaseTag = "v0.0.98";
+    const releaseRevision = "b".repeat(40);
+    const tagObjectSha = "a".repeat(40);
+    const runVerify = (getRef: ReturnType<typeof vi.fn>, getTag: ReturnType<typeof vi.fn>) =>
+      new AsyncFunction("github", "context", "core", script)(
+        { rest: { git: { getRef, getTag } } },
+        { repo: { owner: "NVIDIA", repo: "NemoClaw" } },
+        { info: vi.fn() },
+      );
+    vi.stubEnv("RELEASE_TAG", releaseTag);
+    vi.stubEnv("RELEASE_REVISION", releaseRevision);
+
+    expect(verify.if).toBe("startsWith(github.ref, 'refs/tags/v')");
+    expect(verify.uses).toBe("actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3");
+    expect(promoteSteps.indexOf(barrier)).toBeLessThan(promoteSteps.indexOf(verify));
+    expect(promoteSteps.indexOf(verify)).toBeLessThan(promoteSteps.indexOf(login));
+    expect(promoteSteps.indexOf(verify)).toBeLessThan(promoteSteps.indexOf(promotion));
+
+    const lightweightGetTag = vi.fn();
+    await expect(
+      runVerify(
+        vi.fn().mockResolvedValue({
+          data: { object: { sha: releaseRevision, type: "commit" } },
+        }),
+        lightweightGetTag,
+      ),
+    ).rejects.toThrow(`Release tag ${releaseTag} must be annotated`);
+    expect(lightweightGetTag).not.toHaveBeenCalled();
+
+    vi.useFakeTimers();
+    const unverifiedGetTag = vi.fn().mockResolvedValue({
+      data: {
+        object: { sha: releaseRevision, type: "commit" },
+        tag: releaseTag,
+        verification: { verified: false, reason: "unsigned" },
+      },
+    });
+    const unverified = expect(
+      runVerify(
+        vi.fn().mockResolvedValue({
+          data: { object: { sha: tagObjectSha, type: "tag" } },
+        }),
+        unverifiedGetTag,
+      ),
+    ).rejects.toThrow(`Release tag ${releaseTag} is not GitHub-Verified (unsigned)`);
+    await vi.runAllTimersAsync();
+    await unverified;
+    expect(unverifiedGetTag).toHaveBeenCalledTimes(10);
   });
 
   it("builds all three images and exercises real entrypoints for stacked and main-target pull requests", () => {

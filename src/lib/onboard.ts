@@ -2275,6 +2275,11 @@ async function createSandboxWithBaseImageResolution(
       workloadFallbackReported = true;
       note(`  Managed image unavailable; using the trusted Dockerfile recipe.`);
       note(`  ${prepared.fallbackDiagnostic}`);
+      const buildEstimateNote =
+        process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
+          ? null
+          : formatSandboxBuildEstimateNote(assessHost(), "trusted-dockerfile-fallback");
+      if (buildEstimateNote) note(`  ${buildEstimateNote}`);
     }
     return prepared;
   };

@@ -669,15 +669,16 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
   });
 
-  it("removes a rotated forced-target provider when downstream sandbox create fails", async () => {
+  it("removes a recreated forced-target provider when downstream sandbox create fails", async () => {
     const built = managedOpenClawProfile();
     const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
     const events: string[] = [];
     let destinationProviderExists = true;
-    let providerWasUpdated = false;
+    let providerWasCreated = false;
     let partialSandboxExists = false;
     let providerAttached = true;
+    let providerDeleteCount = 0;
     let sandboxDeleteCount = 0;
     let telegramDetachCount = 0;
     f.getSandboxMock.mockImplementation((name) => {
@@ -781,7 +782,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         return { status: 0, output: "" };
       }
       if (command === "provider delete beta-telegram-bridge") {
-        if (!providerWasUpdated) {
+        providerDeleteCount += 1;
+        if (!providerWasCreated && destinationProviderExists) {
+          if (providerDeleteCount > 1 && !providerAttached) {
+            destinationProviderExists = false;
+            events.push("replacement-provider-delete");
+            return { status: 0, output: "" };
+          }
           events.push("provider-delete:survived");
           return { status: 1, output: "" };
         }
@@ -798,10 +805,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         events.push("provider-delete:rollback");
         return { status: 0, output: "" };
       }
-      if (command === "provider update beta-telegram-bridge --credential TELEGRAM_BOT_TOKEN") {
+      if (
+        command ===
+        "provider create --name beta-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN"
+      ) {
         expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "rotated-clone-token" });
-        providerWasUpdated = true;
-        events.push("provider-update:rotated-clone-token");
+        providerWasCreated = true;
+        destinationProviderExists = true;
+        events.push("provider-create:rotated-clone-token");
         return { status: 0, output: "" };
       }
       return { status: 0, output: "" };
@@ -829,27 +840,20 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(events.indexOf("provider-delete:survived")).toBeLessThan(
-      events.indexOf("provider-update:rotated-clone-token"),
-    );
-    expect(events.indexOf("provider-update:rotated-clone-token")).toBeLessThan(
-      events.indexOf("sandbox-create:failed"),
-    );
-    expect(events.indexOf("sandbox-create:failed")).toBeLessThan(
-      events.indexOf("partial-provider-detach:failed"),
-    );
-    expect(events.indexOf("partial-provider-detach:failed")).toBeLessThan(
-      events.indexOf("partial-sandbox-delete:failed"),
-    );
-    expect(events.indexOf("partial-sandbox-delete:failed")).toBeLessThan(
-      events.indexOf("provider-delete:blocked-attached"),
-    );
-    expect(events.indexOf("provider-delete:blocked-attached")).toBeLessThan(
-      events.indexOf("rollback-provider-detach:recovered"),
-    );
-    expect(events.indexOf("rollback-provider-detach:recovered")).toBeLessThan(
-      events.indexOf("provider-delete:rollback"),
-    );
+    const expectedOrder = [
+      "provider-delete:survived",
+      "replacement-provider-delete",
+      "provider-create:rotated-clone-token",
+      "sandbox-create:failed",
+      "partial-provider-detach:failed",
+      "partial-sandbox-delete:failed",
+      "provider-delete:blocked-attached",
+      "rollback-provider-detach:recovered",
+      "provider-delete:rollback",
+    ];
+    const observedOrder = expectedOrder.map((event) => events.indexOf(event));
+    expect(observedOrder).not.toContain(-1);
+    expect(observedOrder).toEqual([...observedOrder].sort((left, right) => left - right));
     expect(partialSandboxExists).toBe(true);
     expect(destinationProviderExists).toBe(false);
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
