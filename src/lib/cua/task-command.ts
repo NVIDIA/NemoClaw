@@ -43,11 +43,20 @@ function validationFailure(operation: CuaTaskOperation): CuaTaskLifecycleResult 
 }
 
 function readPrivateTaskInput(filePath: string): string {
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile() || stat.size === 0 || stat.size > MAX_TASK_INPUT_BYTES) {
-    throw new Error("CUA task input must be a non-empty file no larger than 64 KiB");
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_TASK_INPUT_BYTES) {
+      throw new Error("CUA task input must be a non-empty file no larger than 64 KiB");
+    }
+    const contents = fs.readFileSync(descriptor);
+    if (contents.byteLength === 0 || contents.byteLength > MAX_TASK_INPUT_BYTES) {
+      throw new Error("CUA task input must be a non-empty file no larger than 64 KiB");
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(contents);
+  } finally {
+    fs.closeSync(descriptor);
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(filePath));
 }
 
 export function executeCuaTaskCommand(input: CuaTaskCommandInput): CuaTaskLifecycleResult {
