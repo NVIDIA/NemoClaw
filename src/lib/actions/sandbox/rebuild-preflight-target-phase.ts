@@ -5,7 +5,9 @@ import { randomUUID } from "node:crypto";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
+import { resolveCurrentOpenShellComputePlan } from "../../onboard/compute/plan";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import { credentialHostProxyReplayEnvArgs } from "../../onboard/host-proxy-env";
 
 import {
   createRebuildProviderReconfigureHandoff,
@@ -13,9 +15,15 @@ import {
   type ProviderRecoveryReceipt,
   type RegistryInferenceRoute,
 } from "../../onboard/rebuild-route-handoff";
+import {
+  prepareManagedWorkloadRebuildHandoff,
+  prepareSandboxWorkloadSourceFromRebuildHandoff,
+} from "../../onboard/workload/rebuild";
+import { resolveSandboxWorkloadRuntimeCapabilities } from "../../onboard/workload/runtime";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
+import { prepareManagedRebuildProfileHandoff } from "./agents/managed-workload-rebuild-profile";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { PreparedRebuildImage } from "./rebuild-custom-image-preflight";
@@ -160,6 +168,24 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  let managedWorkloadRebuildCatalog: Awaited<
+    ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
+  > = null;
+  try {
+    const runtime = resolveSandboxWorkloadRuntimeCapabilities(resolveCurrentOpenShellComputePlan());
+    managedWorkloadRebuildCatalog = await prepareManagedWorkloadRebuildHandoff(sandboxEntry, {
+      runtime,
+    });
+    if (managedWorkloadRebuildCatalog) {
+      prepareSandboxWorkloadSourceFromRebuildHandoff(managedWorkloadRebuildCatalog, runtime);
+      if (managedWorkloadRebuildCatalog.previousReceipt.credentialProxyReplayRequired) {
+        credentialHostProxyReplayEnvArgs(process.env);
+      }
+    }
+  } catch (error) {
+    bail(error instanceof Error ? error.message : String(error));
+    return null;
+  }
   // The durable resolver may recover a legacy row's choice from its matching
   // session. Use that authoritative value for both preflight and inner onboard,
   // never the raw registry fallback used while constructing generic options.
@@ -188,6 +214,19 @@ export async function prepareRebuildTargetPreflights(args: {
     log,
     bail,
   );
+  if (managedWorkloadRebuildCatalog) {
+    try {
+      recreateOptions.managedWorkloadRebuild = prepareManagedRebuildProfileHandoff({
+        catalogHandoff: managedWorkloadRebuildCatalog,
+        targetConfig,
+        recreateOptions,
+        messagingPlan,
+      });
+    } catch (error) {
+      bail(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
   // Detect cross-sandbox credential conflicts immediately after staging the
   // exact rebuild plan, before host/runtime probes and every destructive phase.
   await preflightRebuildMessagingConflicts(messagingPlan, {
@@ -225,12 +264,14 @@ export async function prepareRebuildTargetPreflights(args: {
   if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
-  const baseImagePreflight = rebuildsDcodeSandbox
-    ? { ok: true, imageRef: null, overrideEnvVar: null }
-    : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
-        resolutionHint: baseImageResolutionHint,
-        forceBaseImageRefresh,
-      });
+  const rebuildsManagedWorkload = recreateOptions.managedWorkloadRebuild !== undefined;
+  const baseImagePreflight =
+    rebuildsDcodeSandbox || rebuildsManagedWorkload
+      ? { ok: true, imageRef: null, overrideEnvVar: null }
+      : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
+          resolutionHint: baseImageResolutionHint,
+          forceBaseImageRefresh,
+        });
   if (!baseImagePreflight.ok) return null;
   let retainBaseImagePreflight = false;
   try {
@@ -248,7 +289,7 @@ export async function prepareRebuildTargetPreflights(args: {
         bail,
         {
           allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
-          skipImagePreflight: rebuildsDcodeSandbox,
+          skipImagePreflight: rebuildsDcodeSandbox || rebuildsManagedWorkload,
         },
       );
     } finally {

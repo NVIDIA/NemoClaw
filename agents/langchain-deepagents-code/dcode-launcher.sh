@@ -14,7 +14,12 @@ unset _nemoclaw_auto_approval_env
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
 readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"
-readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
+if [ -e /run/nemoclaw/managed-startup-ca-bundle.pem ] \
+  || [ -L /run/nemoclaw/managed-startup-ca-bundle.pem ]; then
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/nemoclaw/managed-startup-ca-bundle.pem"
+else
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
+fi
 readonly MANAGED_SESSION_SUPERVISOR="/usr/local/lib/nemoclaw/dcode-session-supervisor.py"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"

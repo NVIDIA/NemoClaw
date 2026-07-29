@@ -1,0 +1,843 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+  type ManagedStartupAgentEnvironment,
+  type ManagedStartupAgentMaterial,
+  mapManagedStartupProfileToAgentEnvironment,
+} from "./agent-environment";
+import {
+  coordinateManagedStartupApplication,
+  type ManagedStartupAdapterContext,
+  type ManagedStartupAgentAdapter,
+} from "./coordinator";
+import { MANAGED_STARTUP_AGENTS, type ManagedStartupAgent } from "./profile";
+import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
+
+export { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
+export const MANAGED_STARTUP_RUNTIME_ENV_FILE = "/run/nemoclaw/managed-startup-runtime.env";
+export const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
+  "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
+export const MANAGED_STARTUP_MERGED_CA_FILE = "/run/nemoclaw/managed-startup-ca-bundle.pem";
+
+const MANAGED_STARTUP_CORPORATE_CA_FILE = "/usr/local/share/nemoclaw/corporate-ca.pem";
+const MESSAGING_RUNTIME_PLAN_FILE = "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
+const ROOT_STATE_PARENT = "/var/lib/nemoclaw";
+const ROOT_RUNTIME_DIRECTORY = "/run/nemoclaw";
+const ROOT_OWNED_DIRECTORY_MODE = 0o755;
+const MAX_TRUST_BUNDLE_BYTES = 4 * 1024 * 1024;
+const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const SHA256_RE = /^[a-f0-9]{64}$/u;
+
+export type ManagedStartupImageIdentity = "root" | "sandbox";
+
+export interface ManagedStartupImageActionCommand {
+  readonly action:
+    | "generate-agent-config"
+    | "messaging-runtime-setup"
+    | "messaging-post-agent-install";
+  readonly runAs: ManagedStartupImageIdentity;
+  readonly argv: readonly string[];
+}
+
+export interface ManagedStartupImageApplyResult {
+  readonly agent: ManagedStartupAgent;
+  readonly adapterApplied: boolean;
+  readonly fingerprint: string;
+  readonly runtimeEnvironmentFile: string;
+}
+
+export class ManagedStartupImageRuntimeError extends Error {
+  constructor(message: string) {
+    super(`Managed startup image application failed: ${message}`);
+    this.name = "ManagedStartupImageRuntimeError";
+  }
+}
+
+type Environment = Record<string, string | undefined>;
+
+interface CommandResult {
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function fail(message: string): never {
+  throw new ManagedStartupImageRuntimeError(message);
+}
+
+function exactAgent(value: string): ManagedStartupAgent {
+  if ((MANAGED_STARTUP_AGENTS as readonly string[]).includes(value)) {
+    return value as ManagedStartupAgent;
+  }
+  return fail(`unsupported agent ${JSON.stringify(value)}`);
+}
+
+function requireRoot(): void {
+  if (process.geteuid?.() !== 0) {
+    fail("managed startup requires container effective uid 0");
+  }
+}
+
+function modeOf(stat: fs.Stats): number {
+  return stat.mode & 0o777;
+}
+
+function requireRootOwnedDirectory(target: string, mode: number): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    fail(`required root-owned directory is missing: ${target}`);
+  }
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isDirectory() ||
+    stat.uid !== 0 ||
+    stat.gid !== 0 ||
+    modeOf(stat) !== mode
+  ) {
+    fail(`${target} must be a root:root directory with mode ${mode.toString(8)}`);
+  }
+}
+
+function ensureRootOwnedDirectory(target: string, mode = ROOT_OWNED_DIRECTORY_MODE): void {
+  const parent = path.dirname(target);
+  const parentStat = fs.lstatSync(parent);
+  if (
+    parentStat.isSymbolicLink() ||
+    !parentStat.isDirectory() ||
+    parentStat.uid !== 0 ||
+    parentStat.gid !== 0 ||
+    (modeOf(parentStat) & 0o022) !== 0
+  ) {
+    fail(`refusing unsafe parent directory for ${target}`);
+  }
+  try {
+    fs.mkdirSync(target, { mode });
+    fs.chownSync(target, 0, 0);
+    fs.chmodSync(target, mode);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      fail(`could not create ${target}`);
+    }
+  }
+  requireRootOwnedDirectory(target, mode);
+}
+
+function requireSafeExistingRootTarget(target: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    fail(`could not inspect ${target}`);
+  }
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isFile() ||
+    stat.nlink !== 1 ||
+    stat.uid !== 0 ||
+    stat.gid !== 0
+  ) {
+    fail(`refusing to replace unsafe root-owned file ${target}`);
+  }
+}
+
+function atomicWriteRootFile(target: string, contents: string | Buffer, mode: number): void {
+  const parent = path.dirname(target);
+  const parentStat = fs.lstatSync(parent);
+  if (
+    parentStat.isSymbolicLink() ||
+    !parentStat.isDirectory() ||
+    parentStat.uid !== 0 ||
+    parentStat.gid !== 0 ||
+    (modeOf(parentStat) & 0o022) !== 0
+  ) {
+    fail(`refusing unsafe root-owned file parent ${parent}`);
+  }
+  requireSafeExistingRootTarget(target);
+  const temporary = path.join(
+    parent,
+    `.${path.basename(target)}.${randomBytes(12).toString("hex")}`,
+  );
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.fchownSync(descriptor, 0, 0);
+    fs.writeFileSync(descriptor, contents);
+    fs.fchmodSync(descriptor, mode);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      // Preserve the primary write failure.
+    }
+    fail(`could not atomically write ${target}: ${(error as Error).message}`);
+  }
+  const stat = fs.lstatSync(target);
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isFile() ||
+    stat.nlink !== 1 ||
+    stat.uid !== 0 ||
+    stat.gid !== 0 ||
+    modeOf(stat) !== mode
+  ) {
+    fail(`root-owned output failed metadata verification: ${target}`);
+  }
+}
+
+function removeSafeRootFile(target: string): void {
+  requireSafeExistingRootTarget(target);
+  try {
+    fs.unlinkSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      fail(`could not remove ${target}`);
+    }
+  }
+}
+
+function trustedExecutable(target: string): boolean {
+  try {
+    const stat = fs.lstatSync(target);
+    return (
+      !stat.isSymbolicLink() &&
+      stat.isFile() &&
+      stat.uid === 0 &&
+      stat.gid === 0 &&
+      (modeOf(stat) & 0o022) === 0 &&
+      (modeOf(stat) & 0o111) !== 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
+  const readId = (flag: "-u" | "-g"): string => {
+    const result = spawnSync("/usr/bin/id", [flag, "sandbox"], {
+      encoding: "utf8",
+      env: { PATH: FIXED_PATH },
+    });
+    const value = result.stdout.trim();
+    if (result.status !== 0 || !/^[1-9][0-9]*$/u.test(value)) {
+      fail("could not resolve the sandbox account");
+    }
+    return value;
+  };
+  return { uid: readId("-u"), gid: readId("-g") };
+}
+
+function sandboxPrefix(): readonly string[] {
+  if (trustedExecutable("/usr/local/bin/gosu")) {
+    return ["/usr/local/bin/gosu", "sandbox"];
+  }
+  if (trustedExecutable("/usr/bin/setpriv")) {
+    const identity = readSandboxIdentity();
+    return [
+      "/usr/bin/setpriv",
+      `--reuid=${identity.uid}`,
+      `--regid=${identity.gid}`,
+      "--init-groups",
+      "--",
+    ];
+  }
+  return fail("a trusted gosu or setpriv executable is required");
+}
+
+function commandEnvironment(
+  configurationEnvironment: Readonly<Record<string, string>>,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...configurationEnvironment,
+    HOME: "/sandbox",
+    PATH: FIXED_PATH,
+    NPM_CONFIG_OFFLINE: "true",
+    npm_config_offline: "true",
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+    PIP_NO_INDEX: "1",
+    UV_OFFLINE: "1",
+  };
+  delete env[MANAGED_STARTUP_PROFILE_ENV];
+  delete env[MANAGED_STARTUP_CA_ENV];
+  return env;
+}
+
+function execute(
+  argv: readonly string[],
+  runAs: ManagedStartupImageIdentity,
+  configurationEnvironment: Readonly<Record<string, string>>,
+  capture = false,
+): CommandResult {
+  if (argv.length === 0) fail("refusing an empty managed startup command");
+  const command = runAs === "sandbox" ? [...sandboxPrefix(), ...argv] : [...argv];
+  const result = spawnSync(command[0] as string, command.slice(1), {
+    encoding: "utf8",
+    env: commandEnvironment(configurationEnvironment),
+    stdio: capture ? "pipe" : "inherit",
+  });
+  if (result.error) {
+    fail(`could not execute ${argv[0]}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = capture ? `: ${(result.stderr || result.stdout).trim()}` : "";
+    fail(`${argv[0]} exited with status ${String(result.status ?? "unknown")}${detail}`);
+  }
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
+  switch (agent) {
+    case "openclaw":
+      return [
+        "/usr/local/bin/node",
+        "--experimental-strip-types",
+        "/scripts/generate-openclaw-config.mts",
+      ];
+    case "hermes":
+      return [
+        "/usr/local/bin/node",
+        "--experimental-strip-types",
+        "/opt/nemoclaw-hermes-config/generate-config.ts",
+      ];
+    case "langchain-deepagents-code":
+      return [
+        "/usr/local/bin/node",
+        "--experimental-strip-types",
+        "/opt/nemoclaw-deepagents-code/generate-config.ts",
+      ];
+  }
+}
+
+function messagingCommand(
+  agent: "openclaw" | "hermes",
+  phase: "runtime-setup" | "post-agent-install",
+): readonly string[] {
+  return [
+    "/usr/local/bin/node",
+    "--experimental-strip-types",
+    "/src/lib/messaging/applier/build/messaging-build-applier.mts",
+    "--agent",
+    agent,
+    "--phase",
+    phase,
+  ];
+}
+
+/**
+ * Convert the mapper's closed action vocabulary into executable image steps.
+ * There is deliberately no mapping for agent-install or any package manager.
+ */
+export function buildManagedStartupImageActionPlan(
+  environment: ManagedStartupAgentEnvironment,
+): readonly ManagedStartupImageActionCommand[] {
+  const commands: ManagedStartupImageActionCommand[] = [];
+  for (const action of environment.actions) {
+    if (action.kind === "configure-dashboard") continue;
+    if (action.kind === "generate-agent-config") {
+      commands.push({
+        action: "generate-agent-config",
+        runAs: action.runAs,
+        argv: generatorCommand(action.agent),
+      });
+      continue;
+    }
+    commands.push({
+      action:
+        action.phase === "runtime-setup"
+          ? "messaging-runtime-setup"
+          : "messaging-post-agent-install",
+      runAs: action.runAs,
+      argv: messagingCommand(action.agent, action.phase),
+    });
+  }
+  return Object.freeze(commands.map((command) => Object.freeze(command)));
+}
+
+function prepareMessagingRuntimeTarget(mode: "apply" | "clear"): void {
+  if (mode === "clear") {
+    removeSafeRootFile(MESSAGING_RUNTIME_PLAN_FILE);
+    return;
+  }
+  requireSafeExistingRootTarget(MESSAGING_RUNTIME_PLAN_FILE);
+  try {
+    fs.unlinkSync(MESSAGING_RUNTIME_PLAN_FILE);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      fail("could not prepare the messaging runtime-plan target");
+    }
+  }
+}
+
+function verifyMessagingRuntimeTarget(mode: "apply" | "clear"): void {
+  if (mode === "clear") {
+    if (fs.existsSync(MESSAGING_RUNTIME_PLAN_FILE)) {
+      fail("clear messaging profile left a runtime-plan artifact");
+    }
+    return;
+  }
+  const stat = fs.lstatSync(MESSAGING_RUNTIME_PLAN_FILE);
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isFile() ||
+    stat.nlink !== 1 ||
+    stat.uid !== 0 ||
+    stat.gid !== 0 ||
+    modeOf(stat) !== 0o644
+  ) {
+    fail("messaging runtime-plan artifact failed root ownership validation");
+  }
+}
+
+function runInternalSandboxAction(
+  action: "write-openclaw-hash" | "write-hermes-compat-hash",
+  configurationEnvironment: Readonly<Record<string, string>>,
+  extraEnvironment: Readonly<Record<string, string>> = {},
+): void {
+  execute(
+    ["/usr/local/bin/node", MANAGED_STARTUP_RUNTIME_EXECUTABLE, `--internal-${action}`],
+    "sandbox",
+    { ...configurationEnvironment, ...extraEnvironment },
+  );
+}
+
+function sealOpenClawConfiguration(
+  configurationEnvironment: Readonly<Record<string, string>>,
+): void {
+  const validation = execute(
+    ["/usr/local/bin/openclaw", "config", "validate", "--json"],
+    "sandbox",
+    configurationEnvironment,
+    true,
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(validation.stdout);
+  } catch {
+    fail("OpenClaw config validation did not emit JSON");
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    (parsed as Record<string, unknown>).valid !== true
+  ) {
+    fail("OpenClaw rejected the generated managed startup config");
+  }
+  runInternalSandboxAction("write-openclaw-hash", configurationEnvironment);
+}
+
+function readStableRegularFile(target: string, maxBytes: number): Buffer {
+  const before = fs.lstatSync(target);
+  if (
+    before.isSymbolicLink() ||
+    !before.isFile() ||
+    before.nlink !== 1 ||
+    before.size < 1 ||
+    before.size > maxBytes
+  ) {
+    fail(`refusing unsafe or oversized file ${target}`);
+  }
+  const bytes = fs.readFileSync(target);
+  const after = fs.lstatSync(target);
+  if (
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    bytes.length !== before.size
+  ) {
+    fail(`${target} changed while it was read`);
+  }
+  return bytes;
+}
+
+function sealHermesConfiguration(configurationEnvironment: Readonly<Record<string, string>>): void {
+  const configPath = "/sandbox/.hermes/config.yaml";
+  const envPath = "/sandbox/.hermes/.env";
+  const config = readStableRegularFile(configPath, 4 * 1024 * 1024);
+  const env = readStableRegularFile(envPath, 512 * 1024);
+  const digest = execute(
+    [
+      "/opt/hermes/.venv/bin/python3",
+      "-I",
+      "/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
+      "--guard",
+      "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+      "--config",
+      configPath,
+    ],
+    "root",
+    configurationEnvironment,
+    true,
+  ).stdout.trim();
+  if (!SHA256_RE.test(digest)) {
+    fail("Hermes MCP digest helper returned an invalid digest");
+  }
+  const hashText = [
+    `${createHash("sha256").update(config).digest("hex")}  ${configPath}`,
+    `${createHash("sha256").update(env).digest("hex")}  ${envPath}`,
+    `# nemoclaw-hermes-mcp-state-v1 intended=${digest} applied=${digest}`,
+    "",
+  ].join("\n");
+  atomicWriteRootFile("/etc/nemoclaw/hermes.config-hash", hashText, 0o444);
+  runInternalSandboxAction("write-hermes-compat-hash", configurationEnvironment, {
+    NEMOCLAW_MANAGED_HERMES_HASH_B64: Buffer.from(hashText, "utf8").toString("base64"),
+  });
+}
+
+function installRootOwnedMaterials(materials: readonly ManagedStartupAgentMaterial[]): void {
+  for (const material of materials) {
+    if (material.kind !== "root-owned-file") continue;
+    if (material.owner !== "root" || material.group !== "root" || material.mode !== 0o444) {
+      fail(`unsupported root-owned material contract for ${material.path}`);
+    }
+    atomicWriteRootFile(material.path, material.contents, material.mode);
+  }
+}
+
+function verifyRootOwnedMaterials(materials: readonly ManagedStartupAgentMaterial[]): void {
+  for (const material of materials) {
+    if (material.kind !== "root-owned-file") continue;
+    const stat = fs.lstatSync(material.path);
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.uid !== 0 ||
+      stat.gid !== 0 ||
+      modeOf(stat) !== material.mode ||
+      fs.readFileSync(material.path, "utf8") !== material.contents
+    ) {
+      fail(`committed root-owned material drifted: ${material.path}`);
+    }
+  }
+}
+
+function installCorporateCa(corporateCaPath: string | null): void {
+  if (corporateCaPath === null) {
+    removeSafeRootFile(MANAGED_STARTUP_CORPORATE_CA_FILE);
+    return;
+  }
+  const bytes = readStableRegularFile(corporateCaPath, 128 * 1024);
+  atomicWriteRootFile(MANAGED_STARTUP_CORPORATE_CA_FILE, bytes, 0o444);
+}
+
+function safeTrustBundle(target: string): Buffer | null {
+  try {
+    const stat = fs.lstatSync(target);
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.size < 1 ||
+      stat.size > MAX_TRUST_BUNDLE_BYTES ||
+      (modeOf(stat) & 0o022) !== 0
+    ) {
+      fail(`refusing unsafe trust bundle ${target}`);
+    }
+    return readStableRegularFile(target, MAX_TRUST_BUNDLE_BYTES);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function mergeCorporateCa(corporateCaPath: string | null): boolean {
+  if (corporateCaPath === null) {
+    removeSafeRootFile(MANAGED_STARTUP_MERGED_CA_FILE);
+    return false;
+  }
+  const corporate = readStableRegularFile(corporateCaPath, 128 * 1024);
+  const candidates = [
+    "/etc/openshell-tls/ca-bundle.pem",
+    process.env.SSL_CERT_FILE ?? "",
+    "/etc/ssl/certs/ca-certificates.crt",
+  ].filter(
+    (candidate, index, values) =>
+      candidate &&
+      candidate !== MANAGED_STARTUP_MERGED_CA_FILE &&
+      values.indexOf(candidate) === index,
+  );
+  let base: Buffer | null = null;
+  for (const candidate of candidates) {
+    base = safeTrustBundle(candidate);
+    if (base) break;
+  }
+  const merged = Buffer.concat([
+    ...(base ? [base, Buffer.from("\n", "utf8")] : []),
+    corporate,
+    ...(corporate.at(-1) === 0x0a ? [] : [Buffer.from("\n", "utf8")]),
+  ]);
+  atomicWriteRootFile(MANAGED_STARTUP_MERGED_CA_FILE, merged, 0o444);
+  return true;
+}
+
+function shellSingleQuote(value: string): string {
+  if (value.includes("\0") || /[\r\n]/u.test(value)) {
+    fail("runtime environment values must be single-line text");
+  }
+  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}
+
+export function serializeManagedStartupRuntimeEnvironment(
+  environment: Readonly<Record<string, string>>,
+  corporateCaMerged: boolean,
+  configurationEnvironment: Readonly<Record<string, string>> = {},
+): string {
+  const output: Record<string, string> = {
+    ...environment,
+    NEMOCLAW_MANAGED_STARTUP_APPLIED: "1",
+  };
+  if (corporateCaMerged) {
+    for (const name of [
+      "CURL_CA_BUNDLE",
+      "GIT_SSL_CAINFO",
+      "NODE_EXTRA_CA_CERTS",
+      "REQUESTS_CA_BUNDLE",
+      "SSL_CERT_FILE",
+    ]) {
+      output[name] = MANAGED_STARTUP_MERGED_CA_FILE;
+    }
+    output._NEMOCLAW_CORPORATE_CA_MERGED = "1";
+  }
+  const unsetLines = Object.keys(configurationEnvironment)
+    .filter((name) => !Object.hasOwn(environment, name))
+    .sort()
+    .map((name) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+        fail(`invalid runtime environment key ${JSON.stringify(name)}`);
+      }
+      return `unset ${name}`;
+    });
+  const exportLines = Object.entries(output)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+        fail(`invalid runtime environment key ${JSON.stringify(name)}`);
+      }
+      return `export ${name}=${shellSingleQuote(value)}`;
+    });
+  return `${[...unsetLines, ...exportLines].join("\n")}\n`;
+}
+
+function applyAdapter(context: ManagedStartupAdapterContext): void {
+  const mapped = mapManagedStartupProfileToAgentEnvironment(context.profile);
+  if (mapped.agent !== context.agent) {
+    fail(`mapped ${mapped.agent} environment for ${context.agent}`);
+  }
+  for (const action of mapped.actions) {
+    if (action.kind === "configure-dashboard") continue;
+    if (action.kind === "apply-messaging-plan") {
+      if (action.phase === "runtime-setup") {
+        prepareMessagingRuntimeTarget(action.mode);
+      }
+      execute(
+        messagingCommand(action.agent, action.phase),
+        action.runAs,
+        mapped.configurationEnvironment,
+      );
+      if (action.phase === "runtime-setup") {
+        verifyMessagingRuntimeTarget(action.mode);
+      }
+      continue;
+    }
+    execute(generatorCommand(action.agent), action.runAs, mapped.configurationEnvironment);
+  }
+
+  switch (context.agent) {
+    case "openclaw":
+      sealOpenClawConfiguration(mapped.configurationEnvironment);
+      break;
+    case "hermes":
+      sealHermesConfiguration(mapped.configurationEnvironment);
+      break;
+    case "langchain-deepagents-code":
+      break;
+  }
+  installRootOwnedMaterials(mapped.materials);
+  installCorporateCa(context.corporateCaPath);
+  mergeCorporateCa(context.corporateCaPath);
+}
+
+function adapters(): readonly ManagedStartupAgentAdapter[] {
+  return MANAGED_STARTUP_AGENTS.map((agent) => ({
+    agent,
+    apply: (context: ManagedStartupAdapterContext) => applyAdapter(context),
+  }));
+}
+
+export async function applyManagedStartupImageProfile(
+  expectedAgentInput: string,
+  env: Environment = process.env,
+): Promise<ManagedStartupImageApplyResult> {
+  requireRoot();
+  const expectedAgent = exactAgent(expectedAgentInput);
+  if (env.NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION !== "1") {
+    fail("startup profiles require a complete managed image");
+  }
+  const encodedProfile = env[MANAGED_STARTUP_PROFILE_ENV];
+  if (!encodedProfile) fail(`${MANAGED_STARTUP_PROFILE_ENV} is required`);
+
+  ensureRootOwnedDirectory(ROOT_STATE_PARENT);
+  ensureRootOwnedDirectory(ROOT_RUNTIME_DIRECTORY);
+  const result = await coordinateManagedStartupApplication(
+    {
+      encodedProfile,
+      expectedAgent,
+      ...(env[MANAGED_STARTUP_CA_ENV] === undefined
+        ? {}
+        : { corporateCaB64: env[MANAGED_STARTUP_CA_ENV] }),
+    },
+    adapters(),
+  );
+  const mapped = mapManagedStartupProfileToAgentEnvironment(result.application.profile);
+  let corporateCaMerged: boolean;
+  if (result.adapterApplied) {
+    corporateCaMerged = result.application.corporateCaPath !== null;
+  } else {
+    verifyRootOwnedMaterials(mapped.materials);
+    if (result.application.corporateCaPath === null) {
+      if (fs.existsSync(MANAGED_STARTUP_CORPORATE_CA_FILE)) {
+        fail("committed profile without a corporate CA has a stale CA material");
+      }
+    } else {
+      const expected = readStableRegularFile(result.application.corporateCaPath, 128 * 1024);
+      const installed = readStableRegularFile(MANAGED_STARTUP_CORPORATE_CA_FILE, 128 * 1024);
+      if (!expected.equals(installed)) {
+        fail("committed corporate CA material drifted");
+      }
+    }
+    corporateCaMerged = mergeCorporateCa(result.application.corporateCaPath);
+  }
+  atomicWriteRootFile(
+    MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      corporateCaMerged,
+      mapped.configurationEnvironment,
+    ),
+    0o400,
+  );
+  return {
+    agent: expectedAgent,
+    adapterApplied: result.adapterApplied,
+    fingerprint: result.application.fingerprint,
+    runtimeEnvironmentFile: MANAGED_STARTUP_RUNTIME_ENV_FILE,
+  };
+}
+
+function writeSandboxFileAtomically(target: string, contents: string, mode: number): void {
+  const parent = path.dirname(target);
+  const parentStat = fs.lstatSync(parent);
+  if (
+    parentStat.isSymbolicLink() ||
+    !parentStat.isDirectory() ||
+    parentStat.uid !== process.geteuid?.() ||
+    parentStat.gid !== process.getegid?.()
+  ) {
+    fail(`refusing unsafe sandbox-owned directory ${parent}`);
+  }
+  const temporary = path.join(
+    parent,
+    `.${path.basename(target)}.${randomBytes(12).toString("hex")}`,
+  );
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(descriptor, contents);
+    fs.fchmodSync(descriptor, mode);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      // Preserve the primary write failure.
+    }
+    fail(`could not write sandbox-owned file ${target}: ${(error as Error).message}`);
+  }
+}
+
+function internalWriteOpenClawHash(): void {
+  if (process.geteuid?.() === 0) fail("sandbox hash writer must not run as root");
+  const configPath = "/sandbox/.openclaw/openclaw.json";
+  const config = readStableRegularFile(configPath, 16 * 1024 * 1024);
+  const text = `${createHash("sha256").update(config).digest("hex")}  openclaw.json\n`;
+  writeSandboxFileAtomically("/sandbox/.openclaw/.config-hash", text, 0o660);
+}
+
+function internalWriteHermesCompatHash(): void {
+  if (process.geteuid?.() === 0) fail("sandbox hash writer must not run as root");
+  const encoded = process.env.NEMOCLAW_MANAGED_HERMES_HASH_B64 ?? "";
+  if (
+    encoded.length === 0 ||
+    encoded.length > 4096 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)
+  ) {
+    fail("Hermes compatibility hash transport is invalid");
+  }
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.toString("base64") !== encoded) {
+    fail("Hermes compatibility hash transport is non-canonical");
+  }
+  writeSandboxFileAtomically("/sandbox/.hermes/.config-hash", decoded.toString("utf8"), 0o640);
+}
+
+function readCliAgent(argv: readonly string[]): string {
+  const index = argv.indexOf("--agent");
+  if (index < 0 || index + 1 >= argv.length || argv.length !== 2) {
+    fail("usage: managed-startup-image-runtime --agent <agent>");
+  }
+  return argv[index + 1] as string;
+}
+
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  if (argv.length === 1 && argv[0] === "--internal-write-openclaw-hash") {
+    internalWriteOpenClawHash();
+    return;
+  }
+  if (argv.length === 1 && argv[0] === "--internal-write-hermes-compat-hash") {
+    internalWriteHermesCompatHash();
+    return;
+  }
+  const result = await applyManagedStartupImageProfile(readCliAgent(argv));
+  console.log(
+    result.adapterApplied
+      ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}`
+      : `[managed-startup] ${result.agent} profile ${result.fingerprint} is already committed`,
+  );
+}
+
+if (require.main === module) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
