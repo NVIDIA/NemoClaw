@@ -412,6 +412,29 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("rejects trusted target mappings outside their exact case branch (#7824)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          steps: Array<{ id?: string; run?: string }>;
+        }
+      >;
+    };
+    const controllerMatrix = workflow.jobs["generate-matrix"]!.steps.find(
+      (step) => step.id === "controller_matrix",
+    )!;
+    const trustedMapping =
+      '{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}';
+    controllerMatrix.run = controllerMatrix
+      .run!.replace(trustedMapping, trustedMapping.replace("ubuntu-latest", "self-hosted"))
+      .concat(`\n# ${trustedMapping}\n`);
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "trusted controller matrix must pin typed target runner to ubuntu-latest",
+    );
+  });
+
   type RebuildWorkflowStep = {
     env?: Record<string, string>;
     name?: string;

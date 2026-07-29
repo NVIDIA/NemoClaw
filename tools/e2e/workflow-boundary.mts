@@ -604,6 +604,25 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function shellCaseBranchCommands(script: string, selector: string): string[] | undefined {
+  const lines = script.split("\n");
+  const caseStart = lines.findIndex((line) => line.trim() === 'case "${TARGETS}" in');
+  const caseEnd = lines.findIndex((line, index) => index > caseStart && line.trim() === "esac");
+  if (caseStart < 0 || caseEnd < 0) return undefined;
+  const branchStart = lines.findIndex(
+    (line, index) => index > caseStart && index < caseEnd && line.trim() === `${selector})`,
+  );
+  if (branchStart < 0) return undefined;
+  const branchEnd = lines.findIndex(
+    (line, index) => index > branchStart && index < caseEnd && line.trim() === ";;",
+  );
+  if (branchEnd < 0) return undefined;
+  return lines
+    .slice(branchStart + 1, branchEnd)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function extractCallArguments(script: string, callStart: number): string {
   const openIndex = script.indexOf("(", callStart);
   if (openIndex < 0) return "";
@@ -4397,12 +4416,23 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
   requireRunContains(errors, controllerMatrix, "matrix='[]'");
   const controllerMatrixScript = stringValue(controllerMatrix?.run);
-  const trustedTargetMappings = [
-    '{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}',
-    '{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}',
+  const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
+  const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
+  const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  const trustedTargetBranches = [
+    [deepAgentsTarget, `matrix='[${deepAgentsMapping}]'`],
+    [postRebootTarget, `matrix='[${postRebootMapping}]'`],
+    [
+      `${deepAgentsTarget},${postRebootTarget}`,
+      `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
+    ],
   ];
   if (
-    trustedTargetMappings.some((mapping) => controllerMatrixScript.split(mapping).length - 1 !== 2)
+    trustedTargetBranches.some(
+      ([selector, assignment]) =>
+        !isDeepStrictEqual(shellCaseBranchCommands(controllerMatrixScript, selector), [assignment]),
+    )
   ) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
