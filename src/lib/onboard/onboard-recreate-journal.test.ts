@@ -74,7 +74,6 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
 });
 
 const SANDBOX_ID = "sbx-71c9a4e08b";
-const TARGET_FINGERPRINT = "a".repeat(64);
 
 const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
@@ -130,11 +129,11 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     vi.restoreAllMocks();
   });
 
-  function open(targetIntentFingerprint: string = TARGET_FINGERPRINT) {
+  function open(intent: OnboardRecreateTargetIntent = BASE_INTENT) {
     return openOnboardRecreateJournal({
       target: NON_DEFAULT_TARGET,
       agentName: "openclaw",
-      targetIntentFingerprint,
+      intent,
       note: vi.fn(),
     });
   }
@@ -145,7 +144,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     const recorded = session.checkpoint?.sandboxRecreate;
     expect(recorded?.phase).toBe("planned");
     expect(recorded?.sandboxName).toBe("alpha");
-    expect(recorded?.targetIntentFingerprint).toBe(TARGET_FINGERPRINT);
+    expect(recorded?.targetIntentFingerprint).toBe(
+      fingerprintOnboardRecreateTargetIntent(BASE_INTENT),
+    );
     expect(recorded?.sourceLiveIdentityFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(session.checkpoint)).not.toContain(SANDBOX_ID);
   });
@@ -206,6 +207,20 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleting");
   });
 
+  it("retires its own transaction once the replacement registry row commits", () => {
+    const runtime = open();
+    runtime.advance("deleting");
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    runtime.confirmDeleted();
+    runtime.advance("creating");
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    runtime.recordCreated();
+
+    runtime.complete();
+
+    expect(session.checkpoint?.sandboxRecreate).toBeNull();
+  });
+
   it("resumes the same replacement after a restart without a resume flag", () => {
     const first = open();
     first.advance("deleting");
@@ -220,7 +235,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
   it("refuses a replacement whose target intent changed mid-transaction", () => {
     open();
 
-    expect(() => open("b".repeat(64))).toThrow(/different recreate transaction in progress/);
+    expect(() => open({ ...BASE_INTENT, observabilityEnabled: true })).toThrow(
+      /different recreate transaction in progress/,
+    );
   });
 
   it("refuses to continue when the live source identity no longer matches", () => {

@@ -13,7 +13,9 @@ import {
   type SandboxRecreateTarget,
 } from "./sandbox-recreate-probe";
 import {
+  advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
+  clearCompletedSandboxRecreateTransaction,
   createSandboxRecreateRuntime,
   fingerprintSandboxRecreateValue,
   planSandboxRecreateRecovery,
@@ -41,18 +43,37 @@ export function fingerprintOnboardRecreateTargetIntent(
   return fingerprintSandboxRecreateValue({ version: 1, ...intent });
 }
 
+export interface ManagedMcpRecreateRefusal {
+  readonly sandboxName: string;
+  readonly cliName: string;
+  readonly toolDisclosure: string;
+  readonly rebuildFlag: string;
+  readonly observabilityFlag: string | null;
+}
+
+export function managedMcpRecreateRefusalHints(input: ManagedMcpRecreateRefusal): string[] {
+  const observability = input.observabilityFlag ? ` ${input.observabilityFlag}` : "";
+  return [
+    `  Sandbox '${input.sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
+    `  Run \`${input.cliName} ${input.sandboxName} rebuild --yes --tool-disclosure ${input.toolDisclosure}${observability}${input.rebuildFlag}\` so MCP providers and adapter state are preserved transactionally.`,
+  ];
+}
+
 export interface OpenOnboardRecreateJournalInput {
   readonly target: SandboxRecreateTarget;
   readonly agentName: string;
-  readonly targetIntentFingerprint: string;
+  readonly intent: OnboardRecreateTargetIntent;
   readonly note: (message: string) => void;
   readonly observe?: SandboxRecreateObserver;
 }
 
+export type OwnedSandboxRecreateRuntime = SandboxRecreateRuntime & { complete(): void };
+
 export function openOnboardRecreateJournal(
   input: OpenOnboardRecreateJournalInput,
-): SandboxRecreateRuntime {
-  const { target, agentName, targetIntentFingerprint, note } = input;
+): OwnedSandboxRecreateRuntime {
+  const { target, agentName, note } = input;
+  const targetIntentFingerprint = fingerprintOnboardRecreateTargetIntent(input.intent);
   const observe = input.observe ?? observeSandboxOnGateway;
   const authority = resolveGatewayTeardownAuthority({
     gatewayName: target.gatewayName,
@@ -105,8 +126,10 @@ export function openOnboardRecreateJournal(
     `  Journaled replacement ${transaction.id} for '${target.sandboxName}' on ${target.gatewayName}:${String(target.gatewayPort)} at phase '${transaction.phase}'.`,
   );
 
-  return createSandboxRecreateRuntime(
-    onboardSession,
+  const runtime = createSandboxRecreateRuntime(
+    // The journal just committed is authoritative for this run; do not re-read
+    // it through a store that may not yet observe the write.
+    { loadSession: () => session, updateSession: onboardSession.updateSession },
     {
       id: transaction.id,
       targetGeneration: transaction.targetGeneration,
@@ -118,4 +141,21 @@ export function openOnboardRecreateJournal(
     (sandboxName) => observe({ ...target, sandboxName }),
     note,
   );
+
+  return {
+    ...runtime,
+    get registrationFields() {
+      return runtime.registrationFields;
+    },
+    // This journal has no outer owner, so it retires its own transaction once
+    // the replacement registry row commits.
+    complete: () => {
+      onboardSession.updateSession((current) => {
+        advanceSandboxRecreateTransaction(current, transaction.id, "registry_committing");
+        advanceSandboxRecreateTransaction(current, transaction.id, "completed");
+        clearCompletedSandboxRecreateTransaction(current, transaction.id);
+        return current;
+      });
+    },
+  };
 }
