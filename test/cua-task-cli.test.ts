@@ -352,4 +352,24 @@ describe("public CUA task commands (#7752)", () => {
       family: "validation_failed",
     });
   });
+
+  it("rejects a symbolic link as private task input before invoking the adapter", () => {
+    const { home, adapterPath, inputPath } = fixture();
+    const linkedInputPath = path.join(home, "linked-task-input.txt");
+    fs.symlinkSync(inputPath, linkedInputPath);
+
+    const started = run(home, [
+      ...taskArgs(adapterPath, "start"),
+      "--mode",
+      "headless",
+      "--input-file",
+      linkedInputPath,
+    ]);
+
+    expect(started.status).toBe(2);
+    expect(JSON.parse(started.stdout)).toMatchObject({
+      kind: "failure",
+      family: "validation_failed",
+    });
+  });
 });
