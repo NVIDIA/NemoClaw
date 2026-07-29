@@ -903,11 +903,11 @@ describe("rebuild destroy phase", () => {
       order.push("journal:deleting");
     });
     mocks.runOpenshell.mockImplementation((args: string[]) => {
-      if (args[1] === "delete") {
-        order.push("openshell:delete");
-        return { status: 0, stdout: "deleted", stderr: "" };
-      }
-      return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+      const deleting = args[1] === "delete";
+      order.push(...(deleting ? ["openshell:delete"] : []));
+      return deleting
+        ? { status: 0, stdout: "deleted", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
     });
 
     await runRebuildDestroyPhase({
