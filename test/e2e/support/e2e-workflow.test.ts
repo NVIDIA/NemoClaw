@@ -39,7 +39,7 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects staging Launchable protected-environment and secret-guard drift", () => {
+  it("rejects a staging Launchable environment gate and secret-guard drift", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
@@ -57,7 +57,7 @@ describe("e2e workflow boundary", () => {
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "staging-brev-launchable must use its protected non-deployment environment",
+        "staging-brev-launchable must not use a GitHub environment",
         "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
       ]),
     );

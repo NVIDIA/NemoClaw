@@ -423,9 +423,6 @@ jobs:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    environment:
-      name: approve-brev-launchable-e2e
-      deployment: false
     permissions:
       contents: read
     concurrency:

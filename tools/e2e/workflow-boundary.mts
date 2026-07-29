@@ -4105,16 +4105,15 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  const environment = asRecord(job.environment);
-  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
-    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  if (Object.hasOwn(job, "environment")) {
+    errors.push("staging-brev-launchable must not use a GitHub environment");
   }
   const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
   if (
     !stringValue(job.if).includes(trustedRun) ||
     stringValue(job.if).includes("checkout_sha == ''")
   ) {
-    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
+    errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
     "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
