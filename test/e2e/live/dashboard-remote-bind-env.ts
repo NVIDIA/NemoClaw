@@ -9,9 +9,10 @@ export function buildDashboardRemoteBindEnv(
   sandboxName: string,
   extra: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
+  const baseEnv = buildAvailabilityProbeEnv();
   return {
-    ...buildAvailabilityProbeEnv(),
-    PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
+    ...baseEnv,
+    PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${baseEnv.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",

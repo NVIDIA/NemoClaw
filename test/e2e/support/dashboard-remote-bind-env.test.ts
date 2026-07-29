@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { buildDashboardRemoteBindEnv } from "../live/dashboard-remote-bind-env.ts";
 
 describe("dashboard remote-bind E2E environment", () => {
@@ -17,6 +18,7 @@ describe("dashboard remote-bind E2E environment", () => {
       NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind",
       NVIDIA_INFERENCE_API_KEY: "test-key",
     });
+    expect(env.PATH).toContain(buildAvailabilityProbeEnv().PATH);
   });
 
   it("does not allow command overlays to disable remote exposure preparation", () => {
