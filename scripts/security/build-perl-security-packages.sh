@@ -27,20 +27,6 @@ trap cleanup EXIT
 
 mkdir -p "${output_dir}" "${source_dir}"
 
-# Pin the reviewed d_syscallproto result for trixie's libc so both native
-# architectures use the same known declaration instead of relying on a
-# Configure probe that previously returned a false negative under QEMU.
-# Remove this override only after the pinned base image and Perl release report
-# d_syscallproto=define from native Configure probes on amd64 and arm64.
-# Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP
-# scheduler use each native runner efficiently instead of serializing every
-# script in QEMU.
-# ExtUtils::Constant's test recursively invokes make and produced an incomplete
-# TAP plan when it overlapped another test locally, so run it alone first and
-# exclude exactly that already-passed file from the parallel pass.
-# Remove this split only after the unsplit parallel harness passes in two
-# consecutive amd64 and arm64 base-image builds; keep the selection-equivalence
-# check below until that removal condition is met.
 curl --proto '=https' --tlsv1.2 -fsSL \
   --retry 5 --retry-all-errors --retry-delay 2 \
   --connect-timeout 15 --max-time 120 \
@@ -52,6 +38,11 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
 
 (
   cd "${source_dir}"
+  # Pin the reviewed d_syscallproto result for trixie's libc so both native
+  # architectures use the same known declaration instead of relying on a
+  # Configure probe that previously returned a false negative under QEMU.
+  # Remove this override only after the pinned base image and Perl release report
+  # d_syscallproto=define from native Configure probes on amd64 and arm64.
   ./Configure -des \
     -Dprefix=/usr \
     -Dvendorprefix=/usr \
@@ -63,6 +54,12 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
     -Dman3dir=none
   make -j"$(nproc)"
   make test_prep
+  # ExtUtils::Constant's test recursively invokes make and produced an incomplete
+  # TAP plan when it overlapped another test locally, so run it alone first and
+  # exclude exactly that already-passed file from the parallel pass.
+  # Remove this split only after the unsplit parallel harness passes in two
+  # consecutive amd64 and arm64 base-image builds; keep the selection-equivalence
+  # check below until that removal condition is met.
   env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
     >"${build_root}/perl-tests-full"
   env -C t ./perl harness -dumptests \
@@ -82,9 +79,12 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
     "${build_root}/perl-tests-combined.sorted"
   test "$(
     grep -Fxc \
-      'cpan/ExtUtils-Constant/t/Constant.t' \
+      '../cpan/ExtUtils-Constant/t/Constant.t' \
       "${build_root}/perl-tests-combined.sorted"
   )" -eq 1
+  # Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP
+  # scheduler use each native runner efficiently instead of serializing every
+  # script in QEMU.
   TEST_JOBS=1 \
     TEST_ARGS='../cpan/ExtUtils-Constant/t/Constant.t' \
     make test_harness
