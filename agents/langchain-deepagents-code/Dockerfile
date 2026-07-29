@@ -136,7 +136,13 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
     && case "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" in \
         disabled) ;; \
         *[!A-Za-z0-9+/=]*|'') echo "ERROR: invalid DCode validation profile encoding" >&2; exit 1 ;; \
-    esac
+    esac \
+    && if [ "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" != "disabled" ]; then \
+        test "${#NEMOCLAW_DCODE_VALIDATION_PROFILE_B64}" -le 90000 \
+        && printf '%s' "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" > /tmp/nemoclaw-dcode-validation-profile.encoding \
+        && grep -Eq '^[A-Za-z0-9+/]+={0,2}$' /tmp/nemoclaw-dcode-validation-profile.encoding \
+        && rm -f /tmp/nemoclaw-dcode-validation-profile.encoding; \
+    fi
 
 # The launcher and startup script read these root-owned files instead of
 # trusting process-level environment overrides for inference routing. Invoking
@@ -152,8 +158,15 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
         rm -f /usr/local/share/nemoclaw/dcode-validation-profile.json; \
     else \
         printf '%s' "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" > /tmp/nemoclaw-dcode-validation-profile.b64; \
-        base64 -d /tmp/nemoclaw-dcode-validation-profile.b64 > /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+        if ! base64 -d /tmp/nemoclaw-dcode-validation-profile.b64 > /usr/local/share/nemoclaw/dcode-validation-profile.json; then \
+            rm -f /tmp/nemoclaw-dcode-validation-profile.b64 /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+            exit 1; \
+        fi; \
         rm -f /tmp/nemoclaw-dcode-validation-profile.b64; \
+        if [ "$(wc -c < /usr/local/share/nemoclaw/dcode-validation-profile.json)" -gt 65536 ]; then \
+            rm -f /usr/local/share/nemoclaw/dcode-validation-profile.json; \
+            exit 1; \
+        fi; \
     fi \
     && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
     && if [ -f /usr/local/share/nemoclaw/dcode-validation-profile.json ]; then \

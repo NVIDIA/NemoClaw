@@ -4,6 +4,11 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
+import {
+  DCODE_VALIDATION_PROFILE_ENV,
+  type DcodeValidationProfile,
+  decodeDcodeValidationProfile,
+} from "../domain/dcode-validation-profile";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
@@ -17,11 +22,6 @@ import type {
 } from "../state/registry";
 import * as registry from "../state/registry";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
-import {
-  DCODE_VALIDATION_PROFILE_ENV,
-  type DcodeValidationProfile,
-  decodeDcodeValidationProfile,
-} from "./dcode/validation-profile";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { usesManagedDcodeIdentity } from "./dcode-selection-drift";
 import {

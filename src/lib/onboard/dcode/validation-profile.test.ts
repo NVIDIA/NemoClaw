@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,7 @@ import {
   encodeDcodeValidationProfile,
   loadDcodeValidationProfile,
   parseDcodeValidationProfile,
-} from "./validation-profile";
+} from "../../domain/dcode-validation-profile";
 
 function profile(): DcodeValidationProfile {
   const content = {
@@ -131,14 +131,18 @@ describe("DCode validation profiles", () => {
 
   it("loads only a regular non-symlink host file with a matching sandbox binding (#7774)", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-dcode-profile-"));
-    const file = join(directory, "profile.json");
-    const link = join(directory, "profile-link.json");
-    writeFileSync(file, JSON.stringify(profile()), { mode: 0o600 });
-    symlinkSync(file, link);
-    expect(loadDcodeValidationProfile(file, "validation-sandbox")).toEqual(profile());
-    expect(() => loadDcodeValidationProfile(link, "validation-sandbox")).toThrow(/cannot open/);
-    expect(() => loadDcodeValidationProfile(file, "other")).toThrow(
-      /does not match rebuild target/,
-    );
+    try {
+      const file = join(directory, "profile.json");
+      const link = join(directory, "profile-link.json");
+      writeFileSync(file, JSON.stringify(profile()), { mode: 0o600 });
+      symlinkSync(file, link);
+      expect(loadDcodeValidationProfile(file, "validation-sandbox")).toEqual(profile());
+      expect(() => loadDcodeValidationProfile(link, "validation-sandbox")).toThrow(/cannot open/);
+      expect(() => loadDcodeValidationProfile(file, "other")).toThrow(
+        /does not match rebuild target/,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

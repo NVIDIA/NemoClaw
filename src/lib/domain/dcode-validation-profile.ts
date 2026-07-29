@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { isAbsolute, posix, resolve } from "node:path";
 
-import { shouldStripCredentialEnv } from "../../security/credential-env";
-import { valueLooksLikeSecret } from "../../security/credential-filter";
+import { shouldStripCredentialEnv } from "../security/credential-env";
+import { valueLooksLikeSecret } from "../security/credential-filter";
 
 export const DCODE_VALIDATION_PROFILE_SCHEMA_VERSION =
   "nemoclaw.dcode.validation-profile.v1" as const;

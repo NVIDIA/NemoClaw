@@ -35,7 +35,9 @@ describe("LangChain Deep Agents Code auto-approval image contracts", () => {
     expect(dockerfile).toContain(
       "chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval",
     );
-    const envBlock = dockerfile.slice(dockerfile.indexOf("ENV HOME="));
+    const envIndex = dockerfile.indexOf("ENV HOME=");
+    expect(envIndex).toBeGreaterThanOrEqual(0);
+    const envBlock = dockerfile.slice(envIndex);
     expect(envBlock).not.toContain("NEMOCLAW_DCODE_AUTO_APPROVAL");
 
     for (const source of [launcher, start, wrapper]) {
@@ -60,15 +62,18 @@ describe("LangChain Deep Agents Code auto-approval image contracts", () => {
     expect(dockerfile).toContain("ARG NEMOCLAW_DCODE_VALIDATION_PROFILE_B64=disabled");
     expect(dockerfile).toContain("/usr/local/share/nemoclaw/dcode-validation-profile.json");
     expect(dockerfile).toContain("managed.validate_managed_validation_profile_file()");
-    const envBlock = dockerfile.slice(dockerfile.indexOf("ENV HOME="));
+    expect(dockerfile).toContain("if ! base64 -d");
+    expect(dockerfile).toContain("wc -c < /usr/local/share/nemoclaw/dcode-validation-profile.json");
+    const envIndex = dockerfile.indexOf("ENV HOME=");
+    expect(envIndex).toBeGreaterThanOrEqual(0);
+    const envBlock = dockerfile.slice(envIndex);
     expect(envBlock).not.toContain("NEMOCLAW_DCODE_VALIDATION_PROFILE_B64");
     expect(runtime).toContain("def execute_managed_validation_command(");
     expect(runtime).toContain("shell=False");
     expect(runtime).toContain("start_new_session=True");
     expect(patcher).toContain("class _NemoClawValidationProfileMiddleware");
-    expect(patcher).toContain(
-      'if request.tool_call["name"] != "execute":\n            return handler(request)\n        return self._result(request)',
-    );
+    expect(patcher).toContain("execute_managed_validation_command");
+    expect(patcher).toContain("DCode validation profiles require declarative subagents");
   });
 
   it("strips ambient hints without serializing them into shell state (#6478)", () => {

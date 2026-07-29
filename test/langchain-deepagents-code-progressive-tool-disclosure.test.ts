@@ -164,7 +164,10 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     graph_config = kwargs.pop("graph_config", None)
     graph = create_deep_agent(
         middleware=[],
-        subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+        subagents=kwargs.pop(
+            "subagents",
+            [{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+        ),
         **kwargs,
     )
     if graph_config is not None:
@@ -361,6 +364,7 @@ function snapshot(paths: string[]): Record<string, string> {
 function runWiring(fixture: PatchFixture): Record<string, unknown> {
   const script = `import importlib
 import importlib.util
+import fcntl
 import json
 import os
 import sys
@@ -370,6 +374,9 @@ spec = importlib.util.spec_from_file_location("disclosure_harness", ${JSON.strin
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 harness._install_stubs()
+for index, name in enumerate(("F_SEAL_WRITE", "F_SEAL_GROW", "F_SEAL_SHRINK", "F_SEAL_SEAL")):
+    if not hasattr(fcntl, name):
+        setattr(fcntl, name, 1 << index)
 sys.path.insert(0, ${JSON.stringify(fixture.root)})
 
 observability = types.ModuleType("deepagents_code.nemoclaw_observability")
@@ -416,6 +423,7 @@ observability.new_metadata_only_callback_manager = MetadataOnlyCallbackManager
 sys.modules["deepagents_code.nemoclaw_observability"] = observability
 
 agent = importlib.import_module("deepagents_code.agent")
+managed = importlib.import_module("deepagents_code._nemoclaw_managed")
 middleware = importlib.import_module("deepagents_code.progressive_tool_disclosure")
 
 class Info:
@@ -464,6 +472,16 @@ def observability_counts(result):
         "metadata": graph.config.get("metadata"),
     }
 
+def validation_counts(result):
+    graph, backend = result
+    assert backend == "fixture-backend"
+    middleware_type = agent._NemoClawValidationProfileMiddleware
+    instances = [item for item in graph.main if isinstance(item, middleware_type)]
+    instances.extend(
+        item for stack in graph.subagents for item in stack if isinstance(item, middleware_type)
+    )
+    return len(instances), len({id(item) for item in instances})
+
 os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
 empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
@@ -494,6 +512,33 @@ observability_prebound_manager = observability_counts(
     )
 )
 os.environ.pop("NEMOCLAW_OBSERVABILITY", None)
+
+managed.managed_validation_profile_enabled = lambda: True
+validation_active = validation_counts(
+    agent.create_cli_agent(None, "assistant", interactive=False)
+)
+try:
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        interactive=False,
+        subagents=[object()],
+    )
+except RuntimeError as exc:
+    validation_subagent_rejection = str(exc)
+else:
+    raise AssertionError("non-declarative validation subagent was accepted")
+
+original_deep_factory = agent._nemoclaw_original_create_deep_agent
+agent._nemoclaw_original_create_deep_agent = None
+try:
+    agent.create_cli_agent(None, "assistant", interactive=False)
+except RuntimeError as exc:
+    validation_boundary_rejection = str(exc)
+else:
+    raise AssertionError("validation profile ran without the middleware boundary")
+finally:
+    agent._nemoclaw_original_create_deep_agent = original_deep_factory
 
 original_factory = agent._nemoclaw_original_create_cli_agent
 reached_original = []
@@ -565,6 +610,9 @@ print(json.dumps({
     "observability_active": observability_active,
     "observability_prebound_list": observability_prebound_list,
     "observability_prebound_manager": observability_prebound_manager,
+    "validation_active": validation_active,
+    "validation_subagent_rejection": validation_subagent_rejection,
+    "validation_boundary_rejection": validation_boundary_rejection,
     "invalid": invalid,
 }))
 `;
@@ -708,6 +756,9 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
       active: [3, 3],
       direct: [0, 0],
       reached_original: [],
+      validation_active: [3, 3],
+      validation_subagent_rejection: "DCode validation profiles require declarative subagents",
+      validation_boundary_rejection: "Deep Agents Code create_deep_agent boundary is unavailable",
       invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
     });
     expect(wiring.observability_noncanonical).toEqual({

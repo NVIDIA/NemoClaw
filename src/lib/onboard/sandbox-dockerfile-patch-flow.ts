@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import {
+  DCODE_VALIDATION_PROFILE_DISABLED,
+  DCODE_VALIDATION_PROFILE_ENV,
+} from "../domain/dcode-validation-profile";
 import type { WebSearchConfig } from "../inference/web-search";
 import {
   SandboxBaseImageResolutionError,
@@ -9,10 +13,6 @@ import {
 } from "../sandbox-base-image";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
-import {
-  DCODE_VALIDATION_PROFILE_DISABLED,
-  DCODE_VALIDATION_PROFILE_ENV,
-} from "./dcode/validation-profile";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 

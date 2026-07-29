@@ -20,7 +20,9 @@ const {
   DCODE_VALIDATION_PROFILE_SCHEMA_VERSION,
   dcodeValidationProfileDigest,
   encodeDcodeValidationProfile,
-} = requireDist("./dcode/validation-profile.ts") as typeof import("./dcode/validation-profile");
+} = requireDist(
+  "../domain/dcode-validation-profile.ts",
+) as typeof import("../domain/dcode-validation-profile");
 
 afterEach(() => vi.unstubAllEnvs());
 

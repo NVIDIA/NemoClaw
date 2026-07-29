@@ -7,7 +7,7 @@ import {
   DCODE_VALIDATION_PROFILE_SCHEMA_VERSION,
   type DcodeValidationProfile,
   dcodeValidationProfileDigest,
-} from "../../../onboard/dcode/validation-profile";
+} from "../../../domain/dcode-validation-profile";
 import { resolveDcodeValidationProfileForRebuild } from "./validation-profile";
 
 function profile(): DcodeValidationProfile {

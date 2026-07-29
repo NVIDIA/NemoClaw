@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
-import type { SandboxMessagingPlan } from "../../messaging";
-import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import {
   DCODE_VALIDATION_PROFILE_ENV,
   type DcodeValidationProfile,
   encodeDcodeValidationProfile,
-} from "../../onboard/dcode/validation-profile";
+} from "../../domain/dcode-validation-profile";
+import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
+import type { SandboxMessagingPlan } from "../../messaging";
+import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import type { RebuildManifest } from "../../state/sandbox";

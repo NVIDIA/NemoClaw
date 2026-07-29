@@ -659,6 +659,10 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
     if subagents:
         patched_subagents = []
         for subagent in subagents:
+            if validation_profile_active and not isinstance(subagent, dict):
+                raise RuntimeError(
+                    "DCode validation profiles require declarative subagents"
+                )
             if isinstance(subagent, dict):
                 subagent_middleware = list(subagent.get("middleware") or ())
                 if progressive_active:
@@ -693,6 +697,10 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         and managed_validation_profile_enabled()
     )
     if validation_profile_active:
+        if _nemoclaw_original_create_deep_agent is None:
+            raise RuntimeError(
+                "Deep Agents Code create_deep_agent boundary is unavailable"
+            )
         # The upstream backend supplies the execute tool, but the managed
         # middleware never calls its shell handler.
         kwargs["enable_shell"] = True

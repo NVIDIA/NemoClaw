@@ -6,7 +6,7 @@ import {
   DCODE_VALIDATION_PROFILE_DISABLED,
   type DcodeValidationProfile,
   loadDcodeValidationProfile,
-} from "../../../onboard/dcode/validation-profile";
+} from "../../../domain/dcode-validation-profile";
 import type { SandboxEntry } from "../../../state/registry/types";
 import { DCODE_AGENT_NAME } from "../rebuild-dcode-target";
 

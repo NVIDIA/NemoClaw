@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import tempfile
 import fcntl
@@ -27,10 +28,20 @@ managed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(managed)
 
 root = Path(tempfile.mkdtemp(prefix="nemoclaw-validation-runtime-")).resolve()
+unicode_root = (root / "café路径").resolve()
+unicode_root.mkdir()
+retry_executable = (root / "retry-executable").resolve()
+retry_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+retry_executable.chmod(0o777)
+delayed_executable = (root / "delayed-executable").resolve()
+delayed_executable.write_text(
+    "#!/bin/sh\nexec >/dev/null 2>&1\nsleep 1.25\nexit 0\n",
+    encoding="utf-8",
+)
+delayed_executable.chmod(0o755)
 executables = {
-    "echo": "/bin/echo",
-    "sleep": "/bin/sleep",
-    "yes": "/usr/bin/yes",
+    name: str(Path(shutil.which(name)).resolve(strict=True))
+    for name in ("echo", "sleep", "yes")
 }
 
 commands = [
@@ -61,6 +72,33 @@ commands = [
         "maxOutputBytes": 64,
         "maxInvocations": 1,
     },
+    {
+        "id": "unicode",
+        "argv": [executables["echo"], "café/路径"],
+        "workingDirectory": str(unicode_root),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "retry-after-rejection",
+        "argv": [str(retry_executable)],
+        "workingDirectory": str(root),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "delayed-exit",
+        "argv": [str(delayed_executable)],
+        "workingDirectory": str(root),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
 ]
 content = {
     "schemaVersion": "nemoclaw.dcode.validation-profile.v1",
@@ -71,7 +109,7 @@ content = {
     "commands": commands,
 }
 digest = "sha256:" + hashlib.sha256(
-    json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 ).hexdigest()
 profile = {**content, "contentDigest": digest}
 
@@ -84,7 +122,7 @@ def profile_is_rejected_with_secret(field):
         secret_content["commands"][0][field] = secret
     secret_digest = "sha256:" + hashlib.sha256(
         json.dumps(
-            secret_content, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            secret_content, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode()
     ).hexdigest()
     secret_profile = {**secret_content, "contentDigest": secret_digest}
@@ -128,11 +166,17 @@ results = {
     "invocationExhausted": run(f'{executables["echo"]} managed'),
     "timeout": run(f'{executables["sleep"]} 2'),
     "output": run(f'{executables["yes"]} bounded'),
+    "unicode": run(f'{executables["echo"]} café/路径'),
     "escaped": (root / "escaped").exists(),
     "disabled": disabled,
     "secretTaskIdentityRejected": profile_is_rejected_with_secret("taskIdentity"),
     "secretCommandIdRejected": profile_is_rejected_with_secret("id"),
 }
+managed._VALIDATION_EXECUTABLE_OWNER_UID = os.getuid()
+results["unsafeExecutable"] = run(str(retry_executable))
+retry_executable.chmod(0o755)
+results["successfulAfterRejection"] = run(str(retry_executable))
+results["delayedExit"] = run(str(delayed_executable))
 print(json.dumps(results))
 `;
 
@@ -162,6 +206,10 @@ describe("managed DCode validation-command runtime", () => {
     expect(receipts.timeout.status).toBe("timed_out");
     expect(receipts.output.status).toBe("output_limit_exceeded");
     expect(receipts.output.stdoutBytes).toBeLessThanOrEqual(64);
+    expect(receipts.unicode.status).toBe("succeeded");
+    expect(receipts.unsafeExecutable.status).toBe("rejected");
+    expect(receipts.successfulAfterRejection.status).toBe("succeeded");
+    expect(receipts.delayedExit.status).toBe("succeeded");
     expect(receipts.escaped).toBe(false);
     expect(receipts.secretTaskIdentityRejected).toBe(true);
     expect(receipts.secretCommandIdRejected).toBe(true);

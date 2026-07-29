@@ -31,8 +31,8 @@ export {
   type SandboxEntryInference,
 } from "./registry-entry-view";
 
+import { cloneDcodeValidationProfile } from "../domain/dcode-validation-profile";
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
-import { cloneDcodeValidationProfile } from "../onboard/dcode/validation-profile";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,

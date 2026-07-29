@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isAbsolute, resolve } from "node:path";
+
 import { isNonInteractiveEnv } from "../../core/non-interactive";
 import {
   DCODE_AUTO_APPROVAL_MODES,
@@ -59,6 +61,13 @@ export interface UpgradeSandboxesOptions {
   yes?: boolean;
 }
 
+function isDcodeValidationProfileOption(value: unknown): value is string {
+  return (
+    value === "disabled" ||
+    (typeof value === "string" && isAbsolute(value) && resolve(value) === value)
+  );
+}
+
 export function normalizeDestroySandboxOptions(
   options: string[] | DestroySandboxOptions = {},
 ): DestroySandboxOptions {
@@ -100,7 +109,7 @@ export function normalizeRebuildSandboxOptions(
         : dcodeValidationProfileInline?.slice("--dcode-validation-profile=".length);
     if (
       (dcodeValidationProfileSplitIndex >= 0 || dcodeValidationProfileInline !== undefined) &&
-      !dcodeValidationProfile
+      !isDcodeValidationProfileOption(dcodeValidationProfile)
     ) {
       throw new Error("--dcode-validation-profile requires an absolute JSON path or 'disabled'.");
     }
@@ -160,6 +169,12 @@ export function normalizeRebuildSandboxOptions(
   const toolDisclosure = normalizeToolDisclosure(rawToolDisclosure);
   if (rawToolDisclosure !== undefined && !toolDisclosure) {
     throw new Error(`toolDisclosure must be one of: ${TOOL_DISCLOSURE_VALUES.join(", ")}.`);
+  }
+  if (
+    options.dcodeValidationProfile !== undefined &&
+    !isDcodeValidationProfileOption(options.dcodeValidationProfile)
+  ) {
+    throw new Error("dcodeValidationProfile requires an absolute JSON path or 'disabled'.");
   }
   return {
     ...options,

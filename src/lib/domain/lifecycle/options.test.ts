@@ -136,12 +136,14 @@ describe("lifecycle option normalization", () => {
     expect(
       normalizeRebuildSandboxOptions({
         dcodeAutoApprovalMode: "thread-opt-in",
+        dcodeValidationProfile: "/tmp/validation-profile.json",
         toolDisclosure: "direct",
         verbose: true,
         yes: true,
       }),
     ).toEqual({
       dcodeAutoApprovalMode: "thread-opt-in",
+      dcodeValidationProfile: "/tmp/validation-profile.json",
       toolDisclosure: "direct",
       verbose: true,
       yes: true,
@@ -206,6 +208,15 @@ describe("lifecycle option normalization", () => {
     expect(() => normalizeRebuildSandboxOptions(["--dcode-validation-profile="])).toThrow(
       /requires an absolute JSON path/,
     );
+    expect(() =>
+      normalizeRebuildSandboxOptions(["--dcode-validation-profile=relative.json"]),
+    ).toThrow(/requires an absolute JSON path/);
+    expect(() => normalizeRebuildSandboxOptions({ dcodeValidationProfile: "" })).toThrow(
+      /requires an absolute JSON path/,
+    );
+    expect(() =>
+      normalizeRebuildSandboxOptions({ dcodeValidationProfile: "relative.json" }),
+    ).toThrow(/requires an absolute JSON path/);
   });
 
   it("preserves typed maintenance options and still accepts compatibility argv", () => {

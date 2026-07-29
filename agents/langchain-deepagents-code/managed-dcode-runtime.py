@@ -1640,6 +1640,7 @@ def _terminate_validation_process(process: subprocess.Popen[bytes]) -> None:
         try:
             process.kill()
         except (OSError, ProcessLookupError):
+            # The process already exited, so there is no remaining cleanup.
             pass
 
 
@@ -1675,8 +1676,6 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
             ),
             False,
         )
-    _VALIDATION_INVOCATIONS[invocation_key] = used + 1
-
     executable = Path(argv[0])
     working_directory = Path(matched["workingDirectory"])
     directory_descriptor: int | None = None
@@ -1762,6 +1761,7 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         return _validation_receipt(profile, command_id, argv, "rejected", started), False
     finally:
         os.close(directory_descriptor)
+    _VALIDATION_INVOCATIONS[invocation_key] = used + 1
 
     output = {"stdout": bytearray(), "stderr": bytearray()}
     selector = selectors.DefaultSelector()
@@ -1792,7 +1792,13 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
             if terminal_status is not None and process.poll() is not None:
                 for key in list(selector.get_map().values()):
                     selector.unregister(key.fileobj)
-        return_code = process.wait(timeout=1)
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            return_code = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            terminal_status = terminal_status or "timed_out"
+            _terminate_validation_process(process)
+            return_code = process.wait()
     except Exception:
         _terminate_validation_process(process)
         process.wait()
