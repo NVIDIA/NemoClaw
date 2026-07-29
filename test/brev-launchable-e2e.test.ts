@@ -26,6 +26,7 @@ function fixture(
     deleteFails?: boolean;
     e2eFails?: boolean;
     imageRepositorySha?: string;
+    omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
     provisionImageRepositorySha?: string;
     provisionSha?: string;
     ready?: boolean;
@@ -67,14 +68,15 @@ elif [ "$1 $2" = 'run download' ]; then
   done
   mkdir -p "$directory"
   jq -n --arg sha "$FAKE_RECEIPT_SHA" --arg correlation "$CORRELATION_ID" \
-    --arg imageRepositorySha "$FAKE_IMAGE_REPOSITORY_SHA" '{
+    --arg imageRepositorySha "$FAKE_IMAGE_REPOSITORY_SHA" \
+    --arg omit "$FAKE_OMIT_RECEIPT_FIELD" '{
     kind:"nemoclaw-exact-image-manifest",nemoclawSha:$sha,correlationId:$correlation,
     requesterWorkflowRunId:"789",requesterWorkflowRunAttempt:1,
     imageRepository:"brevdev/nemoclaw-image",producerWorkflow:".github/workflows/build-launchable-e2e-image.yml",
     workflowRunId:"123",workflowRunAttempt:1,
     status:"READY",channel:"staging",variant:"cpu",observedFamily:"nemoclaw-brev-staging-cpu",
     project:"brevdevprod",imageName:"nemoclaw-test-image",imageRepositorySha:$imageRepositorySha
-  }' > "$directory/nemoclaw-image-manifest.v1.json"
+  } | if $omit == "" then . else del(.[$omit]) end' > "$directory/nemoclaw-image-manifest.v1.json"
 else
   exit 2
 fi
@@ -140,6 +142,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
+    FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PROVISION_IMAGE_REPOSITORY_SHA:
       options.provisionImageRepositorySha ?? options.imageRepositorySha ?? "b".repeat(40),
     FAKE_PROVISION_SHA: options.provisionSha ?? candidateSha,
@@ -211,6 +214,19 @@ describe("focused staging Brev Launchable lane", () => {
     expect(receiptResult.status).not.toBe(0);
     expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
+
+    for (const malformed of [
+      fixture({ omitReceiptField: "project" }),
+      fixture({ omitReceiptField: "imageName" }),
+      fixture({ imageRepositorySha: "not-a-sha" }),
+    ]) {
+      const malformedResult = run(malformed.env);
+      expect(malformedResult.status).not.toBe(0);
+      expect(malformedResult.stderr).toContain("producer receipt does not match the candidate");
+      expect(fs.readFileSync(malformed.calls, "utf8")).not.toMatch(
+        /brev create|full-e2e\.test\.ts/u,
+      );
+    }
 
     const unready = fixture({ ready: false });
     const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
