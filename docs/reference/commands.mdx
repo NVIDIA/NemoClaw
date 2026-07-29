@@ -2818,8 +2818,8 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 | `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade.
-If managed catalog or registry resolution is unavailable during rebuild, the Docker workflow can use the trusted canonical Dockerfile fallback.
-It does not substitute an unpinned managed `:latest` image.
+Managed-image rebuild requires the current complete release cohort and an exact replacement digest.
+If catalog or registry resolution is unavailable, rebuild stops before deleting the existing sandbox; it does not fall back to a Dockerfile or an unpinned managed `:latest` image.
 During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup.
 That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry.
 The legacy confirmation never overrides recorded custom-image evidence.
