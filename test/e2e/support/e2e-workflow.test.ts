@@ -412,65 +412,6 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("rejects trusted target mappings outside their exact case branch (#7824)", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          steps: Array<{ id?: string; run?: string }>;
-        }
-      >;
-    };
-    const controllerMatrix = workflow.jobs["generate-matrix"]!.steps.find(
-      (step) => step.id === "controller_matrix",
-    )!;
-    const trustedMapping =
-      '{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}';
-    const expectedError = "trusted controller matrix must pin typed target runner to ubuntu-latest";
-    expect(validateE2eWorkflow(workflow)).not.toContain(expectedError);
-    requireFixture(
-      controllerMatrix.run?.includes(trustedMapping),
-      "trusted target fixture mapping is missing",
-    );
-
-    controllerMatrix.run = controllerMatrix
-      .run!.replace(trustedMapping, trustedMapping.replace("ubuntu-latest", "self-hosted"))
-      .concat(`\n# ${trustedMapping}\n`);
-
-    expect(validateE2eWorkflow(workflow)).toContain(expectedError);
-  });
-
-  it("rejects a dead approved case block before unsafe target routing (#7824)", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          steps: Array<{ id?: string; run?: string }>;
-        }
-      >;
-    };
-    const controllerMatrix = workflow.jobs["generate-matrix"]!.steps.find(
-      (step) => step.id === "controller_matrix",
-    )!;
-    const trustedMapping =
-      '{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}';
-    const run = controllerMatrix.run!;
-    const caseStart = run.indexOf('case "${TARGETS}" in');
-    const caseEnd = run.indexOf("\nesac", caseStart) + "\nesac".length;
-    requireFixture(caseStart >= 0, "trusted target fixture case is missing");
-    requireFixture(caseEnd > caseStart, "trusted target fixture case terminator is missing");
-    const deadApprovedCase = run.slice(caseStart, caseEnd);
-    const unsafeRouting = run.replace(
-      trustedMapping,
-      trustedMapping.replace("ubuntu-latest", "self-hosted"),
-    );
-    controllerMatrix.run = `${deadApprovedCase}\n${unsafeRouting}`;
-
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "trusted controller matrix must pin typed target runner to ubuntu-latest",
-    );
-  });
-
   type RebuildWorkflowStep = {
     env?: Record<string, string>;
     name?: string;

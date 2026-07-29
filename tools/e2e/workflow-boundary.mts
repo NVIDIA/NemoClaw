@@ -604,7 +604,7 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function shellCaseBranchCommands(script: string, selector: string): string[] | undefined {
+function shellTargetCaseLines(script: string): string[] | undefined {
   const lines = script.split("\n");
   const caseStarts = lines.flatMap((line, index) =>
     line.trim() === 'case "${TARGETS}" in' ? [index] : [],
@@ -614,16 +614,8 @@ function shellCaseBranchCommands(script: string, selector: string): string[] | u
   const caseStart = caseStarts[0]!;
   const caseEnd = caseEnds[0]!;
   if (caseEnd <= caseStart) return undefined;
-  const branchStart = lines.findIndex(
-    (line, index) => index > caseStart && index < caseEnd && line.trim() === `${selector})`,
-  );
-  if (branchStart < 0) return undefined;
-  const branchEnd = lines.findIndex(
-    (line, index) => index > branchStart && index < caseEnd && line.trim() === ";;",
-  );
-  if (branchEnd < 0) return undefined;
   return lines
-    .slice(branchStart + 1, branchEnd)
+    .slice(caseStart, caseEnd + 1)
     .map((line) => line.trim())
     .filter(Boolean);
 }
@@ -4425,20 +4417,27 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
-  const trustedTargetBranches = [
-    [deepAgentsTarget, `matrix='[${deepAgentsMapping}]'`],
-    [postRebootTarget, `matrix='[${postRebootMapping}]'`],
-    [
-      `${deepAgentsTarget},${postRebootTarget}`,
-      `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
-    ],
+  const trustedTargetCase = [
+    'case "${TARGETS}" in',
+    '"")',
+    "matrix='[]'",
+    ";;",
+    `${deepAgentsTarget})`,
+    `matrix='[${deepAgentsMapping}]'`,
+    ";;",
+    `${postRebootTarget})`,
+    `matrix='[${postRebootMapping}]'`,
+    ";;",
+    `${deepAgentsTarget},${postRebootTarget})`,
+    `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
+    ";;",
+    "*)",
+    'echo "::error::PR E2E target is not approved by the trusted controller" >&2',
+    "exit 1",
+    ";;",
+    "esac",
   ];
-  if (
-    trustedTargetBranches.some(
-      ([selector, assignment]) =>
-        !isDeepStrictEqual(shellCaseBranchCommands(controllerMatrixScript, selector), [assignment]),
-    )
-  ) {
+  if (!isDeepStrictEqual(shellTargetCaseLines(controllerMatrixScript), trustedTargetCase)) {
     errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
   }
   requireRunContains(
