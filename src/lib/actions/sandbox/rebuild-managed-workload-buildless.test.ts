@@ -53,20 +53,21 @@ function managedContract(
 
 function managedSandboxEntry(agent: ShippedManagedImageAgent): Record<string, unknown> {
   const old = managedContract(agent, "old");
-  let profile = managedStartupE2eProfile(agent);
-  if (profile.agent === "openclaw") {
-    profile = {
-      ...profile,
-      inference: {
-        ...profile.inference,
-        upstreamProvider: "compatible-endpoint",
-      },
-      tuning: {
-        ...profile.tuning,
-        reasoning: true,
-      },
-    };
-  }
+  const baseProfile = managedStartupE2eProfile(agent);
+  const profile =
+    baseProfile.agent === "openclaw"
+      ? {
+          ...baseProfile,
+          inference: {
+            ...baseProfile.inference,
+            upstreamProvider: "compatible-endpoint",
+          },
+          tuning: {
+            ...baseProfile.tuning,
+            reasoning: true,
+          },
+        }
+      : baseProfile;
   const encodedProfile = encodeManagedStartupProfile(profile);
   return {
     agent: agent === "openclaw" ? null : agent,

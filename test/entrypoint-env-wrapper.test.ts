@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { sliceBlock } from "./helpers/corporate-ca-support";
 
 const HELPER = path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
@@ -108,22 +109,21 @@ describe("OCI entrypoint env-wrapper normalization", () => {
   });
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
-    const src = fs.readFileSync(OPENCLAW_START, "utf-8");
     const normalizer = fs.readFileSync(
       path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),
       "utf-8",
     );
-    const start = src.indexOf('NEMOCLAW_CMD=("$@")');
-    const end = src.indexOf("# ── Config integrity check", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected sandbox-create wrapper normalization and port block");
-    }
+    const openClawPortBlock = sliceBlock(
+      OPENCLAW_START,
+      'NEMOCLAW_CMD=("$@")',
+      "# ── Config integrity check",
+    );
     const snippet = [
       normalizer,
       'nemoclaw_normalize_entrypoint_env_wrapper "$@"',
       'if [ "$NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC" -eq 0 ]; then set --; ' +
         'else set -- "${NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV[@]}"; fi',
-      src.slice(start, end),
+      openClawPortBlock,
     ].join("\n");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-wrapper-"));
     const fakeBin = path.join(tmpDir, "bin");

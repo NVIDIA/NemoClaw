@@ -11,6 +11,7 @@ import { decodeManagedStartupProfile } from "../../onboard/managed-startup/profi
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { SANDBOX_CREATE_MAX_ARGUMENT_BYTES } from "../../onboard/sandbox-create/transport";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import * as s from "./snapshot/lifecycle-test-support";
 import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
@@ -120,22 +121,18 @@ afterEach(() => {
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   it("refuses provider replacement when an unrelated sandbox is attached", async () => {
     const commands: Array<{ args: string[]; options?: Record<string, unknown> }> = [];
-    const runner = vi.fn((args: string[], options?: Record<string, unknown>) => {
-      commands.push({ args, options });
-      if (args.join(" ") === "provider get beta-telegram-bridge") {
-        return {
+    const runner = vi.fn(
+      s.recordingCommandRouter(commands, {
+        "provider get beta-telegram-bridge": () => ({
           status: 0,
           stdout: providerMetadata("beta-telegram-bridge", "generic", "TELEGRAM_BOT_TOKEN"),
-        };
-      }
-      if (args.join(" ") === "provider delete beta-telegram-bridge") {
-        return {
+        }),
+        "provider delete beta-telegram-bridge": () => ({
           status: 1,
           stderr: "provider 'beta-telegram-bridge' is attached to sandbox(es): beta, gamma",
-        };
-      }
-      return { status: 0 };
-    });
+        }),
+      }),
+    );
     const { provisionManagedCloneProviders } = await import("./snapshot/managed-clone-providers");
 
     expect(() =>
@@ -356,31 +353,18 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "clone-only-token");
     vi.stubEnv("BRAVE_API_KEY", "clone-only-brave-key");
-    const createdProviders = new Set<string>();
-    f.runOpenshellMock.mockImplementation((args) => {
-      if (args[0] === "provider" && args[1] === "get") {
-        const providerName = args[2] ?? "";
-        const binding =
-          providerName === "beta-telegram-bridge"
-            ? { type: "generic", credential: "TELEGRAM_BOT_TOKEN" }
-            : providerName === "beta-brave-search"
-              ? { type: "brave", credential: "BRAVE_API_KEY" }
-              : null;
-        return binding && createdProviders.has(providerName)
-          ? {
-              status: 0,
-              stdout: providerMetadata(providerName, binding.type, binding.credential),
-              stderr: "",
-              output: "",
-            }
-          : { status: 1, stdout: "", stderr: "", output: "" };
-      }
-      if (args[0] === "provider" && args[1] === "create") {
-        createdProviders.add(args[3] ?? "");
-        return { status: 0, stdout: "", stderr: "", output: "" };
-      }
-      return { status: 0, output: "" };
-    });
+    f.runOpenshellMock.mockImplementation(
+      s.managedProviderCreationRunner({
+        "beta-telegram-bridge": {
+          type: "generic",
+          credential: "TELEGRAM_BOT_TOKEN",
+        },
+        "beta-brave-search": {
+          type: "brave",
+          credential: "BRAVE_API_KEY",
+        },
+      }),
+    );
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
@@ -565,31 +549,18 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "clone-only-hermes-token");
     vi.stubEnv("TAVILY_API_KEY", "clone-only-tavily-key");
-    const createdProviders = new Set<string>();
-    f.runOpenshellMock.mockImplementation((args) => {
-      if (args[0] === "provider" && args[1] === "get") {
-        const providerName = args[2] ?? "";
-        const binding =
-          providerName === "beta-telegram-bridge"
-            ? { type: "generic", credential: "TELEGRAM_BOT_TOKEN" }
-            : providerName === "beta-tavily-search"
-              ? { type: "tavily-hermes-v1", credential: "TAVILY_API_KEY" }
-              : null;
-        return binding && createdProviders.has(providerName)
-          ? {
-              status: 0,
-              stdout: providerMetadata(providerName, binding.type, binding.credential),
-              stderr: "",
-              output: "",
-            }
-          : { status: 1, stdout: "", stderr: "", output: "" };
-      }
-      if (args[0] === "provider" && args[1] === "create") {
-        createdProviders.add(args[3] ?? "");
-        return { status: 0, stdout: "", stderr: "", output: "" };
-      }
-      return { status: 0, output: "" };
-    });
+    f.runOpenshellMock.mockImplementation(
+      s.managedProviderCreationRunner({
+        "beta-telegram-bridge": {
+          type: "generic",
+          credential: "TELEGRAM_BOT_TOKEN",
+        },
+        "beta-tavily-search": {
+          type: "tavily-hermes-v1",
+          credential: "TAVILY_API_KEY",
+        },
+      }),
+    );
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
@@ -753,7 +724,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         ?.slice("NEMOCLAW_STARTUP_PROFILE_B64=".length) ?? "";
     const reboundDashboard = decodeManagedStartupProfile(encodedProfile).dashboard;
     expect(reboundDashboard).toMatchObject({ agent: "openclaw" });
-    if (reboundDashboard.agent !== "openclaw") throw new Error("fixture mismatch");
+    s.assertOpenClawDashboard(reboundDashboard);
     expect(reboundDashboard.port).not.toBe(18_789);
     expect(new URL(reboundDashboard.url).port).toBe(String(reboundDashboard.port));
     const registration = f.registerSandboxMock.mock.calls[0]?.[0] as

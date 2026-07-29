@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
 } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { loadAgent } from "../agent/defs";
 import type { SandboxMessagingPlan } from "../messaging";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry";
 import {
@@ -19,9 +21,20 @@ import {
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import { encodeManagedStartupProfile, type ManagedStartupProfile } from "./managed-startup/profile";
+import {
+  createManagedWorkloadOnboardRuntime,
+  prepareOnboardSandboxWorkloadLaunch,
+  resolveOnboardSandboxWorkloadReceipt,
+} from "./managed-workload/onboard-orchestration";
+import * as preparedDcodeRebuild from "./prepared-dcode-rebuild";
+import type { MaterializeSandboxCreatePlanInput } from "./sandbox-create-intent-types";
+import * as sandboxCreateLaunch from "./sandbox-create-launch";
+import type { SandboxCreatePlan } from "./sandbox-create-plan-materialization";
+import * as workloadPreparation from "./workload/preparation";
 import {
   managedWorkloadRebuildDependencies,
   managedWorkloadRebuildHandoffMatchesEntry,
@@ -30,6 +43,7 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
   stageManagedWorkloadRebuildProfile,
 } from "./workload/rebuild";
+import * as workloadRuntime from "./workload/runtime";
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
 
 const RUNTIME = {
@@ -233,6 +247,245 @@ describe("managed workload rebuild handoff", () => {
     expect(managedWorkloadRebuildHandoffMatchesEntry(handoff!, oldEntry)).toBe(true);
   });
 
+  it.each(
+    SHIPPED_MANAGED_IMAGE_AGENTS,
+  )("carries the exact staged %s rebuild through managed launch and durable receipt", async (agent) => {
+    const oldEntry = entry(agent, { corporateCa: agent === "openclaw" });
+    const { replacement, spy: catalogSelection } = installReplacement(agent);
+    const catalogHandoff = (await prepareManagedWorkloadRebuildHandoff(oldEntry, {
+      runtime: RUNTIME,
+      version: NEW_RELEASE,
+    }))!;
+    const handoff = stageManagedWorkloadRebuildProfile(catalogHandoff, profileInput(agent), {});
+    const innerPreparation = vi
+      .spyOn(workloadPreparation, "prepareSandboxWorkloadSource")
+      .mockRejectedValue(new Error("inner onboarding attempted catalog or fallback preparation"));
+    vi.spyOn(workloadRuntime, "resolveSandboxWorkloadRuntimeCapabilities").mockReturnValue(RUNTIME);
+    const legacyBuildContext = vi
+      .spyOn(preparedDcodeRebuild, "resolveSandboxBuildContext")
+      .mockImplementation(() => {
+        throw new Error("managed rebuild entered legacy build-context preparation");
+      });
+    const legacyBuildPatch = vi
+      .spyOn(preparedDcodeRebuild, "resolveSandboxBuildPatch")
+      .mockImplementation(() => {
+        throw new Error("managed rebuild entered legacy Dockerfile patching");
+      });
+    const legacyPrebuild = vi
+      .spyOn(sandboxCreateLaunch, "prepareSandboxCreateLaunchWithPrebuild")
+      .mockImplementation(() => {
+        throw new Error("managed rebuild entered legacy image prebuild");
+      });
+    const resolveAgentInferenceApi = vi.fn(() => {
+      throw new Error("managed rebuild regenerated its inference API");
+    });
+    const getSandboxInferenceConfig = vi.fn(() => {
+      throw new Error("managed rebuild regenerated its inference profile");
+    });
+    const note = vi.fn();
+    const fallbackBuildEstimate = vi.fn(() => "legacy build estimate");
+    const dashboardEnabled = agent !== "langchain-deepagents-code";
+    const selectedAgent = agent === "openclaw" ? null : loadAgent(agent);
+    const runtime = createManagedWorkloadOnboardRuntime(
+      {
+        computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
+        managedWorkloadRebuild: handoff,
+        agentName: agent,
+        legacyDockerfilePath: "/repo/agents/forbidden/Dockerfile",
+        customDockerfilePath: null,
+        rootDir: "/repo",
+        model: "must-not-regenerate",
+        provider: "nvidia-prod",
+        preferredInferenceApi: null,
+        endpointUrl: "https://must-not-regenerate.example.test/v1",
+        startupProfile: { ...profileInput(agent), environment: {} },
+        note,
+        fallbackBuildEstimate,
+      },
+      { resolveAgentInferenceApi, getSandboxInferenceConfig },
+    );
+
+    const workload = await runtime.ensurePreparedWorkload();
+    expect(await runtime.ensurePreparedWorkload()).toBe(workload);
+    expect(workload.source).toEqual(handoff.replacement.source);
+    expect(runtime.ensurePreparedProfile(workload)).toBe(handoff.replacementProfile);
+
+    const intent = {
+      sandboxName: "alpha",
+      inferenceProvider: "inference",
+      activeMessagingChannels: [],
+      messagingProviderRequests: [],
+      reusableMessagingProviders: [],
+      extraProviders: [],
+      staleExtraProviders: [],
+      hermesToolGateways: [],
+      policy: {
+        basePolicyPath: "/repo/policy.yaml",
+        activeMessagingChannels: [],
+        options: {
+          directGpu: false,
+          additionalPresets: [],
+          policyTier: null,
+          baselineExclusions: [],
+        },
+      },
+      gpuCreateArgs: [],
+      resourceCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      disabledChannelNames: [],
+      extraPlaceholderKeys: [],
+    } as const;
+    const materializeSandboxCreatePlan = vi.fn(
+      (input: MaterializeSandboxCreatePlanInput): SandboxCreatePlan => ({
+        activeMessagingChannels: [],
+        initialSandboxPolicy: { policyPath: "/tmp/managed-policy.yaml", appliedPresets: [] },
+        policyTier: null,
+        createArgs: [
+          "--from",
+          input.fromRef,
+          "--name",
+          input.intent.sandboxName,
+          "--policy",
+          "/tmp/managed-policy.yaml",
+        ],
+        messagingProviders: [],
+        gpuRoutePlan: "none",
+        compatibilityPolicyPath: null,
+        sandboxGpuLogMessage: null,
+      }),
+    );
+    const createAgentSandbox = vi.fn(() => {
+      throw new Error("managed rebuild staged an agent Dockerfile");
+    });
+    const prepareSandboxBuildPatchConfig = vi.fn(() => {
+      throw new Error("managed rebuild prepared Dockerfile patch configuration");
+    });
+    const launch = await prepareOnboardSandboxWorkloadLaunch({
+      runtime,
+      workload,
+      legacy: {
+        preparedBuildContext: null,
+        agent: selectedAgent,
+        fromDockerfile: null,
+        createAgentSandbox,
+        patchInput: {} as never,
+      },
+      plan: {
+        intent,
+        rebindMessagingTokenDefs: async () => [],
+        runProviderPreDeleteCleanup: vi.fn(),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(() => "hermes-tools"),
+        discloseInitialSandboxPolicy: vi.fn(),
+      },
+      launchInput: {
+        agent: selectedAgent,
+        observabilityEnabled: agent === "langchain-deepagents-code",
+        chatUiUrl: dashboardEnabled ? "http://127.0.0.1:18789" : "",
+        sandboxName: "alpha",
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => (dashboardEnabled ? "18789" : "0"),
+        hermesDashboardState: { config: null, enabled: false },
+        manageDashboard: dashboardEnabled,
+        openshellShellCommand: (args) => args.join(" "),
+        openshellArgv: (args) => [...args],
+        buildEnv: () => ({}),
+      },
+      plannedMessagingPlan: null,
+      gpu: {
+        provider: "nvidia-prod",
+        config: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        dockerDriverGateway: true,
+        gatewayPort: 8_080,
+      },
+      dependencies: {
+        materializeSandboxCreatePlan,
+        prepareSandboxBuildPatchConfig,
+      },
+      log: vi.fn(),
+    });
+
+    const replacementReference = handoff.replacement.source.reference;
+    const encodedProfile = handoff.replacementProfile.encodedProfile;
+    const fromIndexes = launch.launch.createArgv.flatMap((argument, index) =>
+      argument === "--from" ? [index] : [],
+    );
+    expect(fromIndexes).toHaveLength(1);
+    expect(launch.launch.createArgv[fromIndexes[0]! + 1]).toBe(replacementReference);
+    expect(replacementReference).toBe(`${replacement.image}@${replacement.digest}`);
+    expect(
+      launch.launch.createArgv.filter(
+        (argument) => argument === `NEMOCLAW_STARTUP_PROFILE_B64=${encodedProfile}`,
+      ),
+    ).toHaveLength(1);
+    expect(launch.launch.createArgv.join("\n")).not.toContain("Dockerfile");
+    expect(launch.legacyBuildContext).toBeNull();
+    expect(launch.launch.prebuild).toEqual({
+      createArgs: expect.arrayContaining(["--from", replacementReference]),
+      imageRef: null,
+      imageId: null,
+    });
+    expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
+      expect.objectContaining({ fromRef: replacementReference }),
+    );
+
+    const extractBuiltImageRef = vi.fn(() => "legacy-built-image");
+    const resolveSandboxImageTagFromCreateOutput = vi.fn(() => "legacy-output-image");
+    const resolved = resolveOnboardSandboxWorkloadReceipt({
+      runtime,
+      workload,
+      registryImageRef: "legacy-registry-image",
+      prebuildImageRef: "legacy-prebuild-image",
+      firstCreateOutput: "legacy first output",
+      createOutput: "legacy create output",
+      buildId: "legacy-build-id",
+      extractBuiltImageRef,
+      resolveSandboxImageTagFromCreateOutput,
+    });
+
+    expect(resolved.resolvedImageTag).toBe(replacementReference);
+    expect(resolved.workloadReceipt).toEqual({
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: replacementReference,
+      release: handoff.replacement.source.contract.source.release,
+      sourceRevision: handoff.replacement.source.contract.source.revision,
+      sourceCohort: handoff.replacement.source.contract.source.cohort,
+      capabilityContractVersion: handoff.replacement.source.contract.capabilityContractVersion,
+      startupProfileContractVersion:
+        handoff.replacement.source.contract.startupProfileContractVersion,
+      encodedProfile,
+      startupProfileSha256: handoff.replacementProfile.startupProfileSha256,
+      credentialProxyReplayRequired: handoff.replacementProfile.credentialProxyReplayRequired,
+      ...(handoff.replacementProfile.corporateCaB64 === undefined
+        ? {}
+        : { corporateCaB64: handoff.replacementProfile.corporateCaB64 }),
+      shared: true,
+    });
+    expect(catalogSelection).toHaveBeenCalledOnce();
+    expect(innerPreparation).not.toHaveBeenCalled();
+    expect(legacyBuildContext).not.toHaveBeenCalled();
+    expect(legacyBuildPatch).not.toHaveBeenCalled();
+    expect(legacyPrebuild).not.toHaveBeenCalled();
+    expect(createAgentSandbox).not.toHaveBeenCalled();
+    expect(prepareSandboxBuildPatchConfig).not.toHaveBeenCalled();
+    expect(resolveAgentInferenceApi).not.toHaveBeenCalled();
+    expect(getSandboxInferenceConfig).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+    expect(fallbackBuildEstimate).not.toHaveBeenCalled();
+    expect(extractBuiltImageRef).not.toHaveBeenCalled();
+    expect(resolveSandboxImageTagFromCreateOutput).not.toHaveBeenCalled();
+  });
+
   it("retains validated corporate CA bytes while selecting a new OpenClaw image", async () => {
     const oldEntry = entry("openclaw", { corporateCa: true });
     installReplacement("openclaw");
@@ -270,7 +523,7 @@ describe("managed workload rebuild handoff", () => {
     const previous = structuredClone(
       managedStartupE2eProfile("openclaw"),
     ) as DeepMutable<ManagedStartupProfile>;
-    if (previous.agentConfig.agent !== "openclaw") throw new Error("fixture drift");
+    assert(previous.agentConfig.agent === "openclaw", "fixture drift");
     previous.proxy.managedHost = "10.44.0.9";
     previous.proxy.managedPort = 4312;
     previous.tuning.contextWindow = 196_608;

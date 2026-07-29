@@ -223,8 +223,9 @@ describe("rebindManagedStartupProfileForClone", () => {
       ).not.toHaveProperty("credentialHash");
       expect(rebound.startupProfileSha256).not.toBe(built.startupProfileSha256);
     } finally {
-      if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
-      else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+      previousToken === undefined
+        ? Reflect.deleteProperty(process.env, "TELEGRAM_BOT_TOKEN")
+        : Reflect.set(process.env, "TELEGRAM_BOT_TOKEN", previousToken);
     }
   });
 

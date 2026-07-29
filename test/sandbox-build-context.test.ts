@@ -118,6 +118,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
+    writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
     writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
     writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
@@ -127,6 +128,12 @@ describe("sandbox build context staging", () => {
     writeFixture(
       path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"),
     );
+    writeFixture(path.join("src", "lib", "core", "json-types.ts"));
+    writeFixture(path.join("src", "lib", "core", "ports.ts"));
+    writeFixture(path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"));
+    writeFixture(path.join("src", "lib", "security", "credential-hash.ts"));
+    writeFixture(path.join("src", "lib", "state", "paths.ts"));
+    writeFixture(path.join("src", "lib", "state", "state-root.ts"));
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
@@ -255,6 +262,19 @@ describe("sandbox build context staging", () => {
     expect(fs.existsSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts"))).toBe(true);
   }
 
+  function expectStagedManagedStartupRuntimeSources(buildCtx: string) {
+    for (const relativePath of [
+      path.join("core", "json-types.ts"),
+      path.join("core", "ports.ts"),
+      path.join("onboard", "managed-startup", "image-runtime.ts"),
+      path.join("security", "credential-hash.ts"),
+      path.join("state", "paths.ts"),
+      path.join("state", "state-root.ts"),
+    ]) {
+      expect(fs.existsSync(path.join(buildCtx, "src", "lib", relativePath))).toBe(true);
+    }
+  }
+
   function expectStagedScriptModes(buildCtx: string) {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
@@ -334,6 +354,7 @@ describe("sandbox build context staging", () => {
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
       expectStagedToolDisclosureContract(buildCtx);
+      expectStagedManagedStartupRuntimeSources(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -365,6 +386,7 @@ describe("sandbox build context staging", () => {
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
       expectStagedToolDisclosureContract(buildCtx);
+      expectStagedManagedStartupRuntimeSources(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -472,6 +494,7 @@ describe("sandbox build context staging", () => {
       );
       expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, repoRoot);
+      expectStagedManagedStartupRuntimeSources(buildCtx);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
@@ -584,6 +607,9 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-rlimits.sh"))).toBe(true);
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "lib", "entrypoint-env-wrapper.sh")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -134,66 +134,66 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
     const authorization = new Headers(init?.headers).get("authorization");
     const manifestPrefix = `/v2/${repository}/manifests/`;
     const rootReference = options.rootReference ?? RELEASE;
-    if (url.pathname === "/token") {
-      expect(url.searchParams.get("service")).toBe("ghcr.io");
-      expect(url.searchParams.get("scope")).toBe(`repository:${repository}:pull`);
-      return Response.json({ token: "anonymous-registry-token" });
-    }
-    if (url.pathname === `${manifestPrefix}${rootReference}` && !authorization) {
-      return new Response("", {
-        status: 401,
-        headers: {
-          "www-authenticate": `Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:${repository}:pull"`,
-        },
-      });
-    }
-    if (url.pathname === `${manifestPrefix}${rootReference}` && authorization) {
-      if (options.missingRoot) return new Response("not found", { status: 404 });
-      if (options.oversizedRootBody) {
-        return new Response(Buffer.alloc(2 * 1024 * 1024 + 1, 0x20), {
-          headers: { "docker-content-digest": rootDigest },
-        });
-      }
-      const deliveredRootBody = options.rootBodyMismatch
-        ? Buffer.concat([rootBody, Buffer.from(" ", "utf8")])
-        : rootBody;
-      return jsonResponse(deliveredRootBody, rootDigest);
-    }
-    if (url.pathname === `${manifestPrefix}${platformDigest}` && authorization) {
-      return jsonResponse(imageManifestBody, platformDigest);
-    }
-    if (url.pathname === `/v2/${repository}/blobs/${configDigest}` && authorization) {
-      expect(init?.redirect).toBe("manual");
-      return new Response(null, {
-        status: options.blobRedirectStatus ?? 307,
-        headers: {
-          location:
-            options.blobRedirectLocation ??
-            `https://pkg-containers.githubusercontent.com/ghcrblobs13/blobs/${configDigest}?sig=fixture`,
-        },
-      });
-    }
-    if (
-      url.origin === "https://pkg-containers.githubusercontent.com" &&
-      url.pathname === `/ghcrblobs13/blobs/${configDigest}`
-    ) {
-      expect(authorization).toBeNull();
-      expect(init?.redirect).toBe("manual");
-      if (options.secondBlobRedirect) {
-        return new Response(null, {
-          status: 307,
+    switch (true) {
+      case url.pathname === "/token":
+        expect(url.searchParams.get("service")).toBe("ghcr.io");
+        expect(url.searchParams.get("scope")).toBe(`repository:${repository}:pull`);
+        return Response.json({ token: "anonymous-registry-token" });
+      case url.pathname === `${manifestPrefix}${rootReference}` && !authorization:
+        return new Response("", {
+          status: 401,
           headers: {
-            location: `https://pkg-containers.githubusercontent.com/ghcrblobs14/blobs/${configDigest}?sig=second`,
+            "www-authenticate": `Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:${repository}:pull"`,
+          },
+        });
+      case url.pathname === `${manifestPrefix}${rootReference}` && Boolean(authorization): {
+        switch (true) {
+          case options.missingRoot === true:
+            return new Response("not found", { status: 404 });
+          case options.oversizedRootBody === true:
+            return new Response(Buffer.alloc(2 * 1024 * 1024 + 1, 0x20), {
+              headers: { "docker-content-digest": rootDigest },
+            });
+        }
+        const deliveredRootBody = options.rootBodyMismatch
+          ? Buffer.concat([rootBody, Buffer.from(" ", "utf8")])
+          : rootBody;
+        return jsonResponse(deliveredRootBody, rootDigest);
+      }
+      case url.pathname === `${manifestPrefix}${platformDigest}` && Boolean(authorization):
+        return jsonResponse(imageManifestBody, platformDigest);
+      case url.pathname === `/v2/${repository}/blobs/${configDigest}` && Boolean(authorization): {
+        expect(init?.redirect).toBe("manual");
+        return new Response(null, {
+          status: options.blobRedirectStatus ?? 307,
+          headers: {
+            location:
+              options.blobRedirectLocation ??
+              `https://pkg-containers.githubusercontent.com/ghcrblobs13/blobs/${configDigest}?sig=fixture`,
           },
         });
       }
-      return jsonResponse(
-        options.configBodyMismatch
-          ? Buffer.concat([configBody, Buffer.from(" ", "utf8")])
-          : configBody,
-      );
+      case url.origin === "https://pkg-containers.githubusercontent.com" &&
+        url.pathname === `/ghcrblobs13/blobs/${configDigest}`:
+        expect(authorization).toBeNull();
+        expect(init?.redirect).toBe("manual");
+        switch (options.secondBlobRedirect) {
+          case true:
+            return new Response(null, {
+              status: 307,
+              headers: {
+                location: `https://pkg-containers.githubusercontent.com/ghcrblobs14/blobs/${configDigest}?sig=second`,
+              },
+            });
+        }
+        return jsonResponse(
+          options.configBodyMismatch
+            ? Buffer.concat([configBody, Buffer.from(" ", "utf8")])
+            : configBody,
+        );
+      default:
+        return new Response("not found", { status: 404 });
     }
-    return new Response("not found", { status: 404 });
   });
   const fetchImpl = fetchMock as unknown as typeof fetch;
 
@@ -222,8 +222,9 @@ function catalogFixture(
           value.includes(fixtures[candidate].configDigest),
       ),
     );
-    if (!agent) return new Response("not found", { status: 404 });
-    return fixtures[agent].fetchImpl(input, init);
+    return agent
+      ? fixtures[agent].fetchImpl(input, init)
+      : new Response("not found", { status: 404 });
   });
   const fetchImpl = fetchMock as unknown as typeof fetch;
 

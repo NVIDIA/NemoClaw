@@ -158,8 +158,9 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
 # The launcher and startup script read these root-owned files instead of
 # trusting process-level environment overrides for inference routing. Invoking
 # each launcher validates the build args before the image can complete. The
-# empty-prompt probe also exercises the installed launcher -> wrapper chain so a
-# stale or misassembled image cannot silently lose the public exit-code contract.
+# empty-prompt probe targets the installed wrapper directly: it validates the
+# public parser contract without requiring the image builder's kernel to support
+# the runtime-only child-subreaper supervisor.
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
@@ -168,9 +169,15 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
     && empty_prompt_log="$(mktemp)" \
-    && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
-    && test "$empty_prompt_status" -eq 2 \
-    && test "$(cat "$empty_prompt_log")" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." \
+    && if timeout 10 /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
+    && empty_prompt_output="$(cat "$empty_prompt_log")" \
+    && if [ "$empty_prompt_status" -ne 2 ] \
+        || [ "$empty_prompt_output" != "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then \
+        printf 'ERROR: managed dcode empty-prompt probe returned status %s:\n%s\n' \
+            "$empty_prompt_status" "$empty_prompt_output" >&2; \
+        rm -f "$empty_prompt_log"; \
+        exit 1; \
+    fi \
     && rm -f "$empty_prompt_log" \
     && /usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true \
     && /usr/local/bin/dcode --version \

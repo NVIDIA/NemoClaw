@@ -1843,6 +1843,7 @@ refresh_hermes_runtime_config_hashes() {
 inspect_hermes_mcp_integrity() {
   local hash_file="${1:-}"
   local guard_status
+  local -a guard_command
   [ -n "$hash_file" ] || {
     if [ "$(id -u)" -eq 0 ]; then
       hash_file="$HERMES_HASH_FILE"
@@ -1855,11 +1856,20 @@ inspect_hermes_mcp_integrity() {
   # exact-parent proof used by --startup-owner. State is returned only through
   # the kernel-owned exit status: 0=current, 10=pending, anything else=failure.
   # This avoids a same-UID writable result file or ambiguous shell byte parsing.
-  if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
-    --hermes-dir "$HERMES_DIR" \
-    --hash-file "$hash_file" \
-    --startup-owner \
-    --mcp-state-exit-code >/dev/null; then
+  guard_command=(
+    "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity
+    --hermes-dir "$HERMES_DIR"
+    --hash-file "$hash_file"
+    --startup-owner
+    --mcp-state-exit-code
+  )
+  if [ "$(id -u)" -eq 0 ]; then
+    # Hardened managed runtimes can remove root's DAC override before startup.
+    # Read the sandbox-owned mutable config through its owning identity; the
+    # step-down exec still leaves the guard as the startup owner's direct child.
+    guard_command=("${STEP_DOWN_PREFIX_SANDBOX[@]}" "${guard_command[@]}")
+  fi
+  if "${guard_command[@]}" >/dev/null; then
     guard_status=0
   else
     guard_status=$?

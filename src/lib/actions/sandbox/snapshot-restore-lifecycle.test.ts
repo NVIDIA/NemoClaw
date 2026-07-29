@@ -11,6 +11,7 @@ import { decodeManagedStartupProfile } from "../../onboard/managed-startup/profi
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { SANDBOX_CREATE_MAX_ARGUMENT_BYTES } from "../../onboard/sandbox-create/transport";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import * as s from "./snapshot/lifecycle-test-support";
 import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
@@ -122,9 +123,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const built = managedOpenClawProfile();
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "openclaw",
           dashboardPort: 18_789,
@@ -146,10 +147,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: true,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "openclaw",
           dashboardPort: 19_789,
@@ -157,10 +156,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
           openshellDriver: "docker",
           provider: "openai-api",
           model: "gpt-5.4",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -217,9 +215,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       corporateCa: null,
     });
     const reference = `registry.example.test/${"a".repeat(SANDBOX_CREATE_MAX_ARGUMENT_BYTES)}`;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "langchain-deepagents-code",
           imageTag: reference,
@@ -240,20 +238,17 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: false,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "langchain-deepagents-code",
           imageTag: "nemoclaw-beta:test",
           openshellDriver: "docker",
           provider: "nvidia-nim",
           model: "nvidia/model-a",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -283,9 +278,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(
       64,
     )}`;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "langchain-deepagents-code",
           imageTag: reference,
@@ -307,20 +302,17 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: false,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "langchain-deepagents-code",
           imageTag: "nemoclaw-beta:test",
           openshellDriver: "docker",
           provider: "nvidia-nim",
           model: "nvidia/model-a",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -363,9 +355,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const built = managedOpenClawProfile();
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "openclaw",
           dashboardPort: 18_789,
@@ -395,10 +387,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: false,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "openclaw",
           dashboardPort: 19_789,
@@ -406,10 +396,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
           openshellDriver: "docker",
           provider: "openai-api",
           model: "gpt-5.4",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -444,9 +433,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const built = managedOpenClawProfile();
     const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "openclaw",
           dashboardPort: 18_789,
@@ -476,10 +465,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: false,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "openclaw",
           dashboardPort: 19_789,
@@ -487,10 +474,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
           openshellDriver: "docker",
           provider: "openai-api",
           model: "gpt-5.4",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -502,17 +488,16 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    f.runOpenshellMock.mockImplementation((args) => {
-      if (args.join(" ") === "provider get beta-telegram-bridge") {
-        return {
+    f.runOpenshellMock.mockImplementation(
+      s.commandRouter({
+        "provider get beta-telegram-bridge": () => ({
           status: 0,
           stdout: providerMetadata("beta-telegram-bridge", "brave", "TELEGRAM_BOT_TOKEN"),
           stderr: "",
           output: "",
-        };
-      }
-      return { status: 0, output: "" };
-    });
+        }),
+      }),
+    );
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -537,48 +522,45 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const built = managedOpenClawProfile();
     const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
-    const events: string[] = [];
-    let destinationProviderExists = true;
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation((entry) => {
       registeredClone = entry as f.SandboxRecord;
     });
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
-          name: "alpha",
-          agent: "openclaw",
-          dashboardPort: 18_789,
-          dashboardRemoteBindPrepared: false,
-          imageTag: reference,
-          openshellDriver: "docker",
-          provider: "openai-api",
-          model: "gpt-5.4",
-          endpointUrl: null,
-          preferredInferenceApi: "openai-responses",
-          compatibleEndpointReasoning: null,
-          toolDisclosure: "progressive",
-          webSearchEnabled: false,
-          webSearchProvider: null,
-          messaging: { schemaVersion: 1, plan: currentMessaging },
-          workload: {
-            schemaVersion: 1,
-            kind: "managed-image",
-            reference,
-            release: "v0.0.99",
-            sourceRevision: "b".repeat(40),
-            sourceCohort: "ghrun-123456-1",
-            capabilityContractVersion: 1,
-            startupProfileContractVersion: 1,
-            encodedProfile: built.encodedProfile,
-            startupProfileSha256: built.startupProfileSha256,
-            credentialProxyReplayRequired: false,
-            shared: true,
-          },
-        } as never;
-      }
-      if (name === "beta") {
-        return (
+    f.getSandboxMock.mockImplementation(
+      s.valueFactoryByName({
+        alpha: () =>
+          ({
+            name: "alpha",
+            agent: "openclaw",
+            dashboardPort: 18_789,
+            dashboardRemoteBindPrepared: false,
+            imageTag: reference,
+            openshellDriver: "docker",
+            provider: "openai-api",
+            model: "gpt-5.4",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-responses",
+            compatibleEndpointReasoning: null,
+            toolDisclosure: "progressive",
+            webSearchEnabled: false,
+            webSearchProvider: null,
+            messaging: { schemaVersion: 1, plan: currentMessaging },
+            workload: {
+              schemaVersion: 1,
+              kind: "managed-image",
+              reference,
+              release: "v0.0.99",
+              sourceRevision: "b".repeat(40),
+              sourceCohort: "ghrun-123456-1",
+              capabilityContractVersion: 1,
+              startupProfileContractVersion: 1,
+              encodedProfile: built.encodedProfile,
+              startupProfileSha256: built.startupProfileSha256,
+              credentialProxyReplayRequired: false,
+              shared: true,
+            },
+          }) as never,
+        beta: () =>
           registeredClone ?? {
             name: "beta",
             agent: "openclaw",
@@ -587,11 +569,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             openshellDriver: "docker",
             provider: "openai-api",
             model: "gpt-5.4",
-          }
-        );
-      }
-      return null;
-    });
+          },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -604,42 +584,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     );
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "new-clone-token");
-    f.runOpenshellMock.mockImplementation((args, options) => {
-      const command = args.join(" ");
-      if (command === "provider get beta-telegram-bridge") {
-        return destinationProviderExists
-          ? {
-              status: 0,
-              stdout: providerMetadata("beta-telegram-bridge", "generic", "TELEGRAM_BOT_TOKEN"),
-              stderr: "",
-              output: "",
-            }
-          : { status: 1, stdout: "", stderr: "", output: "" };
-      }
-      if (command === "sandbox provider detach beta beta-telegram-bridge") {
-        events.push("detach");
-        return { status: 0, output: "" };
-      }
-      if (command === "sandbox delete beta") {
-        events.push("sandbox-delete");
-        return { status: 0, output: "" };
-      }
-      if (command === "provider delete beta-telegram-bridge") {
-        destinationProviderExists = false;
-        events.push("provider-delete");
-        return { status: 0, output: "" };
-      }
-      if (
-        command ===
-        "provider create --name beta-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN"
-      ) {
-        expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "new-clone-token" });
-        destinationProviderExists = true;
-        events.push("provider-create:new-clone-token");
-        return { status: 0, output: "" };
-      }
-      return { status: 0, output: "" };
+    const providerHarness = s.createReplacementProviderHarness((options) => {
+      expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "new-clone-token" });
     });
+    const { events } = providerHarness;
+    f.runOpenshellMock.mockImplementation(providerHarness.runner);
     f.streamSandboxCreateMock.mockImplementation(async () => {
       events.push("sandbox-create");
       return {
@@ -673,17 +622,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const built = managedOpenClawProfile();
     const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
-    const events: string[] = [];
-    let destinationProviderExists = true;
-    let providerWasCreated = false;
-    let partialSandboxExists = false;
-    let providerAttached = true;
-    let providerDeleteCount = 0;
-    let sandboxDeleteCount = 0;
-    let telegramDetachCount = 0;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    const providerHarness = s.createFailedReplacementProviderHarness((options) => {
+      expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "rotated-clone-token" });
+    });
+    const { events } = providerHarness;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "openclaw",
           dashboardPort: 18_789,
@@ -713,10 +658,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: false,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "openclaw",
           dashboardPort: 19_789,
@@ -724,10 +667,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
           openshellDriver: "docker",
           provider: "openai-api",
           model: "gpt-5.4",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -740,87 +682,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     );
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "rotated-clone-token");
-    f.runOpenshellMock.mockImplementation((args, options) => {
-      const command = args.join(" ");
-      if (command === "provider get beta-telegram-bridge") {
-        return destinationProviderExists
-          ? {
-              status: 0,
-              stdout: providerMetadata("beta-telegram-bridge", "generic", "TELEGRAM_BOT_TOKEN"),
-              stderr: "",
-              output: "",
-            }
-          : { status: 1, stdout: "", stderr: "", output: "" };
-      }
-      if (command === "sandbox provider detach beta beta-telegram-bridge") {
-        telegramDetachCount += 1;
-        if (telegramDetachCount === 2) {
-          events.push("partial-provider-detach:failed");
-          return {
-            status: 1,
-            stderr: "synthetic transient detach failure",
-            stdout: "",
-            output: "",
-          };
-        }
-        events.push(
-          telegramDetachCount === 1
-            ? "initial-provider-detach"
-            : "rollback-provider-detach:recovered",
-        );
-        providerAttached = false;
-        return { status: 0, output: "" };
-      }
-      if (command === "sandbox delete beta") {
-        sandboxDeleteCount += 1;
-        if (sandboxDeleteCount === 1) {
-          events.push("initial-sandbox-delete");
-        } else {
-          events.push("partial-sandbox-delete:failed");
-          return { status: 1, stderr: "synthetic partial delete failure", output: "" };
-        }
-        return { status: 0, output: "" };
-      }
-      if (command === "provider delete beta-telegram-bridge") {
-        providerDeleteCount += 1;
-        if (!providerWasCreated && destinationProviderExists) {
-          if (providerDeleteCount > 1 && !providerAttached) {
-            destinationProviderExists = false;
-            events.push("replacement-provider-delete");
-            return { status: 0, output: "" };
-          }
-          events.push("provider-delete:survived");
-          return { status: 1, output: "" };
-        }
-        if (providerAttached) {
-          events.push("provider-delete:blocked-attached");
-          return {
-            status: 1,
-            stderr: "provider 'beta-telegram-bridge' is attached to sandbox(es): beta",
-            stdout: "",
-            output: "",
-          };
-        }
-        destinationProviderExists = false;
-        events.push("provider-delete:rollback");
-        return { status: 0, output: "" };
-      }
-      if (
-        command ===
-        "provider create --name beta-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN"
-      ) {
-        expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "rotated-clone-token" });
-        providerWasCreated = true;
-        destinationProviderExists = true;
-        events.push("provider-create:rotated-clone-token");
-        return { status: 0, output: "" };
-      }
-      return { status: 0, output: "" };
-    });
+    f.runOpenshellMock.mockImplementation(providerHarness.runner);
     f.streamSandboxCreateMock.mockImplementation(async () => {
-      partialSandboxExists = true;
-      providerAttached = true;
-      events.push("sandbox-create:failed");
+      providerHarness.markSandboxCreateFailed();
       return {
         status: 1,
         output: "synthetic create failure",
@@ -854,23 +718,24 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     const observedOrder = expectedOrder.map((event) => events.indexOf(event));
     expect(observedOrder).not.toContain(-1);
     expect(observedOrder).toEqual([...observedOrder].sort((left, right) => left - right));
-    expect(partialSandboxExists).toBe(true);
-    expect(destinationProviderExists).toBe(false);
+    expect(providerHarness.state()).toEqual({
+      destinationProviderExists: false,
+      partialSandboxExists: true,
+    });
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
   it("refuses rollback recovery when provider attachment names an unrelated sandbox", async () => {
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const rollbackRunner = vi.fn((args: string[]) => {
-      if (args.join(" ") === "provider delete beta-telegram-bridge") {
-        return {
+    const rollbackRunner = vi.fn(
+      s.commandRouter({
+        "provider delete beta-telegram-bridge": () => ({
           status: 1,
           stdout: "",
           stderr: "provider 'beta-telegram-bridge' is attached to sandbox(es): beta, gamma",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+        }),
+      }),
+    );
     const { cleanupManagedCloneProviders } = await import("./snapshot/managed-clone-providers");
 
     cleanupManagedCloneProviders(["beta-telegram-bridge"], rollbackRunner, "beta");
@@ -917,9 +782,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       corporateCa: null,
     });
     const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
           name: "alpha",
           agent: "hermes",
           imageTag: reference,
@@ -948,20 +813,17 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             credentialProxyReplayRequired: false,
             shared: true,
           },
-        } as never;
-      }
-      if (name === "beta") {
-        return {
+        } as never,
+        beta: {
           name: "beta",
           agent: "hermes",
           imageTag: "nemoclaw-beta:test",
           openshellDriver: "docker",
           provider: "hermes-provider",
           model: "new-model",
-        };
-      }
-      return null;
-    });
+        },
+      }),
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {

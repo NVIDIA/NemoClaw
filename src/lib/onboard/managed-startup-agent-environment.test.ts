@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import assert from "node:assert/strict";
 
 import { describe, expect, it } from "vitest";
 
@@ -580,7 +581,7 @@ describe("managed startup agent environment", () => {
 
   it("uses explicit clear states without erasing launch-only ambient proxy credentials", () => {
     const openclawBase = openClawProfile();
-    if (openclawBase.agentConfig.agent !== "openclaw") throw new Error("fixture mismatch");
+    assert(openclawBase.agentConfig.agent === "openclaw", "fixture mismatch");
     const openclaw: ManagedStartupProfile = {
       ...openclawBase,
       agentConfig: {

@@ -568,6 +568,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
+    const entrypointEnvWrapper = path.join(localLib, "entrypoint-env-wrapper.sh");
     const stateDirGuard = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
@@ -596,6 +597,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.chmodSync(safetyNet, 0o666);
       fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
+      fs.writeFileSync(entrypointEnvWrapper, "# entrypoint env wrapper fixture\n");
       fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
@@ -611,6 +613,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
+        .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
@@ -658,6 +661,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(entrypointEnvWrapper).mode & 0o777).toBe(0o444);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);

@@ -196,8 +196,11 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "--network none",
     "/tmp/nemoclaw-managed-command-uid",
     "/tmp/nemoclaw-managed-command-proxy-env",
-    "http://fixture-http-proxy.example.test:18080",
-    "http://fixture-https-proxy.example.test:18443",
+    '/usr/local/bin/dcode -n ""',
+    "/tmp/nemoclaw-managed-dcode-empty-prompt-status",
+    "/tmp/nemoclaw-managed-dcode-empty-prompt-output",
+    "NemoClaw: empty non-interactive prompt for -n; provide prompt text.",
+    "managed DCode launcher/supervisor empty-prompt contract failed",
     "HTTP_PROXY=%s",
     "HTTPS_PROXY=%s",
     "NO_PROXY=%s",
@@ -572,6 +575,11 @@ describe("complete managed-image publication workflow", () => {
       "--network none",
       "/tmp/nemoclaw-pr-command-uid",
       "/tmp/nemoclaw-pr-command-proxy-env",
+      '/usr/local/bin/dcode -n ""',
+      "/tmp/nemoclaw-pr-dcode-empty-prompt-status",
+      "/tmp/nemoclaw-pr-dcode-empty-prompt-output",
+      "NemoClaw: empty non-interactive prompt for -n; provide prompt text.",
+      "managed DCode launcher/supervisor empty-prompt contract failed",
       "upper-http:upper-secret",
       "lower-http:lower-secret",
       "authenticated proxy material entered the startup profile",
@@ -595,6 +603,12 @@ describe("complete managed-image publication workflow", () => {
     ).toHaveLength(1);
     expect(gate.run).not.toContain('--env "NEMOCLAW_STARTUP_PROFILE_B64=');
     expect(gate.run).not.toContain('--env "NEMOCLAW_CORPORATE_CA_B64=');
+    expect(gate.run).not.toMatch(
+      /if \[ "\$AGENT" = "langchain-deepagents-code" \]; then\s+expected_http_proxy=/u,
+    );
+    expect(gate.run).not.toContain(
+      'expected_http_proxy="http://upper-http:upper-secret@upper-http.example.test:18080"',
+    );
   });
 
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
@@ -709,6 +723,7 @@ fi
 
     const guard = step(builder, "Validate production build args");
     const build = step(builder, "Build and push managed image by digest");
+    const validate = step(builder, "Validate exact managed image before promotion");
     expect(buildSteps.indexOf(guard)).toBeLessThan(buildSteps.indexOf(build));
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
     expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
@@ -732,6 +747,12 @@ fi
     );
     expect(guard.run).toContain('--build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"');
     expect(guard.run).toContain('--build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"');
+    expect(validate.run).not.toMatch(
+      /if \[ "\$AGENT" = "langchain-deepagents-code" \]; then\s+expected_http_proxy=/u,
+    );
+    expect(validate.run).not.toContain(
+      'expected_http_proxy="http://fixture-http-proxy.example.test:18080"',
+    );
 
     const candidate = step(builder, "Export validated managed image candidate");
     for (const marker of [
