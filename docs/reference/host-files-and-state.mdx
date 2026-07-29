@@ -45,7 +45,7 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/state/` | Operational coordination and history for lifecycle locks, shields transitions, timers, and audit events, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard security or recovery context. |
-| `~/.nemoclaw/snapshots/` | Full copies of host `~/.openclaw` state created by blueprint migration and rollback flows. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
+| `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential fields from `openclaw.json`. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
 | `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
