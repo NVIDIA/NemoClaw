@@ -105,9 +105,15 @@ Use `state_dirs` for directory trees.
 Use `state_files` with `sqlite_backup` for live SQLite databases.
 When a SQLite database also lives under a state directory, the online state-file backup and restore must run after directory transfer so the consistent copy wins.
 Test nested state-file paths, missing parent recreation, WAL and SHM cleanup, and rebuild persistence.
+A `mode=ro` SQLite connection to a WAL-mode source can still materialize `-wal` and `-shm`
+sidecars owned by the backup identity. Remove those stale sidecars after atomically installing the
+restored database and before the producer reopens it; otherwise group-readable but non-writable
+sidecars can make the replacement appear read-only to the producer.
 When a gateway-created ledger is backed up or restored by the sandbox identity, verify every such
-parent's owner, shared group, setgid mode, database group-write mode, and both identities' reopen
-behavior.
+parent's owner, shared group, and setgid mode. Record the real producer-selected database mode:
+the live source must be group-readable for online backup, while the sandbox-owned restored
+replacement must be group-writable so the gateway can reopen it. Prove both identities' behavior
+instead of assuming every SQLite creator uses mode `0660`.
 Do not assume a state directory inherited the shared contract because a neighboring ledger did:
 Hermes 0.19 creates both `cron/executions.db` and
 `gateway/discord_message_recovery.db` from gateway-owned processes, while sandbox performs the

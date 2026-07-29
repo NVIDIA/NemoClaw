@@ -861,7 +861,7 @@ assert created["job_id"] == "nemoclaw-cross-uid-create-probe"
 assert created["status"] == "claimed"
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "gateway:sandbox 660" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "gateway:sandbox 640" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I - <<'PY'
 import os
@@ -884,6 +884,8 @@ finally:
     source.close()
 os.chmod(staged, 0o660)
 os.replace(staged, path)
+for suffix in ("-wal", "-shm"):
+    path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
 PY
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \

@@ -97,6 +97,7 @@ Hermes 0.19 records default-profile cron execution history in `cron/executions.d
 Both default-profile files use SQLite online backup and restore.
 The cron directory remains a state-directory contract for job definitions, and the later online database copy deliberately replaces its potentially inconsistent raw directory copy.
 WAL and SHM files are omitted and removed on restore.
+This cleanup is required even after a read-only online backup because opening a WAL-mode source can materialize sidecars owned by the backup identity; leaving those `0640` sidecars in place makes the producer's restored database appear read-only.
 
 Both ledgers follow the active `HERMES_HOME`.
 When a gateway or cron process is launched with a named profile home, the corresponding files live below `profiles/<name>/`.
@@ -105,7 +106,9 @@ This is an upgrade-created instance of the existing generic named-profile databa
 The cron ledger is an audit history rather than a retry queue; an inconsistent Discord recovery ledger can lose or repeat reconnect bookkeeping.
 Supporting dynamic profile-local SQLite discovery safely requires generic path enumeration, validation, backup, and restore work outside this dependency-upgrade scope.
 Both default-profile ledgers cross two runtime identities: `gateway` creates and reopens them under the gateway's `0007` umask, while `sandbox` performs snapshot backup and atomic restore.
-The image therefore maintains both parents as `gateway:sandbox` mode `2770`, which makes ordinary SQLite creation group-writable in `cron`; it also exact-source patches Discord's explicit upstream ledger chmod from `0600` to `0660`.
+The image therefore maintains both parents as `gateway:sandbox` mode `2770`.
+Hermes' ordinary SQLite creation produces the live cron database as `gateway:sandbox` mode `0640`, which gives `sandbox` the read access needed for online backup; the sandbox-owned restored replacement is explicitly mode `0660` so `gateway` can reopen it.
+Discord instead forces its live database to `0600`, so NemoClaw exact-source patches that upstream chmod to `0660`.
 Build probes use the real cron and Discord APIs to prove gateway creation, sandbox read/online-backup/replacement, and gateway reopen/write against each restored file.
 
 The target MCP tool names use the `mcp__server__tool` shape.
@@ -167,7 +170,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-3` | High | Migrate and test | Generated configuration and the doctor hash contract use schema 33 before runtime startup. |
 | `HERMES-4` | High | Migrate and test | Wrapper routing covers `console`, `--no-restore-cwd`, and `--safe-mode`; it preserves profile selectors, bare continue, and unquoted multi-word names against Hermes' exact coalescing boundaries across all four continue/resume spellings, and recognizes and explicitly rejects `--usage-file` only when the resumed one-shot append workaround would otherwise discard the report. Unknown future versions remain guarded. |
 | `HERMES-5` | Medium | Guard and test | Every retained compatibility patch was compared with target source, retargeted, hash-bound, and exercised by a focused regression or image smoke probe. |
-| `HERMES-6` | High | Migrate, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent and overlapping-directory tests. Both bind their cross-UID contract to `gateway:sandbox` `2770` parents, descriptor-safe startup repair, and gateway-to-sandbox-to-gateway image probes; Discord additionally needs its guarded `0660` upstream chmod patch. Rebuild persistence remains a live E2E gate. |
+| `HERMES-6` | High | Migrate, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent and overlapping-directory tests. Both bind their cross-UID contract to `gateway:sandbox` `2770` parents, descriptor-safe startup repair, and gateway-to-sandbox-to-gateway image probes. Cron's live source is group-readable `0640` and its restored replacement is `0660`; Discord additionally needs its guarded `0660` upstream chmod patch. Rebuild persistence remains a live E2E gate. |
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
 | `HERMES-8` | High | Guard and runtime-proof | Optional upstream secret sources stay disabled, `--safe-mode` does not broaden the generated environment allowlist, and the live environment boundary must reject raw credentials. |
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |

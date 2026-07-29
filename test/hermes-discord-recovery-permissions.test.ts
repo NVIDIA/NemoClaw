@@ -166,7 +166,9 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(dockerfile).toContain("from cron.executions import create_execution");
     expect(dockerfile).toContain("nemoclaw-cross-uid-create-probe");
     expect(dockerfile).toContain("nemoclaw-cross-uid-reopen-probe");
+    expect(dockerfile).toContain(`cron/executions.db)" = "gateway:sandbox 640"`);
     expect(dockerfile).toContain(`cron/executions.db)" = "sandbox:sandbox 660"`);
+    expect(dockerfile).toContain('for suffix in ("-wal", "-shm"):');
   });
 
   it("build-probes Discord gateway creation, sandbox backup and replacement, then reopen", () => {
