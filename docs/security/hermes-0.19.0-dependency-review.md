@@ -198,7 +198,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
 | `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `cryptography==48.0.1`, `Pillow==12.3.0`, and `starlette==1.3.1`, and fails the image build on dependency inconsistency or installed-version drift. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30411365314` published the exact source commit as amd64 and arm64 manifests under OCI index `sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e`. The final Dockerfile pins that digest, and the pinned arm64 final image passes all 62 BuildKit steps, including installed-version, patch, config, and cross-identity SQLite probes. Protected runtime E2E remains. |
+| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30411365314` published the exact source commit as amd64 and arm64 manifests under OCI index `sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e`. The final Dockerfile pins that digest. Before the cron ledger relocation, the pinned arm64 final image passed all 62 BuildKit steps, including installed-version, patch, config, and cross-identity SQLite probes. The exact PR head must build the three added relocation layers and changed cron probe before protected runtime E2E. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -227,10 +227,11 @@ Completed local evidence:
 - Python 3.13 multipart compatibility probes;
 - a no-cache arm64 Hermes base-image build;
 - trusted amd64 and arm64 branch-image publication plus immutable OCI-index inspection; and
-- a 62-step arm64 final-image build from the pinned branch digest, including private wrapper-boundary and cross-identity SQLite probes.
+- a 62-step arm64 final-image build from the pinned pre-relocation branch digest, including private wrapper-boundary and cross-identity SQLite probes.
 
 Before merge, the exact PR head must still pass:
 
+- the final-image build, including the cron ledger relocation and changed cross-identity probe;
 - managed MCP discovery and invocation;
 - messaging, environment-secret, restart, snapshot, rebuild, and rollback E2E paths;
 - normal repository checks with no unresolved actionable automated-review finding; and
