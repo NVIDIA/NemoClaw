@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Seed the Hermes dashboard's isolated config with the gateway's model routing.
+"""Seed the Hermes dashboard's isolated config from the gateway-owned config.
 
 The Hermes dashboard runs under its own ``HERMES_HOME`` (``HERMES_DASHBOARD_HOME``
 in ``start.sh``) for privilege separation from the gateway user, so it never sees
@@ -18,9 +18,9 @@ things break (verified live):
   / ``model.base_url`` are empty so the auto-detect chain finds nothing.
 
 This script mirrors the routing keys (``model``, ``custom_providers``, and the
-informational ``_nemoclaw_upstream``) plus the exact native Tavily backend from
-the gateway config into the dashboard config, preserving every other
-dashboard-local key. It also copies only the
+informational ``_nemoclaw_upstream``), the exact native Tavily backend, and a
+tight allowlist of reviewed policy leaves from the gateway config into the
+dashboard config, preserving every other dashboard-local key. It also copies only the
 dashboard-needed dotenv keys (local API server context and managed-tool gateway
 URLs) into the dashboard ``HERMES_HOME`` when paths are supplied, because Hermes
 0.16 moved parts of dashboard chat/model setup behind dotenv loading.
@@ -40,9 +40,10 @@ Usage:
     seed-dashboard-config.py <gateway-config.yaml> <dashboard-config.yaml>
     seed-dashboard-config.py <gateway-config.yaml> <dashboard-config.yaml> <gateway.env> <dashboard.env>
 
-Exits 0 on success or benign no-op (missing gateway config, no routing to copy).
-Exits 1 only on an unexpected write failure. Emits ``[dashboard]`` lines on stderr
-to match the rest of the gateway startup contract.
+Exits 0 on success or a benign no-op for a missing gateway config.
+Exits 1 when an existing config is invalid or unreadable, routing is absent, a
+reviewed policy is invalid, or a write fails. Emits ``[dashboard]`` lines on
+stderr to match the rest of the gateway startup contract.
 """
 
 from __future__ import annotations
@@ -60,6 +61,21 @@ from typing import Callable, TextIO
 # excludes platforms/plugins/messaging: the dashboard binds its own ports and
 # must not inherit the gateway's api_server bind (port conflict) or channels.
 _ROUTING_KEYS = ("model", "custom_providers", "_nemoclaw_upstream")
+_APPROVAL_MODES = frozenset({"manual", "smart", "off"})
+_SESSION_RESET_MODES = frozenset({"daily", "idle", "both", "none"})
+_SESSION_RESET_KEYS = frozenset(
+    {
+        "mode",
+        "at_hour",
+        "idle_minutes",
+        "notify",
+        "notify_exclude_platforms",
+        "bg_process_max_age_hours",
+    }
+)
+_PRE_UPDATE_BACKUP_MODES = frozenset(
+    {"off", "false", "none", "disabled", "quick", "full", "zip", "true"}
+)
 _DASHBOARD_ENV_ALLOWED_KEYS = frozenset(
     {
         # Local API server context needed by dashboard chat/model calls.
@@ -90,6 +106,14 @@ class UnsafeDashboardSeedPathError(Exception):
 
 
 class MissingDashboardSeedPathError(Exception):
+    pass
+
+
+class InvalidDashboardPolicyError(Exception):
+    pass
+
+
+class InvalidDashboardSeedDocumentError(Exception):
     pass
 
 
@@ -147,8 +171,13 @@ def _read_regular_text_no_follow(path: str, label: str) -> str:
 def _load_yaml(path: str, label: str) -> dict:
     import yaml
 
-    data = yaml.safe_load(_read_regular_text_no_follow(path, label))
-    return data if isinstance(data, dict) else {}
+    try:
+        data = yaml.safe_load(_read_regular_text_no_follow(path, label))
+    except yaml.YAMLError as exc:
+        raise InvalidDashboardSeedDocumentError(f"{label} is malformed") from exc
+    if not isinstance(data, dict):
+        raise InvalidDashboardSeedDocumentError(f"{label} must be a mapping")
+    return data
 
 
 def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], None]) -> bool:
@@ -373,6 +402,129 @@ def _normalized_routing(gateway: dict) -> dict:
     return routing
 
 
+def _policy_section(gateway: dict, name: str) -> dict:
+    value = gateway.get(name)
+    if not isinstance(value, dict):
+        raise InvalidDashboardPolicyError(f"{name} must be a mapping")
+    return value
+
+
+def _policy_bool(section: dict, section_name: str, key: str) -> bool:
+    value = section.get(key)
+    if not isinstance(value, bool):
+        raise InvalidDashboardPolicyError(f"{section_name}.{key} must be a boolean")
+    return value
+
+
+def _policy_int(section: dict, section_name: str, key: str, minimum: int, maximum: int) -> int:
+    value = section.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise InvalidDashboardPolicyError(
+            f"{section_name}.{key} must be an integer from {minimum} through {maximum}"
+        )
+    return value
+
+
+def _normalized_policy(gateway: dict) -> dict:
+    """Return only reviewed policy leaves, rejecting incomplete or invalid source policy."""
+    approvals = _policy_section(gateway, "approvals")
+    approval_mode = approvals.get("mode")
+    if not isinstance(approval_mode, str) or approval_mode not in _APPROVAL_MODES:
+        raise InvalidDashboardPolicyError(
+            "approvals.mode must be one of manual, smart, or off"
+        )
+
+    browser = _policy_section(gateway, "browser")
+    restrict_evaluate = _policy_bool(browser, "browser", "restrict_evaluate")
+
+    session_reset = _policy_section(gateway, "session_reset")
+    session_keys = frozenset(session_reset)
+    if session_keys != _SESSION_RESET_KEYS:
+        missing = sorted(_SESSION_RESET_KEYS - session_keys)
+        extra = sorted(session_keys - _SESSION_RESET_KEYS)
+        raise InvalidDashboardPolicyError(
+            f"session_reset must contain the reviewed complete policy "
+            f"(missing={missing}, extra={extra})"
+        )
+    reset_mode = session_reset.get("mode")
+    if not isinstance(reset_mode, str) or reset_mode not in _SESSION_RESET_MODES:
+        raise InvalidDashboardPolicyError(
+            "session_reset.mode must be one of daily, idle, both, or none"
+        )
+    at_hour = _policy_int(session_reset, "session_reset", "at_hour", 0, 23)
+    idle_minutes = _policy_int(
+        session_reset,
+        "session_reset",
+        "idle_minutes",
+        1,
+        2**31 - 1,
+    )
+    notify = _policy_bool(session_reset, "session_reset", "notify")
+    excluded_platforms = session_reset.get("notify_exclude_platforms")
+    if (
+        not isinstance(excluded_platforms, list)
+        or not excluded_platforms
+        or not all(isinstance(value, str) and value for value in excluded_platforms)
+    ):
+        raise InvalidDashboardPolicyError(
+            "session_reset.notify_exclude_platforms must be a non-empty list of strings"
+        )
+    bg_process_max_age_hours = _policy_int(
+        session_reset,
+        "session_reset",
+        "bg_process_max_age_hours",
+        1,
+        2**31 - 1,
+    )
+
+    display = _policy_section(gateway, "display")
+    show_reasoning = _policy_bool(display, "display", "show_reasoning")
+    show_commentary = _policy_bool(display, "display", "show_commentary")
+
+    updates = _policy_section(gateway, "updates")
+    pre_update_backup = updates.get("pre_update_backup")
+    if isinstance(pre_update_backup, str):
+        if pre_update_backup.strip().lower() not in _PRE_UPDATE_BACKUP_MODES:
+            raise InvalidDashboardPolicyError(
+                "updates.pre_update_backup has an unsupported mode"
+            )
+    elif not isinstance(pre_update_backup, bool):
+        raise InvalidDashboardPolicyError(
+            "updates.pre_update_backup must be a boolean or supported mode string"
+        )
+    refresh_cua_driver = _policy_bool(updates, "updates", "refresh_cua_driver")
+
+    return {
+        "approvals": {"mode": approval_mode},
+        "browser": {"restrict_evaluate": restrict_evaluate},
+        "session_reset": {
+            "mode": reset_mode,
+            "at_hour": at_hour,
+            "idle_minutes": idle_minutes,
+            "notify": notify,
+            "notify_exclude_platforms": list(excluded_platforms),
+            "bg_process_max_age_hours": bg_process_max_age_hours,
+        },
+        "display": {
+            "show_reasoning": show_reasoning,
+            "show_commentary": show_commentary,
+        },
+        "updates": {
+            "pre_update_backup": pre_update_backup,
+            "refresh_cua_driver": refresh_cua_driver,
+        },
+    }
+
+
+def _merge_policy(dashboard: dict, policy: dict) -> None:
+    """Overwrite only reviewed policy leaves while preserving dashboard-local siblings."""
+    for section_name, managed_values in policy.items():
+        dashboard_values = dashboard.get(section_name)
+        merged = dict(dashboard_values) if isinstance(dashboard_values, dict) else {}
+        merged.update(managed_values)
+        dashboard[section_name] = merged
+
+
 def _mirror_env(src: str, dst: str) -> bool:
     try:
         env_text = _read_regular_text_no_follow(src, "gateway env")
@@ -382,9 +534,14 @@ def _mirror_env(src: str, dst: str) -> bool:
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard env because {exc}", file=sys.stderr)
         return False
-    except OSError as exc:
-        print(f"[dashboard] gateway env {src} unreadable ({exc}); skipping env seed", file=sys.stderr)
-        return True
+    except Exception:
+        # Do not interpolate decoder or parser exceptions here: their context can
+        # contain credential-bearing source text.
+        print(
+            "[SECURITY] Refusing to seed dashboard env because gateway env is invalid or unreadable",
+            file=sys.stderr,
+        )
+        return False
 
     if os.path.islink(dst):
         print(f"[SECURITY] Refusing to seed dashboard env because {dst} is a symlink", file=sys.stderr)
@@ -444,15 +601,15 @@ def main(argv: list[str]) -> int:
         return 1
 
     src, dst = argv[1], argv[2]
-    env_ok = True
-    if len(argv) == 5:
-        env_ok = _mirror_env(argv[3], argv[4])
 
     try:
-        import yaml  # noqa: F401  (import here so a missing PyYAML is a clean skip)
-    except Exception as exc:  # pragma: no cover - PyYAML ships in the Hermes venv
-        print(f"[dashboard] PyYAML unavailable ({exc}); skipping model seed", file=sys.stderr)
-        return 0 if env_ok else 1
+        import yaml  # noqa: F401
+    except Exception:  # pragma: no cover - PyYAML ships in the Hermes venv
+        print(
+            "[SECURITY] Refusing to seed dashboard config because PyYAML is unavailable",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         gateway = _load_yaml(src, "gateway config")
@@ -460,18 +617,37 @@ def main(argv: list[str]) -> int:
         # Cold paths where the gateway config has not been written yet are not an
         # error: there is simply nothing to mirror.
         print(f"[dashboard] gateway config {src} missing; skipping model seed", file=sys.stderr)
+        env_ok = True
+        if len(argv) == 5:
+            env_ok = _mirror_env(argv[3], argv[4])
         return 0 if env_ok else 1
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard config because {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:
-        print(f"[dashboard] gateway config {src} unreadable ({exc}); skipping model seed", file=sys.stderr)
-        return 0 if env_ok else 1
+    except Exception:
+        # PyYAML includes the offending source line in parser exceptions. Never
+        # echo that context because routing documents contain API-key fields.
+        print(
+            "[SECURITY] Refusing to seed dashboard config because gateway config is invalid or unreadable",
+            file=sys.stderr,
+        )
+        return 1
 
     routing = _normalized_routing(gateway)
     if not routing.get("model") and not routing.get("custom_providers") and not routing.get("providers"):
-        print("[dashboard] gateway config has no model routing; nothing to seed", file=sys.stderr)
-        return 0 if env_ok else 1
+        print(
+            "[SECURITY] Refusing to seed dashboard config because gateway config has no model routing",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        policy = _normalized_policy(gateway)
+    except InvalidDashboardPolicyError:
+        print(
+            "[SECURITY] Refusing to seed dashboard config because gateway policy is invalid",
+            file=sys.stderr,
+        )
+        return 1
 
     dashboard: dict = {}
     try:
@@ -481,14 +657,21 @@ def main(argv: list[str]) -> int:
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard config because {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:
-        # A corrupt dashboard config is owned by Hermes and is regenerated on
-        # launch; recreate from the routing keys rather than abort startup.
+    except Exception:
+        # Preserve the existing bytes and stop startup. Recreating from a
+        # partially understood document could erase dashboard-owned policy.
         print(
-            f"[dashboard] existing dashboard config {dst} unreadable ({exc}); recreating",
+            "[SECURITY] Refusing to seed dashboard config because existing dashboard "
+            "config is invalid or unreadable",
             file=sys.stderr,
         )
-        dashboard = {}
+        return 1
+
+    # Validate both YAML documents before mirroring dotenv or replacing either
+    # config. A malformed policy source must not partially update the dashboard
+    # environment before startup refuses the config.
+    if len(argv) == 5 and not _mirror_env(argv[3], argv[4]):
+        return 1
 
     # The seeder owns only web.backend. Merge or remove that field while
     # preserving unrelated dashboard-local web settings.
@@ -503,6 +686,7 @@ def main(argv: list[str]) -> int:
     else:
         dashboard.pop("web", None)
     dashboard.update(routing)
+    _merge_policy(dashboard, policy)
 
     import yaml
 
@@ -512,8 +696,8 @@ def main(argv: list[str]) -> int:
     if not _atomic_write_no_follow(dst, "dashboard config", write_dashboard):
         return 1
 
-    print(f"[dashboard] seeded model routing into {dst}", file=sys.stderr)
-    return 0 if env_ok else 1
+    print(f"[dashboard] seeded model routing and reviewed policy into {dst}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
