@@ -262,48 +262,61 @@ export function registerRebuildFlowRecoveryTests(): void {
       });
     });
 
-    it("keeps a registered replacement when a rebuild restarts after its commit (#7734)", async () => {
-      const replacementProbe = "Name: alpha\nId: sbx-replacement\nPhase: Ready\n";
-      const replacementIdentity = fingerprintSandboxLiveIdentity(replacementProbe);
-      const provenReplacement = {
-        sandboxEntry: {
-          lifecycleGeneration: "generation-1",
-          lifecycleLiveIdentityFingerprint: replacementIdentity,
-        },
-      };
+    const REPLACEMENT_PROBE = "Name: alpha\nId: sbx-replacement\nPhase: Ready\n";
+    const FOREIGN_PROBE = "Name: alpha\nId: sbx-foreign\nPhase: Ready\n";
+    const REPLACEMENT_IDENTITY = fingerprintSandboxLiveIdentity(REPLACEMENT_PROBE);
+    const POST_DELETE_PHASES = ["creating", "created", "registry_committing", "completed"] as const;
+    const provenReplacement = {
+      sandboxEntry: {
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
+      },
+    };
 
-      // The interrupted run journals the replacement and registers it, then
-      // dies before the journal is cleared.
+    // Journal a replacement through the real pipeline, then die at the given
+    // post-delete phase so the restart reads persisted state, not a hand-built
+    // checkpoint.
+    async function interruptAfterCreate(phase: string): Promise<unknown> {
       const interrupted = createRebuildFlowHarness({
         ...provenReplacement,
         onboard: (session) => {
           Object.assign(
             (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
             {
-              phase: "registry_committing",
+              phase,
               targetGeneration: "generation-1",
-              targetLiveIdentityFingerprint: replacementIdentity,
+              targetLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
             },
           );
-          throw new Error("interrupted after replacement registration");
+          throw new Error("interrupted after replacement creation");
         },
       });
       await expect(
         interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).rejects.toThrow("Recreate failed");
+      return interrupted.session.checkpoint;
+    }
 
+    function restartRebuild(probe: string, checkpoint: unknown) {
       const restarted = createRebuildFlowHarness({
         ...provenReplacement,
         captureOpenshell: (argv) =>
           argv[0] === "sandbox" && argv[1] === "get"
-            ? { status: 0, output: replacementProbe, stdout: replacementProbe, stderr: "" }
+            ? { status: 0, output: probe, stdout: probe, stderr: "" }
             : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" },
       });
-      restarted.session.checkpoint = interrupted.session.checkpoint;
+      restarted.session.checkpoint = checkpoint;
       // Both harnesses share one spy per mocked module function, so the
       // interrupted run's calls have to be dropped before the restart.
       restarted.runOpenshellSpy.mockClear();
       restarted.onboardSpy.mockClear();
+      return restarted;
+    }
+
+    it.each(
+      POST_DELETE_PHASES,
+    )("keeps a registered replacement when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartRebuild(REPLACEMENT_PROBE, await interruptAfterCreate(phase));
 
       await restarted.rebuildSandbox("alpha", ["--yes"]);
 
@@ -312,6 +325,19 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(
         (restarted.session.checkpoint as { sandboxRecreate: unknown }).sandboxRecreate,
       ).toBeNull();
+    });
+
+    it.each(
+      POST_DELETE_PHASES,
+    )("refuses a foreign same-name sandbox when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartRebuild(FOREIGN_PROBE, await interruptAfterCreate(phase));
+
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /not the journaled replacement/,
+      );
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
     });
 
     it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
