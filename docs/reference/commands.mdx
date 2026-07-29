@@ -100,12 +100,16 @@ The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exp
 Deep Agents does not use the OpenClaw chat slash command.
 Use the host-side `nemo-deepagents` commands for lifecycle, status, policy, and inference operations.
 Inside the sandbox, use `dcode` for the interactive TUI and `dcode -n` for explicit headless automation.
+Add `--json` when automation needs the managed, versioned result envelope.
 
 ```bash
 dcode
 dcode -n "Summarize this repository"
+dcode -n "Summarize this repository" --json
 dcode status
 ```
+
+For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#use-the-harness).
 
 </AgentOnly>
 
@@ -170,6 +174,18 @@ $$nemoclaw resources [--json]
 
 If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
 
+### `$$nemoclaw host probe`
+
+Inspect host readiness before onboarding without changing host, Docker, gateway, credential, policy, or sandbox state.
+Use `--json` for the schema-versioned report.
+The command exits with `0` for `supported`, `2` for `incompatible`, and `3` for `inconclusive`.
+
+```bash
+$$nemoclaw host probe [--json]
+```
+
+For capability IDs, evidence bounds, and compatibility guidance, refer to [System Readiness](system-readiness).
+
 ### `$$nemoclaw agents list`
 
 List the installed agent runtimes that can be selected with `$$nemoclaw onboard --agent <name>`.
@@ -233,6 +249,8 @@ Each line is one JSON object with the version 1 envelope:
 
 In this mode, human progress remains available on stderr so stdout stays valid JSONL.
 Payloads contain only the existing bounded, redacted machine-event context: credential environment variable names may appear, but credential values and secret-bearing URL components are redacted.
+For a `compatible-endpoint` route that uses `openai-completions`, the context includes `reasoningEffort` as `low`, `medium`, `high`, or `endpoint-default`.
+Other provider and API-family routes omit this field.
 Treat new event `type` values and new payload fields as additive changes.
 A breaking envelope or field-semantics change increments `schemaVersion`.
 
@@ -780,7 +798,8 @@ NemoClaw retries only after it verifies that no OpenShell-managed Docker contain
 On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly.
 On ordinary native Linux, the compatibility path uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
 On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime.
-On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds the host group IDs that own `/dev/nvmap` and `/dev/nvhost-*` so the sandbox user can initialize CUDA.
+On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds eligible host group IDs for the supported GPU device nodes.
+These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 If the compatibility attempt fails, onboarding keeps its diagnostics and the failed sandbox in place and prints a manual cleanup command.
 
 Prerequisites:
@@ -988,6 +1007,7 @@ $$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
 $$nemoclaw my-assistant agent --session-key intake-42 --json -m 'ping'
 $$nemoclaw dcode-sandbox agent --help
 $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
+$$nemoclaw dcode-sandbox agent -n "Summarize this repository" --json
 ```
 
 When post-command permission cleanup succeeds, the wrapper inherits the remote command's exit code so host-side pipelines can branch on it.
@@ -1032,6 +1052,9 @@ curl -sN http://127.0.0.1:8642/v1/chat/completions \
 For Deep Agents sandboxes, `agent` forwards to the manifest-declared terminal command.
 Bare invocations run `dcode`, and `--help` runs `dcode --help`.
 Use `dcode -n` for explicit headless automation when you are already connected to the sandbox, or use `$$nemoclaw <name> agent -n "<task>"` from the host.
+Add `--json` to either form for one managed, versioned JSON envelope on stdout.
+The host wrapper forwards the flag to `dcode`.
+For the schema, status and exit behavior, and 1 MiB output limit, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#use-the-harness).
 The host wrapper keeps `HOME=/sandbox`, the managed proxy environment, and the manifest-declared Deep Agents config path aligned with `connect`.
 Interactive `$$nemoclaw <name> agent` launches the same terminal TUI as `dcode`.
 Headless `$$nemoclaw <name> agent -n "<task>"` uses the managed headless boundary, where non-shell tools can auto-run without the interactive approval UI.
@@ -1270,6 +1293,9 @@ Do not pass a sandbox name to `$$nemoclaw status`; that command is the global al
 NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state.
 If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
+For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`.
+The line is omitted for another provider or API family.
+
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
@@ -1336,7 +1362,11 @@ For cloud-only providers, the output omits the NIM status line unless a NIM cont
 
 When the sandbox's recorded driver is `docker` and the host Docker daemon is not reachable, the command prints the `docker_unreachable` failure layer with the message `Docker daemon is not reachable.` as the first line of stdout, suppresses the host-side `Inference` probe (which otherwise hits the remote provider directly and is misleading when the local stack is down), and exits with a non-zero status.
 
-When the host Docker daemon is reachable but the per-sandbox container is stopped, the command prints the `sandbox_container_stopped` failure layer with the message `sandbox container exists but is not running.` as the first line of stdout, suppresses the host-side `Inference` probe, and exits with a non-zero status.
+When the host Docker daemon is reachable but the per-sandbox container is stopped, the initial preflight records the `sandbox_container_stopped` failure layer and suppresses the host-side `Inference` probe.
+If the owning OpenShell gateway is healthy but no longer lists the registered Docker-driver sandbox, status attempts post-reboot recovery from the labeled container.
+It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference.
+A successful recovery clears the stale stopped-container failure.
+If Docker readiness or the agent delivery chain cannot be proven, status exits non-zero and reports the failed recovery layer.
 <AgentOnly variant="openclaw,hermes">
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to the `sandbox_dashboard_port_conflict` failure layer with the message `sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 </AgentOnly>
@@ -1470,6 +1500,9 @@ A live policy that contains the excluded key fails the check and requires policy
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
+For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`.
+The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials.
+Because the check has `info` status, it does not change the command's exit status.
 
 <AgentOnly variant="openclaw">
 
@@ -2025,7 +2058,7 @@ $$nemoclaw my-assistant channels add telegram
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Validate the channel name and matching policy preset without prompting for credentials, contacting the gateway, or rebuilding |
-| `--force` | Add the channel even when another sandbox already uses the same messaging credential, bypassing the cross-sandbox conflict warning (otherwise `channels add` warns and, when non-interactive, aborts) |
+| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
@@ -2106,7 +2139,9 @@ A paired channel with no observed inbound delivery exits non-zero with verdict `
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
 A Hermes WhatsApp sandbox uses the basic registration, policy, and config report because NemoClaw does not treat the Hermes session file as a live-health signal.
 
-For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison, and classifies the current state into a verdict such as `healthy`, `idle`, `unreachable` (network or egress), `token_rejected`, or `not_started`.
+For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.
+It classifies the state as `healthy`, `idle`, `token_rejected`, `unreachable`, `not_started`, `policy_gap`, `config_gap`, `unknown`, or `probe_failed`.
+A network or egress failure, or a non-authentication Bot API startup HTTP error, produces `unreachable`; a 401 or 404 response produces `token_rejected`.
 It reads the gateway's own startup and poll log breadcrumbs rather than issuing its own Bot API request, so the resolved bot token never leaves the gateway.
 The verdict reflects the most recent evidence in the log window, so a bridge that recovered after a blocked start reports `healthy` while one blocked again reports `unreachable`.
 Telegram health is probed only for OpenClaw sandboxes; a Hermes Telegram sandbox uses the basic config report.
@@ -2658,7 +2693,7 @@ The command backs up workspace state, destroys the old sandbox (including its ho
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
-The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
+The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values.
 Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
 It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
@@ -3168,6 +3203,25 @@ NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit p
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+```bash
+$$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]
+```
+
+`--reasoning-effort` accepts `low`, `medium`, `high`, or `default`.
+An explicit flag or `NEMOCLAW_REASONING_EFFORT` value applies only to a `compatible-endpoint` route that resolves to `openai-completions`.
+NemoClaw validates the explicit value, provider, and API before it changes the OpenShell route, the agent config, or the host registry.
+It rejects an unsupported route for every explicit value, including `default`.
+For a `low`, `medium`, or `high` value on an `openai-completions` route, NemoClaw writes `params.extra_body.reasoning_effort` on the model entry, and OpenClaw merges it into the request body.
+`--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
+When you omit the flag, `$$nemoclaw inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
+When neither is set, the sandbox keeps the recorded effort only while the resulting route uses `compatible-endpoint` and `openai-completions`.
+Without an explicit effort input, switching to another provider or API family removes an inherited `reasoning_effort` field and records the endpoint-default state.
+Pass `default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort and return the endpoint to its own default.
+An ordinary sandbox restart preserves the resulting effort or endpoint-default state; it does not replay the image's original onboarding value.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 
 For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` when you need to change the provider or model.
@@ -3297,6 +3351,9 @@ It prints the versioned URL of the matching `uninstall.sh` so you can download, 
 When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries.
 It still deletes the selected sandboxes and attempts to remove the modern local gateway registration.
 When uninstall confirms that no sibling gateways remain, it also deletes NemoClaw provider registrations.
+For a managed dual-Station vLLM runtime, full uninstall revalidates the exact recorded pair and removes both managed containers before starting the remaining uninstall steps.
+If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying.
+Pair cleanup can partially complete before an error; verify both Stations before the retry.
 It does not use the legacy `gateway destroy` command for that gateway.
 <AgentOnly variant="openclaw">
 
@@ -3562,7 +3619,9 @@ Set them before running `$$nemoclaw onboard`.
 | `SANDBOX_NAME` | sandbox name | Compatibility spelling used after `NEMOCLAW_SANDBOX_NAME` and `NEMOCLAW_SANDBOX`. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`. Overridden by the `--install-ref` flag. |
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. The DGX Station express installer sets `nemotron-3-ultra-550b-a55b` explicitly. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX Station peer for Nemotron 3 Ultra pair qualification. The peer must match the reciprocal private `/30` rail and hardware checks; an explicit peer failure stops setup instead of falling back. NemoClaw does not enroll SSH trust or accept a port or SSH option in this value. When unset, DGX Station installer discovery checks only the two deterministic `/30` counterpart addresses. A peer cannot be combined with an explicit non-Ultra model; conflicting explicit selections fail before pair preparation. |
+| `NEMOCLAW_DGX_STATION_SSH_BINDING` | opaque installer-managed token | Carries the qualified peer endpoint and host-key binding from DGX Station pair preparation into the current managed-vLLM install. The installer creates and clears this token; operators should not set or persist it. Missing, changed, or mismatched binding state fails before peer SSH or Docker work. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
 <AgentOnly variant="openclaw">
 | `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes). |
@@ -3585,6 +3644,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the image's original value. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 

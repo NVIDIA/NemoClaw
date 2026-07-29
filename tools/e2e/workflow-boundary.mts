@@ -109,8 +109,7 @@ export interface FocusedE2eJob {
 }
 
 export interface StagingBrevLaunchableDispatchEvaluation {
-  failReadiness: boolean;
-  runQualification: boolean;
+  runLaunchableE2e: boolean;
 }
 
 type CachedFreeStandingJobsInventory = {
@@ -121,6 +120,17 @@ type CachedFreeStandingJobsInventory = {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const RETIRED_CONTROLLER_SELECTOR_IDS = [
+  "credential-migration",
+  "credential-sanitization",
+  "diagnostics",
+  "docs-validation",
+  "gateway-drift-preflight",
+  "gateway-health-honest",
+  "onboard-negative-paths",
+  "openshell-version-pin",
+  "ubuntu-repo-cli-smoke",
+] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
@@ -143,11 +153,7 @@ const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
-const NO_IMAGE_E2E_JOBS = new Set([
-  "gateway-health-honest",
-  "staging-brev-launchable",
-  SHARED_E2E_JOB_ID,
-]);
+const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -218,11 +224,6 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
       scenario: "live-probes",
       selector: "^network-policy:.+probes$",
       sandbox: "e2e-net-policy-live-probes",
-    },
-    {
-      scenario: "zero-presets",
-      selector: "^network-policy:.+presets$",
-      sandbox: "e2e-net-policy-zero-presets",
     },
   ],
 } as const;
@@ -561,6 +562,12 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
+const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/auto-pair-approval.ts",
+  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+]);
+
 export function focusedE2eJobsForChangedFiles(
   changedFiles: readonly string[],
   inventory: FreeStandingJobsInventory = readFreeStandingJobsInventory(),
@@ -569,6 +576,9 @@ export function focusedE2eJobsForChangedFiles(
   for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
     for (const job of inventory.liveTestToJobs.get(file) ?? []) {
       addMapValue(matchedFilesByJob, job, file);
+    }
+    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
+      addMapValue(matchedFilesByJob, "snapshot-commands", file);
     }
   }
   return [...matchedFilesByJob]
@@ -685,7 +695,6 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
   eventName: "schedule" | "workflow_dispatch";
   includeStagingBrevLaunchable?: boolean;
   jobs?: string;
-  readinessEnabled?: boolean;
   targets?: string;
   trustedMain?: boolean;
 }): StagingBrevLaunchableDispatchEvaluation {
@@ -697,14 +706,12 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
     jobs === "" &&
     targets === "";
   const explicitlySelected =
-    input.eventName === "workflow_dispatch" &&
-    splitSelector(jobs).includes("staging-brev-launchable");
-  const requested = input.eventName === "schedule" || fullDispatch || explicitlySelected;
+    input.eventName === "workflow_dispatch" && jobs === "staging-brev-launchable" && targets === "";
+  const requested = fullDispatch || explicitlySelected;
   const trustedMain = input.trustedMain !== false;
 
   return {
-    failReadiness: fullDispatch && (input.readinessEnabled !== true || !trustedMain),
-    runQualification: requested && input.readinessEnabled === true && trustedMain,
+    runLaunchableE2e: requested && trustedMain,
   };
 }
 
@@ -1377,7 +1384,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("network-policy scenario matrix must disable fail-fast");
   }
   if (!isDeepStrictEqual(asRecord(strategy.matrix), NETWORK_POLICY_SCENARIO_MATRIX)) {
-    errors.push("network-policy job must keep the two isolated scenario shards");
+    errors.push("network-policy job must keep only the isolated live-probes scenario");
   }
 
   const jobEnv = asRecord(job.env);
@@ -2855,90 +2862,6 @@ function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): 
   }
 }
 
-function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "diagnostics";
-  const targetName = "diagnostics";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing diagnostics job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("diagnostics job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("diagnostics job must keep the 60 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("diagnostics job must not expose Docker auth to branch-controlled steps");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/diagnostics") {
-    errors.push("diagnostics job must write artifacts under e2e-artifacts/live/diagnostics");
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("diagnostics job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("diagnostics job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
-    errors.push("diagnostics job must set NEMOCLAW_NON_INTERACTIVE=1");
-  }
-  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
-    errors.push("diagnostics job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
-  }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-diag") {
-    errors.push("diagnostics job must use the stable e2e-diag sandbox name");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("diagnostics job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  for (const secret of [
-    "NVIDIA_INFERENCE_API_KEY",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "GITHUB_TOKEN",
-  ]) {
-    requireEnvDoesNotExposeSecret(errors, "diagnostics job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `diagnostics step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run diagnostics live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    }
-    if (step.name !== DOCKER_HUB_AUTH_STEP) {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("diagnostics job missing checkout step");
-  requireFullShaAction(errors, checkout, "diagnostics checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("diagnostics checkout step must set persist-credentials=false");
-  }
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run diagnostics live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("diagnostics live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/diagnostics.test.ts");
-  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-}
-
 function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "spark-install";
   const targetName = "spark-install";
@@ -4240,23 +4163,69 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  const environment = asRecord(job.environment);
-  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
-    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  if (Object.hasOwn(job, "environment")) {
+    errors.push("staging-brev-launchable must not use a GitHub environment");
   }
   const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
   if (
     !stringValue(job.if).includes(trustedRun) ||
     stringValue(job.if).includes("checkout_sha == ''")
   ) {
-    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
+    errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (job.if !== expectedSelector) {
     errors.push(
-      "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+      "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
     );
+  }
+  const generateMatrix = asRecord(jobs["generate-matrix"]);
+  const generateSteps = asSteps(generateMatrix.steps);
+  const authorization = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Authorize Launchable E2E maintainer dispatch",
+  );
+  const expectedAuthorizationSelector =
+    "${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+  if (authorization?.if !== expectedAuthorizationSelector) {
+    errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
+  }
+  if (authorization?.shell !== "bash") {
+    errors.push("Launchable E2E maintainer authorization must use bash");
+  }
+  const authorizationEnv = asRecord(authorization?.env);
+  for (const [key, expected] of [
+    ["ACTOR", "${{ github.actor }}"],
+    ["GITHUB_TOKEN", "${{ github.token }}"],
+    ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
+  ] as const) {
+    if (authorizationEnv[key] !== expected) {
+      errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
+    }
+  }
+  for (const required of [
+    "/collaborators/${maintainer}/permission",
+    "'.user.login // \"\"'",
+    "'.role_name // \"\"'",
+    "maintain | admin",
+    'require_maintainer "$ACTOR"',
+    'require_maintainer "$TRIGGERING_ACTOR"',
+    "requires a repository maintainer or administrator",
+  ]) {
+    requireRunContains(errors, authorization, required);
+  }
+  const generateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  if (
+    authorization &&
+    generateCheckout &&
+    generateSteps.indexOf(authorization) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("Launchable E2E maintainer authorization must run before generate-matrix checkout");
   }
   const concurrency = asRecord(job.concurrency);
   if (
@@ -4265,7 +4234,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
+      "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
     );
   }
   const steps = asSteps(job.steps);
@@ -4315,7 +4284,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     )
   ) {
     errors.push(
-      "staging-brev-launchable must record dispatch identity after preparation and before qualification",
+      "staging-brev-launchable must record dispatch identity after preparation and before the Launchable E2E run",
     );
   }
   const runEnv = asRecord(run?.env);
@@ -4325,7 +4294,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
     [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
+    const expected = `\${{ ${trustedRun} && github.event_name == 'workflow_dispatch' && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
@@ -4346,35 +4315,72 @@ function validateStagingBrevLaunchableInput(
   if (
     !description.includes("Exact staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
-    !description.includes("persistent repository readiness gate")
+    !description.includes("full E2E run")
   ) {
     errors.push(
-      "workflow_dispatch include_staging_brev_launchable input must document qualification scope and readiness",
+      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable E2E scope",
     );
   }
 }
 
-function validateStagingBrevLaunchableReadinessJob(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["staging-brev-launchable-readiness"]);
-  if (job.needs !== "generate-matrix") {
-    errors.push("staging-brev-launchable-readiness must depend on generate-matrix");
+function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["retired-selector-compatibility"]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing retired-selector-compatibility job");
+    return;
   }
-  const expectedIf =
-    "${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}";
+  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
   if (job.if !== expectedIf) {
     errors.push(
-      "staging-brev-launchable-readiness must fail only full dispatches with disabled readiness",
+      "retired-selector-compatibility job selector gate must match retired selector contract",
     );
   }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("staging-brev-launchable-readiness must run on ubuntu-latest");
+}
+
+function validateTrustedE2eDispatchReceipt(
+  errors: string[],
+  generateSteps: readonly WorkflowStep[],
+): void {
+  const dispatchReceipt = requireStep(errors, generateSteps, "Record trusted E2E dispatch receipt");
+  if (dispatchReceipt?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+    errors.push("trusted E2E dispatch receipt must run for workflow dispatches only");
   }
-  const steps = asSteps(job.steps);
-  const fail = namedStep(steps, "Fail when staging Brev Launchable is not ready");
-  requireRunContains(errors, fail, "NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true");
-  requireRunContains(errors, fail, "protected environment");
-  requireRunContains(errors, fail, "staging Launchable ID");
-  requireRunContains(errors, fail, "exit 1");
+  const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
+  const expectedDispatchReceiptEnv = {
+    ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    DISPATCH_JOBS: "${{ inputs.jobs }}",
+    DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
+    DISPATCH_TARGETS: "${{ inputs.targets }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    INCLUDE_STAGING_BREV_LAUNCHABLE:
+      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    RUN_ATTEMPT: "${{ github.run_attempt }}",
+    RUN_ID: "${{ github.run_id }}",
+  };
+  if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
+    errors.push(
+      "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+    );
+  }
+  for (const fragment of [
+    'kind: "nemoclaw-e2e-dispatch-v1"',
+    "candidateSha: $candidateSha",
+    "eventName: $eventName",
+    "workflowRunId: $workflowRunId",
+    "workflowRunAttempt: $workflowRunAttempt",
+    "jobs: $jobs",
+    "targets: $targets",
+    "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
+    "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
+  ]) {
+    requireRunContains(errors, dispatchReceipt, fragment);
+  }
 }
 
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
@@ -4432,6 +4438,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  if (Object.hasOwn(jobs, "staging-brev-launchable-readiness")) {
+    errors.push("workflow must not define superseded staging-brev-launchable-readiness job");
+  }
+  validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
     "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {
@@ -4547,6 +4557,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     generate,
     "E2E planner matrix does not match controller-selected targets",
   );
+  validateTrustedE2eDispatchReceipt(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
@@ -4886,9 +4897,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   validateSharedE2eJob(errors, jobs);
   validateStagingBrevLaunchableJob(errors, jobs);
-  validateStagingBrevLaunchableReadinessJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
-  validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
   validateInferenceRoutingJob(errors, jobs);
@@ -4918,7 +4927,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   );
   validateIssue4434HostDependencies(errors, jobs);
   validateOpenclawTuiChatCorrelationHostDependencies(errors, jobs);
-  validateDiagnosticsJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceJob(errors, jobs);
   validateSnapshotCommandsJob(errors, jobs);
   errors.push(...validateSandboxOperationsWorkflow({ jobs }));
@@ -4935,8 +4943,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateIssue2478CrashLoopRecoveryJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
-
-  validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
   validateSandboxRlimitConnectJob(errors, jobs);
 

@@ -158,6 +158,44 @@ For a single headless task, run:
 dcode -n "Summarize this repository"
 ```
 
+For automation, add `--json`.
+The managed runtime writes exactly one UTF-8 JSON object to stdout and suppresses other stdout text.
+Progress is suppressed.
+Warnings and diagnostics go to stderr.
+
+```bash
+dcode -n "Summarize this repository" --json
+```
+
+A successful run has this version 1 envelope:
+
+```json
+{
+  "schema_version": 1,
+  "command": "non-interactive",
+  "data": {
+    "status": "success",
+    "exit_code": 0,
+    "response": "The repository contains...",
+    "completion": {
+      "thread_id": "thread-id",
+      "duration_ms": 842,
+      "response_bytes": 26
+    }
+  }
+}
+```
+
+`response` contains the exact final assistant text on success and is `null` on failure.
+`response_bytes` is its UTF-8 byte length on success and is `0` on failure.
+The process exit code matches `data.exit_code`.
+The terminal statuses are `success`, `agent_failure`, `process_failure`, `timeout`, `turn_limit`, `cancelled`, and `output_limit`.
+A timeout exits `124`, cancellation exits `130`, and other failures exit nonzero.
+
+The complete serialized envelope is limited to 1 MiB.
+If the response cannot fit, the runtime discards it and emits a bounded `output_limit` failure envelope.
+If it cannot write the envelope, the command exits nonzero and reports the write failure on stderr; callers must reject empty, malformed, additional, or unsupported-version stdout.
+
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
 For interactive and headless sessions, each launcher supervises its own process descendants so completion, terminal exit, or disconnect terminates the associated LangGraph server tree without affecting another session.
 After a disconnect, the supervisor uses bounded grace periods before it kills unresponsive processes from that session.
@@ -321,9 +359,19 @@ OpenShell rejects provider deletion while any sandbox still has it attached.
 
   <Accordion title="Export traces through a local collector" id="export-traces-through-a-local-collector">
     Deep Agents trace export now has focused Monitoring pages.
+    <a id="understand-the-export-boundary"></a>
     Review [Understand Deep Agents Trace Export](../monitoring/understand-deepagents-trace-export) before you enable the exporter.
+    <a id="enable-trace-export"></a>
+    <a id="recover-a-skipped-policy"></a>
+    <a id="create-langsmith-credentials"></a>
+    <a id="find-the-private-host-bind-address"></a>
+    <a id="configure-the-collector"></a>
+    <a id="start-and-verify-the-collector"></a>
     Follow [Set Up Deep Agents Trace Export](../monitoring/set-up-deepagents-trace-export) to configure the policy and host collector.
+    <a id="verify-traces-end-to-end"></a>
+    <a id="troubleshoot-trace-export"></a>
     Use [Verify Deep Agents Trace Export](../monitoring/verify-deepagents-trace-export) to prove delivery or diagnose a failure.
+    <a id="stop-or-disable-trace-export"></a>
     Use [Manage Deep Agents Trace Export](../monitoring/manage-deepagents-trace-export) to stop, disable, reconfigure, or remove tracing.
   </Accordion>
 </AccordionGroup>

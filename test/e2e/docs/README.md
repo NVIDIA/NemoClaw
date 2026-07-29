@@ -289,8 +289,9 @@ test/e2e/
   budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
   root-required contracts on shard 1 only.
   `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E
-  targets directly for their platform coverage. Repository-hosted targets, including
-  `ollama-auth-proxy`, are selected through `.github/workflows/e2e.yaml`.
+  targets directly for their platform coverage.
+  Repository-hosted targets, including `ollama-auth-proxy`, are selected
+  through `.github/workflows/e2e.yaml`.
 - The `staging-brev-launchable` job validates the exact baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.

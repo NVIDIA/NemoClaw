@@ -144,7 +144,7 @@ describe("Hermes GPU boundary", () => {
 
   it("rejects broad drift", () => {
     const errors = wfErrors((workflow) => {
-      workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "minimaxai/minimax-m2.7";
+      workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "provider/unexpected-model";
       const job = workflow.jobs[GPU];
       job["runs-on"] = "ubuntu-latest";
       job.if = "${{ always() }}";

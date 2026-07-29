@@ -20,6 +20,7 @@ const reviewedBundledPackages = [
   "@modelcontextprotocol/sdk",
   "ajv",
   "ajv-formats",
+  "content-type",
   "eventsource-parser",
   "fast-deep-equal",
   "fast-uri",

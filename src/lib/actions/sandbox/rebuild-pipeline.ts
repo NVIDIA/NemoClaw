@@ -10,7 +10,7 @@ import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
-import * as registry from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
@@ -126,7 +126,7 @@ async function rebuildSandboxUnlocked(
   try {
     if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
     let recoveryRegistrySnapshot = preparedBackupRecovery
-      ? JSON.parse(JSON.stringify(registry.load()))
+      ? JSON.parse(JSON.stringify(loadRegistry()))
       : liveState.staleRegistrySnapshot;
     const registryRollback = createRebuildRegistryRollback({
       sandboxName,

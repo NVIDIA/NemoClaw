@@ -37,6 +37,8 @@ const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service 
 const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "Connection
   │ refused (os error 111)"
 `;
+const OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR =
+  "Error: sandbox 'recreated-box' is not ready (phase: Error); wait for it to reach Ready state.\n";
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -78,6 +80,70 @@ describe("recreated sandbox OpenShell readiness", () => {
     );
     expect(beforeProbe).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
+  });
+
+  it("retries the same-sandbox Error phase until OpenShell accepts the sandbox", () => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
+        stdout: "",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("rides out a transient Error phase past the old 30s budget by default (#7227)", () => {
+    // No timeoutSeconds option and no env override: the default recovery budget
+    // must be large enough (120s, aligned with connect's readiness wait) to keep
+    // retrying a cold-start phase:Error settling window that exceeds the old
+    // 30s / 11-attempt budget. The 12th probe (past the old 11-attempt cap) must
+    // still be reached, so the primary dashboard/API forward is not abandoned.
+    delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
+    const errorPhase = {
+      status: 1,
+      output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
+      stdout: "",
+      stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+    };
+    const captureOpenshellImpl = vi.fn();
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      captureOpenshellImpl.mockReturnValueOnce(errorPhase);
+    }
+    captureOpenshellImpl.mockReturnValueOnce({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: () => {},
+        // no timeoutSeconds -> exercise the default budget; the old 30s default
+        // capped at 11 attempts and would have given up before the 12th probe.
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(12);
   });
 
   it("retries the exact supervisor reconnect states exposed during direct recreation", () => {
@@ -205,6 +271,8 @@ describe("recreated sandbox OpenShell readiness", () => {
   │ relay failed: status: DeadlineExceeded, message: \\"relay requester timed
   │ out\\", details: [], metadata: MetadataMap { headers: {} }"`,
     `Error:   × code: 'The service is currently unavailable', message: "permission denied"`,
+    "Error: sandbox 'other-box' is not ready (phase: Error); wait for it to reach Ready state.",
+    "Error: sandbox 'recreated-box' is not ready (phase: Failed); wait for it to reach Ready state.",
   ])("does not retry an unrelated OpenShell error", (stderr) => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,
