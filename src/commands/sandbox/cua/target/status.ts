@@ -12,6 +12,7 @@ export default class SandboxCuaTargetStatusCommand extends NemoClawCommand {
   static summary = "Show the secret-free CUA target attachment state";
   static description =
     "Read the recorded target identity, capability health, and active-task projection without invoking the target adapter.";
+  static examples = ["<%= config.bin %> sandbox cua target status alpha --json"];
   static usage = ["<name> [--json]"];
   static args = {
     sandboxName: Args.string({

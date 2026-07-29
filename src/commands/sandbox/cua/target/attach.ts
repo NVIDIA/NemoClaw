@@ -12,6 +12,9 @@ export default class SandboxCuaTargetAttachCommand extends NemoClawCommand {
   static summary = "Attach and verify one disposable CUA desktop target";
   static description =
     "Use a host-side adapter to attach one target after immutable identity and browser, computer, and terminal health checks pass.";
+  static examples = [
+    "<%= config.bin %> sandbox cua target attach alpha --adapter /opt/cua-target-adapter --target-manifest ./target.json",
+  ];
   static usage = ["<name> --adapter <absolute-path> --target-manifest <path> [--json]"];
   static args = {
     sandboxName: Args.string({

@@ -12,6 +12,9 @@ export default class SandboxCuaTargetDetachCommand extends NemoClawCommand {
   static summary = "Revoke CUA target reachability and clear attachment state";
   static description =
     "Ask the host-side adapter to revoke target reachability before NemoClaw clears the secret-free attachment projection.";
+  static examples = [
+    "<%= config.bin %> sandbox cua target detach alpha --adapter /opt/cua-target-adapter",
+  ];
   static usage = ["<name> --adapter <absolute-path> [--json]"];
   static args = {
     sandboxName: Args.string({

@@ -12,6 +12,9 @@ export default class SandboxCuaTargetResetCommand extends NemoClawCommand {
   static summary = "Reset mutable CUA desktop, browser, and fixture state";
   static description =
     "Ask the host-side adapter to reconstruct mutable desktop, browser, and fixture state, then verify all target identities and services.";
+  static examples = [
+    "<%= config.bin %> sandbox cua target reset alpha --adapter /opt/cua-target-adapter",
+  ];
   static usage = ["<name> --adapter <absolute-path> [--json]"];
   static args = {
     sandboxName: Args.string({

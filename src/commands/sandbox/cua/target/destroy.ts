@@ -12,6 +12,9 @@ export default class SandboxCuaTargetDestroyCommand extends NemoClawCommand {
   static summary = "Destroy the disposable CUA target and clear attachment state";
   static description =
     "Ask the host-side adapter to destroy the target before NemoClaw clears its secret-free attachment projection.";
+  static examples = [
+    "<%= config.bin %> sandbox cua target destroy alpha --adapter /opt/cua-target-adapter",
+  ];
   static usage = ["<name> --adapter <absolute-path> [--json]"];
   static args = {
     sandboxName: Args.string({

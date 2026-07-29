@@ -12,6 +12,9 @@ export default class SandboxCuaTargetHealthCommand extends NemoClawCommand {
   static summary = "Verify CUA target identity and capability health";
   static description =
     "Recover fresh host-side authority, verify immutable target identity, and check browser, computer, and terminal separately.";
+  static examples = [
+    "<%= config.bin %> sandbox cua target health alpha --adapter /opt/cua-target-adapter",
+  ];
   static usage = ["<name> --adapter <absolute-path> [--json]"];
   static args = {
     sandboxName: Args.string({
