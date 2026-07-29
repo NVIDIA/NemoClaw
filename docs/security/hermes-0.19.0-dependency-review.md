@@ -168,7 +168,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-1` | High | Pin and test | The verified target tag, commit, source SHA-256, CalVer-to-semver mapping, registry cross-check, and producer runs are recorded, while final source-pin coherence remains an exact-head test. |
 | `HERMES-2` | High | Migrate and test | `approvals.mode` is explicitly `manual`, and generated-config tests reject inheritance of smart authorization. |
 | `HERMES-3` | High | Migrate and test | Generated configuration and the doctor hash contract use schema 33 before runtime startup. |
-| `HERMES-4` | High | Migrate and test | Wrapper routing covers `console`, `--no-restore-cwd`, and `--safe-mode`; it preserves profile selectors, bare continue, and unquoted multi-word names against Hermes' exact coalescing boundaries across all four continue/resume spellings, and recognizes and explicitly rejects `--usage-file` only when the resumed one-shot append workaround would otherwise discard the report. Unknown future versions remain guarded. |
+| `HERMES-4` | High | Migrate and test | Wrapper routing covers `console`, `--no-restore-cwd`, and `--safe-mode`; it preserves profile selectors, bare continue, and unquoted multi-word names against Hermes' exact coalescing boundaries across all four continue/resume spellings, and recognizes and explicitly rejects `--usage-file` only when the resumed one-shot append workaround would otherwise discard the report. The final image compares the wrapper's private session-name boundary AST to the pinned upstream coalescer instead of deriving it from public help. Unknown future versions remain guarded. |
 | `HERMES-5` | Medium | Guard and test | Every retained compatibility patch was compared with target source, retargeted, hash-bound, and exercised by a focused regression or image smoke probe. |
 | `HERMES-6` | High | Migrate, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent and overlapping-directory tests. Both bind their cross-UID contract to `gateway:sandbox` `2770` parents, descriptor-safe startup repair, and gateway-to-sandbox-to-gateway image probes. Cron's live source is group-readable `0640` and its restored replacement is `0660`; Discord additionally needs its guarded `0660` upstream chmod patch. Rebuild persistence remains a live E2E gate. |
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
@@ -176,18 +176,19 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
 | `HERMES-10` | High | Document and review | Reachable Pillow and Starlette advisory debt predates the target and is not worsened by it, but it remains explicit baseline debt for security disposition rather than a zero-finding audit claim. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | The source commit must publish both base-image architectures, the final Dockerfile must pin that exact multi-platform digest, and final-image and E2E evidence must bind to the PR head. |
+| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30411365314` published the exact source commit as amd64 and arm64 manifests under OCI index `sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e`. The final Dockerfile pins that digest, and the pinned arm64 final image passes all 62 BuildKit steps, including installed-version, patch, config, and cross-identity SQLite probes. Protected runtime E2E remains. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
 | `HERMES-16` | High | Migrate and test | The reasoning-display default changed from hidden to visible, and commentary is a new default-visible output channel. Generated configuration explicitly disables both so the upgrade does not broaden disclosure in user-visible channels. |
 | `HERMES-17` | High | Migrate and test | In-place update now defaults to duplicating state and refreshing a mutable CUA driver. NemoClaw's immutable image workflow owns dependency updates, so generated configuration explicitly disables both side effects. |
 | `HERMES-18` | High | Migrate and test | Fresh named profiles omit `config.yaml`, so generated pins do not cover every `HERMES_HOME`. The final image hash-binds the exact `v2026.7.20` config, classic-CLI config copy, raw browser-policy, TUI raw-YAML, agent-commentary, update-command, and gateway-policy sources, patches their fail-safe defaults, and creates a real config-less profile to exercise all affected installed loaders. |
+| `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
 
 Unresolved upgrade-created high-impact concerns: `0`.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation remains explicitly accepted for this upgrade scope.
 
-The remaining exact-head gates are the branch base-image publication, immutable digest pin, final image inspection, repository CI, automated review, documentation review, and protected Hermes E2E.
+The remaining exact-head gates are repository CI, automated review, documentation review, security review, and protected Hermes E2E.
 The reachable pre-existing Pillow and Starlette debt also requires an explicit security-review disposition before merge.
 
 ## Verification and remaining gates
@@ -199,14 +200,13 @@ Completed local evidence:
 - current and target Python closures, JavaScript locks, licenses, and point-in-time advisories compared;
 - target source comparison for configuration, wrapper, patches, state, MCP, messaging, and secret boundaries;
 - focused generated-config, wrapper, patch, default-profile state-manifest, and skill contract tests;
-- Python 3.13 multipart compatibility probes; and
-- a no-cache arm64 Hermes base-image build.
+- Python 3.13 multipart compatibility probes;
+- a no-cache arm64 Hermes base-image build;
+- trusted amd64 and arm64 branch-image publication plus immutable OCI-index inspection; and
+- a 62-step arm64 final-image build from the pinned branch digest, including private wrapper-boundary and cross-identity SQLite probes.
 
 Before merge, the exact PR head must still pass:
 
-- amd64 and arm64 branch base-image publication with the final source inputs;
-- immutable multi-platform digest resolution and final Dockerfile pinning;
-- final-image build, installed-version checks, patch smoke probes, and independent inventory inspection;
 - managed MCP discovery and invocation;
 - messaging, environment-secret, restart, snapshot, rebuild, and rollback E2E paths;
 - normal repository checks with no unresolved actionable automated-review finding; and

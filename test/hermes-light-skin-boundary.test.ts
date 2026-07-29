@@ -12,7 +12,7 @@ describe("hermes light-skin boundary check", () => {
   it("passes when the pinned version is reviewed", () => {
     expect(
       checkHermesLightSkinBoundary({
-        dockerfileText: dockerfileWithVersion("v2026.7.1"),
+        dockerfileText: dockerfileWithVersion("v2026.7.20"),
         reviewedVersions: ["v2026.6.19", "v2026.7.1", "v2026.7.20"],
       }),
     ).toBeNull();

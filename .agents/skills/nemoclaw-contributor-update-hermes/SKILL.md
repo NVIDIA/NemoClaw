@@ -104,6 +104,7 @@ For each adjacent release, inspect release notes, commits, changed paths, source
 Map each material change through these NemoClaw surfaces:
 
 - generated config schema, defaults, migrations, approval behavior, and config-less named-profile fallbacks;
+- isolated-home config mirrors, parse failures, stale policy, and secret-safe error reporting;
 - wrapper flags, subcommands, argument translation, and help probes;
 - session preview, Langfuse, and managed light-skin workarounds;
 - durable SQLite ledgers, state directories, backups, rebuilds, and rollback;
@@ -116,6 +117,11 @@ Retarget comments, exact-source guards, integrity hashes, and regression tests f
 
 Record silent default changes as migration concerns.
 Do not inherit an authorization, network, credential, or persistence default through a version-only bump.
+Treat every gateway-to-dashboard or alternate-home config mirror as a policy boundary.
+Missing source config may be a cold-start no-op, but an existing malformed, non-mapping,
+unreadable, or routing-free source and an invalid destination must fail startup without changing
+the destination.
+Never log raw YAML parser exceptions; they can include credential-bearing source lines.
 
 ## Implement the source pin
 
@@ -135,6 +141,11 @@ Preserve historical fixtures, release reviews, and old-base rebuild evidence unl
 
 Run the updater again with the same exact tag after edits.
 Require a no-diff result for all identity pins.
+Include `test/update-hermes-agent-script.test.ts` and
+`test/sandbox-provisioning.test.ts` plus `test/sandbox-rlimit-hooks.test.ts` in the focused upgrade
+suite.
+Move the updater test's active target and fake package-version contract to the new release, while
+preserving older installed-copy and unsafe-candidate fixtures as historical migration coverage.
 
 ## Validate the image layers
 

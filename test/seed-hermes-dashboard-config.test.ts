@@ -500,16 +500,79 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(fs.readFileSync(envDst, "utf-8")).toBe(`API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
   });
 
-  it("skips seeding when the gateway config has no model routing", () => {
+  it("fails closed without changing stale dashboard config when gateway routing is absent", () => {
     const src = writeYaml("gw.yaml", {
       _config_version: 12,
       terminal: { backend: "local" },
     });
-    const dst = path.join(tmpDir, "dash.yaml");
+    const dst = writeYaml("dash.yaml", {
+      model: { default: "stale-model" },
+      approvals: { mode: "off" },
+    });
+    const before = fs.readFileSync(dst, "utf-8");
 
     const res = runSeed(src, dst);
-    expect(res.status).toBe(0);
-    expect(fs.existsSync(dst)).toBe(false);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("no model routing");
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+  });
+
+  it("does not expose malformed gateway YAML or replace stale dashboard config", () => {
+    const secret = "sk-secret-NEMOCLAW-PARSER-LEAK";
+    const src = path.join(tmpDir, "gw.yaml");
+    const dst = writeYaml("dash.yaml", {
+      model: { default: "stale-model" },
+      approvals: { mode: "off" },
+    });
+    const envSrc = path.join(tmpDir, "gw.env");
+    const envDst = path.join(tmpDir, "dash.env");
+    const before = fs.readFileSync(dst, "utf-8");
+    fs.writeFileSync(envSrc, `API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
+    fs.writeFileSync(envDst, "API_SERVER_HOST=stale.invalid\n");
+    const envBefore = fs.readFileSync(envDst, "utf-8");
+    fs.writeFileSync(src, `model:\n  api_key: [${secret}\n`);
+
+    const res = runSeed(src, dst, envSrc, envDst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("gateway config is invalid or unreadable");
+    expect(res.stderr).not.toContain(secret);
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+    expect(fs.readFileSync(envDst, "utf-8")).toBe(envBefore);
+  });
+
+  it("rejects a non-mapping gateway document without replacing stale dashboard config", () => {
+    const src = writeYaml("gw.yaml", ["not", "a", "mapping"]);
+    const dst = writeYaml("dash.yaml", {
+      model: { default: "stale-model" },
+      approvals: { mode: "off" },
+    });
+    const before = fs.readFileSync(dst, "utf-8");
+
+    const res = runSeed(src, dst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("gateway config is invalid or unreadable");
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+  });
+
+  it("does not expose or recreate malformed existing dashboard YAML", () => {
+    const secret = "sk-secret-NEMOCLAW-DASHBOARD-LEAK";
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const dst = path.join(tmpDir, "dash.yaml");
+    fs.writeFileSync(dst, `model:\n  api_key: [${secret}\n`);
+    const before = fs.readFileSync(dst, "utf-8");
+
+    const res = runSeed(src, dst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("existing dashboard config is invalid or unreadable");
+    expect(res.stderr).not.toContain(secret);
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
   });
 
   it("refuses to follow a symlink at the dashboard config path", () => {

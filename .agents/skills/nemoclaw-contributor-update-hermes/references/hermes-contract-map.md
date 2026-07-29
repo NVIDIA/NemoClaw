@@ -59,6 +59,13 @@ default/dashboard configs explicit as defense in depth, and build-probe a real f
 config-less named profile through the classic CLI, TUI, agent-output, browser, update-command, and
 gateway paths, including config-load error fallbacks.
 
+The dashboard uses a separate sandbox-owned `HERMES_HOME`, and NemoClaw mirrors an allowlist from
+the gateway config at startup.
+Treat that compatibility bridge as a fail-safe policy migration: a missing source can be a benign
+cold-start no-op, while an existing malformed, non-mapping, unreadable, routing-free source or
+invalid destination must preserve destination bytes and abort dashboard startup.
+Do not print PyYAML exception text because parser context can include API-key source lines.
+
 The Dockerfile runs upstream config repair before it writes the final NemoClaw config.
 A stale generated schema can therefore survive the build and migrate only at runtime.
 
@@ -84,6 +91,9 @@ Hermes 0.19 defines `-c/--continue` with an optional value, where the bare flag 
 recent session, and coalesces unquoted multi-word names after all four continue/resume spellings.
 The coalescer's boundary set can differ from the full command inventory, so bind each consumer to
 the correct target-source set rather than deriving both from help.
+Have the final image AST-compare the wrapper boundary constant with the pinned upstream
+`_coalesce_session_name_args` local subcommand set; public help cannot prove this private parser
+contract.
 Test bare, quoted, and unquoted forms plus global profile selectors anywhere wrapper ordering or
 one-shot routing is involved.
 The final Dockerfile intentionally rejects a new semver while version-bound workarounds remain unreviewed.

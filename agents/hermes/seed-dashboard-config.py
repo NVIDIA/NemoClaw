@@ -40,9 +40,10 @@ Usage:
     seed-dashboard-config.py <gateway-config.yaml> <dashboard-config.yaml>
     seed-dashboard-config.py <gateway-config.yaml> <dashboard-config.yaml> <gateway.env> <dashboard.env>
 
-Exits 0 on success or benign no-op (missing gateway config, no routing to copy).
-Exits 1 only on an unexpected write failure. Emits ``[dashboard]`` lines on stderr
-to match the rest of the gateway startup contract.
+Exits 0 on success or a benign no-op for a missing gateway config.
+Exits 1 when an existing config is invalid or unreadable, routing is absent, a
+reviewed policy is invalid, or a write fails. Emits ``[dashboard]`` lines on
+stderr to match the rest of the gateway startup contract.
 """
 
 from __future__ import annotations
@@ -112,6 +113,10 @@ class InvalidDashboardPolicyError(Exception):
     pass
 
 
+class InvalidDashboardSeedDocumentError(Exception):
+    pass
+
+
 def _lookup_uid(value: str) -> int:
     return int(value) if value.isdigit() else pwd.getpwnam(value).pw_uid
 
@@ -166,8 +171,13 @@ def _read_regular_text_no_follow(path: str, label: str) -> str:
 def _load_yaml(path: str, label: str) -> dict:
     import yaml
 
-    data = yaml.safe_load(_read_regular_text_no_follow(path, label))
-    return data if isinstance(data, dict) else {}
+    try:
+        data = yaml.safe_load(_read_regular_text_no_follow(path, label))
+    except yaml.YAMLError as exc:
+        raise InvalidDashboardSeedDocumentError(f"{label} is malformed") from exc
+    if not isinstance(data, dict):
+        raise InvalidDashboardSeedDocumentError(f"{label} must be a mapping")
+    return data
 
 
 def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], None]) -> bool:
@@ -524,9 +534,14 @@ def _mirror_env(src: str, dst: str) -> bool:
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard env because {exc}", file=sys.stderr)
         return False
-    except OSError as exc:
-        print(f"[dashboard] gateway env {src} unreadable ({exc}); skipping env seed", file=sys.stderr)
-        return True
+    except Exception:
+        # Do not interpolate decoder or parser exceptions here: their context can
+        # contain credential-bearing source text.
+        print(
+            "[SECURITY] Refusing to seed dashboard env because gateway env is invalid or unreadable",
+            file=sys.stderr,
+        )
+        return False
 
     if os.path.islink(dst):
         print(f"[SECURITY] Refusing to seed dashboard env because {dst} is a symlink", file=sys.stderr)
@@ -586,15 +601,15 @@ def main(argv: list[str]) -> int:
         return 1
 
     src, dst = argv[1], argv[2]
-    env_ok = True
-    if len(argv) == 5:
-        env_ok = _mirror_env(argv[3], argv[4])
 
     try:
-        import yaml  # noqa: F401  (import here so a missing PyYAML is a clean skip)
-    except Exception as exc:  # pragma: no cover - PyYAML ships in the Hermes venv
-        print(f"[dashboard] PyYAML unavailable ({exc}); skipping model seed", file=sys.stderr)
-        return 0 if env_ok else 1
+        import yaml  # noqa: F401
+    except Exception:  # pragma: no cover - PyYAML ships in the Hermes venv
+        print(
+            "[SECURITY] Refusing to seed dashboard config because PyYAML is unavailable",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         gateway = _load_yaml(src, "gateway config")
@@ -602,23 +617,34 @@ def main(argv: list[str]) -> int:
         # Cold paths where the gateway config has not been written yet are not an
         # error: there is simply nothing to mirror.
         print(f"[dashboard] gateway config {src} missing; skipping model seed", file=sys.stderr)
+        env_ok = True
+        if len(argv) == 5:
+            env_ok = _mirror_env(argv[3], argv[4])
         return 0 if env_ok else 1
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard config because {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:
-        print(f"[dashboard] gateway config {src} unreadable ({exc}); skipping model seed", file=sys.stderr)
-        return 0 if env_ok else 1
+    except Exception:
+        # PyYAML includes the offending source line in parser exceptions. Never
+        # echo that context because routing documents contain API-key fields.
+        print(
+            "[SECURITY] Refusing to seed dashboard config because gateway config is invalid or unreadable",
+            file=sys.stderr,
+        )
+        return 1
 
     routing = _normalized_routing(gateway)
     if not routing.get("model") and not routing.get("custom_providers") and not routing.get("providers"):
-        print("[dashboard] gateway config has no model routing; nothing to seed", file=sys.stderr)
-        return 0 if env_ok else 1
+        print(
+            "[SECURITY] Refusing to seed dashboard config because gateway config has no model routing",
+            file=sys.stderr,
+        )
+        return 1
     try:
         policy = _normalized_policy(gateway)
-    except InvalidDashboardPolicyError as exc:
+    except InvalidDashboardPolicyError:
         print(
-            f"[SECURITY] Refusing to seed dashboard config because gateway policy is invalid: {exc}",
+            "[SECURITY] Refusing to seed dashboard config because gateway policy is invalid",
             file=sys.stderr,
         )
         return 1
@@ -631,14 +657,21 @@ def main(argv: list[str]) -> int:
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard config because {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:
-        # A corrupt dashboard config is owned by Hermes and is regenerated on
-        # launch; recreate from the routing keys rather than abort startup.
+    except Exception:
+        # Preserve the existing bytes and stop startup. Recreating from a
+        # partially understood document could erase dashboard-owned policy.
         print(
-            f"[dashboard] existing dashboard config {dst} unreadable ({exc}); recreating",
+            "[SECURITY] Refusing to seed dashboard config because existing dashboard "
+            "config is invalid or unreadable",
             file=sys.stderr,
         )
-        dashboard = {}
+        return 1
+
+    # Validate both YAML documents before mirroring dotenv or replacing either
+    # config. A malformed policy source must not partially update the dashboard
+    # environment before startup refuses the config.
+    if len(argv) == 5 and not _mirror_env(argv[3], argv[4]):
+        return 1
 
     # The seeder owns only web.backend. Merge or remove that field while
     # preserving unrelated dashboard-local web settings.
@@ -664,7 +697,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     print(f"[dashboard] seeded model routing and reviewed policy into {dst}", file=sys.stderr)
-    return 0 if env_ok else 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:77975858f6d737cb5e46fb30e99acfccf9a912b9ab7bf022b652540a8de2db33
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e
 ARG NEMOCLAW_CORPORATE_CA_B64=
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
@@ -476,6 +476,70 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
 # Hermes consumes -p/--profile before argparse renders help, so validate those
 # hidden global options behaviorally and parse every visible option token.
 RUN /usr/bin/python3 -I -c 'import ast, pathlib, re, subprocess, sys; source = pathlib.Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(); tree = ast.parse(source); expected_constants = {"_VALUE_FLAGS", "_TOP_LEVEL_VALUE_FLAGS", "_BOOLEAN_FLAGS", "_HERMES_SUBCOMMANDS", "_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS", "_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS"}; constants = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in expected_constants}; missing_constants = sorted(expected_constants - set(constants)); missing_constants and sys.exit("ERROR: Hermes wrapper CLI constants not found in AST: " + ", ".join(missing_constants)); empty_constants = sorted(name for name in expected_constants if not constants[name]); empty_constants and sys.exit("ERROR: Hermes wrapper CLI constants are empty: " + ", ".join(empty_constants)); session_flags = set(constants["_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS"]); required_value_flags = set(constants["_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS"]); profile_flags = {"-p", "--profile"}; profile_flags <= required_value_flags or sys.exit("ERROR: Hermes wrapper scanner must retain both hidden profile flags"); derived_required_value_flags = (set(constants["_VALUE_FLAGS"]) - session_flags) | set(constants["_TOP_LEVEL_VALUE_FLAGS"]) | {"-z", "--oneshot"} | profile_flags; required_value_flags != derived_required_value_flags and sys.exit("ERROR: Hermes wrapper required-value scanner flags drifted from forwarding/global flags: missing=" + ",".join(sorted(derived_required_value_flags - required_value_flags)) + " stale=" + ",".join(sorted(required_value_flags - derived_required_value_flags))); option_pattern = r"(?<![A-Za-z0-9_])--?[A-Za-z0-9][A-Za-z0-9-]*"; top_help = subprocess.check_output(["/usr/local/bin/hermes", "--help"], text=True, timeout=30); top_option_fields = [re.split(r"\s{2,}", line.strip(), maxsplit=1)[0] for line in top_help.splitlines() if line.lstrip().startswith("-")]; top_options = set(re.findall(option_pattern, "\n".join(top_option_fields))); top_expected = (required_value_flags - profile_flags) | session_flags | set(constants["_BOOLEAN_FLAGS"]); top_missing = sorted(top_expected - top_options); top_missing and sys.exit("ERROR: Hermes wrapper scanner flag allowlist drifted from pinned hermes --help: " + ", ".join(top_missing)); profile_probe_name = "nemoclaw-build-probe-missing"; profile_probe_expected = "Profile %r does not exist." % profile_probe_name; profile_probe_results = {flag: subprocess.run(["/usr/local/bin/hermes", flag, profile_probe_name, "--version"], text=True, capture_output=True, timeout=30) for flag in sorted(profile_flags)}; profile_probe_failures = sorted(flag for flag, result in profile_probe_results.items() if result.returncode == 0 or profile_probe_expected not in (result.stdout + result.stderr)); profile_probe_failures and sys.exit("ERROR: Hermes hidden profile flags drifted from the wrapper scanner: " + ", ".join(profile_probe_failures)); subcommand_match = re.search(r"^\s*\{([^}\n]+)\}\s*$", top_help, re.MULTILINE); not subcommand_match and sys.exit("ERROR: could not parse pinned hermes subcommands from --help"); pinned_subcommands = {name.strip() for name in subcommand_match.group(1).split(",")}; wrapper_subcommands = set(constants["_HERMES_SUBCOMMANDS"]); missing_subcommands = sorted(pinned_subcommands - wrapper_subcommands); stale_subcommands = sorted(wrapper_subcommands - pinned_subcommands); (missing_subcommands or stale_subcommands) and sys.exit("ERROR: Hermes wrapper subcommand allowlist drifted from pinned hermes --help: missing=" + ",".join(missing_subcommands) + " stale=" + ",".join(stale_subcommands)); chat_help = subprocess.check_output(["/usr/local/bin/hermes", "chat", "--help"], text=True, timeout=30); chat_option_fields = [re.split(r"\s{2,}", line.strip(), maxsplit=1)[0] for line in chat_help.splitlines() if line.lstrip().startswith("-")]; chat_options = set(re.findall(option_pattern, "\n".join(chat_option_fields))); chat_expected = set(constants["_VALUE_FLAGS"]) | set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"--query", "-q", "--quiet", "-Q", "--continue", "-c"}; chat_missing = sorted(chat_expected - chat_options); chat_missing and sys.exit("ERROR: Hermes wrapper forwarded flags drifted from pinned hermes chat --help: " + ", ".join(chat_missing))'
+# Hermes' private unquoted-session coalescer intentionally differs from public
+# help (for example, `console` is not a boundary). Bind that upstream AST set
+# independently so a new command cannot silently change wrapper parsing.
+# hadolint ignore=DL3059
+RUN /usr/bin/python3 -I - <<'PY'
+import ast
+from pathlib import Path
+
+wrapper_tree = ast.parse(
+    Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(encoding="utf-8")
+)
+wrapper_assignments = [
+    node
+    for node in wrapper_tree.body
+    if isinstance(node, ast.Assign)
+    and len(node.targets) == 1
+    and isinstance(node.targets[0], ast.Name)
+    and node.targets[0].id == "_HERMES_SESSION_NAME_BOUNDARIES"
+]
+if len(wrapper_assignments) != 1:
+    raise SystemExit("ERROR: expected one wrapper session-name boundary constant")
+wrapper_value = wrapper_assignments[0].value
+if not (
+    isinstance(wrapper_value, ast.Call)
+    and isinstance(wrapper_value.func, ast.Name)
+    and wrapper_value.func.id == "frozenset"
+    and len(wrapper_value.args) == 1
+    and not wrapper_value.keywords
+):
+    raise SystemExit("ERROR: wrapper session-name boundaries are not a literal frozenset")
+wrapper_boundaries = set(ast.literal_eval(wrapper_value.args[0]))
+
+upstream_tree = ast.parse(
+    Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
+)
+coalescers = [
+    node
+    for node in upstream_tree.body
+    if isinstance(node, ast.FunctionDef)
+    and node.name == "_coalesce_session_name_args"
+]
+if len(coalescers) != 1:
+    raise SystemExit("ERROR: expected one pinned Hermes session-name coalescer")
+upstream_assignments = [
+    node
+    for node in coalescers[0].body
+    if isinstance(node, ast.Assign)
+    and len(node.targets) == 1
+    and isinstance(node.targets[0], ast.Name)
+    and node.targets[0].id == "_SUBCOMMANDS"
+]
+if len(upstream_assignments) != 1:
+    raise SystemExit("ERROR: expected one pinned Hermes coalescer boundary set")
+upstream_boundaries = set(ast.literal_eval(upstream_assignments[0].value))
+
+missing = sorted(upstream_boundaries - wrapper_boundaries)
+stale = sorted(wrapper_boundaries - upstream_boundaries)
+if missing or stale:
+    raise SystemExit(
+        "ERROR: Hermes wrapper session-name boundaries drifted from pinned coalescer: "
+        f"missing={','.join(missing)} stale={','.join(stale)}"
+    )
+PY
+
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
