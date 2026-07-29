@@ -1671,6 +1671,9 @@ def validate_managed_validation_invocation_budget_unprivileged() -> None:
         root_probe = claims / _VALIDATION_INVOCATION_ROOT_PROBE
         sandbox_probe = claims / _VALIDATION_INVOCATION_SANDBOX_PROBE
         anchor_stat = anchor.stat(follow_symlinks=False)
+        # The link retains the root-owned anchor inode, so the sticky claims
+        # directory denies sandbox removal. A sandbox-owned file would not
+        # provide the write-once guarantee.
         os.link(anchor, sandbox_probe, follow_symlinks=False)
         with root_probe.open("wb") as stream:
             stream.write(b"sandbox file-write probe")
@@ -1882,8 +1885,11 @@ def _verified_validation_source_identity(
         ["ls-files", "--others", "--exclude-standard", "-z"],
         pass_descriptors,
     )
-    object_format = raw_format.decode("ascii", errors="strict").strip()
-    object_id = raw_oid.decode("ascii", errors="strict").strip()
+    try:
+        object_format = raw_format.decode("ascii", errors="strict").strip()
+        object_id = raw_oid.decode("ascii", errors="strict").strip()
+    except UnicodeDecodeError:
+        return None
     expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
     if (
         format_status != 0
@@ -2197,6 +2203,7 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
             start_new_session=True,
             pass_fds=pass_descriptors,
         )
+        spawned = time.monotonic()
         _commit_validation_invocation(invocation_reservation)
         committed_reservation = invocation_reservation
         invocation_reservation = None
@@ -2229,7 +2236,7 @@ def execute_managed_validation_command(command_text: object) -> tuple[dict[str, 
         os.set_blocking(stream.fileno(), False)
         selector.register(stream, selectors.EVENT_READ, name)
     terminal_status: str | None = None
-    deadline = started + matched["timeoutSeconds"]
+    deadline = spawned + matched["timeoutSeconds"]
     maximum_output = matched["maxOutputBytes"]
     try:
         while selector.get_map():

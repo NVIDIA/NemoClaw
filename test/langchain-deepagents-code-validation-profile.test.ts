@@ -191,6 +191,24 @@ commands = [
         "maxOutputBytes": 1024,
         "maxInvocations": 1,
     },
+    {
+        "id": "malformed-source",
+        "argv": [executables["echo"], "malformed-source"],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 2,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
+    {
+        "id": "spawn-deadline",
+        "argv": [executables["echo"], "spawn-deadline"],
+        "workingDirectory": str(workspace),
+        "environment": ["HOME"],
+        "timeoutSeconds": 1,
+        "maxOutputBytes": 1024,
+        "maxInvocations": 1,
+    },
 ]
 content = {
     "schemaVersion": "nemoclaw.dcode.validation-profile.v1",
@@ -332,6 +350,29 @@ subprocess.run(
     check=True,
 )
 results["filterEscaped"] = (root / "filter-escaped").exists()
+original_run_validation_git = managed._run_validation_git
+def return_malformed_object_format(working_directory, arguments, pass_descriptors):
+    status, output = original_run_validation_git(
+        working_directory, arguments, pass_descriptors
+    )
+    if arguments == ["rev-parse", "--show-object-format"]:
+        return status, b"\xff"
+    return status, output
+managed._run_validation_git = return_malformed_object_format
+try:
+    results["malformedSource"] = run(f'{executables["echo"]} malformed-source')
+finally:
+    managed._run_validation_git = original_run_validation_git
+original_verify_source = managed._verified_validation_source_identity
+def verify_source_after_delay(working_directory, pass_descriptors):
+    import time
+    time.sleep(1.05)
+    return original_verify_source(working_directory, pass_descriptors)
+managed._verified_validation_source_identity = verify_source_after_delay
+try:
+    results["spawnDeadline"] = run(f'{executables["echo"]} spawn-deadline')
+finally:
+    managed._verified_validation_source_identity = original_verify_source
 (workspace / "dirty.txt").write_text("changed\n", encoding="utf-8")
 results["dirtySource"] = run(f'{executables["echo"]} dirty-source')
 print(json.dumps(results))
@@ -383,6 +424,8 @@ describe("managed DCode validation-command runtime", () => {
       expect(receipts.concurrent).toEqual(["invocation_limit_exceeded", "succeeded"]);
       expect(receipts.unsafeGitConfig.status).toBe("source_identity_mismatch");
       expect(receipts.filterEscaped).toBe(false);
+      expect(receipts.malformedSource.status).toBe("source_identity_mismatch");
+      expect(receipts.spawnDeadline.status).toBe("succeeded");
       expect(receipts.dirtySource.status).toBe("source_identity_mismatch");
       expect(receipts.escaped).toBe(false);
       expect(receipts.secretTaskIdentityRejected).toBe(true);
