@@ -36,12 +36,23 @@ type RestoredSandboxGatewayRestartDeps = {
     sandboxName: string,
     options?: { quiet?: boolean },
   ) => GatewayRestartResult;
+  checkAndRecoverSandboxProcesses: (
+    sandboxName: string,
+    options?: { quiet?: boolean },
+  ) => {
+    checked: boolean;
+    recovered: boolean;
+    forwardRecovered: boolean;
+    forwardRecoveryFailed?: boolean;
+  };
 };
 
 function defaultRestoredSandboxGatewayRestartDeps(): RestoredSandboxGatewayRestartDeps {
-  const { restartSandboxGateway }: typeof import("./process-recovery") =
-    require("./process-recovery");
-  return { restartSandboxGateway };
+  const recovery: typeof import("./process-recovery") = require("./process-recovery");
+  return {
+    restartSandboxGateway: recovery.restartSandboxGateway,
+    checkAndRecoverSandboxProcesses: recovery.checkAndRecoverSandboxProcesses,
+  };
 }
 
 export function restartRestoredSandboxGateway(
@@ -49,6 +60,21 @@ export function restartRestoredSandboxGateway(
   deps: RestoredSandboxGatewayRestartDeps = defaultRestoredSandboxGatewayRestartDeps(),
 ): void {
   const result = deps.restartSandboxGateway(sandboxName, { quiet: true });
+  if (!result.ok && result.failureLayer === "supervisor not running") {
+    // A restored OpenShell container can become ready before its managed
+    // supervisor session exists. Reuse the existing transactional relaunch
+    // path only for that exact classified failure. Recovery must prove both
+    // the gateway and its primary forward before pairing work can continue.
+    const recovery = deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (
+      recovery.checked &&
+      recovery.recovered &&
+      !recovery.forwardRecoveryFailed &&
+      recovery.forwardRecovered
+    ) {
+      return;
+    }
+  }
   if (!result.ok) {
     throw new RestoreGatewayPairingClassifiedError(result.failureLayer);
   }

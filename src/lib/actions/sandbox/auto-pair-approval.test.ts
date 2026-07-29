@@ -214,8 +214,9 @@ process.exit(2);
 
   const pyIt =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
+  const pyIt25s = (name: string, test: () => void) => pyIt(name, test, 25_000);
 
-  pyIt("approves one exact local clone transition from listed or gated state (#7818)", () => {
+  pyIt25s("approves one exact local clone transition from listed or gated state (#7818)", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
@@ -233,6 +234,8 @@ process.exit(2);
       const stateDir = path.join(tmpDir, "openclaw-state");
       const identityDir = path.join(stateDir, "identity");
       const devicesDir = path.join(stateDir, "devices");
+      const authFile = path.join(identityDir, "device-auth.json");
+      const pairedFile = path.join(devicesDir, "paired.json");
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
       fs.mkdirSync(identityDir, { recursive: true });
@@ -268,6 +271,36 @@ if (args[0] === "devices" && args[1] === "list") {
   process.exit(Number(process.env.NEMOCLAW_LIST_EXIT_CODE || "0"));
 }
 if (args[0] === "devices" && args[1] === "approve") {
+  if (process.env.NEMOCLAW_APPROVE_COMPLETED) {
+    const stateDir = process.env.OPENCLAW_STATE_DIR;
+    const pendingPath = stateDir + "/devices/pending.json";
+    const pairedPath = stateDir + "/devices/paired.json";
+    const pending = JSON.parse(fs.readFileSync(pendingPath, "utf8"));
+    const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8"));
+    const request = pending[args[2]];
+    delete pending[args[2]];
+    paired[request.deviceId] = {
+      ...request,
+      scopes: request.scopes,
+      approvedScopes: request.scopes,
+      tokens: {
+        operator: {
+          token: "rotated-clone-token",
+          role: "operator",
+          scopes: process.env.NEMOCLAW_APPROVE_INVALID_STATE === "1"
+            ? ["operator.pairing", "operator.write"]
+            : ["operator.pairing", "operator.read", "operator.write"],
+        },
+      },
+    };
+    fs.writeFileSync(pendingPath, JSON.stringify(pending));
+    fs.writeFileSync(pairedPath, JSON.stringify(paired));
+    if (process.env.NEMOCLAW_APPROVE_COMPLETED === "timeout") {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+    }
+    process.stderr.write("raw concurrent approval output must stay private\\n");
+    process.exit(1);
+  }
   if (process.env.NEMOCLAW_APPROVE_FAIL === "1") {
     process.stderr.write("raw approval output must stay private\\n");
     process.exit(1);
@@ -297,6 +330,8 @@ process.exit(2);
           listStderr?: string;
           localPending?: Record<string, unknown>;
           failApproval?: boolean;
+          completedApproval?: "nonzero" | "timeout";
+          invalidCompletedState?: boolean;
           approvalScript?: string;
         } = {},
       ) => {
@@ -314,6 +349,39 @@ process.exit(2);
           path.join(devicesDir, "pending.json"),
           JSON.stringify(options.localPending ?? pendingByRequestId),
         );
+        if (options.completedApproval) {
+          const localRequest = pending.find(
+            (value) =>
+              typeof value === "object" &&
+              value !== null &&
+              "deviceId" in value &&
+              value.deviceId === deviceId,
+          ) as Record<string, unknown>;
+          const pairedBaseline = {
+            ...localRequest,
+            scopes: ["operator.pairing"],
+            approvedScopes: ["operator.pairing"],
+            tokens: {
+              operator: {
+                token: "pairing-only-clone-token",
+                role: "operator",
+                scopes: ["operator.pairing"],
+              },
+            },
+          };
+          fs.writeFileSync(pairedFile, JSON.stringify({ [deviceId]: pairedBaseline }));
+          fs.writeFileSync(
+            authFile,
+            JSON.stringify({
+              version: 1,
+              deviceId,
+              tokens: pairedBaseline.tokens,
+            }),
+          );
+        } else {
+          fs.rmSync(pairedFile, { force: true });
+          fs.rmSync(authFile, { force: true });
+        }
         return spawnSync("sh", ["-c", options.approvalScript ?? script], {
           encoding: "utf-8",
           env: {
@@ -325,6 +393,8 @@ process.exit(2);
             NEMOCLAW_LIST_SLEEP_MS: String(options.listSleepMs ?? 0),
             NEMOCLAW_LIST_STDERR: options.listStderr ?? "",
             NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
+            NEMOCLAW_APPROVE_COMPLETED: options.completedApproval ?? "",
+            NEMOCLAW_APPROVE_INVALID_STATE: options.invalidCompletedState ? "1" : "0",
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "secret-token",
@@ -413,7 +483,7 @@ process.exit(2);
 
       resetLogs();
       const timedOut = run([repairRequest], {
-        listSleepMs: 800,
+        listSleepMs: 100,
         approvalScript: timeoutScript,
       });
       expect(timedOut.status).toBe(0);
@@ -421,25 +491,25 @@ process.exit(2);
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
 
       for (const [pending, options, receipt] of [
-        [[], { listSleepMs: 800, approvalScript: timeoutScript }, "list-timeout"],
+        [[], { listSleepMs: 100, approvalScript: timeoutScript }, "list-timeout"],
         [
           [repairRequest],
           {
-            listSleepMs: 800,
+            listSleepMs: 100,
             localPending: { "different-request": repairRequest },
             approvalScript: timeoutScript,
           },
           "list-timeout",
         ],
-        [[foreignRequest], { listSleepMs: 800, approvalScript: timeoutScript }, "clone-no-match"],
+        [[foreignRequest], { listSleepMs: 100, approvalScript: timeoutScript }, "clone-no-match"],
         [
           [repairRequest, { ...repairRequest, requestId: "second-clone-upgrade" }],
-          { listSleepMs: 800, approvalScript: timeoutScript },
+          { listSleepMs: 100, approvalScript: timeoutScript },
           "clone-ambiguous",
         ],
         [
           [{ ...repairRequest, publicKey: "mismatched-public-key" }],
-          { listSleepMs: 800, approvalScript: timeoutScript },
+          { listSleepMs: 100, approvalScript: timeoutScript },
           "request-rejected",
         ],
       ] as const) {
@@ -497,6 +567,37 @@ process.exit(2);
       const approveFailed = run([repairRequest], { failApproval: true });
       expect(approveFailed.stdout).toContain(`${RECEIPT_MARKER}=approve-failed`);
       expect(`${approveFailed.stdout}${approveFailed.stderr}`).not.toContain("raw approval output");
+
+      for (const completedApproval of ["nonzero", "timeout"] as const) {
+        resetLogs();
+        const completed = run([foreignRequest, repairRequest], { completedApproval });
+        expect(completed.status).toBe(0);
+        expect(completed.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
+        expect(`${completed.stdout}${completed.stderr}`).not.toContain(
+          "raw concurrent approval output",
+        );
+        expect(JSON.parse(fs.readFileSync(authFile, "utf-8"))).toMatchObject({
+          version: 1,
+          deviceId,
+          tokens: {
+            operator: {
+              token: "rotated-clone-token",
+              role: "operator",
+              scopes: ["operator.pairing", "operator.read", "operator.write"],
+            },
+          },
+        });
+      }
+
+      resetLogs();
+      const invalidCompleted = run([foreignRequest, repairRequest], {
+        completedApproval: "nonzero",
+        invalidCompletedState: true,
+      });
+      expect(invalidCompleted.stdout).toContain(`${RECEIPT_MARKER}=approve-failed`);
+      expect(JSON.parse(fs.readFileSync(authFile, "utf-8"))).toMatchObject({
+        tokens: { operator: { token: "pairing-only-clone-token" } },
+      });
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [

@@ -166,11 +166,35 @@ def exit_with_receipt(receipt):
     ? "exit_with_receipt('request-rejected')"
     : "continue";
   const failedApproveBranch = options.emitReceipt
-    ? "        else:\n            exit_with_receipt('approve-failed')\n"
+    ? options.localDeviceOnly
+      ? `        else:
+            if reconcile_completed_local_approval(device):
+                approved_count += 1
+            else:
+                exit_with_receipt('approve-failed')
+`
+      : "        else:\n            exit_with_receipt('approve-failed')\n"
     : "";
   const failedApproveAction = options.emitReceipt
     ? "exit_with_receipt('approve-failed')"
     : "continue";
+  const approveExceptionHandler =
+    options.emitReceipt && options.localDeviceOnly
+      ? `    except subprocess.TimeoutExpired:
+        # The canonical transition can finish while this competing approval
+        # process is still waiting. Never retry it. Accept only the exact
+        # rotated state published for this clone and synchronize that bounded
+        # credential before the caller restarts the gateway.
+        if reconcile_completed_local_approval(device):
+            approved_count += 1
+        else:
+            exit_with_receipt('approve-failed')
+    except (FileNotFoundError, OSError):
+        exit_with_receipt('approve-failed')
+`
+      : `    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        ${failedApproveAction}
+`;
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
@@ -185,14 +209,22 @@ def exit_with_receipt(receipt):
 # authenticated devices list fails or times out.
 def local_pending_after_gated_list():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    pending_path = os.path.join(state_dir, 'devices', 'pending.json')
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+    fd = -1
     try:
-        with open(
-            os.path.join(state_dir, 'devices', 'pending.json'),
-            encoding='utf-8',
-        ) as handle:
+        import stat
+        fd = os.open(pending_path, flags)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, encoding='utf-8') as handle:
+            fd = -1
             local_pending = json.load(handle)
     except (OSError, ValueError):
         return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
     if not isinstance(local_pending, dict):
         return None
     candidates = []
@@ -233,9 +265,34 @@ def local_pending_after_gated_list():
 import binascii
 import hashlib
 import re
+import stat
+import time
 
 REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
 ALLOWED_LOCAL_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
+
+state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+state_dir_real = os.path.realpath(state_dir)
+
+def clone_state_path(*parts):
+    candidate = os.path.join(state_dir, *parts)
+    parent_real = os.path.realpath(os.path.dirname(candidate))
+    if os.path.commonpath((state_dir_real, parent_real)) != state_dir_real:
+        raise OSError('clone state path escaped its root')
+    return candidate
+
+def read_clone_json(path):
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError('clone state entry is not a regular file')
+        with os.fdopen(fd, encoding='utf-8') as handle:
+            fd = -1
+            return json.load(handle)
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 def local_identity_public_key(identity):
     raw = str(identity.get('publicKey', '') or '').strip()
@@ -292,10 +349,37 @@ def consistent_scope_view(device):
         return None
     return views[0]
 
-state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+def bounded_scope_set(raw_scopes):
+    if not isinstance(raw_scopes, list) or not raw_scopes:
+        return None
+    scopes = []
+    for scope in raw_scopes:
+        if not isinstance(scope, str) or not scope.strip():
+            return None
+        scopes.append(scope.strip())
+    if len(scopes) != len(set(scopes)) or not set(scopes).issubset(ALLOWED_LOCAL_SCOPES):
+        return None
+    return set(scopes)
+
+def paired_operator_credential(device):
+    raw_tokens = device.get('tokens')
+    if not isinstance(raw_tokens, dict) or set(raw_tokens) != {'operator'}:
+        return None
+    operator = raw_tokens.get('operator')
+    if (
+        not isinstance(operator, dict)
+        or str(operator.get('role', '') or '').strip() != 'operator'
+        or operator.get('revokedAtMs') is not None
+    ):
+        return None
+    token = str(operator.get('token', '') or '').strip()
+    scopes = bounded_scope_set(operator.get('scopes'))
+    if not token or scopes is None:
+        return None
+    return token, scopes
+
 try:
-    with open(os.path.join(state_dir, 'identity', 'device.json'), encoding='utf-8') as handle:
-        local_identity = json.load(handle)
+    local_identity = read_clone_json(clone_state_path('identity', 'device.json'))
 except (OSError, ValueError):
     ${exitWithReceipt("request-rejected")}
 if not isinstance(local_identity, dict):
@@ -315,6 +399,188 @@ if (
     or hashlib.sha256(local_public_key_raw).hexdigest() != local_device_id
 ):
     ${exitWithReceipt("request-rejected")}
+
+# Capture only an exact pairing-scoped clone baseline. This lets the failure
+# path distinguish a canonical approval completed by the competing startup
+# watcher from an arbitrary failed command. The source sandbox's auth state is
+# never consulted.
+local_previous_operator_token = ''
+try:
+    paired_before = read_clone_json(clone_state_path('devices', 'paired.json'))
+    auth_before = read_clone_json(clone_state_path('identity', 'device-auth.json'))
+except FileNotFoundError:
+    paired_before = {}
+    auth_before = {}
+except (OSError, ValueError):
+    ${exitWithReceipt("request-rejected")}
+if not isinstance(paired_before, dict) or not isinstance(auth_before, dict):
+    ${exitWithReceipt("request-rejected")}
+related_paired_before = [
+    (map_key, device) for map_key, device in paired_before.items()
+    if map_key == local_device_id or (
+        isinstance(device, dict) and (
+            str(device.get('deviceId', '') or '').strip() == local_device_id
+            or str(device.get('publicKey', '') or '').strip() == local_public_key
+        )
+    )
+]
+if len(related_paired_before) > 1:
+    ${exitWithReceipt("request-rejected")}
+if len(related_paired_before) == 1:
+    paired_map_key, local_paired_before = related_paired_before[0]
+    paired_credential_before = (
+        paired_operator_credential(local_paired_before)
+        if isinstance(local_paired_before, dict)
+        else None
+    )
+    auth_credential_before = paired_operator_credential(auth_before)
+    if (
+        paired_map_key == local_device_id
+        and isinstance(local_paired_before, dict)
+        and str(local_paired_before.get('deviceId', '') or '').strip() == local_device_id
+        and str(local_paired_before.get('publicKey', '') or '').strip() == local_public_key
+        and normalized_roles(local_paired_before) == {'operator'}
+        and bounded_scope_set(local_paired_before.get('scopes')) == {'operator.pairing'}
+        and bounded_scope_set(local_paired_before.get('approvedScopes')) == {'operator.pairing'}
+        and paired_credential_before is not None
+        and paired_credential_before[1] == {'operator.pairing'}
+        and auth_before.get('version') == 1
+        and str(auth_before.get('deviceId', '') or '').strip() == local_device_id
+        and auth_credential_before == paired_credential_before
+    ):
+        local_previous_operator_token = paired_credential_before[0]
+
+def reconcile_completed_local_approval(request):
+    previous_token = local_previous_operator_token
+    request_scopes = consistent_scope_view(request)
+    if not previous_token or request_scopes is None or 'operator.write' not in request_scopes:
+        return False
+    try:
+        pending_after = read_clone_json(clone_state_path('devices', 'pending.json'))
+        paired_after = read_clone_json(clone_state_path('devices', 'paired.json'))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(pending_after, dict) or not isinstance(paired_after, dict):
+        return False
+    request_id = request.get('requestId')
+    if request_id in pending_after:
+        return False
+    related_pending_after = [
+        device for device in pending_after.values()
+        if isinstance(device, dict) and (
+            str(device.get('deviceId', '') or '').strip() == local_device_id
+            or str(device.get('publicKey', '') or '').strip() == local_public_key
+        )
+    ]
+    if related_pending_after:
+        return False
+    related_paired_after = [
+        (map_key, device) for map_key, device in paired_after.items()
+        if map_key == local_device_id or (
+            isinstance(device, dict) and (
+                str(device.get('deviceId', '') or '').strip() == local_device_id
+                or str(device.get('publicKey', '') or '').strip() == local_public_key
+            )
+        )
+    ]
+    if len(related_paired_after) != 1:
+        return False
+    paired_map_key, approved_device = related_paired_after[0]
+    if (
+        paired_map_key != local_device_id
+        or not isinstance(approved_device, dict)
+        or str(approved_device.get('deviceId', '') or '').strip() != local_device_id
+        or str(approved_device.get('publicKey', '') or '').strip() != local_public_key
+        or str(approved_device.get('clientId', '') or '').strip() != 'cli'
+        or str(approved_device.get('clientMode', '') or '').strip() != 'cli'
+        or normalized_roles(approved_device) != {'operator'}
+    ):
+        return False
+    approved_credential = paired_operator_credential(approved_device)
+    if approved_credential is None:
+        return False
+    approved_token, approved_token_scopes = approved_credential
+    expected_token_scopes = set(request_scopes)
+    expected_token_scopes.add('operator.pairing')
+    if 'operator.write' in expected_token_scopes:
+        expected_token_scopes.add('operator.read')
+    approved_scopes = bounded_scope_set(approved_device.get('scopes'))
+    approved_scope_view = bounded_scope_set(approved_device.get('approvedScopes'))
+    if (
+        approved_token == previous_token
+        or approved_token_scopes != expected_token_scopes
+        or approved_scopes is None
+        or approved_scope_view is None
+        or 'operator.write' not in approved_scopes
+        or 'operator.write' not in approved_scope_view
+    ):
+        return False
+
+    dir_fd = -1
+    temp_name = ''
+    try:
+        auth_path = clone_state_path('identity', 'device-auth.json')
+        auth_dir = os.path.dirname(auth_path)
+        dir_flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0) | getattr(os, 'O_NOFOLLOW', 0)
+        dir_fd = os.open(auth_dir, dir_flags)
+        if not stat.S_ISDIR(os.fstat(dir_fd).st_mode):
+            return False
+        try:
+            auth_stat = os.stat('device-auth.json', dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            auth_stat = None
+        if auth_stat is not None and not stat.S_ISREG(auth_stat.st_mode):
+            return False
+        auth_store = {
+            'version': 1,
+            'deviceId': local_device_id,
+            'tokens': {
+                'operator': {
+                    'token': approved_token,
+                    'role': 'operator',
+                    'scopes': sorted(approved_token_scopes),
+                    'updatedAtMs': int(time.time() * 1000),
+                },
+            },
+        }
+        temp_name = f'.device-auth.{os.getpid()}.{os.urandom(8).hex()}'
+        temp_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, 'O_NOFOLLOW', 0)
+        )
+        fd = os.open(temp_name, temp_flags, 0o600, dir_fd=dir_fd)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                fd = -1
+                json.dump(auth_store, handle, separators=(',', ':'))
+                handle.write('\\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(
+                temp_name,
+                'device-auth.json',
+                src_dir_fd=dir_fd,
+                dst_dir_fd=dir_fd,
+            )
+            temp_name = ''
+            os.fsync(dir_fd)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except (OSError, ValueError):
+        return False
+    finally:
+        if temp_name and dir_fd >= 0:
+            try:
+                os.unlink(temp_name, dir_fd=dir_fd)
+            except FileNotFoundError:
+                pass
+        if dir_fd >= 0:
+            os.close(dir_fd)
+    return True
 
 def is_local_pairing_transition(device):
     request_id = device.get('requestId')
@@ -447,8 +713,7 @@ for device in pending:
         )
         if approve_proc.returncode == 0:
             approved_count += 1
-${failedApproveBranch}    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        ${failedApproveAction}
+${failedApproveBranch}${approveExceptionHandler}
 ${summaryLine}${receiptSuccessLine}PYAPPROVE
 exit 0
 `;
