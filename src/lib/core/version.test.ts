@@ -94,6 +94,14 @@ describe("lib/version", () => {
     });
   });
 
+  it("rejects a stamped version without an immutable source revision (#7777)", () => {
+    writeFileSync(join(testDir, ".version"), "0.0.96-35-g8bfff4526");
+
+    expect(() => getBuildIdentity({ rootDir: testDir })).toThrow(
+      "Could not resolve the immutable NemoClaw source revision.",
+    );
+  });
+
   it("uses the compiled identity as the public version source (#7777)", () => {
     const identity = {
       nemoclawVersion: "0.0.96-35-g8bfff4526",
