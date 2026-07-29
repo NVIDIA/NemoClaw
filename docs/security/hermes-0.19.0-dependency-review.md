@@ -13,7 +13,7 @@ This replaces `v2026.7.1` and covers all three adjacent stable release ranges, i
 The upgrade is acceptable only with the downstream migrations recorded in this review.
 NemoClaw preserves manual command approval instead of inheriting Hermes 0.19's new smart-approval default, emits configuration schema 33, recognizes the new one-shot flags and `console` subcommand, and backs up the new default-profile cron and Discord recovery SQLite ledgers online.
 Named-profile copies remain inside the raw `profiles` directory capture under the existing generic snapshot limitation; this bounded residual is recorded rather than described as online backup.
-The session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
+The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
 The selected Python graph introduces no package-level advisory or license regression relative to `v2026.7.1`.
 The review nevertheless found that both versions resolve `python-multipart==0.0.27`, which is affected by a network-reachable CPU denial of service and parser differential.
@@ -111,6 +111,11 @@ Hermes' ordinary SQLite creation produces the live cron database as `gateway:san
 Discord instead forces its live database to `0600`, so NemoClaw exact-source patches that upstream chmod to `0660`.
 Build probes use the real cron and Discord APIs to prove gateway creation, sandbox read/online-backup/replacement, and gateway reopen/write against each restored file.
 
+Base SHA `fa96c91f` contributes the workaround that moves gateway PID, lock, and runtime-status files below the writable `HERMES_HOME/runtime` directory.
+Hermes 0.19 retains the top-level paths but changes their home selector from `get_hermes_home()` to `_get_process_hermes_home()` so profile-context tasks cannot redirect process-owned gateway metadata.
+The upgrade retargets the exact-source patch to that target shape and preserves the process-scoped selector while relocating only the three central metadata paths.
+The final image hash-binds the patcher and probes the installed PID, lock, and status readers against the writable runtime directory.
+
 The target MCP tool names use the `mcp__server__tool` shape.
 Progressive disclosure and the managed MCP bridge therefore require exact-head runtime proof rather than inference from the image build.
 New optional upstream secret sources are not enabled by NemoClaw.
@@ -184,6 +189,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-17` | High | Migrate and test | In-place update now defaults to duplicating state and refreshing a mutable CUA driver. NemoClaw's immutable image workflow owns dependency updates, so generated configuration explicitly disables both side effects. |
 | `HERMES-18` | High | Migrate and test | Fresh named profiles omit `config.yaml`, so generated pins do not cover every `HERMES_HOME`. The final image hash-binds the exact `v2026.7.20` config, classic-CLI config copy, raw browser-policy, TUI raw-YAML, agent-commentary, update-command, and gateway-policy sources, patches their fail-safe defaults, and creates a real config-less profile to exercise all affected installed loaders. |
 | `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
+| `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving PID, lock, and status files below `runtime`, hash-binds the helper, and adds unit and final-image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
 
 Unresolved upgrade-created high-impact concerns: `0`.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation remains explicitly accepted for this upgrade scope.

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Relocate pinned Hermes gateway metadata below its writable runtime directory.
 
-Hermes v0.18.0 stores ``gateway.pid``, ``gateway.lock``, and
+Hermes v0.19.0 stores ``gateway.pid``, ``gateway.lock``, and
 ``gateway_state.json`` directly below ``HERMES_HOME``. NemoClaw shields-up
 correctly makes that config root root-owned and non-writable, so a managed
 gateway replacement cannot remove the old PID file or atomically refresh
@@ -25,12 +25,12 @@ from pathlib import Path
 
 OLD_PID_HELPER = '''def _get_pid_path() -> Path:
     """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "gateway.pid"
 '''
 NEW_PID_HELPER = '''def _get_pid_path() -> Path:
     """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "runtime" / "gateway.pid"
 '''
 
@@ -38,14 +38,14 @@ OLD_LOCK_HELPER = '''def _get_gateway_lock_path(pid_path: Optional[Path] = None)
     """Return the path to the runtime gateway lock file."""
     if pid_path is not None:
         return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / _GATEWAY_LOCK_FILENAME
 '''
 NEW_LOCK_HELPER = '''def _get_gateway_lock_path(pid_path: Optional[Path] = None) -> Path:
     """Return the path to the runtime gateway lock file."""
     if pid_path is not None:
         return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = get_hermes_home()
+    home = _get_process_hermes_home()
     return home / "runtime" / _GATEWAY_LOCK_FILENAME
 '''
 

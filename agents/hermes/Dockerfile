@@ -334,11 +334,18 @@ assert main_source.count('_update_cfg.get("refresh_cua_driver", True)') == 0
 assert main_source.count('_update_cfg.get("refresh_cua_driver", False)') == 1
 PY
 
-# Hermes v0.18.0 writes gateway lifecycle metadata directly below HERMES_HOME.
+# Hermes v0.19.0 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Shields-up deliberately makes that config root root-owned and non-writable,
 # so a replacement cannot remove the old PID file and exits with a false PID
 # race. Keep config/hash locks intact and relocate only Hermes's central
-# PID/lock/status path helpers to the existing writable runtime directory.
+# PID/lock/status path helpers to the existing writable runtime directory while
+# preserving Hermes's process-scoped home selection.
+ARG NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256=b2be73d89f554e09d44d91479ec7eb9325dd44bf1b06c62745eec18b21cb71e6
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-gateway-runtime-metadata.py hash mismatch (update NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256)" >&2; exit 1; }
 RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
         /opt/hermes/gateway/status.py \
@@ -348,11 +355,11 @@ from pathlib import Path
 from gateway.status import (
     _get_gateway_lock_path,
     _get_pid_path,
+    _get_process_hermes_home,
     _get_runtime_status_path,
 )
-from hermes_constants import get_hermes_home
 
-home = get_hermes_home()
+home = _get_process_hermes_home()
 runtime = home / "runtime"
 assert _get_pid_path() == runtime / "gateway.pid"
 assert _get_gateway_lock_path() == runtime / "gateway.lock"
