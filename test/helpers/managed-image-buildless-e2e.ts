@@ -117,6 +117,7 @@ function childSource(
   const source = (relativePath: string) => JSON.stringify(path.join(REPO_ROOT, relativePath));
   return String.raw`
 const { EventEmitter } = require("node:events");
+const Module = require("node:module");
 const path = require("node:path");
 
 const agentName = ${JSON.stringify(agent)};
@@ -129,6 +130,24 @@ const forbiddenCalls = [];
 const registerCalls = [];
 const runnerCommands = [];
 const spawnCalls = [];
+
+// The protected live-E2E job intentionally runs source without build:cli.
+// Route the root CLI's generated shared-boundary import back to its canonical
+// .cts source so this test cannot pass only because a local dist tree exists.
+const canonicalSandboxNameSource =
+  ${source("nemoclaw/src/shared/sandbox-name.cts")};
+const generatedSandboxName =
+  ${source("nemoclaw/dist/shared/sandbox-name.cjs")};
+const resolveFilename = Module._resolveFilename;
+Module._extensions[".cts"] = Module._extensions[".ts"];
+Module._resolveFilename = function(request, parent, isMain, options) {
+  const requestedPath =
+    request.startsWith(".") && parent && parent.filename
+      ? path.resolve(path.dirname(parent.filename), request)
+      : request;
+  if (requestedPath === generatedSandboxName) return canonicalSandboxNameSource;
+  return resolveFilename.call(this, request, parent, isMain, options);
+};
 
 const normalize = (command) =>
   (Array.isArray(command) ? command.map(String).join(" ") : String(command)).replace(/'/g, "");

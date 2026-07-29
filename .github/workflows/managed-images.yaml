@@ -31,6 +31,7 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "src/lib/tool-disclosure.ts"
+      - "src/lib/**"
       - "tools/mcp-tool-discovery-runtime/**"
       - "tsconfig.runtime-preloads.json"
 
@@ -43,7 +44,7 @@ env:
 
 jobs:
   pr-build-and-entrypoint:
-    name: PR build and real entrypoint (${{ matrix.display_name }})
+    name: PR build, entrypoint, and OpenShell (${{ matrix.display_name }})
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -386,6 +387,39 @@ jobs:
             test ! -L /run/nemoclaw/managed-startup-ca-bundle.pem
             test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"
           '
+
+      - name: Install managed-image OpenShell harness dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install pinned OpenShell runtime
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85"
+          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.85"
+          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG \
+            -u DOCKERHUB_USERNAME \
+            -u DOCKERHUB_TOKEN \
+            -u NVIDIA_API_KEY \
+            -u NVIDIA_INFERENCE_API_KEY \
+            -u GITHUB_TOKEN \
+            -u GH_TOKEN \
+            bash scripts/install-openshell.sh
+
+      - name: Exercise exact PR image through real OpenShell
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+          SANDBOX_NAME: nemoclaw-pr-${{ matrix.agent }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          npx tsx scripts/checks/run-managed-image-openshell-e2e.ts \
+            --agent "$AGENT" \
+            --image "$IMAGE_REFERENCE" \
+            --sandbox "$SANDBOX_NAME"
 
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image
