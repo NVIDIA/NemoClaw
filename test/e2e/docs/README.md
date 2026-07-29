@@ -288,10 +288,13 @@ test/e2e/
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
   budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
   root-required contracts on shard 1 only.
-  `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
-  `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E targets directly
-  for their E2E coverage. Individual repository-hosted targets, including
-  `ollama-auth-proxy`, are selected through `.github/workflows/e2e.yaml`.
+  `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E
+  targets directly for their platform coverage.
+  Repository-hosted targets, including `ollama-auth-proxy`, are selected
+  through `.github/workflows/e2e.yaml`.
+- The `staging-brev-launchable` job validates the exact baked candidate in
+  preinstalled mode. Generic Brev VMs with source overlays are not a
+  qualification boundary.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
   shards include `e2e-support` for code changes; they never opt into live
