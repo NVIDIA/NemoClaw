@@ -82,7 +82,8 @@ If preflight detects an unsafe path, invalid config, invalid ownership posture, 
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
 | Channel enable or disable | Rebuild required because sandbox creation materializes `/sandbox/.hermes/.env` and the Hermes configuration | `$$nemoclaw <name> channels stop <channel>`, then rebuild |
 | API or dashboard forward port | Runtime; the host-side forward is re-resolved on the next `connect` | `$$nemoclaw <name> connect` or `openshell forward start` |
-| Hermes plugin code, Langfuse settings, or other startup-only runtime config | Runtime after a supported host-side update and gateway restart | Use a custom Dockerfile for plugin code or use a supported host config command, then run `$$nemoclaw <name> gateway restart` |
+| Hermes plugin code or dependencies | Rebuild required because custom plugin contents come from the custom Dockerfile image | Update the custom Dockerfile, then run `$$nemoclaw <name> rebuild` |
+| Langfuse settings or other supported startup-only runtime config | Runtime after a supported host-side update and gateway restart | Use a supported host config command, then run `$$nemoclaw <name> gateway restart` |
 | Web search provider | Rebuild required because onboarding prepares `web.backend`, the environment placeholder, and the credential attachment for sandbox creation | Set `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` or `none`, then rerun onboarding and recreate the sandbox |
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |

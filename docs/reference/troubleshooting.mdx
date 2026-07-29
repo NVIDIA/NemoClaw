@@ -695,7 +695,8 @@ Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning 
 In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before sandbox preparation reaches the likely failure point.
 Type `y` only when you intentionally want to continue on the smaller runtime.
 Non-interactive onboarding prints the warning and continues.
-The configuration review shows a local build-time estimate only for an explicit custom Dockerfile or after NemoClaw has selected the trusted Dockerfile fallback.
+The configuration review shows a local build-time estimate only for an explicit custom Dockerfile.
+If NemoClaw selects the trusted Dockerfile fallback later during sandbox creation, it prints the fallback notice and build estimate at that point.
 Managed-image launch does not show a Dockerfile build estimate.
 On Colima, raise the resources before re-running onboard:
 
