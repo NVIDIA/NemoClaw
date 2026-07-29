@@ -3877,11 +3877,16 @@ async function requireIndependentE2eApprover(
         if (!isObjectRecord(author) || (author.user !== null && !isObjectRecord(author.user))) {
           throw new Error("GitHub returned invalid PR commit author identity");
         }
-        const login = isObjectRecord(author.user) ? author.user.login : null;
-        if (login !== null && (typeof login !== "string" || login.trim().length === 0)) {
+        if (author.user === null) {
+          throw new Error(
+            "Credentialed E2E approval requires GitHub to identify every PR commit author",
+          );
+        }
+        const login = author.user.login;
+        if (typeof login !== "string" || login.trim().length === 0) {
           throw new Error("GitHub returned invalid PR commit author identity");
         }
-        if (typeof login === "string") contributors.add(login.trim().toLowerCase());
+        contributors.add(login.trim().toLowerCase());
       }
     }
 

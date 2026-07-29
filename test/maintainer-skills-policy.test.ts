@@ -337,6 +337,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "The first attempt requires the triggering actor to have current `maintain` or `admin` access and not be the PR opener, a commit author, or a co-author.",
     );
     expect(mergeGate).toContain(
+      "GitHub must associate every commit author and co-author with an account so the controller can prove that separation.",
+    );
+    expect(mergeGate).toContain(
       "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.",
     );
     expect(mergeGate).toContain("Approval cannot record success by itself.");

@@ -137,7 +137,7 @@ function contributorHistoryRoute({
   commitAuthors = ["contributor"],
 }: {
   opener?: string;
-  commitAuthors?: string[];
+  commitAuthors?: Array<string | null>;
 } = {}) {
   return githubFetchRoute(
     ({ url, method }) => url.endsWith("/graphql") && method === "POST",
@@ -154,7 +154,9 @@ function contributorHistoryRoute({
                     commit: {
                       authors: {
                         totalCount: commitAuthors.length,
-                        nodes: commitAuthors.map((login) => ({ user: { login } })),
+                        nodes: commitAuthors.map((login) => ({
+                          user: login === null ? null : { login },
+                        })),
                       },
                     },
                   },
@@ -470,6 +472,39 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         conclusion: "failure",
         output: { title, summary },
       });
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects credentialed E2E approval when a commit author has no GitHub identity", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-unidentified-"));
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(forkPullRequest()),
+          ),
+          contributorHistoryRoute({ commitAuthors: [null] }),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
+        /requires GitHub to identify every PR commit author/u,
+      );
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

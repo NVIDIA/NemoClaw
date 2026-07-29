@@ -159,6 +159,7 @@ Use the maintainer workflow when coordination reports either of these states:
 6. Run the workflow.
 
 The first attempt requires the triggering actor to have current `maintain` or `admin` access and not be the PR opener, a commit author, or a co-author.
+GitHub must associate every commit author and co-author with an account so the controller can prove that separation.
 The controller checks the PR number, head repository, PR SHA, base SHA, deterministic plan, matching pending coordination check, compatible `main`, and open PR state.
 Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.
 It fails closed if any value changed or does not match.
