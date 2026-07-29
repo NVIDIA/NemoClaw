@@ -658,7 +658,8 @@ A repository maintainer or administrator chooses **Run workflow** on `main`, sel
 `approve-e2e`, and supplies the PR number, current 40-character head SHA
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
 and a specific 10–500-character `review_reason`. The controller verifies the
-triggering actor's current `maintain` or `admin` permission. It then revalidates
+triggering actor's current `maintain` or `admin` permission and rejects the PR
+opener and GitHub-recognized commit authors and co-authors. It then revalidates
 the open PR, PR SHA and base SHA, deterministic plan, matching pending
 coordination state, compatible trusted controller commit, and final live
 revision. It updates coordination to `Running <count> E2E check(s)` and
@@ -741,7 +742,8 @@ head SHA, base SHA, selected jobs and targets, and
 maintainer then chooses **Run workflow** on `main`, selects
 `approve-e2e`, and supplies the exact PR number, head SHA, base SHA, and
 a specific review reason. GitHub supplies the triggering actor; the controller
-requires that account to have current `maintain` or `admin` permission.
+requires that account to have current `maintain` or `admin` permission and not
+be the PR opener, a commit author, or a co-author.
 
 The shared resolver revalidates the open PR, head repository, PR SHA and base
 SHA, deterministic plan, matching fork approval state, and that the controller

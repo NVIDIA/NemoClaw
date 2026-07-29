@@ -11,7 +11,12 @@ import { pathToFileURL } from "node:url";
 
 import YAML from "yaml";
 
-import { githubApi, githubApiWithResponse, githubRestPaginated } from "../advisors/github.mts";
+import {
+  githubApi,
+  githubApiWithResponse,
+  githubGraphql,
+  githubRestPaginated,
+} from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
 import {
   buildRiskPlan,
@@ -3231,6 +3236,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       headSha: command.headSha,
       baseSha: command.baseSha,
     });
+    await requireIndependentE2eApprover(repository, token, command.prNumber, command.maintainer);
     const isFork = pull.head.repo?.full_name !== repository;
     pendingTitle = isFork ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
     const changedFiles = await pullChangedFiles(repository, pull, token);
@@ -3775,6 +3781,128 @@ async function requireMaintainerPermission(
   ) {
     throw new Error(`${operation} requires a repository maintainer or administrator`);
   }
+}
+
+async function requireIndependentE2eApprover(
+  repository: string,
+  token: string,
+  prNumber: number,
+  maintainer: string,
+): Promise<void> {
+  const [owner, name, extra] = repository.split("/");
+  if (!owner || !name || extra) throw new Error("repository is invalid");
+
+  const contributors = new Set<string>();
+  let expectedCommitCount: number | null = null;
+  let observedCommitCount = 0;
+  let after: string | null = null;
+  for (let page = 0; page < 100; page += 1) {
+    const payload = await githubGraphql(
+      token,
+      `query PrE2EContributors(
+        $owner: String!,
+        $name: String!,
+        $number: Int!,
+        $after: String
+      ) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            author { login }
+            commits(first: 100, after: $after) {
+              totalCount
+              nodes {
+                commit {
+                  authors(first: 100) {
+                    totalCount
+                    nodes { user { login } }
+                  }
+                }
+              }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }`,
+      { owner, name, number: prNumber, after },
+    );
+    if (!isObjectRecord(payload) || !isObjectRecord(payload.data)) {
+      throw new Error("GitHub returned invalid PR contributor history");
+    }
+    const repositoryData = payload.data.repository;
+    if (!isObjectRecord(repositoryData) || !isObjectRecord(repositoryData.pullRequest)) {
+      throw new Error("GitHub returned invalid PR contributor history");
+    }
+    const pullRequest = repositoryData.pullRequest;
+    if (
+      !isObjectRecord(pullRequest.author) ||
+      typeof pullRequest.author.login !== "string" ||
+      pullRequest.author.login.trim().length === 0
+    ) {
+      throw new Error("GitHub returned invalid PR author identity");
+    }
+    contributors.add(pullRequest.author.login.trim().toLowerCase());
+
+    const commits = pullRequest.commits;
+    if (
+      !isObjectRecord(commits) ||
+      !Number.isSafeInteger(commits.totalCount) ||
+      (commits.totalCount as number) < 0 ||
+      !Array.isArray(commits.nodes) ||
+      !isObjectRecord(commits.pageInfo) ||
+      typeof commits.pageInfo.hasNextPage !== "boolean"
+    ) {
+      throw new Error("GitHub returned invalid PR commit author history");
+    }
+    if (expectedCommitCount !== null && expectedCommitCount !== (commits.totalCount as number)) {
+      throw new Error("GitHub returned inconsistent PR commit author history");
+    }
+    expectedCommitCount = commits.totalCount as number;
+    observedCommitCount += commits.nodes.length;
+
+    for (const node of commits.nodes) {
+      if (!isObjectRecord(node) || !isObjectRecord(node.commit)) {
+        throw new Error("GitHub returned invalid PR commit author history");
+      }
+      const authors = node.commit.authors;
+      if (
+        !isObjectRecord(authors) ||
+        !Number.isSafeInteger(authors.totalCount) ||
+        (authors.totalCount as number) < 0 ||
+        !Array.isArray(authors.nodes) ||
+        authors.nodes.length !== authors.totalCount
+      ) {
+        throw new Error("GitHub returned incomplete PR commit author history");
+      }
+      for (const author of authors.nodes) {
+        if (!isObjectRecord(author) || (author.user !== null && !isObjectRecord(author.user))) {
+          throw new Error("GitHub returned invalid PR commit author identity");
+        }
+        const login = isObjectRecord(author.user) ? author.user.login : null;
+        if (login !== null && (typeof login !== "string" || login.trim().length === 0)) {
+          throw new Error("GitHub returned invalid PR commit author identity");
+        }
+        if (typeof login === "string") contributors.add(login.trim().toLowerCase());
+      }
+    }
+
+    if (!commits.pageInfo.hasNextPage) {
+      if (observedCommitCount !== expectedCommitCount) {
+        throw new Error("GitHub returned incomplete PR commit author history");
+      }
+      if (contributors.has(maintainer.toLowerCase())) {
+        throw new Error(
+          "Credentialed E2E approval requires a maintainer who did not open or author the pull request",
+        );
+      }
+      return;
+    }
+    const next = commits.pageInfo.endCursor;
+    if (typeof next !== "string" || next.length === 0 || next === after) {
+      throw new Error("GitHub returned invalid PR commit author pagination");
+    }
+    after = next;
+  }
+  throw new Error("PR commit author history exceeds the approval pagination limit");
 }
 
 async function activeSupersededPrGateChecks(options: {

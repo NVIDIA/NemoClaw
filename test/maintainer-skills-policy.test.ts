@@ -334,7 +334,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).not.toContain('--body "..."');
     expect(judgment).toContain("{candidate_comments}");
     expect(mergeGate).toContain(
-      "The first attempt requires the triggering actor to have current `maintain` or `admin` access.",
+      "The first attempt requires the triggering actor to have current `maintain` or `admin` access and not be the PR opener, a commit author, or a co-author.",
     );
     expect(mergeGate).toContain(
       "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.",

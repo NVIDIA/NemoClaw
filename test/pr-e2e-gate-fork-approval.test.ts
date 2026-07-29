@@ -132,6 +132,42 @@ function forkPullRequest(changedFiles = 1): PullRequest {
   };
 }
 
+function contributorHistoryRoute({
+  opener = "contributor",
+  commitAuthors = ["contributor"],
+}: {
+  opener?: string;
+  commitAuthors?: string[];
+} = {}) {
+  return githubFetchRoute(
+    ({ url, method }) => url.endsWith("/graphql") && method === "POST",
+    () =>
+      githubResponse({
+        data: {
+          repository: {
+            pullRequest: {
+              author: { login: opener },
+              commits: {
+                totalCount: 1,
+                nodes: [
+                  {
+                    commit: {
+                      authors: {
+                        totalCount: commitAuthors.length,
+                        nodes: commitAuthors.map((login) => ({ user: { login } })),
+                      },
+                    },
+                  },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      }),
+  );
+}
+
 function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_files"> {
   const { changed_files: _changedFiles, ...item } = pull;
   return item;
@@ -208,6 +244,7 @@ function successfulMaintainerForkRoutes(requests: RecordedGitHubRequest[]) {
       ({ url }) => url.endsWith("/pulls/42"),
       () => githubResponse(forkPullRequest()),
     ),
+    contributorHistoryRoute(),
     githubFetchRoute(
       ({ url }) => url.includes("/pulls/42/files?"),
       () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
@@ -672,6 +709,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             ({ url }) => url.endsWith("/pulls/42"),
             () => githubResponse(forkPullRequest()),
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
@@ -789,6 +827,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             ({ url }) => url.endsWith("/pulls/42"),
             () => githubResponse(pullRequest()),
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () =>
@@ -938,6 +977,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             ({ url }) => url.endsWith("/pulls/42"),
             () => githubResponse(pullRequest()),
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
@@ -1041,6 +1081,59 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     }
   });
 
+  it.each([
+    {
+      contributor: "PR opener",
+      opener: "maintainer",
+      commitAuthors: ["contributor"],
+    },
+    {
+      contributor: "commit author",
+      opener: "contributor",
+      commitAuthors: ["maintainer"],
+    },
+    {
+      contributor: "commit co-author",
+      opener: "contributor",
+      commitAuthors: ["contributor", "maintainer"],
+    },
+  ])("rejects credentialed E2E approval when the maintainer is the $contributor", async ({
+    opener,
+    commitAuthors,
+  }) => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-independent-"));
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(forkPullRequest()),
+          ),
+          contributorHistoryRoute({ opener, commitAuthors }),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
+        /requires a maintainer who did not open or author the pull request/u,
+      );
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      expect(requests.some((request) => request.url.includes("/pulls/42/files?"))).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects control-plane authorization when the gate is already completed", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -1057,6 +1150,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             ({ url }) => url.endsWith("/pulls/42"),
             () => githubResponse(pullRequest()),
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
@@ -1101,6 +1195,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             ({ url }) => url.endsWith("/pulls/42"),
             () => githubResponse(pullRequest()),
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
@@ -1191,6 +1286,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
               );
             },
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
@@ -1237,6 +1333,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
               );
             },
           ),
+          contributorHistoryRoute(),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
