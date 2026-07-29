@@ -225,11 +225,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-tiny=2:9.2.0782-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
-        "perl-base=5.44.0-1nemoclaw1" \
-        "perl=5.44.0-1nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
-    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0644 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
@@ -240,6 +238,8 @@ RUN apt-get update \
         /tmp/nemoclaw-native-security/perl.deb \
     && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf /var/lib/apt/lists/* \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
@@ -251,6 +251,11 @@ RUN apt-get update \
         'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
     && perl -e \
         'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && printf '%s\n' \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
+        >> /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && git --version \
     && test -z "$(dpkg --audit)"
 

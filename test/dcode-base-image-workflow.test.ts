@@ -67,6 +67,8 @@ const workflow = YAML.parse(
 const FULL_SHA_ACTION = /^[^@]+@[0-9a-f]{40}$/i;
 const OPENCLAW_AGENT_GATE =
   'if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then';
+const PLATFORM_DIGEST_OUTPUT =
+  "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true";
 
 function renderMatrixValue(value: unknown, matrix: PublisherMatrixEntry): string {
   return String(value ?? "").replace(
@@ -198,9 +200,6 @@ function validatePublishers(candidate: Workflow): string[] {
       const cacheTo = registryCacheEntries(renderMatrixValue(build.with?.["cache-to"], matrix));
       const importedCacheRef = cacheFrom[0]?.ref;
       const exportedCacheRef = cacheTo[0]?.ref;
-      const expectedOutput =
-        "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true";
-
       return [
         ...(guardIndex < 0 || guardIndex >= buildIndex
           ? [`${jobName} must validate production build args before publishing`]
@@ -223,7 +222,7 @@ function validatePublishers(candidate: Workflow): string[] {
         ...(build.with?.platforms !== "${{ matrix.platform }}"
           ? [`${jobName} must build its selected native platform`]
           : []),
-        ...(build.with?.outputs !== expectedOutput
+        ...(build.with?.outputs !== PLATFORM_DIGEST_OUTPUT
           ? [`${jobName} must push an immutable platform digest`]
           : []),
         ...(build.with?.tags !== undefined || build.with?.push !== undefined
@@ -266,7 +265,7 @@ describe("base-image publication behavior", () => {
   // source-shape-contract: security -- Publisher mutations must preserve immutable actions, guarded arguments, and trusted registry cache ownership
   it("accepts every discovered publisher and rejects supply-chain mutations", () => {
     const publishers = publisherJobs(workflow);
-    expect(publisherBuildSteps(workflow)).toHaveLength(2);
+    expect(publisherBuildSteps(workflow)).toHaveLength(3);
     expect(
       publishers.map(({ dockerfile, matrix }) => ({
         agent: matrix.agent,
@@ -300,7 +299,9 @@ describe("base-image publication behavior", () => {
         image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
       },
     ]);
-    expect(publishers[0].job.strategy?.["fail-fast"]).toBe(false);
+    for (const publisher of publishers) {
+      expect(publisher.job.strategy?.["fail-fast"]).toBe(false);
+    }
     expect(validatePublishers(workflow)).toEqual([]);
     expect(validatePublisherInputs(workflow, openClawPlatformPublishers(workflow))).toEqual([]);
 
@@ -411,9 +412,7 @@ describe("base-image publication behavior", () => {
       expect(guardIndex).toBeLessThan(buildIndex);
       expect(hasAgentScopedOpenClawVersion(steps[guardIndex])).toBe(true);
       expect(build.with?.platforms).toBe("${{ matrix.platform }}");
-      expect(build.with?.outputs).toBe(
-        "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true",
-      );
+      expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
       expect(build.with?.tags).toBeUndefined();
       expect(renderMatrixValue(build.with?.["cache-from"], matrix)).toContain(cacheSuffix);
       expect(renderMatrixValue(build.with?.["cache-to"], matrix)).toContain(
@@ -457,12 +456,29 @@ describe("base-image publication behavior", () => {
 
   it("publishes sibling images atomically from native architecture runners", () => {
     const publishers = publisherJobs(workflow);
-    const platformJob = workflow.jobs?.["build-sibling-platforms"];
-    const manifestJob = workflow.jobs?.["build-and-push"];
+    const imagePublishers = [
+      {
+        platformJobName: "build-hermes-platforms",
+        manifestJobName: "build-and-push-hermes",
+        manifestName: "Build and push Hermes base image",
+        artifactPattern: "hermes-base-digest-*",
+        image: "${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base",
+      },
+      {
+        platformJobName: "build-dcode-platforms",
+        manifestJobName: "build-and-push-dcode",
+        manifestName: "Build and push Deep Agents Code base image",
+        artifactPattern: "langchain-deepagents-code-base-digest-*",
+        image: "${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+      },
+    ];
 
-    expect(platformJob?.["timeout-minutes"]).toBe(60);
-    expect(platformJob?.["runs-on"]).toBe("${{ matrix.runner }}");
-    expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
+    for (const { platformJobName } of imagePublishers) {
+      const platformJob = workflow.jobs?.[platformJobName];
+      expect(platformJob?.["timeout-minutes"]).toBe(60);
+      expect(platformJob?.["runs-on"]).toBe("${{ matrix.runner }}");
+      expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
+    }
     expect(
       publishers.map(({ matrix }) => ({
         agent: matrix.agent,
@@ -503,52 +519,45 @@ describe("base-image publication behavior", () => {
 
       expect(steps.some((step) => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(false);
       expect(build.with?.platforms).toBe("${{ matrix.platform }}");
-      expect(build.with?.outputs).toBe(
-        "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true",
-      );
+      expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
       expect(digestUpload?.with?.name).toBe("${{ matrix.agent }}-base-digest-${{ matrix.arch }}");
       expect(renderMatrixValue(digestUpload?.with?.name, matrix)).toBe(
         `${matrix.agent}-base-digest-${matrix.arch}`,
       );
     }
 
-    expect(manifestJob?.needs).toBe("build-sibling-platforms");
-    expect(manifestJob?.["timeout-minutes"]).toBe(10);
-    expect(
-      manifestJob?.steps?.some((step) => step.uses?.startsWith("docker/build-push-action@")),
-    ).toBe(false);
-    expect(manifestJob?.strategy?.matrix?.include).toEqual([
-      {
-        agent: "hermes",
-        display_name: "Hermes",
-        image: "nvidia/nemoclaw/hermes-sandbox-base",
-      },
-      {
-        agent: "langchain-deepagents-code",
-        display_name: "Deep Agents Code",
-        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-      },
-    ]);
-    const download = manifestJob?.steps?.find((step) => step.name === "Download platform digests");
-    const metadata = manifestJob?.steps?.find((step) => step.id === "meta");
-    const createManifest = manifestJob?.steps?.find(
-      (step) => step.name === "Create and verify multi-platform manifest",
-    );
-    expect(download?.with).toMatchObject({
-      pattern: "${{ matrix.agent }}-base-digest-*",
-      "merge-multiple": true,
-    });
-    expect(metadata?.with?.images).toBe("${{ env.REGISTRY }}/${{ matrix.image }}");
-    expect(metadata?.with?.tags).toContain("type=raw,value=latest");
-    expect(metadata?.with?.tags).toContain("type=ref,event=tag");
-    expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
-    expect(createManifest?.run).toContain('"${#digest_files[@]}" -ne 2');
-    expect(createManifest?.run).toContain(
-      'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
-    );
-    expect(createManifest?.run).toContain('"amd64,arm64"');
-    for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
-      expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
+    for (const imagePublisher of imagePublishers) {
+      const manifestJob = workflow.jobs?.[imagePublisher.manifestJobName];
+      expect(manifestJob?.name).toBe(imagePublisher.manifestName);
+      expect(manifestJob?.needs).toBe(imagePublisher.platformJobName);
+      expect(manifestJob?.["timeout-minutes"]).toBe(10);
+      expect(
+        manifestJob?.steps?.some((step) => step.uses?.startsWith("docker/build-push-action@")),
+      ).toBe(false);
+      const download = manifestJob?.steps?.find(
+        (step) => step.name === "Download platform digests",
+      );
+      const metadata = manifestJob?.steps?.find((step) => step.id === "meta");
+      const createManifest = manifestJob?.steps?.find(
+        (step) => step.name === "Create and verify multi-platform manifest",
+      );
+      expect(download?.with).toMatchObject({
+        pattern: imagePublisher.artifactPattern,
+        "merge-multiple": true,
+      });
+      expect(metadata?.with?.images).toBe(imagePublisher.image);
+      expect(metadata?.with?.tags).toContain("type=raw,value=latest");
+      expect(metadata?.with?.tags).toContain("type=ref,event=tag");
+      expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+      expect(createManifest?.env?.IMAGE).toBe(imagePublisher.image);
+      expect(createManifest?.run).toContain('"${#digest_files[@]}" -ne 2');
+      expect(createManifest?.run).toContain(
+        'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
+      );
+      expect(createManifest?.run).toContain('"amd64,arm64"');
+      for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
+        expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
+      }
     }
   });
 

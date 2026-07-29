@@ -167,6 +167,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         /tmp/nemoclaw-native-security/perl-base.deb \
         /tmp/nemoclaw-native-security/perl.deb \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
