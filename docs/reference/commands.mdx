@@ -1718,6 +1718,7 @@ The adapter must be an absolute executable path.
 NemoClaw starts it without a shell and writes one `task-adapter-request` JSON object to standard input.
 The request includes the recorded runtime and target identities plus the requested operation.
 Task, guidance, and input-required response text comes from a non-empty UTF-8 `--input-file` of at most 64 KiB.
+The path must directly name a regular file; NemoClaw does not follow symbolic links.
 That private input is sent to the adapter only; NemoClaw does not write it to lifecycle output, canonical registry state, or backups.
 
 The adapter returns one record from `schemas/cua-lifecycle.schema.json`:
