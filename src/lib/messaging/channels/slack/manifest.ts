@@ -39,7 +39,6 @@ export const slackManifest = {
   auth: {
     mode: "token-paste",
   },
-  requireForceForConflictOverride: true,
   inputs: [
     {
       id: "botToken",

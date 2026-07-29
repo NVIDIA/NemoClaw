@@ -550,7 +550,6 @@ async function checkChannelAddConflict(
     .list()
     .find((m) => m.id === channelName);
   if (!channelManifest || channelManifest.credentials.length === 0) return true;
-  const requiresForceForConflictOverride = channelManifest.requireForceForConflictOverride === true;
 
   const credentialHashes: Record<string, string> = {};
   for (const cred of channelManifest.credentials) {
@@ -570,28 +569,14 @@ async function checkChannelAddConflict(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  Could not verify messaging channel conflicts for ${channelName}: ${message}`);
-    if (requiresForceForConflictOverride && !force) {
-      console.error(
-        `  Aborting: resolve the messaging channel conflict check for ${channelName} or re-run with --force.`,
-      );
-      process.exit(1);
-    }
     if (force) {
       console.log("  --force: proceeding without a completed messaging channel conflict check.");
       return true;
     }
-    if (isNonInteractive()) {
-      console.error(
-        `  Aborting: rerun with --force to skip the messaging channel conflict check for ${channelName}.`,
-      );
-      process.exit(1);
-    }
-    const answer = (await askPrompt("  Continue without a completed conflict check? [y/N]: "))
-      .trim()
-      .toLowerCase();
-    if (answer === "y" || answer === "yes") return true;
-    console.log("  Aborting channel add.");
-    return false;
+    console.error(
+      `  Aborting: resolve the messaging channel conflict check for ${channelName} or re-run with --force.`,
+    );
+    process.exit(1);
   }
   if (conflicts.length === 0) return true;
 
@@ -601,7 +586,7 @@ async function checkChannelAddConflict(
         ? `uses the same ${channel} credential`
         : `already has ${channel} enabled, but its credential hash is unavailable`;
     const message = `Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect.`;
-    if (requiresForceForConflictOverride && !force) {
+    if (!force) {
       console.error(`  Conflict: ${message}`);
     } else {
       console.log(
@@ -610,32 +595,19 @@ async function checkChannelAddConflict(
     }
   }
 
-  if (requiresForceForConflictOverride && !force) {
-    console.error(
-      `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
-    );
-    process.exit(1);
-  }
-
   if (force) {
     console.log(`  --force: proceeding despite the messaging channel conflict above.`);
     return true;
   }
-  if (isNonInteractive()) {
-    console.error(
-      `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
-    );
-    process.exit(1);
-  }
-  const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
-  if (answer === "y" || answer === "yes") return true;
-  console.log("  Aborting channel add.");
-  return false;
+  console.error(
+    `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+  );
+  process.exit(1);
 }
 
 // Channel-owned pre-enable checks run after `checkChannelAddConflict` so the
-// shared credential axis is reported first. A manifest can require --force
-// before registry read failures or detected conflicts continue.
+// shared credential axis is reported first. Hook failure policy controls
+// whether registry read failures or detected conflicts require --force.
 async function checkMessagingPreEnableHooks(
   sandboxName: string,
   channelName: string,
@@ -644,15 +616,14 @@ async function checkMessagingPreEnableHooks(
 ): Promise<boolean> {
   const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
-  const requiresForceForConflictOverride =
-    messagingManifestRegistry.get(channelName)?.requireForceForConflictOverride === true;
+  const abortOnFailure = requests.some((request) => (request.onFailure ?? "abort") === "abort");
 
   let registryEntries: ReturnType<typeof registry.listSandboxes>["sandboxes"];
   try {
     registryEntries = registry.listSandboxes().sandboxes;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (requiresForceForConflictOverride && !force) {
+    if (abortOnFailure && !force) {
       console.error(`  Could not verify messaging pre-enable checks: ${message}`);
       console.error(
         `  Aborting: resolve the messaging pre-enable check for ${channelName} or re-run with --force.`,
@@ -695,14 +666,15 @@ async function checkMessagingPreEnableHooks(
   } catch (err) {
     if (!isMessagingHookConflictError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
+    const failedHookAborts = err.onFailure === "abort";
     for (const line of message.split("\n").filter((line) => line.trim().length > 0)) {
-      if (requiresForceForConflictOverride && !force) {
+      if (failedHookAborts && !force) {
         console.error(`  Conflict: ${line}`);
       } else {
         console.log(`  ${YW}⚠${R} ${line}`);
       }
     }
-    if (requiresForceForConflictOverride && !force) {
+    if (failedHookAborts && !force) {
       console.error(
         `  Aborting: resolve the messaging pre-enable conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
       );

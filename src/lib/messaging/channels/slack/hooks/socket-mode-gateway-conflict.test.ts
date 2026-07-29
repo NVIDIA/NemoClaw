@@ -72,7 +72,6 @@ describe("slack.socketModeGatewayConflict hook", () => {
     );
     await expect(runMessagingHook(HOOK, registry, { channelId: "slack" })).rejects.toMatchObject({
       code: MESSAGING_HOOK_CONFLICT_CODE,
-      channelId: "slack",
     });
   });
 

@@ -120,13 +120,13 @@ describe("preflightRebuildMessagingConflicts (#5954)", () => {
       { name: "my-assistant", messaging: { plan } },
       { name: "hermes", messaging: { plan: teamsPlan("hermes", "shared-hash") } },
     ]);
-    const { deps, bail, log } = makeDeps({ registry: registry as never });
+    const { deps, bail, error } = makeDeps({ registry: registry as never });
 
     await expect(preflightRebuildMessagingConflicts(plan, deps)).rejects.toThrow(
       /messaging channel conflict/i,
     );
     expect(bail).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls.flat().join("\n")).toContain("uses the same teams credential");
+    expect(error.mock.calls.flat().join("\n")).toContain("uses the same teams credential");
   });
 
   it("proceeds (no bail) when no other sandbox shares the credential", async () => {

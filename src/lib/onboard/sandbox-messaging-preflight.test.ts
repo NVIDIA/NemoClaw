@@ -174,7 +174,7 @@ describe("prepareSandboxMessagingPreflight", () => {
     expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalled();
   });
 
-  it("lets interactive users continue through a matching-token conflict", async () => {
+  it("aborts interactive credential conflicts without prompting (#7808)", async () => {
     const deps = createDeps({
       readMessagingPlanFromEnv: vi.fn(() => createPlan("demo", "telegram", "same")),
       registry: {
@@ -187,13 +187,15 @@ describe("prepareSandboxMessagingPreflight", () => {
       promptYesNoOrDefault: vi.fn(async () => true),
     });
 
-    await prepareSandboxMessagingPreflight(baseInput, deps);
+    await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
+      code: 1,
+    });
 
-    expect(deps.log).toHaveBeenCalledWith(
+    expect(deps.error).toHaveBeenCalledWith(
       expect.stringContaining("uses the same telegram credential"),
     );
-    expect(deps.promptYesNoOrDefault).toHaveBeenCalledWith("  Continue anyway?", null, false);
-    expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalled();
+    expect(deps.promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(deps.prepareCreateSandboxMessaging).not.toHaveBeenCalled();
   });
 
   it("aborts non-interactive runs when the current plan conflicts", async () => {
