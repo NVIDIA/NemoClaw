@@ -6,7 +6,7 @@
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 26,
       "src/lib/actions/sandbox/process-recovery.ts": 26,
       "src/lib/adapters/docker/index.ts": 45,
-      "src/lib/adapters/openshell/client.ts": 22,
+      "src/lib/adapters/openshell/client.ts": 23,
       "src/lib/adapters/openshell/resolve.ts": 28,
       "src/lib/adapters/openshell/runtime.ts": 51,
       "src/lib/adapters/openshell/timeouts.ts": 37,
@@ -26,8 +26,8 @@
       "src/lib/onboard/gateway-binding.ts": 47,
       "src/lib/runner.ts": 89,
       "src/lib/security/redact.ts": 51,
-      "src/lib/state/onboard-session.ts": 35,
-      "src/lib/state/registry.ts": 100,
+      "src/lib/state/onboard-session.ts": 36,
+      "src/lib/state/registry.ts": 101,
       "src/lib/state/state-root.ts": 23,
       "src/lib/subprocess-env.ts": 23,
       "src/lib/validation.ts": 25
@@ -47,7 +47,7 @@
       "src/lib/actions/uninstall/run-plan.ts": 25,
       "src/lib/inference/onboard-probes.ts": 21,
       "src/lib/inference/vllm.ts": 23,
-      "src/lib/onboard.ts": 224,
+      "src/lib/onboard.ts": 225,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/sandbox/config.ts": 23,
       "src/lib/shields/index.ts": 23
@@ -112,9 +112,7 @@
       "src/lib/actions/sandbox/rebuild-pipeline.ts",
       "src/lib/actions/sandbox/rebuild-post-restore-phase.ts",
       "src/lib/actions/sandbox/rebuild-preflight-phase.ts",
-      "src/lib/actions/sandbox/rebuild-preflight-target-phase.ts",
-      "src/lib/actions/sandbox/rebuild-recreate-journal.ts",
-      "src/lib/actions/sandbox/rebuild-recreate-phase.ts",
+      "src/lib/actions/sandbox/rebuild-preflight-target-phase.ts",      "src/lib/actions/sandbox/rebuild-recreate-phase.ts",
       "src/lib/actions/sandbox/rebuild-shields-phase.ts",
       "src/lib/actions/sandbox/rebuild-shields.ts",
       "src/lib/actions/sandbox/rebuild-target-config.ts",
@@ -139,7 +137,7 @@
     ]
   ],
   "maxRootFiles": {
-    "src/lib/onboard": 307,
+    "src/lib/onboard": 309,
     "src/lib/actions": 19,
     "src/lib/actions/sandbox": 183,
     "src/lib/state": 38,

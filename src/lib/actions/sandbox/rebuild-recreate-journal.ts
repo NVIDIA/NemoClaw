@@ -1,37 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshell } from "../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { checkpointGatewayAuthority } from "../../onboard/gateway-authority-checkpoint";
 import { resolveGatewayTeardownAuthority } from "../../onboard/gateway-teardown-authority";
 import {
+  observeSandboxOnGateway,
+  type SandboxRecreateObserver,
+  type SandboxRecreateTarget,
+} from "../../onboard/sandbox-recreate-probe";
+import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
-  fingerprintSandboxLiveIdentity,
   fingerprintSandboxRecreateValue,
   planSandboxRecreateRecovery,
-  type SandboxRecreateObservation,
   sandboxRecreatePhaseReached,
 } from "../../onboard/sandbox-recreate-transaction";
-import { parseSandboxPhase } from "../../state/gateway";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { CheckpointSandboxRecreatePhase } from "../../state/onboard-checkpoint-types";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
-import { isExplicitMissingSandboxGatewayOutput } from "./gateway-state";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
-export interface RebuildRecreateJournalTarget {
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly gatewayPort: number;
-}
+export type RebuildRecreateJournalTarget = SandboxRecreateTarget;
 
-export type RebuildSandboxObserver = (
-  target: RebuildRecreateJournalTarget,
-) => SandboxRecreateObservation;
+export type RebuildSandboxObserver = SandboxRecreateObserver;
 
 export interface RebuildRecreateJournal {
   readonly id: string;
@@ -73,39 +66,7 @@ export function fingerprintRebuildRecreateTargetIntent(
   });
 }
 
-export function observeRebuildSandbox(
-  target: RebuildRecreateJournalTarget,
-): SandboxRecreateObservation {
-  const probe = captureOpenshell(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
-    ignoreError: true,
-    includeStderr: true,
-    includeStreams: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
-  const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
-  const failedCleanly =
-    !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
-  if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
-    return { state: "missing", liveIdentityFingerprint: null };
-  }
-  if (probe.status === 0 && stdout.length > 0) {
-    const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(stdout);
-    if (!liveIdentityFingerprint) {
-      throw new Error(
-        `Cannot journal sandbox '${target.sandboxName}' replacement: OpenShell did not report a stable sandbox Id on gateway '${target.gatewayName}'.`,
-      );
-    }
-    const phase = parseSandboxPhase(combined);
-    return {
-      state: phase === "Ready" || phase === "Running" ? "ready" : "not_ready",
-      liveIdentityFingerprint,
-    };
-  }
-  throw new Error(
-    `Cannot journal sandbox '${target.sandboxName}' replacement: gateway '${target.gatewayName}' reported neither a live sandbox nor explicit absence.`,
-  );
-}
+export const observeRebuildSandbox = observeSandboxOnGateway;
 
 export interface OpenRebuildRecreateJournalInput {
   readonly target: RebuildRecreateJournalTarget;

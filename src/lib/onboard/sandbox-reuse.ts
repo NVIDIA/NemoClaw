@@ -21,6 +21,8 @@ export interface SandboxReuseDeps {
   runOpenshell(args: string[], opts?: Record<string, unknown>): unknown;
   getSandboxStateFromOutputs(sandboxName: string, getOutput: string, listOutput: string): string;
   note(message: string): void;
+  // Read at call time: onboarding rebinds the gateway after preflight resolves it.
+  getGatewayName?(): string;
 }
 
 export interface SandboxReuseHelpers {
@@ -112,12 +114,19 @@ export function applyReusedSandboxDashboardState(
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {
+  function gatewayArgs(): string[] {
+    const gatewayName = deps.getGatewayName?.();
+    return gatewayName ? ["-g", gatewayName] : [];
+  }
+
   function readSandboxState(sandboxName: string | null): { state: string; getOutput: string } {
     if (!sandboxName) return { state: "missing", getOutput: "" };
-    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
+    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", ...gatewayArgs(), sandboxName], {
       ignoreError: true,
     });
-    const listOutput = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+    const listOutput = deps.runCaptureOpenshell(["sandbox", "list", ...gatewayArgs()], {
+      ignoreError: true,
+    });
     const state = deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
     return { state, getOutput };
   }
@@ -144,7 +153,7 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     if (!sandboxName) return;
     deps.note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
     bestEffortForwardStop(deps.runOpenshell, DASHBOARD_PORT);
-    deps.runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+    deps.runOpenshell(["sandbox", "delete", ...gatewayArgs(), sandboxName], { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 

@@ -31,10 +31,12 @@ describe("onboard helpers", () => {
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 
 runner.run = (command) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   if (_n(command).includes("sandbox delete")) {
     throw new Error("unexpected sandbox delete");
   }
@@ -42,8 +44,8 @@ runner.run = (command) => {
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
-  if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant NotReady";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
@@ -109,18 +111,20 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = []; let registeredSandbox = null;
 runner.run = (command, opts = {}) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -140,6 +144,7 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -219,6 +224,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -226,13 +232,14 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   events.push({ kind: "run", cmd: _n(command) });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
-  if (cmd.includes("sandbox list")) return "my-assistant Ready";
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -274,6 +281,7 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -366,6 +374,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -373,13 +382,14 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   events.push({ kind: "run", cmd: _n(command) });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
-  if (cmd.includes("sandbox list")) return "my-assistant Ready";
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -408,6 +418,7 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -487,6 +498,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -495,6 +507,7 @@ const { EventEmitter } = require("node:events");
 const events = [];
 let sandboxDeleted = false;
 runner.run = (command) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
@@ -502,9 +515,9 @@ runner.run = (command) => {
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) {
-    return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
+    return _deleted ? "" : sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
@@ -547,6 +560,7 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -632,6 +646,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const onboardSession = require(${sessionModulePath});
 const childProcess = require("node:child_process");
@@ -639,12 +654,13 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -673,6 +689,7 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -750,6 +767,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -759,6 +777,7 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (_n(command).includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
@@ -783,8 +802,8 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -794,6 +813,7 @@ registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressiv
 credentials.prompt = async () => "y";
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -879,6 +899,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -888,6 +909,7 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (_n(command).includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
@@ -912,8 +934,8 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -936,6 +958,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "y";
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1021,6 +1044,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -1029,15 +1053,16 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 let sandboxDeleted = false;
 runner.run = (command, opts = {}) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   commands.push({ command: _n(command), env: opts.env || null });
   if (_n(command).includes("sandbox delete")) sandboxDeleted = true;
   return { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready initially, becomes Ready after recreation
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) {
-    return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
+    return _deleted ? "" : sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
@@ -1073,7 +1098,7 @@ const fakeSpawn = (...args) => {
   });
   return child;
 };
-childProcess.spawn = fakeSpawn;
+childProcess.spawn = (...args) => { _deleted = false; return fakeSpawn(...args); };
 
 // Also patch spawn inside the compiled sandbox-create-stream module.
 // It imports spawn at load time from "node:child_process", so patching the
@@ -1158,6 +1183,7 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+let _deleted = false;
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -1169,11 +1195,12 @@ const commands = [];
 let sandboxListCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
+  if (_n(command).includes("sandbox delete")) _deleted = true;
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
@@ -1193,6 +1220,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
