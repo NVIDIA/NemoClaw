@@ -19,6 +19,9 @@
  * ports never collide.
  */
 
+import os from "node:os";
+import path from "node:path";
+
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import type { GatewayReuseState } from "../state/gateway";
 
@@ -66,6 +69,12 @@ export function resolveGatewayPortFromName(gatewayName: string): number | null {
 export interface SandboxGatewayBinding {
   gatewayName?: string | null;
   gatewayPort?: number | null;
+}
+
+export interface SandboxGatewayComputeBinding extends SandboxGatewayBinding {
+  name?: string;
+  openshellDriver?: string | null;
+  pendingRouteReservation?: true;
 }
 
 /**
@@ -141,6 +150,40 @@ export function resolveSandboxGatewayName(
   throw new Error(`Invalid persisted sandbox gateway binding (${detail.join(", ")})`);
 }
 
+/**
+ * Resolve the durable compute driver shared by every live sandbox attached to
+ * one gateway. A NemoClaw-managed gateway is a shared runtime: selecting a
+ * different driver for a second sandbox would replace the runtime underneath
+ * the first sandbox. Legacy rows inherit the platform driver they used before
+ * explicit driver identity was persisted.
+ */
+export function resolveGatewayComputeDriverBinding(options: {
+  gatewayName: string;
+  sandboxes: readonly SandboxGatewayComputeBinding[];
+  legacyDriverName: string;
+}): string | null {
+  const evidence = options.sandboxes.flatMap((sandbox) => {
+    if (sandbox.pendingRouteReservation === true) return [];
+    if (resolveSandboxGatewayName(sandbox) !== options.gatewayName) return [];
+    const driverName = sandbox.openshellDriver?.trim() || options.legacyDriverName.trim();
+    if (!driverName) {
+      throw new Error(
+        `Sandbox '${sandbox.name || "<unnamed>"}' has no durable OpenShell compute driver.`,
+      );
+    }
+    return [{ sandboxName: sandbox.name || "<unnamed>", driverName }];
+  });
+  const drivers = new Set(evidence.map(({ driverName }) => driverName));
+  if (drivers.size > 1) {
+    throw new Error(
+      `Conflicting OpenShell compute drivers are bound to gateway '${options.gatewayName}': ${evidence
+        .map(({ sandboxName, driverName }) => `${sandboxName}='${driverName}'`)
+        .join(", ")}.`,
+    );
+  }
+  return evidence[0]?.driverName ?? null;
+}
+
 /** Resolve one attempt-wide onboarding target without overriding an authoritative rebuild. */
 export function resolveCoreOnboardGatewayBinding(options: {
   authoritativeGateway?: { name: string; port: number } | null;
@@ -166,6 +209,26 @@ export function resolveGatewayStateDirName(port: number): string {
   return isDefaultGatewayPort(port)
     ? BASE_GATEWAY_STATE_DIR_NAME
     : `${BASE_GATEWAY_STATE_DIR_NAME}-${port}`;
+}
+
+export function resolveManagedGatewayStateDirectory(
+  gatewayName: string,
+  options: { env?: NodeJS.ProcessEnv; home?: string } = {},
+): string {
+  const gatewayPort = resolveGatewayPortFromName(gatewayName);
+  if (gatewayPort === null) {
+    throw new Error(`Invalid NemoClaw gateway name '${gatewayName}'`);
+  }
+  const env = options.env ?? process.env;
+  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
+  if (configured) return path.resolve(configured);
+  return path.join(
+    options.home ?? env.HOME ?? os.homedir(),
+    ".local",
+    "state",
+    "nemoclaw",
+    resolveGatewayStateDirName(gatewayPort),
+  );
 }
 
 /**

@@ -77,6 +77,7 @@ const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
 const gatewayService: typeof import("./onboard/docker-driver-gateway-service") = require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
+const computeRuntime: typeof import("./onboard/compute/runtime") = require("./onboard/compute/runtime");
 const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
 const {
@@ -123,8 +124,7 @@ const {
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
-const dockerDriverPlatform: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
-const { isLinuxDockerDriverGatewayEnabled } = dockerDriverPlatform;
+const { isLinuxDockerDriverGatewayEnabled } = computeRuntime;
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
@@ -336,7 +336,7 @@ const {
   waitForGatewayHealth,
 }: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const {
-  waitForStandaloneDockerDriverGateway,
+  waitForStandaloneManagedDriverGateway,
 }: typeof import("./onboard/docker-driver-gateway-readiness") = require("./onboard/docker-driver-gateway-readiness");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
@@ -533,7 +533,7 @@ const { isGatewayTcpReady: probeGatewayTcpReady } =
   require("./onboard/gateway-tcp-readiness") as typeof import("./onboard/gateway-tcp-readiness");
 const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
-const { reportDockerDriverGatewayStartFailure } =
+const { reportManagedDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
 const {
   createFinalGatewayStartFailureHandler,
@@ -643,12 +643,44 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 let GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
+let ACTIVE_OPEN_SHELL_COMPUTE_PLAN = computeRuntime.resolveCurrentOpenShellComputePlan();
+
+function getActiveManagedGatewayProfile():
+  | import("./onboard/compute/managed-gateway-profile").ManagedGatewayDriverProfile
+  | null {
+  return computeRuntime.resolveManagedGatewayDriverProfile(ACTIVE_OPEN_SHELL_COMPUTE_PLAN);
+}
+
+function isManagedDriverGatewayEnabled(): boolean {
+  return getActiveManagedGatewayProfile() !== null;
+}
+
+function activeManagedGatewayHasCapability(
+  capability: keyof import("./onboard/compute/managed-gateway-profile").ManagedGatewayDriverCapabilities,
+): boolean {
+  return getActiveManagedGatewayProfile()?.capabilities[capability] === true;
+}
+
+function activeRuntimeSupportsHostLocalInference(): boolean {
+  return computeRuntime.resolveOpenShellComputeCapabilities(ACTIVE_OPEN_SHELL_COMPUTE_PLAN)
+    .hostLocalInference;
+}
+
+function isActiveDockerComputeDriver(): boolean {
+  return computeRuntime.isDockerComputeDriver(ACTIVE_OPEN_SHELL_COMPUTE_PLAN);
+}
+
+function isActiveDockerManagedGateway(): boolean {
+  return isActiveDockerComputeDriver() && isManagedDriverGatewayEnabled();
+}
+
 const {
   clearDockerDriverGatewayRuntimeFiles,
   createGatewayServicePortOwnership,
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
   getDockerDriverGatewayPortListenerPid,
+  getOpenShellSupervisorImage,
   getDockerDriverGatewayReuseDrift: getGatewayReuseDrift,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
@@ -771,7 +803,7 @@ const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatew
 const waitForSandboxReady = sandboxReadinessTracing.createSandboxReadyWaiter({
   runCaptureOpenshell,
   isSandboxReady,
-  isLinuxDockerDriverGatewayEnabled,
+  isLinuxDockerDriverGatewayEnabled: isManagedDriverGatewayEnabled,
   sleep: sleepSeconds,
 });
 const { hasStaleGateway, isSelectedGateway, isGatewayHealthy, getGatewayReuseState } =
@@ -1125,14 +1157,33 @@ function areRequiredDockerDriverBinariesPresent(
 
 function ensureOpenshellForOnboard(
   exitProcess: (code: number) => never = (code) => process.exit(code),
+  computePlan: import("./onboard/compute/plan").OpenShellComputePlan = ACTIVE_OPEN_SHELL_COMPUTE_PLAN,
 ): OpenShellInstallResult {
-  return openshellInstallFlow.ensureOpenshellForOnboard(getOpenShellInstallDeps(exitProcess));
+  return openshellInstallFlow.ensureOpenshellForOnboard(
+    getOpenShellInstallDeps(exitProcess, computePlan),
+  );
 }
 
 function getOpenShellInstallDeps(
   exitProcess: (code: number) => never = (code) => process.exit(code),
+  computePlan: import("./onboard/compute/plan").OpenShellComputePlan = ACTIVE_OPEN_SHELL_COMPUTE_PLAN,
 ): OpenShellInstallDeps {
+  const currentProfile = computeRuntime.resolveManagedGatewayDriverProfile(computePlan);
   return {
+    getManagedGatewayBinaryRequirements: (platform = process.platform, arch = process.arch) => {
+      const plan =
+        platform === process.platform && arch === process.arch
+          ? computePlan
+          : computeRuntime.resolveCurrentOpenShellComputePlan(platform, arch);
+      const profile = computeRuntime.resolveManagedGatewayDriverProfile(plan);
+      return profile
+        ? {
+            driverLabel: profile.displayName,
+            gateway: true,
+            sandbox: profile.capabilities.localSupervisorBinary && platform === "linux",
+          }
+        : null;
+    },
     isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     resolveOpenShellSandboxBinary,
@@ -1147,7 +1198,7 @@ function getOpenShellInstallDeps(
     versionGte,
     hasRequiredOpenshellMessagingFeatures: () =>
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      (require("./onboard/openshell-feature-gate") as typeof import("./onboard/openshell-feature-gate")).hasRequiredOpenshellMessagingFeatures({ openshellBin: resolveOpenshell(), gatewayBin: resolveOpenShellGatewayBinary(), sandboxBin: resolveOpenShellSandboxBinary(), allowExternalGatewayBin: Boolean(process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim()), allowExternalSandboxBin: Boolean(process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim()), requireSandboxBin: process.platform !== "darwin" || Boolean(process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim()) }),
+      (require("./onboard/openshell-feature-gate") as typeof import("./onboard/openshell-feature-gate")).hasRequiredOpenshellMessagingFeatures({ openshellBin: resolveOpenshell(), gatewayBin: resolveOpenShellGatewayBinary(), sandboxBin: resolveOpenShellSandboxBinary(), allowExternalGatewayBin: Boolean(process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim()), allowExternalSandboxBin: Boolean(process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim()), requireSandboxBin: computeRuntime.requiresHostSandboxBinaryForInstall(currentProfile, { explicitSandboxBinary: Boolean(process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim()), platform: process.platform }) }),
     shouldAllowOpenshellAboveBlueprintMax,
     cliDisplayName,
     log: console.log,
@@ -1243,40 +1294,57 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
   }
 }
 
-function logDockerDriverGatewayRestart(reason: string): void {
-  console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
+function logManagedDriverGatewayRestart(driverLabel: string, reason: string): void {
+  console.log(
+    `  Existing OpenShell ${driverLabel}-driver gateway is stale (${reason}); restarting...`,
+  );
 }
 
 async function refreshDockerDriverGatewayReuseState(
   gatewayReuseState: GatewayReuseState,
 ): Promise<GatewayReuseState> {
-  if (!isLinuxDockerDriverGatewayEnabled() || gatewayReuseState !== "healthy") {
+  const profile = getActiveManagedGatewayProfile();
+  if (!profile || gatewayReuseState !== "healthy") {
     return gatewayReuseState;
   }
   const gatewayBin = resolveOpenShellGatewayBinary();
-  const baseDesiredEnv = getDockerDriverGatewayEnv(
-    runCaptureOpenshell(["--version"], { ignoreError: true }),
+  if (!gatewayBin) {
+    console.log(
+      `  Existing OpenShell ${profile.displayName}-driver gateway cannot be verified without its gateway binary; it will be recreated.`,
+    );
+    return "stale";
+  }
+  let runtime: ResolvedManagedGatewayRuntime;
+  try {
+    const adapter = computeRuntime.resolveManagedGatewayRuntimeAdapter(
+      profile,
+      MANAGED_GATEWAY_RUNTIME_ADAPTERS,
+    );
+    runtime = adapter.build({
+      gatewayBin,
+      openshellVersionOutput: runCaptureOpenshell(["--version"], { ignoreError: true }),
+      profile,
+      stateDir: getDockerDriverGatewayStateDir(),
+    });
+  } catch (error) {
+    console.log(
+      `  Existing OpenShell ${profile.displayName}-driver gateway runtime cannot be verified (${compactText(String(error))}); it will be recreated.`,
+    );
+    return "stale";
+  }
+  const desiredEnv = runtime.runtimeIdentity.desiredEnv;
+  const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(
+    runtime.runtimeIdentity,
+    gatewayBin,
   );
-  const runtimeIdentity = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
-        gatewayBin,
-        gatewayEnv: baseDesiredEnv,
-        stateDir: getDockerDriverGatewayStateDir(),
-        sandboxBin: resolveOpenShellSandboxBinary(),
-        gatewayName: GATEWAY_NAME,
-        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
-      })
-    : null;
-  const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
-  const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
-  const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+  const identityBin = runtime.runtimeIdentity.identityGatewayBin ?? gatewayBin;
   const managedServicePid = gatewayService.getTrustedActiveOpenShellGatewayUserServicePid();
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
     const drift = getGatewayReuseDrift(pid, desiredEnv, driftBin, managedServicePid);
     if (drift) {
       console.log(
-        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
+        `  Existing OpenShell ${profile.displayName}-driver gateway is stale (${drift.reason}); it will be recreated.`,
       );
       return "stale";
     }
@@ -1292,7 +1360,7 @@ async function refreshDockerDriverGatewayReuseState(
     if (dockerGatewayPid !== managedServicePid) rememberDockerDriverGatewayPid(dockerGatewayPid);
     if (drift) {
       console.log(
-        `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
+        `  Existing OpenShell ${profile.displayName}-driver gateway is stale (${drift.reason}); it will be recreated.`,
       );
       return "stale";
     }
@@ -1309,17 +1377,22 @@ async function refreshDockerDriverGatewayReuseState(
 
 function destroyGateway(
   clearRegistry: () => void = registry.clearAll,
-  isDockerDriverGatewayEnabledForDestroy: () => boolean = isLinuxDockerDriverGatewayEnabled,
+  isManagedDriverGatewayEnabledForDestroy: () => boolean = isManagedDriverGatewayEnabled,
 ): boolean {
   return destroyGatewayWithVolumeCleanup({
     clearRegistry,
     dockerRemoveVolumesByPrefix,
     gatewayName: GATEWAY_NAME,
     hasLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-    isDockerDriverGatewayEnabled: isDockerDriverGatewayEnabledForDestroy,
+    isDockerDriverGatewayEnabled: () =>
+      isManagedDriverGatewayEnabledForDestroy() && isActiveDockerComputeDriver(),
+    isManagedDriverGatewayEnabled: isManagedDriverGatewayEnabledForDestroy,
     removeDockerDriverGatewayRegistration,
     runOpenshell,
     stopDockerDriverGatewayProcess,
+    shouldCleanupLegacyDockerVolumes: () =>
+      isManagedDriverGatewayEnabledForDestroy() &&
+      activeManagedGatewayHasCapability("legacyDockerVolumeCleanup"),
   });
 }
 
@@ -1444,7 +1517,7 @@ function attachGatewayMetadataIfNeeded({
   // flow explicitly forces a refresh after recreating bootstrap secrets.
   if (!forceRefresh && hasStaleGateway(gwInfo)) return true;
 
-  if (isLinuxDockerDriverGatewayEnabled()) {
+  if (isManagedDriverGatewayEnabled()) {
     return registerDockerDriverGatewayEndpoint();
   }
 
@@ -1475,14 +1548,18 @@ async function preflight(
     preflightOpts,
     {
       nonInteractive: isNonInteractive(),
+      computePlan: ACTIVE_OPEN_SHELL_COMPUTE_PLAN,
+      env: process.env,
     },
   );
 
-  await preflightUtils.checkContainerRuntimeResources(host, {
-    ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
-    nonInteractive: isNonInteractive(),
-    confirm: () => promptYesNoOrDefault("  Continue with onboarding?", null, false),
-  });
+  if (ACTIVE_OPEN_SHELL_COMPUTE_PLAN.driverName !== "podman") {
+    await preflightUtils.checkContainerRuntimeResources(host, {
+      ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
+      nonInteractive: isNonInteractive(),
+      confirm: () => promptYesNoOrDefault("  Continue with onboarding?", null, false),
+    });
+  }
 
   ensureOpenshellForOnboard();
   // Bind the one lifecycle authority before applying any legacy listener-name
@@ -1513,8 +1590,9 @@ async function preflight(
   gatewayReuseState = await runPreflightGatewaySequence({
     gatewayReuseState,
     externallySupervised: gatewayExternallySupervised,
-    supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    supportsLifecycleCommands:
+      !isManagedDriverGatewayEnabled() && gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    isDockerDriverGatewayEnabled: isManagedDriverGatewayEnabled(),
     gatewayName: GATEWAY_NAME,
     cliDisplayName: cliDisplayName(),
     dashboardPort: getOnboardDashboardPort(),
@@ -1585,11 +1663,12 @@ async function preflight(
         if (portCheck.ok) continue;
       }
       if (kind === "gateway") {
-        const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck);
-        if (dockerGatewayPid !== null) {
-          rememberDockerDriverGatewayPid(dockerGatewayPid);
+        const managedGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck);
+        if (managedGatewayPid !== null) {
+          rememberDockerDriverGatewayPid(managedGatewayPid);
+          const driverLabel = getActiveManagedGatewayProfile()?.displayName ?? "managed";
           console.log(
-            `  ✓ Port ${port} already owned by NemoClaw OpenShell Docker gateway (${label})`,
+            `  ✓ Port ${port} already owned by NemoClaw OpenShell ${driverLabel} gateway (${label})`,
           );
           continue;
         }
@@ -1712,23 +1791,27 @@ async function startGatewayWithOptions(
   assertGatewayStartAllowed(exitOnFailure);
   step(2, 8, "Starting OpenShell gateway");
 
-  if (isLinuxDockerDriverGatewayEnabled()) {
-    const selectedGpuRoute = dockerGpuRoute.initialDockerGpuRoute(
-      dockerGpuRoute.resolveDockerGpuRoutePlan(
-        { sandboxGpuEnabled: gpuPassthrough, hostGpuPlatform: _gpu?.platform },
-        {
-          dockerDriverGateway: true,
-          dockerDesktopWsl: dockerGpuSandboxCreate.isDockerDesktopWslRuntime(),
-        },
-      ),
-    );
-    return startDockerDriverGateway({
+  if (isManagedDriverGatewayEnabled()) {
+    const selectedGpuRoute = isActiveDockerComputeDriver()
+      ? dockerGpuRoute.initialDockerGpuRoute(
+          dockerGpuRoute.resolveDockerGpuRoutePlan(
+            { sandboxGpuEnabled: gpuPassthrough, hostGpuPlatform: _gpu?.platform },
+            {
+              dockerDriverGateway: true,
+              dockerDesktopWsl: dockerGpuSandboxCreate.isDockerDesktopWslRuntime(),
+            },
+          ),
+        )
+      : null;
+    return startManagedDriverGateway({
       exitOnFailure,
-      skipSandboxBridgeReachability: dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
-        gpuPassthrough,
-        _gpu?.platform,
-        selectedGpuRoute,
-      ),
+      skipSandboxBridgeReachability:
+        selectedGpuRoute !== null &&
+        dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
+          gpuPassthrough,
+          _gpu?.platform,
+          selectedGpuRoute,
+        ),
     });
   }
 
@@ -1897,46 +1980,192 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
+type ManagedGatewayRuntimeAdapterContext = {
+  gatewayBin: string;
+  openshellVersionOutput: string;
+  profile: import("./onboard/compute/managed-gateway-profile").ManagedGatewayDriverProfile;
+  stateDir: string;
+};
+
+type ResolvedManagedGatewayRuntime = {
+  gatewayEnv: Record<string, string>;
+  runtimeDiagnostics: readonly string[];
+  runtimeIdentity: import("./onboard/docker-driver-gateway-launch").ManagedDriverGatewayRuntimeIdentity;
+  verifySandboxReachability(exitOnFailure: boolean, options?: { skip?: boolean }): Promise<void>;
+  writeRuntimeMarker?(pid: number): void;
+};
+
+type ManagedGatewayRuntimeAdapter =
+  import("./onboard/compute/managed-gateway-profile").ManagedGatewayRuntimeAdapter & {
+    build(context: ManagedGatewayRuntimeAdapterContext): ResolvedManagedGatewayRuntime;
+  };
+
+const MANAGED_GATEWAY_RUNTIME_ADAPTERS = {
+  docker: {
+    driverName: "docker",
+    launchPolicy: "docker-compat",
+    runtimeMarkerPolicy: "docker-compat-v1",
+    sandboxReachability: "docker-bridge",
+    build({
+      gatewayBin,
+      openshellVersionOutput,
+      profile,
+      stateDir,
+    }: ManagedGatewayRuntimeAdapterContext): ResolvedManagedGatewayRuntime {
+      if (profile.launchPolicy !== "docker-compat") {
+        throw new Error("Docker managed-gateway profile must use docker-compat launch policy");
+      }
+      const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
+      const runtimeIdentity = dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
+        gatewayBin,
+        gatewayEnv,
+        stateDir,
+        sandboxBin: profile.capabilities.localSupervisorBinary
+          ? resolveOpenShellSandboxBinary()
+          : null,
+        gatewayName: GATEWAY_NAME,
+        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+        ensureLocalTlsBundle: true,
+        removeEnvironmentKeys: profile.incompatibleRuntimeEnvironmentKeys,
+      });
+      const { verifySandboxBridgeGatewayReachableOrExit } =
+        require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+      return {
+        gatewayEnv,
+        runtimeDiagnostics: ["docker info --format '{{json .CDISpecDirs}}'"],
+        runtimeIdentity,
+        verifySandboxReachability: (fail, options) =>
+          verifySandboxBridgeGatewayReachableOrExit(fail, {
+            skip: options?.skip,
+            port: GATEWAY_PORT,
+          }),
+        writeRuntimeMarker: (pid) =>
+          dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(
+            stateDir,
+            {
+              pid,
+              desiredEnv: runtimeIdentity.desiredEnv,
+              endpoint: getDockerDriverGatewayEndpoint(),
+              gatewayBin: runtimeIdentity.driftGatewayBin,
+              openshellVersion: getInstalledOpenshellVersion(openshellVersionOutput),
+              dockerHost: process.env.DOCKER_HOST || null,
+            },
+          ),
+      };
+    },
+  },
+  podman: {
+    driverName: "podman",
+    launchPolicy: "host-only",
+    runtimeMarkerPolicy: "process-env",
+    sandboxReachability: "podman-host",
+    build({
+      gatewayBin,
+      openshellVersionOutput,
+      profile,
+      stateDir,
+    }: ManagedGatewayRuntimeAdapterContext): ResolvedManagedGatewayRuntime {
+      if (profile.launchPolicy !== "host-only") {
+        throw new Error("Podman managed-gateway profile must remain host-only");
+      }
+      const podmanSocketPath = process.env.OPENSHELL_PODMAN_SOCKET?.trim();
+      if (!podmanSocketPath) {
+        throw new Error("Qualified Podman runtime did not provide OPENSHELL_PODMAN_SOCKET");
+      }
+      computeRuntime.ensureManagedGatewayLocalTlsBundle({
+        additionalServerDnsSans: ["host.containers.internal"],
+        gatewayBin,
+        stateDir,
+      });
+      const gatewayEnv = computeRuntime.buildPodmanDriverGatewayEnv({
+        gatewayPort: GATEWAY_PORT,
+        stateDir,
+        podmanSocketPath,
+        podmanNetworkName: process.env.OPENSHELL_PODMAN_NETWORK_NAME || "openshell",
+        supervisorImage: getOpenShellSupervisorImage(openshellVersionOutput),
+      });
+      const runtimeIdentity = dockerDriverGatewayLaunch.buildHostManagedGatewayRuntimeIdentity({
+        gatewayBin,
+        gatewayEnv,
+        gatewayName: GATEWAY_NAME,
+        removeEnvironmentKeys: profile.incompatibleRuntimeEnvironmentKeys,
+        runtimeEnvironmentKeys: profile.runtimeEnvironmentKeys,
+      });
+      return {
+        gatewayEnv,
+        runtimeDiagnostics: [
+          `podman --url unix://${podmanSocketPath} info`,
+          `podman --url unix://${podmanSocketPath} network inspect ${
+            process.env.OPENSHELL_PODMAN_NETWORK_NAME || "openshell"
+          }`,
+        ],
+        runtimeIdentity,
+        verifySandboxReachability: (fail, options) =>
+          computeRuntime.verifyPodmanSandboxGatewayReachableOrExit(fail, {
+            skip: options?.skip,
+            networkName: process.env.OPENSHELL_PODMAN_NETWORK_NAME || "openshell",
+            podmanSocketPath,
+            port: GATEWAY_PORT,
+            redact,
+          }),
+      };
+    },
+  },
+} as const satisfies Record<string, ManagedGatewayRuntimeAdapter>;
+
 /**
- * Reconcile or create the host Docker-driver gateway. The public onboard()
+ * Reconcile or create a NemoClaw-managed host gateway. The public onboard()
  * entrypoint holds acquireOnboardLock()'s atomic cross-process filesystem lock
- * (created with openSync("wx")) across this whole call, so separate concurrent
- * `nemoclaw onboard` CLI processes cannot race creation.
- * The strict post-reap bind check below remains a second boundary against
- * recovery commands or external processes that do not participate in that
- * lock; the OS then permits only one child to bind the port.
+ * across this whole call. The strict post-reap bind check remains a second
+ * boundary for recovery commands or external processes outside that lock.
  */
-async function startDockerDriverGateway({
+async function startManagedDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,
 }: {
   exitOnFailure?: boolean;
   skipSandboxBridgeReachability?: boolean;
 } = {}): Promise<void> {
+  const profile = getActiveManagedGatewayProfile();
+  if (!profile) {
+    throw new Error(
+      `OpenShell compute driver '${ACTIVE_OPEN_SHELL_COMPUTE_PLAN.driverName}' is not NemoClaw-managed.`,
+    );
+  }
+  const adapter = computeRuntime.resolveManagedGatewayRuntimeAdapter(
+    profile,
+    MANAGED_GATEWAY_RUNTIME_ADAPTERS,
+  );
   const gatewayBin = resolveOpenShellGatewayBinary();
+  if (!gatewayBin) {
+    console.error(`  OpenShell ${profile.displayName}-driver gateway binary not found.`);
+    console.error(
+      `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
+    );
+    if (exitOnFailure) process.exit(1);
+    throw new Error("OpenShell gateway binary not found");
+  }
   const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-  const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
   const stateDir = getDockerDriverGatewayStateDir();
-  const runtimeIdentity = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
-        gatewayBin,
-        gatewayEnv,
-        stateDir,
-        sandboxBin: resolveOpenShellSandboxBinary(),
-        gatewayName: GATEWAY_NAME,
-        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
-        ensureLocalTlsBundle: true,
-      })
-    : null;
-  const gatewayLaunch = runtimeIdentity?.launch ?? null;
+  const runtime = adapter.build({
+    gatewayBin,
+    openshellVersionOutput,
+    profile,
+    stateDir,
+  });
+  const gatewayEnv = runtime.gatewayEnv;
+  if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+    process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+  }
+  const runtimeIdentity = runtime.runtimeIdentity;
+  const gatewayLaunch = runtimeIdentity.launch;
   const driftGatewayBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(
     runtimeIdentity,
     gatewayBin,
   );
-  const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
-  const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
-  const { verifySandboxBridgeGatewayReachableOrExit } =
-    require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  const driftGatewayEnv = runtimeIdentity.desiredEnv;
+  const identityGatewayBin = runtimeIdentity.identityGatewayBin ?? gatewayBin;
+  const verifySandboxReachability = runtime.verifySandboxReachability;
   const initialPortCheck = await checkGatewayPortAvailable();
   const servicePortOwnership = createGatewayServicePortOwnership(initialPortCheck, {
     exitOnFailure,
@@ -1950,8 +2179,12 @@ async function startDockerDriverGateway({
       }),
   });
   if (
-    await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
+    profile.capabilities.packageManagedService &&
+    (await dockerDriverGatewayEnv.startPackageManagedDriverGatewayWithEnvOverride({
+      allowWildcardBind: profile.allowWildcardBind,
       clearDockerDriverGatewayRuntimeFiles,
+      driverLabel: profile.displayName,
+      driverName: profile.driverName,
       exitOnFailure,
       gatewayEnv: driftGatewayEnv,
       gatewayName: GATEWAY_NAME,
@@ -1962,20 +2195,17 @@ async function startDockerDriverGateway({
       runCaptureOpenshell,
       skipSandboxBridgeReachability,
       validatePortOwnerForOpenShellGatewayUserServiceStart: servicePortOwnership.validatePortOwner,
-      verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
-        verifySandboxBridgeGatewayReachableOrExit(fail, {
-          ...options,
-          port: GATEWAY_PORT,
-        }),
-    })
+      verifySandboxBridgeGatewayReachableOrExit: verifySandboxReachability,
+    }))
   )
     return;
   const initialHealth = dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
     runCaptureOpenshell,
     GATEWAY_NAME,
   );
-  const cutover = await dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
+  const cutover = await dockerDriverGatewayCutover.runManagedDriverGatewayCutover(
     {
+      driverLabel: profile.displayName,
       gatewayBin,
       identityGatewayBin,
       driftGatewayBin,
@@ -1991,15 +2221,12 @@ async function startDockerDriverGateway({
       isDockerDriverGatewayProcessAlive,
       isGatewayHealthy,
       getDockerDriverGatewayRuntimeDrift,
-      logDockerDriverGatewayRestart,
+      logDockerDriverGatewayRestart: (reason) =>
+        logManagedDriverGatewayRestart(profile.displayName, reason),
       registerDockerDriverGatewayEndpoint,
       isDockerDriverGatewayHttpReady: () =>
         isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
-      verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
-        verifySandboxBridgeGatewayReachableOrExit(fail, {
-          ...options,
-          port: GATEWAY_PORT,
-        }),
+      verifySandboxBridgeGatewayReachableOrExit: verifySandboxReachability,
       readGatewayHealth: () => ({
         status: runCaptureOpenshell(["status"], { ignoreError: true }),
         namedInfo: runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -2016,25 +2243,23 @@ async function startDockerDriverGateway({
       },
       reportUntrustedGatewayPort: servicePortOwnership.reportUntrustedGatewayPort,
       reportMissingGatewayBinary: () => {
-        console.error("  OpenShell Docker-driver gateway binary not found.");
-        console.error(
-          `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
-        );
-        if (exitOnFailure) process.exit(1);
-        throw new Error("OpenShell gateway binary not found");
+        throw new Error("OpenShell gateway binary disappeared during managed cutover");
       },
       log: (message) => console.log(message),
     },
   );
   if (cutover === "reused") return;
-  if (!gatewayBin || !gatewayLaunch) {
+  if (!gatewayLaunch) {
     throw new Error("OpenShell gateway launch missing after cutover");
   }
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
-  const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
-  console.log("  Starting OpenShell Docker-driver gateway...");
+  const logFd = dockerDriverGatewayLaunch.openManagedDriverGatewayLog(logPath, {
+    driverLabel: profile.displayName,
+    exitOnFailure,
+  });
+  console.log(`  Starting OpenShell ${profile.displayName}-driver gateway...`);
   console.log(`  Gateway log: ${logPath}`);
   const launch = gatewayLaunch;
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
@@ -2046,21 +2271,11 @@ async function startDockerDriverGateway({
     throw new Error("OpenShell gateway process did not return a pid");
   }
   rememberDockerDriverGatewayPid(childPid);
-  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(
-    getDockerDriverGatewayStateDir(),
-    {
-      pid: childPid,
-      desiredEnv: driftGatewayEnv,
-      endpoint: getDockerDriverGatewayEndpoint(),
-      gatewayBin: driftGatewayBin,
-      openshellVersion: getInstalledOpenshellVersion(openshellVersionOutput),
-      dockerHost: process.env.DOCKER_HOST || null,
-    },
-  );
+  runtime.writeRuntimeMarker?.(childPid);
 
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  const gatewayStartup = await waitForStandaloneDockerDriverGateway({
+  const gatewayStartup = await waitForStandaloneManagedDriverGateway({
     childExited: () => childExit.exited,
     childPid,
     gatewayName: GATEWAY_NAME,
@@ -2070,9 +2285,8 @@ async function startDockerDriverGateway({
     isGatewayTcpReady,
     isPidAlive,
     onHealthy: async () => {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+      await verifySandboxReachability(exitOnFailure, {
         skip: skipSandboxBridgeReachability,
-        port: GATEWAY_PORT,
       });
     },
     registerGatewayEndpoint: registerDockerDriverGatewayEndpoint,
@@ -2080,16 +2294,22 @@ async function startDockerDriverGateway({
     sleepSeconds,
   });
   if (gatewayStartup === "healthy") {
-    console.log("  ✓ Docker-driver gateway is healthy");
+    console.log(`  ✓ ${profile.displayName}-driver gateway is healthy`);
     return;
   }
 
-  reportDockerDriverGatewayStartFailure(logPath, childExit, { exitOnFailure });
+  reportManagedDriverGatewayStartFailure(logPath, childExit, {
+    driverLabel: profile.displayName,
+    exitOnFailure,
+    runtimeDiagnostics: runtime.runtimeDiagnostics,
+  });
   if (gatewayStartup === "exited") {
-    throw new Error("Docker-driver gateway failed to start because the process exited");
+    throw new Error(
+      `${profile.displayName}-driver gateway failed to start because the process exited`,
+    );
   }
   const waitLimit = formatGatewayHealthWaitLimit(pollCount, pollInterval);
-  throw new Error(`Docker-driver gateway failed to start within ${waitLimit}`);
+  throw new Error(`${profile.displayName}-driver gateway failed to start within ${waitLimit}`);
 }
 
 async function startGateway(
@@ -2099,15 +2319,72 @@ async function startGateway(
   return startGatewayWithOptions(_gpu, { exitOnFailure: true, gpuPassthrough });
 }
 
-async function startGatewayForRecovery(options = {}): Promise<void> {
-  return require("./onboard/gateway-recovery").startGatewayForRecovery(options, {
-    assertGatewayStartAllowed,
-    getGatewayStartEnv,
-    runCaptureOpenshell,
-    runOpenshell,
-    startGatewayWithOptions,
-    isLinuxDockerDriverGatewayEnabled,
-  });
+async function startGatewayForRecovery(
+  options: import("./onboard/gateway-recovery").StartGatewayForRecoveryOptions = {},
+): Promise<void> {
+  const previousComputePlan = ACTIVE_OPEN_SHELL_COMPUTE_PLAN;
+  const recoveryRuntimeEnvironmentKeys = [
+    "OPENSHELL_PODMAN_NETWORK_NAME",
+    "OPENSHELL_PODMAN_SOCKET",
+    "OPENSHELL_SUPERVISOR_IMAGE",
+  ] as const;
+  const previousRecoveryRuntimeEnvironment = Object.fromEntries(
+    recoveryRuntimeEnvironmentKeys.map((key) => [key, process.env[key]]),
+  ) as Record<(typeof recoveryRuntimeEnvironmentKeys)[number], string | undefined>;
+  try {
+    if (options.computeDriver) {
+      const requestedDriver = options.computeDriver === "vm" ? "docker" : options.computeDriver;
+      ACTIVE_OPEN_SHELL_COMPUTE_PLAN = computeRuntime.resolveOpenShellComputeSelection({
+        requestedDriver,
+        autoPlan: computeRuntime.resolveCurrentOpenShellComputePlan(),
+      });
+      if (requestedDriver === "podman") {
+        const recoveryGatewayName =
+          options.gatewayName ??
+          gatewayBinding.resolveGatewayName(options.gatewayPort ?? GATEWAY_PORT);
+        const recoveryRuntime = computeRuntime.resolveManagedGatewayRecoveryRuntime({
+          driverName: requestedDriver,
+          environment: process.env,
+          stateDir: gatewayBinding.resolveManagedGatewayStateDirectory(recoveryGatewayName),
+        });
+        Object.assign(process.env, recoveryRuntime.environment);
+        const receipt = computeRuntime.assessNativePodman();
+        if (receipt.socketPath !== recoveryRuntime.environment.OPENSHELL_PODMAN_SOCKET) {
+          throw new Error("Qualified Podman socket does not match the managed recovery runtime.");
+        }
+      }
+    }
+    const gatewayRecovery: typeof import("./onboard/gateway-recovery") =
+      require("./onboard/gateway-recovery");
+    return await gatewayRecovery.startGatewayForRecovery(options, {
+      assertGatewayStartAllowed,
+      getGatewayStartEnv,
+      runCaptureOpenshell,
+      runOpenshell,
+      startGatewayWithOptions: async (gpu, recoveryTarget) => {
+        const previousGatewayName = GATEWAY_NAME;
+        const previousGatewayPort = GATEWAY_PORT;
+        try {
+          GATEWAY_NAME = recoveryTarget.gatewayName;
+          GATEWAY_PORT = recoveryTarget.gatewayPort;
+          return await startGatewayWithOptions(gpu, {
+            exitOnFailure: recoveryTarget.exitOnFailure,
+          });
+        } finally {
+          GATEWAY_NAME = previousGatewayName;
+          GATEWAY_PORT = previousGatewayPort;
+        }
+      },
+      isManagedDriverGatewayEnabled,
+    });
+  } finally {
+    ACTIVE_OPEN_SHELL_COMPUTE_PLAN = previousComputePlan;
+    for (const key of recoveryRuntimeEnvironmentKeys) {
+      const previous = previousRecoveryRuntimeEnvironment[key];
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  }
 }
 
 const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
@@ -2139,9 +2416,9 @@ const {
 
 async function recoverGatewayRuntime() {
   assertGatewayStartAllowed(false);
-  if (isLinuxDockerDriverGatewayEnabled()) {
+  if (isManagedDriverGatewayEnabled()) {
     try {
-      await startDockerDriverGateway({ exitOnFailure: false });
+      await startManagedDriverGateway({ exitOnFailure: false });
       return true;
     } catch {
       return false;
@@ -2207,8 +2484,7 @@ async function recoverGatewayRuntime() {
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
-    getOpenShellComputeDriverName: () =>
-      dockerDriverPlatform.resolveCurrentOpenShellComputePlan().driverName,
+    getOpenShellComputeDriverName: () => ACTIVE_OPEN_SHELL_COMPUTE_PLAN.driverName,
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
@@ -2295,6 +2571,19 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
+  if (existingEntry) {
+    // The name may be selected interactively after the early session/registry
+    // binding pass. Re-check the surviving registry row before reuse or
+    // destructive recreation so "auto" can never migrate a sandbox between
+    // runtime drivers implicitly.
+    computeRuntime.resolveOpenShellComputeSelection({
+      requestedDriver: computePlan.driverName,
+      persistedDriver:
+        existingEntry.openshellDriver ??
+        computeRuntime.resolveCurrentOpenShellComputePlan().driverName,
+      autoPlan: computePlan,
+    });
+  }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const recreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
   const restoreReusedSandboxDashboard = (selectionVerified: boolean): void => {
@@ -2637,7 +2926,7 @@ async function createSandboxWithBaseImageResolution(
     staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
   });
 
-  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
+  const dockerDriverGateway = isActiveDockerManagedGateway();
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
     runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
@@ -2866,10 +3155,9 @@ type CreateSandboxArgs =
     : never;
 
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
-  const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   return createSandboxWithBaseImageResolution(
     baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    computePlan,
+    ACTIVE_OPEN_SHELL_COMPUTE_PLAN,
     null,
     ...args,
   );
@@ -3513,8 +3801,16 @@ function getSetupNimDeps(): SetupNimDeps {
     getNonInteractiveProvider,
     getNonInteractiveModel,
     createNvidiaFeaturedModelSession,
-    detectInferenceProviderHostState,
+    detectInferenceProviderHostState: (input) =>
+      detectInferenceProviderHostState({
+        ...input,
+        localInferenceEnabled: activeRuntimeSupportsHostLocalInference(),
+      }),
     getAgentInferenceProviderOptions,
+    filterProviderOptions: (options) =>
+      activeRuntimeSupportsHostLocalInference()
+        ? [...options]
+        : options.filter(({ key }) => Object.hasOwn(REMOTE_PROVIDER_CONFIG, key)),
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
     readRecordedProvider,
     readRecordedNimContainer,
@@ -3637,7 +3933,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
   resolveGpuPlan: (config) =>
     dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(config, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      dockerDriverGateway: isActiveDockerManagedGateway(),
     }),
   appendResourceCreateArgs: (args, resourceProfile) =>
     appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
@@ -3859,6 +4155,10 @@ async function preflightAuthoritativeRebuildTarget(
   const fail = (message: string): never => {
     throw new Error(message);
   };
+  const computePlan = computeRuntime.resolveOpenShellComputeSelection({
+    requestedDriver: opts.computeDriver ?? "auto",
+    autoPlan: computeRuntime.resolveCurrentOpenShellComputePlan(),
+  });
   try {
     await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
@@ -3873,13 +4173,16 @@ async function preflightAuthoritativeRebuildTarget(
             },
             {
               nonInteractive: true,
+              computePlan,
+              env: process.env,
               exitProcess: (code) =>
                 fail(`onboard runtime preflight exited with code ${String(code)}`),
             },
           ),
         ensureOpenshell: () =>
-          ensureOpenshellForOnboard((code) =>
-            fail(`OpenShell component preflight exited with code ${String(code)}`),
+          ensureOpenshellForOnboard(
+            (code) => fail(`OpenShell component preflight exited with code ${String(code)}`),
+            computePlan,
           ),
         inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
@@ -3903,8 +4206,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
+  const previousComputePlan = ACTIVE_OPEN_SHELL_COMPUTE_PLAN;
   const previousOpenshellGateway = process.env.OPENSHELL_GATEWAY;
   const previousOpenshellLocalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
+  const previousOpenshellPodmanSocket = process.env.OPENSHELL_PODMAN_SOCKET;
   const preparedDcodeRuntime = preparedDcodeRebuild.createPreparedDcodeRebuildRuntime(
     opts,
     authoritativeGateway?.name ?? GATEWAY_NAME,
@@ -3918,6 +4223,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   onboardRuntimeBoundary.reset();
   if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
   preparedDcodeRuntime.applyGatewayEnv(process.env);
+  const persistedSessionAtEntry = onboardSession.loadSession();
   const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
     onboardEntryOptions.resolveOnboardEntryOptions(
       {
@@ -3925,7 +4231,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         env: process.env,
         stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
         stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
-        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
+        persistedSessionStatus: persistedSessionAtEntry?.status ?? null,
       },
       {
         isNonInteractive,
@@ -3942,7 +4248,31 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     initialHint: opts.baseImageResolutionHint,
     initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
-  const onboardingComputePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
+  const autoComputePlan = computeRuntime.resolveCurrentOpenShellComputePlan();
+  const durableSandboxName =
+    requestedSandboxName ?? (resume ? (persistedSessionAtEntry?.sandboxName ?? null) : null);
+  const durableSandboxEntry = durableSandboxName ? registry.getSandbox(durableSandboxName) : null;
+  const persistedComputeDriver = computeRuntime.resolvePersistedOpenShellComputeDriver([
+    {
+      source: "onboarding session",
+      driverName: resume ? persistedSessionAtEntry?.metadata.openshellDriver : null,
+    },
+    {
+      source: durableSandboxName ? `sandbox registry '${durableSandboxName}'` : "sandbox registry",
+      // Legacy rows predate explicit driver identity. Preserve their prior
+      // platform-derived behavior instead of allowing cross-driver adoption.
+      driverName: durableSandboxEntry
+        ? (durableSandboxEntry.openshellDriver ?? autoComputePlan.driverName)
+        : null,
+    },
+  ]);
+  const requestedComputeDriver =
+    opts.computeDriver ?? process.env.NEMOCLAW_COMPUTE_DRIVER?.trim() ?? "auto";
+  let onboardingComputePlan = computeRuntime.resolveOpenShellComputeSelection({
+    requestedDriver: requestedComputeDriver,
+    persistedDriver: persistedComputeDriver,
+    autoPlan: autoComputePlan,
+  });
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
@@ -3972,6 +4302,59 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     console.error("  Wait for it to finish, or remove the stale lock if the previous run crashed:");
     console.error(`    rm -f "${lockResult.lockFile}"`);
     process.exit(1);
+  }
+  let lockReleased = false;
+  const releaseOnboardLock = () => {
+    if (lockReleased || !ownsOnboardLock) return;
+    lockReleased = true;
+    onboardSession.releaseOnboardLock();
+  };
+  if (ownsOnboardLock) process.once("exit", releaseOnboardLock);
+  try {
+    const driverBindingGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({
+      authoritativeGateway,
+      currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT },
+      resume,
+      sandbox: durableSandboxEntry,
+    });
+    const sharedGatewayDriver = gatewayBinding.resolveGatewayComputeDriverBinding({
+      gatewayName: driverBindingGateway.name,
+      sandboxes: registry.listSandboxes().sandboxes,
+      legacyDriverName: autoComputePlan.driverName,
+    });
+    const runtimeBinding = computeRuntime.readManagedGatewayRuntimeBinding(
+      gatewayBinding.resolveManagedGatewayStateDirectory(driverBindingGateway.name),
+    );
+    const lockedPersistedComputeDriver = computeRuntime.resolvePersistedOpenShellComputeDriver([
+      {
+        source: "requested sandbox or onboarding session",
+        driverName: persistedComputeDriver,
+      },
+      {
+        source: `gateway '${driverBindingGateway.name}'`,
+        driverName: sharedGatewayDriver,
+      },
+      {
+        source: `gateway runtime '${driverBindingGateway.name}'`,
+        driverName: runtimeBinding?.driverName,
+      },
+    ]);
+    onboardingComputePlan = computeRuntime.resolveOpenShellComputeSelection({
+      requestedDriver: requestedComputeDriver,
+      persistedDriver: lockedPersistedComputeDriver,
+      autoPlan: autoComputePlan,
+    });
+    if (
+      onboardingComputePlan.driverName === "podman" &&
+      (opts.gpu === true || opts.sandboxGpu === "enable")
+    ) {
+      throw new computeRuntime.OpenShellComputeSelectionError(
+        "Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.",
+      );
+    }
+  } catch (error) {
+    releaseOnboardLock();
+    throw error;
   }
   // Stage any pre-fix plaintext credentials.json into process.env so the
   // provider upserts later in this run can pick the values up. The file is
@@ -4014,14 +4397,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     );
   }
 
-  let lockReleased = false;
-  const releaseOnboardLock = () => {
-    if (lockReleased || !ownsOnboardLock) return;
-    lockReleased = true;
-    onboardSession.releaseOnboardLock();
-  };
-  if (ownsOnboardLock) process.once("exit", releaseOnboardLock);
-
   if (authoritativeGateway) {
     GATEWAY_NAME = authoritativeGateway.name;
     GATEWAY_PORT = authoritativeGateway.port;
@@ -4033,6 +4408,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     span: null,
   };
   let traceCompleted = false;
+  ACTIVE_OPEN_SHELL_COMPUTE_PLAN = onboardingComputePlan;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
@@ -4047,6 +4423,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        openshellDriver: onboardingComputePlan.driverName,
         ...stationSessionInput,
       },
       {
@@ -4065,6 +4442,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    if (session) {
+      const recordedDriver = session.metadata.openshellDriver?.trim() || null;
+      if (recordedDriver && recordedDriver !== onboardingComputePlan.driverName) {
+        throw new computeRuntime.OpenShellComputeSelectionError(
+          `Onboarding session driver '${recordedDriver}' does not match selected driver '${onboardingComputePlan.driverName}'.`,
+        );
+      }
+      if (!recordedDriver) {
+        session = onboardSession.updateSession((current) => {
+          current.metadata.openshellDriver = onboardingComputePlan.driverName;
+          return current;
+        });
+      }
+    }
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
@@ -4185,12 +4576,36 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         getResumeSandboxGpuOverrides,
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
-        assessHost,
+        assessHost: () =>
+          assessHost({ skipDockerProbe: onboardingComputePlan.driverName === "podman" }),
         assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
-        rejectUnsupportedContainerRuntime: fatalRuntimePreflight.rejectUnsupportedContainerRuntime,
-        assertDockerBridgeAndContainerDnsHealthy,
-        resolveSandboxGpuConfig,
-        validateSandboxGpuPreflight,
+        rejectUnsupportedContainerRuntime: (host) => {
+          fatalRuntimePreflight.assertSelectedContainerRuntimeReady(host, onboardingComputePlan, {
+            env: process.env,
+          });
+        },
+        assertDockerBridgeAndContainerDnsHealthy: (host) => {
+          if (onboardingComputePlan.driverName !== "podman") {
+            assertDockerBridgeAndContainerDnsHealthy(host);
+          }
+        },
+        resolveSandboxGpuConfig: (gpu, configOptions) =>
+          resolveSandboxGpuConfig(gpu, {
+            ...configOptions,
+            flag:
+              onboardingComputePlan.driverName === "podman" && configOptions.flag === null
+                ? "disable"
+                : configOptions.flag,
+          }),
+        validateSandboxGpuPreflight: (config) => {
+          if (onboardingComputePlan.driverName === "podman" && config.sandboxGpuEnabled) {
+            console.error(
+              "  Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.",
+            );
+            process.exit(1);
+          }
+          validateSandboxGpuPreflight(config);
+        },
         skippedStepMessage,
         recordStateSkipped,
         startRecordedStep,
@@ -4205,6 +4620,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
+          !isManagedDriverGatewayEnabled() &&
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         verifyGatewayContainerRunning,
         waitForGatewayHttpReady,
@@ -4216,7 +4632,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         getGatewayClusterImageDrift,
         stopAllDashboardForwards,
         reconcileGatewayGpuReuseForGpuIntent,
-        isLinuxDockerDriverGatewayEnabled,
+        isLinuxDockerDriverGatewayEnabled: isActiveDockerManagedGateway,
         retireLegacyGatewayForDockerDriverUpgrade,
         destroyGatewayRuntimeForGpuReuse: () =>
           destroyGateway(
@@ -4600,10 +5016,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
     GATEWAY_NAME = previousGatewayBinding.name;
     GATEWAY_PORT = previousGatewayBinding.port;
+    ACTIVE_OPEN_SHELL_COMPUTE_PLAN = previousComputePlan;
     if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
     else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
     if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
     else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
+    if (previousOpenshellPodmanSocket === undefined) delete process.env.OPENSHELL_PODMAN_SOCKET;
+    else process.env.OPENSHELL_PODMAN_SOCKET = previousOpenshellPodmanSocket;
     resetGatewayOwnerBinding();
   }
 }

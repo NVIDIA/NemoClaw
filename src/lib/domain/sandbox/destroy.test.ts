@@ -8,6 +8,7 @@ import {
   getSandboxDeleteOutcome,
   hasNoLiveSandboxes,
   hasRunningDockerSandboxContainer,
+  hasRuntimeSandboxContainer,
   isGatewayUnreachableDeleteOutput,
   isMissingSandboxDeleteOutput,
   resolveDestroyGatewayCleanupDecision,
@@ -140,15 +141,13 @@ describe("sandbox destroy helpers", () => {
     expect(
       hasNoLiveSandboxes({
         liveList: { status: 0, output: liveListOutput },
-        dockerContainersBySandboxName: new Map([["npmtest", { output: "" }]]),
+        runtimeContainersBySandboxName: new Map([["npmtest", { present: false }]]),
       }),
     ).toBe(true);
     expect(
       hasNoLiveSandboxes({
         liveList: { status: 0, output: liveListOutput },
-        dockerContainersBySandboxName: new Map([
-          ["npmtest", { output: "openshell-npmtest-e487d1bd\n" }],
-        ]),
+        runtimeContainersBySandboxName: new Map([["npmtest", { present: true }]]),
       }),
     ).toBe(false);
     expect(
@@ -158,7 +157,7 @@ describe("sandbox destroy helpers", () => {
           output:
             "NAME              CREATED              PHASE\nnpmtest           now                  Ready\n",
         },
-        dockerContainersBySandboxName: new Map([["npmtest", { output: "" }]]),
+        runtimeContainersBySandboxName: new Map([["npmtest", { present: false }]]),
       }),
     ).toBe(false);
   });
@@ -175,7 +174,9 @@ describe("sandbox destroy helpers", () => {
           output:
             "NAME              CREATED              PHASE\nnpmtest           now                  Failed\n",
         },
-        dockerContainersBySandboxName: new Map([["npmtest", { output: "", probeFailed: true }]]),
+        runtimeContainersBySandboxName: new Map([
+          ["npmtest", { present: false, probeFailed: true }],
+        ]),
       }),
     ).toBe(false);
   });
@@ -184,7 +185,7 @@ describe("sandbox destroy helpers", () => {
     expect(
       hasNoLiveSandboxes({
         liveList: { status: 1, output: "" },
-        dockerContainersBySandboxName: new Map(),
+        runtimeContainersBySandboxName: new Map(),
       }),
     ).toBe(false);
   });
@@ -208,5 +209,12 @@ describe("sandbox destroy helpers", () => {
         ["npmtest", "npmtest-extra"],
       ),
     ).toBe(false);
+  });
+
+  it("treats missing and failed pluggable-runtime evidence as live", () => {
+    expect(hasRuntimeSandboxContainer(undefined)).toBe(true);
+    expect(hasRuntimeSandboxContainer({ present: false, probeFailed: true })).toBe(true);
+    expect(hasRuntimeSandboxContainer({ present: true })).toBe(true);
+    expect(hasRuntimeSandboxContainer({ present: false })).toBe(false);
   });
 });

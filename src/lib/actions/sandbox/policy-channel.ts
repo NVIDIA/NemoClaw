@@ -703,7 +703,11 @@ async function applyChannelAddToGatewayAndRegistry(
   }));
   if (tokenDefs.length > 0) {
     const gatewayName = getSandboxTargetGatewayName(sandboxName);
-    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+    const computeDriver = registry.getSandbox(sandboxName)?.openshellDriver?.trim();
+    const recovery = await recoverNamedGatewayRuntime({
+      ...(computeDriver ? { computeDriver } : {}),
+      gatewayName,
+    });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
@@ -732,7 +736,11 @@ async function applyChannelRemoveToGatewayAndRegistry(
 
   if (channelTokenKeys.length > 0) {
     const gatewayName = getSandboxTargetGatewayName(sandboxName);
-    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+    const computeDriver = registry.getSandbox(sandboxName)?.openshellDriver?.trim();
+    const recovery = await recoverNamedGatewayRuntime({
+      ...(computeDriver ? { computeDriver } : {}),
+      gatewayName,
+    });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,

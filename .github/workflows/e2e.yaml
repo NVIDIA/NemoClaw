@@ -15,7 +15,12 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, podman-all-agents, and staging-brev-launchable are skipped unless selected."
+        required: false
+        default: ""
+        type: string
+      podman_managed_image_release:
+        description: "Published complete managed-image release for the explicit podman-all-agents lane (for example v0.0.98). A selected job fails visibly when this input is omitted."
         required: false
         default: ""
         type: string
@@ -5686,6 +5691,369 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  podman-all-agents:
+    name: Native Podman (${{ matrix.agent }})
+    needs: generate-matrix
+    if: ${{ contains(format(',{0},', inputs.jobs), ',podman-all-agents,') || contains(format(',{0},', inputs.targets), ',podman-all-agents,') }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, langchain-deepagents-code]
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "podman-all-agents"
+      E2E_PODMAN_AGENT: ${{ matrix.agent }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/podman-all-agents/${{ matrix.agent }}
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_FRESH: "1"
+      NEMOCLAW_SANDBOX_GPU: "0"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Docker invocation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          guard_dir="$RUNNER_TEMP/nemoclaw-podman-runtime-guard"
+          guard_log="$guard_dir/docker-invocations.log"
+          original_docker_bin="$(command -v docker || true)"
+          install -d -m 0700 "$guard_dir/bin"
+          : >"$guard_log"
+          cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
+          #!/usr/bin/env bash
+          printf '%s\n' "$*" >> "${E2E_DOCKER_GUARD_LOG:?}"
+          printf 'Docker CLI use is forbidden in the native Podman E2E lane.\n' >&2
+          exit 97
+          DOCKER_GUARD
+          chmod 0700 "$guard_dir/bin/docker"
+          {
+            printf 'DOCKER_API_VERSION=\n'
+            printf 'DOCKER_CERT_PATH=\n'
+            printf 'DOCKER_CONFIG=\n'
+            printf 'DOCKER_CONTEXT=\n'
+            printf 'DOCKER_HOST=\n'
+            printf 'DOCKER_TLS_VERIFY=\n'
+            printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_log"
+            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_dir/bin/docker"
+            printf 'E2E_ORIGINAL_DOCKER_BIN=%s\n' "$original_docker_bin"
+            printf 'PATH=%s:%s\n' "$guard_dir/bin" "$PATH"
+          } >>"$GITHUB_ENV"
+
+      - name: Disable the Docker daemon for native Podman proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl stop docker.service docker.socket
+          sudo systemctl mask --runtime docker.service docker.socket
+          if systemctl is-active --quiet docker.service || systemctl is-active --quiet docker.socket; then
+            echo "::error::Docker service or socket unit remained active after it was disabled" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket remained available after the daemon was disabled" >&2
+            exit 1
+          fi
+          docker_candidate="$(command -v docker || true)"
+          if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the native Podman guard" >&2
+            exit 1
+          fi
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          jq -n \
+            --arg candidateDockerBin "$docker_candidate" \
+            --arg originalDockerBin "$E2E_ORIGINAL_DOCKER_BIN" \
+            '{
+              schemaVersion: 1,
+              dockerServiceActive: false,
+              dockerSocketActive: false,
+              dockerSocketPresent: false,
+              candidateDockerBin: $candidateDockerBin,
+              originalDockerBin: ($originalDockerBin | if length > 0 then . else null end)
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-boundary.json"
+
+      - id: podman_catalog
+        name: Resolve complete published managed-image release
+        env:
+          REQUESTED_RELEASE: ${{ inputs.podman_managed_image_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          gate_evidence="$E2E_ARTIFACT_DIR/podman-release-gate.json"
+          catalog_evidence="$E2E_ARTIFACT_DIR/podman-managed-image-catalog.json"
+          release="${REQUESTED_RELEASE:-}"
+          if [ -z "$release" ]; then
+            jq -n \
+              --arg reason "podman-all-agents is gated until a published complete managed-image release is supplied" \
+              '{schemaVersion:1,status:"gated",reason:$reason}' >"$gate_evidence"
+            {
+              printf 'run=false\n'
+              printf 'catalog_evidence=%s\n' "$catalog_evidence"
+            } >>"$GITHUB_OUTPUT"
+            printf '### Native Podman E2E\n\nGated: no published managed-image release was supplied.\n' >>"$GITHUB_STEP_SUMMARY"
+            echo "::error::podman-all-agents was selected without podman_managed_image_release; reporting this lane as not passed" >&2
+            exit 1
+          fi
+          if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){2}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::podman_managed_image_release must be a v-prefixed release version" >&2
+            exit 1
+          fi
+
+          declare -A images=(
+            [openclaw]="ghcr.io/nvidia/nemoclaw/openclaw-sandbox"
+            [hermes]="ghcr.io/nvidia/nemoclaw/hermes-sandbox"
+            [langchain-deepagents-code]="ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox"
+          )
+          openclaw_json="$RUNNER_TEMP/podman-managed-openclaw.json"
+          skopeo inspect --override-os linux --override-arch amd64 \
+            "docker://${images[openclaw]}:$release" >"$openclaw_json"
+          source_cohort="$(
+            jq -r '.Labels["io.nvidia.nemoclaw.managed-image.cohort"] // empty' "$openclaw_json"
+          )"
+          source_revision="$(
+            jq -r '.Labels["org.opencontainers.image.revision"] // empty' "$openclaw_json"
+          )"
+          if [[ ! "$source_cohort" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+             [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::OpenClaw release pointer lacks a valid cohort/revision identity" >&2
+            exit 1
+          fi
+
+          rows="$RUNNER_TEMP/podman-managed-image-rows.jsonl"
+          : >"$rows"
+          for agent in openclaw hermes langchain-deepagents-code; do
+            image="${images[$agent]}"
+            if [ "$agent" = "openclaw" ]; then
+              root_reference="$release"
+              inspect_json="$openclaw_json"
+            else
+              root_reference="cohort-$source_cohort"
+              inspect_json="$RUNNER_TEMP/podman-managed-$agent.json"
+              skopeo inspect --override-os linux --override-arch amd64 \
+                "docker://$image:$root_reference" >"$inspect_json"
+            fi
+            if ! jq -e \
+              --arg agent "$agent" \
+              --arg cohort "$source_cohort" \
+              --arg revision "$source_revision" \
+              '
+                .Os == "linux"
+                and .Architecture == "amd64"
+                and .Labels["io.nvidia.nemoclaw.agent"] == $agent
+                and .Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1"
+                and .Labels["io.nvidia.nemoclaw.managed-image.platform"] == "linux/amd64"
+                and .Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1"
+                and .Labels["io.nvidia.nemoclaw.managed-image.capabilities"] == "1"
+                and .Labels["io.nvidia.nemoclaw.managed-image.cohort"] == $cohort
+                and .Labels["org.opencontainers.image.revision"] == $revision
+                and .Labels["org.opencontainers.image.source"] == "https://github.com/NVIDIA/NemoClaw"
+                and (.Digest | test("^sha256:[0-9a-f]{64}$"))
+              ' "$inspect_json" >/dev/null
+            then
+              echo "::error::$agent managed image failed the complete release contract" >&2
+              exit 1
+            fi
+            digest="$(jq -r '.Digest' "$inspect_json")"
+            jq -n \
+              --arg agent "$agent" \
+              --arg digest "$digest" \
+              --arg image "$image" \
+              --arg release "$release" \
+              --arg rootReference "$root_reference" \
+              --arg sourceCohort "$source_cohort" \
+              --arg sourceRevision "$source_revision" \
+              '{
+                agent: $agent,
+                release: $release,
+                image: $image,
+                digest: $digest,
+                reference: ($image + "@" + $digest),
+                rootReference: $rootReference,
+                sourceCohort: $sourceCohort,
+                sourceRevision: $sourceRevision
+              }' >>"$rows"
+          done
+          jq -s --arg release "$release" \
+            '{schemaVersion:1,status:"resolved",release:$release,images:.}' \
+            "$rows" >"$catalog_evidence"
+          jq -e \
+            --arg cohort "$source_cohort" \
+            --arg release "$release" \
+            --arg revision "$source_revision" \
+            '
+              .status == "resolved"
+              and .release == $release
+              and (.images | length) == 3
+              and ([.images[].agent] | sort) == [
+                "hermes",
+                "langchain-deepagents-code",
+                "openclaw"
+              ]
+              and all(.images[];
+                .release == $release
+                and .sourceCohort == $cohort
+                and .sourceRevision == $revision
+                and .reference == (.image + "@" + .digest)
+              )
+            ' "$catalog_evidence" >/dev/null
+          if ! git merge-base --is-ancestor "$source_revision" HEAD; then
+            echo "::error::managed-image release revision is not an ancestor of the tested checkout" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg release "$release" \
+            --arg sourceCohort "$source_cohort" \
+            --arg sourceRevision "$source_revision" \
+            '{schemaVersion:1,status:"ready",release:$release,sourceCohort:$sourceCohort,sourceRevision:$sourceRevision}' \
+            >"$gate_evidence"
+          {
+            printf 'run=true\n'
+            printf 'release=%s\n' "$release"
+            printf 'catalog_evidence=%s\n' "$catalog_evidence"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Bind the candidate CLI to the verified release identity
+        if: ${{ steps.podman_catalog.outputs.run == 'true' }}
+        env:
+          MANAGED_IMAGE_RELEASE: ${{ steps.podman_catalog.outputs.release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag --force "$MANAGED_IMAGE_RELEASE" HEAD
+          resolved="$(git describe --tags --match 'v*')"
+          if [ "$resolved" != "$MANAGED_IMAGE_RELEASE" ]; then
+            echo "::error::candidate CLI did not resolve to the verified managed-image release" >&2
+            exit 1
+          fi
+
+      - name: Start exact rootless Podman API socket
+        if: ${{ steps.podman_catalog.outputs.run == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          podman_version="$(podman --version)"
+          if [[ ! "$podman_version" =~ ^podman[[:space:]]version[[:space:]]([0-9]+)([.][0-9]+){1,3}$ ]] ||
+             (( BASH_REMATCH[1] < 5 )); then
+            echo "::error::native Podman E2E requires Podman 5 or newer; got '$podman_version'" >&2
+            exit 1
+          fi
+          uid="$(id -u)"
+          runtime_dir="/run/user/$uid"
+          socket_path="$runtime_dir/podman/podman.sock"
+          if [ ! -d "$runtime_dir" ]; then
+            sudo install -d -o "$uid" -g "$(id -g)" -m 0700 "$runtime_dir"
+          fi
+          install -d -m 0700 "$runtime_dir" "$runtime_dir/podman"
+          service_log="$E2E_ARTIFACT_DIR/podman-system-service.log"
+          service_pid_file="$RUNNER_TEMP/nemoclaw-podman-service.pid"
+          if ! podman --url "unix://$socket_path" info --format json >/dev/null 2>&1; then
+            podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+            service_pid="$!"
+            printf '%s\n' "$service_pid" >"$service_pid_file"
+          fi
+          for attempt in $(seq 1 30); do
+            if podman --url "unix://$socket_path" info --format json \
+              >"$E2E_ARTIFACT_DIR/podman-info.json" 2>>"$service_log"; then
+              break
+            fi
+            if [ "$attempt" = "30" ]; then
+              echo "::error::exact rootless Podman API socket did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if ! jq -e '(.host.security.rootless // .Host.Security.Rootless) == true' \
+            "$E2E_ARTIFACT_DIR/podman-info.json" >/dev/null; then
+            echo "::error::Podman API socket is not rootless" >&2
+            exit 1
+          fi
+          if [ ! -S "$socket_path" ]; then
+            echo "::error::Podman API endpoint is not a Unix socket: $socket_path" >&2
+            exit 1
+          fi
+          {
+            printf 'E2E_PODMAN_CATALOG_EVIDENCE=%s\n' "${{ steps.podman_catalog.outputs.catalog_evidence }}"
+            printf 'E2E_PODMAN_MANAGED_IMAGE_RELEASE=%s\n' "${{ steps.podman_catalog.outputs.release }}"
+            printf 'OPENSHELL_PODMAN_NETWORK_NAME=openshell-e2e-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+          } >>"$GITHUB_ENV"
+          jq -n \
+            --arg podmanVersion "$podman_version" \
+            --arg socketPath "$socket_path" \
+            '{schemaVersion:1,driverName:"podman",rootless:true,podmanVersion:$podmanVersion,socketPath:$socketPath}' \
+            >"$E2E_ARTIFACT_DIR/podman-runtime.json"
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Run native Podman all-agent live test
+        if: ${{ steps.podman_catalog.outputs.run == 'true' }}
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/podman-all-agents.test.ts
+
+      - name: Verify the lane never invoked Docker
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$E2E_DOCKER_GUARD_LOG" ]; then
+            echo "::error::Docker invocation guard evidence is missing" >&2
+            exit 1
+          fi
+          if [ -s "$E2E_DOCKER_GUARD_LOG" ]; then
+            echo "::error::native Podman E2E invoked the Docker CLI" >&2
+            sed -n '1,20p' "$E2E_DOCKER_GUARD_LOG" >&2
+            exit 1
+          fi
+          if [ "$(command -v docker || true)" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the native Podman guard" >&2
+            exit 1
+          fi
+          if systemctl is-active --quiet docker.service || systemctl is-active --quiet docker.socket; then
+            echo "::error::Docker service or socket unit became active during the native Podman lane" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket became available during the native Podman lane" >&2
+            exit 1
+          fi
+
+      - name: Stop rootless Podman API service
+        if: ${{ always() && steps.podman_catalog.outputs.run == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_pid_file="$RUNNER_TEMP/nemoclaw-podman-service.pid"
+          if [ -f "$service_pid_file" ]; then
+            service_pid="$(cat "$service_pid_file")"
+            if [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]; then
+              kill "$service_pid" 2>/dev/null || true
+              wait "$service_pid" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Upload native Podman artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
   spark-install:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',spark-install,') || contains(format(',{0},', inputs.targets), ',spark-install,') }}
@@ -5822,6 +6190,7 @@ jobs:
         openclaw-discord-pairing,
         openclaw-slack-pairing,
         channels-stop-start,
+        podman-all-agents,
         spark-install,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}

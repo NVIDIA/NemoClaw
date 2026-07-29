@@ -31,4 +31,10 @@ describe("doctor system checks", () => {
       hint: "expected host port 19080 for this sandbox gateway",
     });
   });
+
+  it("does not inspect the legacy Docker gateway container for Podman sandboxes", () => {
+    const { shouldInspectLegacyGatewayContainer } = requireDist(modulePath);
+
+    expect(shouldInspectLegacyGatewayContainer({ openshellDriver: "podman" })).toBe(false);
+  });
 });

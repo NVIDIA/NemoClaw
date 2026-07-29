@@ -5,7 +5,10 @@ import { randomUUID } from "node:crypto";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
-import { resolveCurrentOpenShellComputePlan } from "../../onboard/compute/plan";
+import {
+  resolveCurrentOpenShellComputePlan,
+  resolveOpenShellComputeSelection,
+} from "../../onboard/compute/plan";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { credentialHostProxyReplayEnvArgs } from "../../onboard/host-proxy-env";
 
@@ -83,6 +86,13 @@ export interface RebuildPreparedTarget {
   messagingPlan: SandboxMessagingPlan | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   preparedImage: PreparedRebuildImage | null;
+}
+
+export function resolveRebuildOpenShellComputePlan(computeDriver: string) {
+  return resolveOpenShellComputeSelection({
+    requestedDriver: computeDriver === "vm" ? "docker" : computeDriver,
+    autoPlan: resolveCurrentOpenShellComputePlan(),
+  });
 }
 
 /** Carry the outer resolver's verified provenance into the inner onboard build. */
@@ -172,7 +182,9 @@ export async function prepareRebuildTargetPreflights(args: {
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
   > = null;
   try {
-    const runtime = resolveSandboxWorkloadRuntimeCapabilities(resolveCurrentOpenShellComputePlan());
+    const runtime = resolveSandboxWorkloadRuntimeCapabilities(
+      resolveRebuildOpenShellComputePlan(recreateOptions.computeDriver),
+    );
     managedWorkloadRebuildCatalog = await prepareManagedWorkloadRebuildHandoff(sandboxEntry, {
       runtime,
     });

@@ -117,7 +117,7 @@ describe("cleanupGatewayAfterLastSandbox", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   });
 
@@ -207,6 +207,62 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+  });
+
+  it("never invokes legacy Docker cleanup for the native Podman profile", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    mocks.dockerRemoveVolumesByPrefix.mockImplementation(() => {
+      throw new Error("Docker volume cleanup must not run for Podman");
+    });
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "remove"
+        ? { status: 2, stdout: "", stderr: "injected removal failure" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const clearManagedGatewayRuntimeBinding = vi.fn(() => {
+      throw new Error("Ambiguous cleanup must retain the runtime binding");
+    });
+
+    expect(() =>
+      cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell, {
+        clearManagedGatewayRuntimeBinding,
+        openshellDriver: "podman",
+      }),
+    ).not.toThrow();
+
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw-8081"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+    expect(clearManagedGatewayRuntimeBinding).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("legacy Docker gateway cleanup is disabled"),
+    );
+  });
+
+  it("clears the durable runtime binding only after successful Podman gateway removal", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "/runtime/nemoclaw-8081");
+    mocks.dockerRemoveVolumesByPrefix.mockImplementation(() => {
+      throw new Error("Docker volume cleanup must not run for Podman");
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const clearManagedGatewayRuntimeBinding = vi.fn();
+
+    cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell, {
+      clearManagedGatewayRuntimeBinding,
+      openshellDriver: "podman",
+    });
+
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+    expect(clearManagedGatewayRuntimeBinding).toHaveBeenCalledOnce();
+    expect(clearManagedGatewayRuntimeBinding).toHaveBeenCalledWith("/runtime/nemoclaw-8081");
   });
 
   it("fails before gateway and volume removal when the owned host listener survives (#4662)", () => {

@@ -133,7 +133,11 @@ export async function ensureRebuildTargetGatewaySelected(
   bail: (message: string, code?: number) => never,
 ): Promise<boolean> {
   const gatewayName = resolveSandboxGatewayName(sb);
-  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  const computeDriver = sb.openshellDriver?.trim();
+  const recovery = await recoverNamedGatewayRuntime({
+    ...(computeDriver ? { computeDriver } : {}),
+    gatewayName,
+  });
   if (!recovery.recovered || recovery.after.state !== "healthy_named") {
     console.error("");
     console.error(
@@ -158,8 +162,10 @@ export async function resolveRebuildLiveState(
   bail: (msg: string, code?: number) => never,
 ): Promise<RebuildLiveState | null> {
   const recordedGateway = resolveSandboxGatewayName(sb);
+  const computeDriver = sb.openshellDriver?.trim();
   log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
   const liveRecovery = await captureSandboxListWithGatewayRecovery({
+    ...(computeDriver ? { computeDriver } : {}),
     gatewayName: recordedGateway,
   });
   const isLive = liveRecovery.result;

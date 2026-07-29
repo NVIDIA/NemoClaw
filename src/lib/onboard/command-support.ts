@@ -4,6 +4,10 @@
 import { Flags } from "@oclif/core";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
 import { describeAgentFlag } from "./agent-flag-help";
+import {
+  OPEN_SHELL_COMPUTE_DRIVER_REQUESTS,
+  type OpenShellComputeDriverRequest,
+} from "./compute/plan";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 type AgentRegistryReader = () => readonly string[];
@@ -46,7 +50,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--compute-driver <auto|docker|podman>] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -54,6 +58,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --name alpha",
   "<%= config.bin %> onboard --resume",
   "<%= config.bin %> onboard --fresh",
+  "<%= config.bin %> onboard --compute-driver podman --name alpha",
   "<%= config.bin %> onboard --from ./Dockerfile --name alpha",
   "<%= config.bin %> onboard --agents ./agents.yaml",
   "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
@@ -65,6 +70,7 @@ export type OnboardFlags = {
   resume?: boolean;
   fresh?: boolean;
   "recreate-sandbox"?: boolean;
+  "compute-driver"?: OpenShellComputeDriverRequest;
   gpu?: boolean;
   "no-gpu"?: boolean;
   from?: string;
@@ -95,6 +101,11 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
       exclusive: ["resume"],
     }),
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
+    "compute-driver": Flags.string({
+      description:
+        "OpenShell compute driver; auto preserves a registered sandbox driver and otherwise uses the platform default",
+      options: [...OPEN_SHELL_COMPUTE_DRIVER_REQUESTS],
+    }),
     gpu: Flags.boolean({
       description: "Require OpenShell GPU passthrough for the gateway and sandbox",
       exclusive: ["no-gpu", "no-sandbox-gpu"],

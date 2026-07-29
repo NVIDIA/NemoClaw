@@ -8,6 +8,7 @@ const SUPPORTED_INSTALLS = new Set(["repo-current"]);
 const SUPPORTED_RUNTIMES = new Set(["docker-running"]);
 const SUPPORTED_ONBOARDING = new Set([
   "cloud-openclaw",
+  "cloud-hermes",
   "cloud-openclaw-policy-custom-missing-presets",
   "cloud-langchain-deepagents-code",
 ]);

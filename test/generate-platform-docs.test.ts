@@ -437,6 +437,56 @@ print(block)
     expect(langchainRow.notes).not.toMatch(/Only OpenClaw and Hermes are integrated\.?\s*$/);
   });
 
+  it("publishes the qualified Podman contract for every shipped agent without weakening Docker defaults", () => {
+    const matrixPath = path.join(import.meta.dirname, "..", "ci", "platform-matrix.json");
+    const matrix = JSON.parse(readFileSync(matrixPath, "utf-8"));
+    const podmanPlatform = (matrix.platforms ?? []).find((row: { runtimes?: string[] }) =>
+      row.runtimes?.some((runtime) => runtime.toLowerCase().includes("podman")),
+    );
+
+    expect(podmanPlatform).toMatchObject({
+      status: "caveated",
+      ci_tested: false,
+    });
+    const claim = `${podmanPlatform.name} ${podmanPlatform.runtimes.join(" ")} ${
+      podmanPlatform.notes
+    }`;
+    for (const required of [
+      "OpenClaw",
+      "Hermes",
+      "LangChain Deep Agents Code",
+      "Linux amd64",
+      "rootless Podman 5",
+      "cgroup v2",
+      "subordinate UID and GID",
+      "--compute-driver podman",
+      "NEMOCLAW_COMPUTE_DRIVER=podman",
+      "immutable managed OCI image",
+      "Docker remains the default",
+      "before this row may claim dedicated CI qualification",
+    ]) {
+      expect(claim).toContain(required);
+    }
+    expect(claim).toMatch(/CPU sandboxes/i);
+    expect(claim).toMatch(/does not fall back to .*Docker daemon/i);
+    expect(
+      (matrix.out_of_scope ?? []).some((row: { name: string }) => /podman/i.test(row.name)),
+    ).toBe(false);
+
+    const prerequisites = readFileSync(
+      path.join(import.meta.dirname, "..", "docs", "get-started", "prerequisites.mdx"),
+      "utf8",
+    );
+    const troubleshooting = readFileSync(
+      path.join(import.meta.dirname, "..", "docs", "reference", "troubleshooting.mdx"),
+      "utf8",
+    );
+    expect(prerequisites).not.toContain("NemoClaw needs Docker access.");
+    expect(prerequisites).toContain("The default Docker driver needs Docker access");
+    expect(troubleshooting).toContain("When you use the default Docker driver");
+    expect(troubleshooting).toContain("The rootless Podman path instead");
+  });
+
   it("every `path:line` citation embedded in matrix notes resolves to a non-empty line in the repo", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const matrix = JSON.parse(

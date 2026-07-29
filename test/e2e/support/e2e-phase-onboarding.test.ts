@@ -106,8 +106,9 @@ function ready(overrides: Partial<EnvironmentReady> = {}): EnvironmentReady {
     runtime: "docker-running",
     onboarding: "cloud-openclaw",
     cliPath: "nemoclaw",
-    docker: {
+    containerRuntime: {
       id: "docker-running",
+      driverName: "docker",
       expectation: "required",
       available: true,
       result: shellResult(0),
@@ -189,6 +190,102 @@ describe("onboarding phase fixture", () => {
     });
   });
 
+  it("runs canonical Hermes onboarding through the shared runtime fixture", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    const instance = await onboard.from(ready({ onboarding: "cloud-hermes" }), {
+      sandboxName: "e2e-ubuntu-repo-cloud-hermes",
+    });
+
+    expect(instance).toMatchObject({
+      agent: "hermes",
+      sandboxName: "e2e-ubuntu-repo-cloud-hermes",
+      gatewayUrl: "http://127.0.0.1:8642",
+    });
+    expect(runner.calls[0]).toMatchObject({
+      command: "nemoclaw",
+      args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+      options: {
+        artifactName: "onboard-cloud-hermes",
+        env: expect.objectContaining({
+          NEMOCLAW_AGENT: "hermes",
+          NVIDIA_INFERENCE_API_KEY: "secret-token",
+        }),
+        redactionValues: ["secret-token"],
+        timeoutMs: 900_000,
+      },
+    });
+  });
+
+  it("selects native Podman and strips Docker discovery from onboard and cleanup", async () => {
+    const previousSocket = process.env.OPENSHELL_PODMAN_SOCKET;
+    const previousDockerHost = process.env.DOCKER_HOST;
+    const previousDockerConfig = process.env.DOCKER_CONFIG;
+    process.env.OPENSHELL_PODMAN_SOCKET = "/run/user/1001/podman/podman.sock";
+    process.env.DOCKER_HOST = "unix:///var/run/docker.sock";
+    process.env.DOCKER_CONFIG = "/tmp/docker-config";
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "onboarded\n"));
+      const cleanup = new FakeCleanup();
+      const onboard = new OnboardingPhaseFixture(
+        new HostCliClient(runner),
+        new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" }),
+        cleanup,
+      );
+      const podmanReady = ready({
+        runtime: "podman-running",
+        containerRuntime: {
+          id: "podman-running",
+          driverName: "podman",
+          expectation: "required",
+          available: true,
+          result: shellResult(0),
+        },
+      });
+
+      await onboard.from(podmanReady, { sandboxName: "e2e-podman-openclaw" });
+
+      expect(runner.calls[0]).toMatchObject({
+        command: "nemoclaw",
+        args: [
+          "onboard",
+          "--non-interactive",
+          "--yes",
+          "--yes-i-accept-third-party-software",
+          "--compute-driver",
+          "podman",
+        ],
+        options: {
+          env: expect.objectContaining({
+            OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+          }),
+        },
+      });
+      expect(runner.calls[0]?.options?.env).not.toHaveProperty("DOCKER_HOST");
+      expect(runner.calls[0]?.options?.env).not.toHaveProperty("DOCKER_CONFIG");
+
+      runner.enqueue(shellResult(0, "destroyed\n"));
+      await cleanup.calls[0]?.run();
+      expect(runner.calls[1]).toMatchObject({
+        command: "nemoclaw",
+        args: ["e2e-podman-openclaw", "destroy", "--yes"],
+      });
+      expect(runner.calls[1]?.options?.env).not.toHaveProperty("DOCKER_HOST");
+      expect(runner.calls[1]?.options?.env).not.toHaveProperty("DOCKER_CONFIG");
+    } finally {
+      if (previousSocket === undefined) delete process.env.OPENSHELL_PODMAN_SOCKET;
+      else process.env.OPENSHELL_PODMAN_SOCKET = previousSocket;
+      if (previousDockerHost === undefined) delete process.env.DOCKER_HOST;
+      else process.env.DOCKER_HOST = previousDockerHost;
+      if (previousDockerConfig === undefined) delete process.env.DOCKER_CONFIG;
+      else process.env.DOCKER_CONFIG = previousDockerConfig;
+    }
+  });
+
   it("fails cloud OpenClaw onboarding on non-zero exit", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(42, "provider rejected credential"));
@@ -240,7 +337,7 @@ describe("onboarding phase fixture", () => {
     expect(runner.calls).toEqual([]);
   });
 
-  it("requires Docker for cloud OpenClaw onboarding", async () => {
+  it("requires the selected runtime for cloud OpenClaw onboarding", async () => {
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(new FakeRunner()),
       new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
@@ -249,10 +346,15 @@ describe("onboarding phase fixture", () => {
     await expect(
       onboard.from(
         ready({
-          docker: { id: "docker-running", expectation: "required", available: false },
+          containerRuntime: {
+            id: "docker-running",
+            driverName: "docker",
+            expectation: "required",
+            available: false,
+          },
         }),
       ),
-    ).rejects.toThrow(/requires an available Docker runtime/);
+    ).rejects.toThrow(/requires an available docker runtime/);
   });
 
   it("rejects invalid sandbox names before cloud OpenClaw side effects", async () => {
@@ -310,7 +412,12 @@ describe("onboarding phase fixture", () => {
       ready({
         runtime: "docker-missing",
         onboarding: "cloud-openclaw-no-docker",
-        docker: { id: "docker-missing", expectation: "missing", available: true },
+        containerRuntime: {
+          id: "docker-missing",
+          driverName: "docker",
+          expectation: "missing",
+          available: true,
+        },
       }),
       { sandboxName: "e2e-no-docker" },
     );
@@ -432,7 +539,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: true },
+          containerRuntime: {
+            id: "docker-missing",
+            driverName: "docker",
+            expectation: "missing",
+            available: true,
+          },
         }),
       );
 
@@ -462,7 +574,12 @@ describe("onboarding phase fixture", () => {
       ready({
         runtime: "docker-missing",
         onboarding: "cloud-openclaw-no-docker",
-        docker: { id: "docker-missing", expectation: "missing", available: false },
+        containerRuntime: {
+          id: "docker-missing",
+          driverName: "docker",
+          expectation: "missing",
+          available: false,
+        },
       }),
     );
 
@@ -502,7 +619,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: false },
+          containerRuntime: {
+            id: "docker-missing",
+            driverName: "docker",
+            expectation: "missing",
+            available: false,
+          },
         }),
       );
 
@@ -538,7 +660,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: false },
+          containerRuntime: {
+            id: "docker-missing",
+            driverName: "docker",
+            expectation: "missing",
+            available: false,
+          },
         }),
         { sandboxName: "e2e-no-docker-success" },
       ),
@@ -571,7 +698,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: false },
+          containerRuntime: {
+            id: "docker-missing",
+            driverName: "docker",
+            expectation: "missing",
+            available: false,
+          },
         }),
       ),
     ).rejects.toThrow(/without Docker-missing preflight signature/);
@@ -583,8 +715,8 @@ describe("onboarding phase fixture", () => {
       new FakeSecrets(),
     );
 
-    await expect(onboard.from(ready({ onboarding: "cloud-hermes" }))).rejects.toThrow(
-      /Unsupported onboarding profile 'cloud-hermes'/,
+    await expect(onboard.from(ready({ onboarding: "cloud-unknown" }))).rejects.toThrow(
+      /Unsupported onboarding profile 'cloud-unknown'/,
     );
   });
 
@@ -629,16 +761,21 @@ describe("onboarding phase fixture", () => {
       await expect(
         onboard.from(
           ready({
-            docker: { id: "docker-running", expectation: "required", available: false },
+            containerRuntime: {
+              id: "docker-running",
+              driverName: "docker",
+              expectation: "required",
+              available: false,
+            },
           }),
         ),
-      ).rejects.toThrow(/requires an available Docker runtime/);
+      ).rejects.toThrow(/requires an available docker runtime/);
 
       expect(readJson(path.join(tmp, "onboarding.result.json"))).toMatchObject({
         phase: "onboarding",
         status: "failed",
         onboarding: "cloud-openclaw",
-        error: "cloud-openclaw onboarding requires an available Docker runtime.",
+        error: "cloud-openclaw onboarding requires an available docker runtime.",
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

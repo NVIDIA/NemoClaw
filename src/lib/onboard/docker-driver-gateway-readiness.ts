@@ -8,7 +8,7 @@ type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) =>
 
 export type DockerDriverGatewayStartupResult = "healthy" | "exited" | "timeout";
 
-export async function waitForStandaloneDockerDriverGateway(options: {
+export async function waitForStandaloneManagedDriverGateway(options: {
   childExited: () => boolean;
   childPid: number;
   gatewayName: string;
@@ -62,4 +62,10 @@ export async function waitForStandaloneDockerDriverGateway(options: {
   }, waitOptions);
 
   return result;
+}
+
+export function waitForStandaloneDockerDriverGateway(
+  options: Parameters<typeof waitForStandaloneManagedDriverGateway>[0],
+): Promise<DockerDriverGatewayStartupResult> {
+  return waitForStandaloneManagedDriverGateway(options);
 }

@@ -14,9 +14,11 @@ export type DestroyGatewayDeps = {
   gatewayName: string;
   hasLifecycleCommands: () => boolean;
   isDockerDriverGatewayEnabled: () => boolean;
+  isManagedDriverGatewayEnabled?: () => boolean;
   removeDockerDriverGatewayRegistration: () => boolean;
   runOpenshell: RunOpenshell;
   stopDockerDriverGatewayProcess: () => void;
+  shouldCleanupLegacyDockerVolumes?: () => boolean;
 };
 
 export function destroyGatewayWithVolumeCleanup({
@@ -25,17 +27,21 @@ export function destroyGatewayWithVolumeCleanup({
   gatewayName,
   hasLifecycleCommands,
   isDockerDriverGatewayEnabled,
+  isManagedDriverGatewayEnabled,
   removeDockerDriverGatewayRegistration,
   runOpenshell,
   stopDockerDriverGatewayProcess,
+  shouldCleanupLegacyDockerVolumes,
 }: DestroyGatewayDeps): boolean {
   const dockerDriver = isDockerDriverGatewayEnabled();
-  if (dockerDriver) {
+  const managedDriver = isManagedDriverGatewayEnabled?.() ?? dockerDriver;
+  const cleanupLegacyDockerVolumes = shouldCleanupLegacyDockerVolumes?.() ?? dockerDriver;
+  if (managedDriver) {
     stopDockerDriverGatewayProcess();
   }
 
   const lifecycleCommands = hasLifecycleCommands();
-  const gatewayRemoved = dockerDriver
+  const gatewayRemoved = managedDriver
     ? removeDockerDriverGatewayRegistration()
     : (() => {
         const removeResult = runOpenshell(["gateway", "remove", gatewayName], {
@@ -54,7 +60,7 @@ export function destroyGatewayWithVolumeCleanup({
     clearRegistry();
   }
 
-  if (gatewayRemoved && (dockerDriver || lifecycleCommands)) {
+  if (gatewayRemoved && (cleanupLegacyDockerVolumes || (!managedDriver && lifecycleCommands))) {
     dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, { ignoreError: true });
   }
 

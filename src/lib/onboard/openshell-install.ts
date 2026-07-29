@@ -101,11 +101,21 @@ export type DockerDriverBinaryOverrides = {
   vmDriverBin?: string | null;
 };
 
+export type ManagedGatewayBinaryRequirements = {
+  driverLabel: string;
+  gateway: boolean;
+  sandbox: boolean;
+};
+
 export type OpenShellInstallDeps = {
   isLinuxDockerDriverGatewayEnabled: (
     platform?: NodeJS.Platform,
     arch?: NodeJS.Architecture,
   ) => boolean;
+  getManagedGatewayBinaryRequirements?: (
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => ManagedGatewayBinaryRequirements | null;
   resolveOpenShellGatewayBinary: () => string | null;
   resolveOpenShellSandboxBinary: () => string | null;
   isOpenshellInstalled: () => boolean;
@@ -130,6 +140,7 @@ export type OpenShellInstallDeps = {
 export function areRequiredDockerDriverBinariesPresent(
   deps: Pick<
     OpenShellInstallDeps,
+    | "getManagedGatewayBinaryRequirements"
     | "isLinuxDockerDriverGatewayEnabled"
     | "resolveOpenShellGatewayBinary"
     | "resolveOpenShellSandboxBinary"
@@ -138,15 +149,24 @@ export function areRequiredDockerDriverBinariesPresent(
   binaries: DockerDriverBinaryOverrides = {},
   arch: NodeJS.Architecture = process.arch,
 ): boolean {
-  if (!deps.isLinuxDockerDriverGatewayEnabled(platform, arch)) return true;
+  const requirements =
+    deps.getManagedGatewayBinaryRequirements?.(platform, arch) ??
+    (deps.isLinuxDockerDriverGatewayEnabled(platform, arch)
+      ? {
+          driverLabel: "Docker",
+          gateway: true,
+          sandbox: platform === "linux",
+        }
+      : null);
+  if (!requirements) return true;
   const gatewayBinary = Object.prototype.hasOwnProperty.call(binaries, "gatewayBin")
     ? binaries.gatewayBin
     : deps.resolveOpenShellGatewayBinary();
   const sandboxBinary = Object.prototype.hasOwnProperty.call(binaries, "sandboxBin")
     ? binaries.sandboxBin
     : deps.resolveOpenShellSandboxBinary();
-  if (!gatewayBinary) return false;
-  if (platform === "linux" && !sandboxBinary) return false;
+  if (requirements.gateway && !gatewayBinary) return false;
+  if (requirements.sandbox && !sandboxBinary) return false;
   return true;
 }
 
@@ -158,6 +178,15 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
     futureShellPathHint: null,
   };
   const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.85";
+  const binaryRequirements =
+    deps.getManagedGatewayBinaryRequirements?.(platform, arch) ??
+    (deps.isLinuxDockerDriverGatewayEnabled(platform, arch)
+      ? {
+          driverLabel: "Docker",
+          gateway: true,
+          sandbox: platform === "linux",
+        }
+      : null);
 
   if (!deps.isOpenshellInstalled()) {
     deps.log("  openshell CLI not found. Installing...");
@@ -182,11 +211,11 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
         ignoreError: true,
       });
       const needsDevChannel =
-        deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
+        binaryRequirements !== null &&
         deps.shouldUseOpenshellDevChannel() &&
         !deps.isOpenshellDevVersion(currentVersionOutput);
       const needsDockerDriverBinaries =
-        deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
+        binaryRequirements !== null &&
         !areRequiredDockerDriverBinariesPresent(deps, platform, {}, arch);
       const needsMessagingFeatures = !deps.hasRequiredOpenshellMessagingFeatures();
       const needsUpgrade =
@@ -196,11 +225,13 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
         needsMessagingFeatures;
       if (needsUpgrade) {
         if (needsDevChannel) {
-          deps.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
-        } else if (needsDockerDriverBinaries) {
-          const required = platform === "linux" ? "gateway and sandbox" : "gateway";
           deps.log(
-            `  OpenShell Docker-driver gateway onboarding requires the ${required} binaries. Reinstalling...`,
+            `  OpenShell ${binaryRequirements?.driverLabel ?? "managed"}-driver onboarding requires the dev channel. Upgrading...`,
+          );
+        } else if (needsDockerDriverBinaries) {
+          const required = binaryRequirements?.sandbox ? "gateway and sandbox" : "gateway";
+          deps.log(
+            `  OpenShell ${binaryRequirements?.driverLabel ?? "managed"}-driver gateway onboarding requires the ${required} binaries. Reinstalling...`,
           );
         } else if (needsMessagingFeatures) {
           deps.log(

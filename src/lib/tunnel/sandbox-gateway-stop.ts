@@ -24,6 +24,8 @@ type ProcessRunner = (
 ) => SpawnSyncReturns<string>;
 
 export type SandboxGatewayStopDeps = {
+  /** Skip the legacy gateway-container kubectl path for non-Docker runtimes. */
+  allowDockerGatewayExec?: boolean;
   getSandbox?: typeof registry.getSandbox;
   getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
   getAgentDisplayName?: typeof agentRuntime.getAgentDisplayName;
@@ -105,12 +107,15 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
   const gatewayLabel = `${agentDisplayName} gateway`;
   info(`Stopping in-sandbox ${gatewayLabel} (sandbox: ${validatedSandboxName})...`);
 
-  const privilegedResult = stopSandboxChannelsViaKubectl(
-    validatedSandboxName,
-    gatewayName,
-    GATEWAY_STOP_SCRIPT,
-    deps.runDocker ?? dockerSpawnSync,
-  );
+  const privilegedResult =
+    deps.allowDockerGatewayExec === false
+      ? null
+      : stopSandboxChannelsViaKubectl(
+          validatedSandboxName,
+          gatewayName,
+          GATEWAY_STOP_SCRIPT,
+          deps.runDocker ?? dockerSpawnSync,
+        );
   if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
 
   const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();

@@ -41,6 +41,7 @@ describe("sandbox gateway state drift guard", () => {
   let captureOpenshellSpy: MockInstance;
   let captureOpenshellForStatusSpy: MockInstance;
   let detectPreflightIssueSpy: MockInstance;
+  let recoverDockerDriverSandboxSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let getSandboxSpy: MockInstance;
   let gatewaySelectSpy: MockInstance;
@@ -102,9 +103,9 @@ describe("sandbox gateway state drift guard", () => {
       getSandboxSpy,
       gatewaySelectSpy,
       recoverNamedGatewayRuntimeSpy,
-      vi
+      (recoverDockerDriverSandboxSpy = vi
         .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
-        .mockReturnValue({ recovered: false, via: null }),
+        .mockReturnValue({ recovered: false, via: null })),
       removeSandboxSpy,
     );
   });
@@ -176,6 +177,28 @@ describe("sandbox gateway state drift guard", () => {
     expect(output).toContain("nemoclaw alpha rebuild --yes");
     expect(output).toContain("nemoclaw alpha destroy");
     expect(removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("never invokes Docker-side recovery for a Podman sandbox missing from a healthy gateway", () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "podman",
+    });
+    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      state: "healthy_named",
+      status: "Gateway: nemoclaw\nStatus: Connected",
+    });
+
+    const lookup = gatewayState.reconcileMissingAgainstNamedGateway("alpha", {
+      state: "missing",
+      output: "NotFound",
+    });
+
+    expect(lookup.state).toBe("missing");
+    expect(recoverDockerDriverSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("preserves registry state and prints deterministic guidance after targeting the owning gateway (#2276)", async () => {

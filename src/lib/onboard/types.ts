@@ -83,6 +83,8 @@ export interface SandboxCreateIntent {
 export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
+  /** Public requests and internal persisted driver identities share one pluggable seam. */
+  computeDriver?: string;
   authoritativeResumeConfig?: boolean;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;

@@ -23,6 +23,7 @@ export type DockerDriverGatewayLocalTlsBundle = {
 };
 
 export interface EnsureDockerDriverGatewayLocalTlsBundleOptions {
+  additionalServerDnsSans?: readonly string[];
   env?: NodeJS.ProcessEnv;
   gatewayBin: string;
   spawnSyncImpl?: typeof spawnSync;
@@ -47,7 +48,10 @@ export function getDockerDriverGatewayLocalTlsBundle(
   };
 }
 
-export function dockerDriverGatewayLocalTlsBundleIsComplete(stateDir: string): boolean {
+export function dockerDriverGatewayLocalTlsBundleIsComplete(
+  stateDir: string,
+  additionalServerDnsSans: readonly string[] = [],
+): boolean {
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
   const expectedFiles = [
     bundle.caPath,
@@ -74,7 +78,7 @@ export function dockerDriverGatewayLocalTlsBundleIsComplete(stateDir: string): b
     certificateMatchesPrivateKey(clientCert, clientKey) &&
     certificateVerifiesAgainstCa(serverCert, ca) &&
     certificateVerifiesAgainstCa(clientCert, ca) &&
-    certificateHasRequiredServerSubjectAltNames(serverCert)
+    certificateHasRequiredServerSubjectAltNames(serverCert, additionalServerDnsSans)
   );
 }
 
@@ -82,6 +86,22 @@ export function buildDockerDriverGatewayLocalTlsEnv(stateDir: string): Record<st
   return {
     OPENSHELL_LOCAL_TLS_DIR: getDockerDriverGatewayLocalTlsDir(stateDir),
   };
+}
+
+export function buildDockerDriverGatewayCertgenArgs(
+  localTlsDir: string,
+  additionalServerDnsSans: readonly string[] = [],
+): string[] {
+  return [
+    "generate-certs",
+    "--output-dir",
+    localTlsDir,
+    ...[
+      ...REQUIRED_SERVER_DNS_SANS,
+      ...additionalServerDnsSans,
+      ...REQUIRED_SERVER_IP_SANS,
+    ].flatMap((subjectAltName) => ["--server-san", subjectAltName]),
+  ];
 }
 
 function text(value: Buffer | string | null | undefined): string {
@@ -156,7 +176,10 @@ function certificateVerifiesAgainstCa(certificate: X509Certificate, ca: X509Cert
   }
 }
 
-function certificateHasRequiredServerSubjectAltNames(certificate: X509Certificate): boolean {
+function certificateHasRequiredServerSubjectAltNames(
+  certificate: X509Certificate,
+  additionalServerDnsSans: readonly string[],
+): boolean {
   const subjectAltNames = new Set(
     (certificate.subjectAltName ?? "")
       .split(",")
@@ -164,7 +187,9 @@ function certificateHasRequiredServerSubjectAltNames(certificate: X509Certificat
       .filter(Boolean),
   );
   return (
-    REQUIRED_SERVER_DNS_SANS.every((dnsName) => subjectAltNames.has(`dns:${dnsName}`)) &&
+    [...REQUIRED_SERVER_DNS_SANS, ...additionalServerDnsSans].every((dnsName) =>
+      subjectAltNames.has(`dns:${dnsName.toLowerCase()}`),
+    ) &&
     REQUIRED_SERVER_IP_SANS.every(
       (ipAddress) =>
         subjectAltNames.has(`ip address:${ipAddress}`) || subjectAltNames.has(`ip:${ipAddress}`),
@@ -180,6 +205,7 @@ function normalizeDockerDriverGatewayLocalTlsBundlePermissions(
 }
 
 export function ensureDockerDriverGatewayLocalTlsBundle({
+  additionalServerDnsSans = [],
   env = process.env,
   gatewayBin,
   spawnSyncImpl = spawnSync,
@@ -188,24 +214,14 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(stateDir, 0o700);
-  if (dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)) {
+  if (dockerDriverGatewayLocalTlsBundleIsComplete(stateDir, additionalServerDnsSans)) {
     normalizeDockerDriverGatewayLocalTlsBundlePermissions(bundle);
     return bundle;
   }
 
   const result = spawnSyncImpl(
     gatewayBin,
-    [
-      "generate-certs",
-      "--output-dir",
-      bundle.localTlsDir,
-      "--server-san",
-      "host.openshell.internal",
-      "--server-san",
-      "localhost",
-      "--server-san",
-      "127.0.0.1",
-    ],
+    buildDockerDriverGatewayCertgenArgs(bundle.localTlsDir, additionalServerDnsSans),
     {
       encoding: "utf-8",
       env: {
@@ -229,7 +245,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
     const detail = sanitizeDockerDriverGatewayLocalTlsErrorDetail(rawDetail, bundle, stateDir);
     throw new Error(`OpenShell gateway certificate generation failed: ${detail}`);
   }
-  if (!dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)) {
+  if (!dockerDriverGatewayLocalTlsBundleIsComplete(stateDir, additionalServerDnsSans)) {
     const detail = sanitizeDockerDriverGatewayLocalTlsErrorDetail(
       `incomplete mTLS bundle in ${bundle.localTlsDir}`,
       bundle,

@@ -234,8 +234,11 @@ export function removeBridgeEntry(sandboxName: string, server: string): void {
 }
 
 export async function ensureSandboxGatewaySelected(sandboxName: string): Promise<void> {
+  const sandbox = getSandboxOrThrow(sandboxName);
   const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  const computeDriver = sandbox.openshellDriver?.trim();
   const recovery = await recoverNamedGatewayRuntime({
+    ...(computeDriver ? { computeDriver } : {}),
     gatewayName,
   });
   if (!recovery.recovered || recovery.after.state !== "healthy_named") {

@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { GATEWAY_PORT } from "../../core/ports";
-import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  resolveGatewayName,
+  resolveManagedGatewayStateDirectory,
+  resolveSandboxGatewayName,
+  type SandboxGatewayComputeBinding,
+} from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
 
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
@@ -12,6 +17,23 @@ export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | nul
 
 export function getSandboxTargetGatewayName(sandboxName = ""): string {
   return getKnownSandboxTargetGatewayName(sandboxName) ?? resolveGatewayName(GATEWAY_PORT);
+}
+
+export function getKnownSandboxOpenShellDriver(sandboxName = ""): string | null {
+  return sandboxName ? (registry.getSandbox(sandboxName)?.openshellDriver?.trim() ?? null) : null;
+}
+
+export function listSandboxGatewayComputeBindings(): readonly SandboxGatewayComputeBinding[] {
+  return registry.listSandboxes().sandboxes;
+}
+
+export function resolveSandboxManagedGatewayStateDirectory(
+  sandbox: SandboxGatewayComputeBinding,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  return resolveManagedGatewayStateDirectory(resolveSandboxGatewayName(sandbox), {
+    env: environment,
+  });
 }
 
 export function gatewayNamePattern(gatewayName: string): RegExp {

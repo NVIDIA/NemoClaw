@@ -50,6 +50,7 @@ resolve_repo_root() {
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
+MIN_NATIVE_PODMAN_VERSION_MAJOR=5
 TOTAL_STEPS=3
 
 is_mutable_install_ref() {
@@ -788,6 +789,8 @@ usage() {
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --compute-driver <auto|docker|podman>\n"
+  printf "                         Container runtime for OpenShell sandboxes (default: auto)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
   printf "    --version, -v        Print installer version and exit\n"
@@ -798,6 +801,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
+  printf "    NEMOCLAW_COMPUTE_DRIVER       auto | docker | podman (flag takes precedence)\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip express install prompt on supported platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
@@ -2773,7 +2777,18 @@ repair_installer_nvidia_cdi_spec() {
   fi
 }
 
+installer_uses_native_podman() {
+  [ "${_INSTALLER_CONTAINER_RUNTIME:-docker}" = "podman" ]
+}
+
 run_installer_host_preflight() {
+  # Native Podman was qualified before installation and the CLI repeats the
+  # exact-socket runtime preflight during onboarding. This legacy remediation
+  # pass is Docker-specific (including CDI repair), so it must not discover or
+  # invoke Docker for a Podman-selected install.
+  if installer_uses_native_podman; then
+    return 0
+  fi
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
     return 0
@@ -2925,6 +2940,10 @@ run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
+  if [ -n "${_INSTALLER_COMPUTE_DRIVER_REQUEST:-}" ] \
+    && [ "$_INSTALLER_COMPUTE_DRIVER_REQUEST" != "auto" ]; then
+    onboard_cmd+=(--compute-driver "$_INSTALLER_COMPUTE_DRIVER_REQUEST")
+  fi
   local installer_auto_fresh_receipt_generation=""
   local session_file
   session_file="$(nemoclaw_state_dir)/onboard-session.json"
@@ -3129,6 +3148,160 @@ station_express_receipt_retirement_pending() {
       process.exit(1);
     }
   ' "$session_file" >/dev/null 2>&1
+}
+
+installer_station_reconciliation_pending() {
+  installer_uses_native_podman && return 1
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
+    || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
+    || station_express_receipt_retirement_pending
+}
+
+# Resolve the installer's runtime request through the same public values and
+# precedence as `nemoclaw onboard`: a non-empty flag wins over the environment,
+# matching the CLI resolver, and auto preserves the existing Docker bootstrap.
+resolve_installer_compute_driver() {
+  local requested="${INSTALLER_COMPUTE_DRIVER_FLAG:-}"
+  requested="${requested#"${requested%%[![:space:]]*}"}"
+  requested="${requested%"${requested##*[![:space:]]}"}"
+  if [ -z "$requested" ]; then
+    requested="${NEMOCLAW_COMPUTE_DRIVER:-auto}"
+    requested="${requested#"${requested%%[![:space:]]*}"}"
+    requested="${requested%"${requested##*[![:space:]]}"}"
+  fi
+  requested="$(printf '%s' "${requested:-auto}" | tr '[:upper:]' '[:lower:]')"
+  case "$requested" in
+    auto | docker | podman) ;;
+    *)
+      error "NEMOCLAW_COMPUTE_DRIVER and --compute-driver must be one of: auto, docker, podman."
+      ;;
+  esac
+
+  _INSTALLER_COMPUTE_DRIVER_REQUEST="$requested"
+  case "$requested" in
+    podman) _INSTALLER_CONTAINER_RUNTIME="podman" ;;
+    # Linux and supported macOS installs have always bootstrapped Docker.
+    # Keep that default stable until another runtime is explicitly selected.
+    auto | docker) _INSTALLER_CONTAINER_RUNTIME="docker" ;;
+  esac
+  export NEMOCLAW_COMPUTE_DRIVER="$_INSTALLER_COMPUTE_DRIVER_REQUEST"
+}
+
+validate_installer_compute_driver_platform() {
+  installer_uses_native_podman || return 0
+  local host_os host_arch
+  host_os="$(uname -s)"
+  host_arch="$(uname -m)"
+  if [ "$host_os" != "Linux" ] || {
+    [ "$host_arch" != "x86_64" ] && [ "$host_arch" != "amd64" ]
+  }; then
+    error "Native Podman support currently requires Linux x86_64; detected ${host_os} ${host_arch}."
+  fi
+  if [ "${STATION_DEEPSEEK:-}" = "1" ] || [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    error "DGX Station express-install flags currently require the Docker compute driver."
+  fi
+}
+
+podman_socket_is_owned_by_current_user() {
+  local socket_path="$1" socket_uid
+  [ -S "$socket_path" ] && [ ! -L "$socket_path" ] || return 1
+  socket_uid="$(stat -Lc '%u' -- "$socket_path" 2>/dev/null)" || return 1
+  [ "$socket_uid" = "$(id -u)" ]
+}
+
+podman_mapping_has_subordinate_range() {
+  awk '
+    NF == 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 > 1 {
+      found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+ensure_native_podman() {
+  validate_installer_compute_driver_platform
+  command_exists podman \
+    || error "Native Podman support requires Podman ${MIN_NATIVE_PODMAN_VERSION_MAJOR}.0 or newer. Install Podman and enable its rootless API socket, then rerun."
+
+  local version_output version major
+  version_output="$(podman --version 2>/dev/null || true)"
+  version="$(printf '%s\n' "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  major="${version%%.*}"
+  if [ -z "$version" ] || ! [[ "$major" =~ ^[0-9]+$ ]] \
+    || [ "$major" -lt "$MIN_NATIVE_PODMAN_VERSION_MAJOR" ]; then
+    error "Native Podman support requires Podman ${MIN_NATIVE_PODMAN_VERSION_MAJOR}.0 or newer; detected '${version:-unavailable}'."
+  fi
+
+  local explicit_socket="${OPENSHELL_PODMAN_SOCKET:-}"
+  explicit_socket="${explicit_socket#"${explicit_socket%%[![:space:]]*}"}"
+  explicit_socket="${explicit_socket%"${explicit_socket##*[![:space:]]}"}"
+  local -a candidates=()
+  if [ -n "$explicit_socket" ]; then
+    candidates=("$explicit_socket")
+  else
+    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+      candidates+=("${XDG_RUNTIME_DIR%/}/podman/podman.sock")
+    fi
+    candidates+=("/run/user/$(id -u)/podman/podman.sock")
+    if [ -n "${HOME:-}" ]; then
+      candidates+=("${HOME%/}/.local/share/containers/podman/podman.sock")
+    fi
+  fi
+
+  local socket_path="" candidate
+  for candidate in "${candidates[@]}"; do
+    case "$candidate" in
+      /*) ;;
+      *)
+        if [ -n "$explicit_socket" ]; then
+          error "OPENSHELL_PODMAN_SOCKET must be an absolute path."
+        fi
+        continue
+        ;;
+    esac
+    [[ "$candidate" != *$'\n'* && "$candidate" != *$'\r'* ]] || continue
+    if podman_socket_is_owned_by_current_user "$candidate"; then
+      socket_path="$candidate"
+      break
+    fi
+    [ -z "$explicit_socket" ] \
+      || error "OPENSHELL_PODMAN_SOCKET must name a current-user-owned, non-symlink Unix socket: ${candidate}"
+  done
+  [ -n "$socket_path" ] \
+    || error "No current-user-owned rootless Podman API socket was found. Enable podman.socket or set OPENSHELL_PODMAN_SOCKET to its absolute path."
+
+  local info_json compact_info
+  if ! info_json="$(podman --url "unix://${socket_path}" info --format json 2>/dev/null)"; then
+    error "The rootless Podman API socket is not responsive: ${socket_path}"
+  fi
+  compact_info="$(printf '%s' "$info_json" | tr -d '[:space:]')"
+  printf '%s' "$compact_info" \
+    | grep -Eqi '"rootless":true' \
+    || error "Native Podman support requires a rootless Podman API service."
+  printf '%s' "$compact_info" \
+    | grep -Eqi '"cgroups?version":"v?2"' \
+    || error "Native Podman support requires cgroups v2."
+  printf '%s' "$compact_info" \
+    | grep -Eqi '"os":"linux"' \
+    || error "The selected Podman API service is not reporting Linux."
+  printf '%s' "$compact_info" \
+    | grep -Eqi '"arch":"(amd64|x86_64)"' \
+    || error "The selected Podman API service is not reporting x86_64."
+
+  local map_name map_output
+  for map_name in uid_map gid_map; do
+    if ! map_output="$(podman unshare cat "/proc/self/${map_name}" 2>/dev/null)" \
+      || ! printf '%s\n' "$map_output" | podman_mapping_has_subordinate_range; then
+      if [ "$map_name" = "uid_map" ]; then
+        error "Rootless Podman requires a subordinate UID range for the current user (configure /etc/subuid)."
+      fi
+      error "Rootless Podman requires a subordinate GID range for the current user (configure /etc/subgid)."
+    fi
+  done
+
+  OPENSHELL_PODMAN_SOCKET="$socket_path"
+  export OPENSHELL_PODMAN_SOCKET
+  ok "Rootless Podman ${version} is ready at ${socket_path}"
 }
 
 # Make sure Docker is installed and the current user can run it without
@@ -4478,6 +4651,12 @@ clear_station_dual_pair_resume() {
 }
 
 prepare_installer_host() {
+  if installer_uses_native_podman; then
+    info "Using native Podman; Docker and DGX express host preparation are skipped."
+    ensure_native_podman
+    ensure_openshell_build_deps
+    return 0
+  fi
   maybe_offer_express_install
   # Reject conflicting explicit Station selections and pending-pair bypasses
   # before the local host-preparation helper can mutate packages or Docker.
@@ -4494,6 +4673,11 @@ prepare_installer_host() {
   ensure_station_express_host
   ensure_docker
   ensure_openshell_build_deps
+}
+
+run_installer_platform_setup() {
+  installer_uses_native_podman && return 0
+  bash "${SCRIPT_DIR}/setup-jetson.sh"
 }
 
 # Prompt the user to opt into express install on supported platforms. Sets the
@@ -4751,7 +4935,10 @@ main() {
   FRESH=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
-  for arg in "$@"; do
+  INSTALLER_COMPUTE_DRIVER_FLAG=""
+  while [ "$#" -gt 0 ]; do
+    local arg="$1"
+    shift
     case "$arg" in
       --non-interactive)
         NON_INTERACTIVE=1
@@ -4759,6 +4946,14 @@ main() {
         ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
+      --compute-driver)
+        [ "$#" -gt 0 ] || error "--compute-driver requires one of: auto, docker, podman."
+        INSTALLER_COMPUTE_DRIVER_FLAG="$1"
+        shift
+        ;;
+      --compute-driver=*)
+        INSTALLER_COMPUTE_DRIVER_FLAG="${arg#*=}"
+        ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
       --version | -v)
@@ -4784,6 +4979,8 @@ main() {
   fi
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+  resolve_installer_compute_driver
+  validate_installer_compute_driver_platform
 
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
@@ -4806,9 +5003,11 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
-  load_station_vllm_conflict_helpers
-  if consume_station_local_vllm_resume; then
-    info "Resuming the selected manual Local vLLM setup."
+  if ! installer_uses_native_podman; then
+    load_station_vllm_conflict_helpers
+    if consume_station_local_vllm_resume; then
+      info "Resuming the selected manual Local vLLM setup."
+    fi
   fi
 
   # Validate the gateway port before the banner, notice acceptance, downloads,
@@ -4819,7 +5018,9 @@ main() {
   # dependencies, or any other host mutation. maybe_offer_express_install
   # repeats the same authoritative validation at the prompt boundary because
   # it is also exercised directly by sourced-installer callers and tests.
-  preflight_explicit_express_flags
+  if ! installer_uses_native_podman; then
+    preflight_explicit_express_flags
+  fi
 
   print_banner
 
@@ -4838,12 +5039,14 @@ main() {
   prepare_installer_host
 
   _INSTALL_START=$SECONDS
-  bash "${SCRIPT_DIR}/setup-jetson.sh"
+  run_installer_platform_setup
 
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
-  ensure_station_express_pair
+  if ! installer_uses_native_podman; then
+    ensure_station_express_pair
+  fi
 
   step 2 "${_CLI_DISPLAY} CLI"
   # Ollama and vLLM install/upgrade and model pulls are owned by
@@ -4888,9 +5091,7 @@ main() {
         if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
-        elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
-          || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
-          || station_express_receipt_retirement_pending; then
+        elif installer_station_reconciliation_pending; then
           info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
           run_onboard || error "Onboarding did not complete successfully."
           ONBOARD_RAN=true
@@ -4912,7 +5113,9 @@ main() {
   fi
 
   finalize_install
-  clear_station_resume_after_completed_onboarding
+  if ! installer_uses_native_podman; then
+    clear_station_resume_after_completed_onboarding
+  fi
 }
 
 clear_station_resume_after_completed_onboarding() {
@@ -4934,7 +5137,7 @@ finalize_install() {
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
     error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
   fi
-  if [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
+  if ! installer_uses_native_podman && [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
     clear_station_local_vllm_resume
   fi
 }

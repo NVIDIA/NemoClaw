@@ -42,6 +42,17 @@ describe("buildOnboardFlags --observability help", () => {
   });
 });
 
+describe("buildOnboardFlags --compute-driver", () => {
+  it("exposes only qualified public selections", () => {
+    const flags = buildOnboardFlags();
+
+    expect(flags["compute-driver"].options).toEqual(["auto", "docker", "podman"]);
+    expect(flags["compute-driver"].description).toContain(
+      "auto preserves a registered sandbox driver",
+    );
+  });
+});
+
 describe("buildOnboardFlags --events help", () => {
   it("exposes the JSONL observer only on the canonical onboard command", () => {
     const onboardFlags = buildOnboardFlags({ includeEvents: true });

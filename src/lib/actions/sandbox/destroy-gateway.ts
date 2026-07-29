@@ -8,6 +8,12 @@ import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
 import {
+  CURRENT_MANAGED_GATEWAY_DRIVER_PROFILES,
+  type ManagedGatewayDriverCapabilities,
+  type ManagedGatewayDriverProfileRegistry,
+} from "../../onboard/compute/managed-gateway-profile";
+import { clearManagedGatewayRuntimeBinding } from "../../onboard/docker-driver-gateway-config";
+import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
@@ -27,7 +33,25 @@ export type DestroyRunOpenshell = (
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 export interface CleanupGatewayDeps {
+  clearManagedGatewayRuntimeBinding?: typeof clearManagedGatewayRuntimeBinding;
+  openshellDriver?: string | null;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+}
+
+function permitsLegacyDockerCleanup(
+  openshellDriver: string | null | undefined,
+  capability: keyof Pick<
+    ManagedGatewayDriverCapabilities,
+    "legacyDockerGatewayCleanup" | "legacyDockerVolumeCleanup"
+  >,
+  profiles: ManagedGatewayDriverProfileRegistry = CURRENT_MANAGED_GATEWAY_DRIVER_PROFILES,
+): boolean {
+  const driver = openshellDriver?.trim().toLowerCase();
+  // Missing driver metadata predates the pluggable runtime registry and is
+  // therefore the one compatibility case that retains Docker cleanup.
+  if (!driver) return true;
+  const profile = Object.hasOwn(profiles, driver) ? profiles[driver] : undefined;
+  return profile?.driverName === driver && profile.capabilities[capability] === true;
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -36,7 +60,9 @@ export interface CleanupGatewayDeps {
 // `nemoclaw-<port>` sandbox would read the default instance's pid file and
 // stop the wrong host gateway process. Returns null when the gateway name is
 // outside the NemoClaw namespace (the caller then keeps the defaults).
-function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: string } | null {
+export function resolvePerGatewayState(
+  gatewayName: string,
+): { port: number; stateDir: string } | null {
   const port = resolveGatewayPortFromName(gatewayName);
   if (port === null) return null;
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
@@ -91,6 +117,16 @@ export function cleanupGatewayAfterLastSandbox(
     { env: process.env },
   );
   const externallySupervised = isExternallySupervised(owner);
+  const legacyDockerGatewayCleanup = permitsLegacyDockerCleanup(
+    deps.openshellDriver,
+    "legacyDockerGatewayCleanup",
+  );
+  const legacyDockerVolumeCleanup = permitsLegacyDockerCleanup(
+    deps.openshellDriver,
+    "legacyDockerVolumeCleanup",
+  );
+  const clearRuntimeBinding =
+    deps.clearManagedGatewayRuntimeBinding ?? clearManagedGatewayRuntimeBinding;
   const openshell =
     runOpenshell ??
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
@@ -175,23 +211,34 @@ export function cleanupGatewayAfterLastSandbox(
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  let gatewayRegistrationRemoved = removeResult.status === 0;
   if (removeResult.status !== 0) {
     if (externallySupervised) {
       console.warn(
         `Could not remove local registration for externally supervised gateway '${gatewayName}'. ` +
           "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
       );
-    } else {
-      openshell(["gateway", "destroy", "-g", gatewayName], {
+    } else if (legacyDockerGatewayCleanup) {
+      const legacyDestroyResult = openshell(["gateway", "destroy", "-g", gatewayName], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      gatewayRegistrationRemoved = legacyDestroyResult.status === 0;
+    } else {
+      console.warn(
+        `Could not remove gateway registration '${gatewayName}'; legacy Docker gateway cleanup is disabled for OpenShell driver '${deps.openshellDriver || "unknown"}'.`,
+      );
     }
   }
   if (externallySupervised) {
     return;
   }
-  dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
-    ignoreError: true,
-  });
+  if (legacyDockerVolumeCleanup) {
+    dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
+      ignoreError: true,
+    });
+  }
+  if (gatewayRegistrationRemoved) {
+    clearRuntimeBinding(perGatewayState.stateDir);
+  }
 }

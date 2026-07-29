@@ -17,7 +17,11 @@ import {
 } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
-import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  resolveGatewayName,
+  resolveManagedGatewayStateDirectory,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
 import {
@@ -32,7 +36,7 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
-import { captureHostCommand } from "./doctor-host-command";
+import { captureHostCommand, collectDoctorHostRuntimeCheck } from "./doctor-host-command";
 import {
   collectInferenceChecks,
   type DoctorInferenceRoute,
@@ -125,29 +129,29 @@ function cliBuildCheck(): DoctorCheck {
   };
 }
 
-function collectHostChecks(): {
+function collectHostChecks(
+  sb: SandboxEntry | null | undefined,
+  gatewayName: string | null,
+): {
   checks: DoctorCheck[];
   openshellBin: ReturnType<typeof resolveOpenshell>;
 } {
   const cli = cliBuildCheck();
-  const dockerInfo = captureHostCommand("docker", ["info", "--format", "{{.ServerVersion}}"], 8000);
+  const runtime = collectDoctorHostRuntimeCheck(
+    {
+      driverName: sb?.openshellDriver,
+      managedGatewayStateDirectory: gatewayName
+        ? resolveManagedGatewayStateDirectory(gatewayName)
+        : null,
+    },
+    undefined,
+    { captureHostCommand },
+  );
   const openshellBin = resolveOpenshell();
   return {
     checks: [
       cli,
-      {
-        group: "Host",
-        label: "Docker daemon",
-        status: dockerInfo.status === 0 ? "ok" : "fail",
-        detail:
-          dockerInfo.status === 0
-            ? `server ${dockerInfo.stdout.trim() || "unknown"}`
-            : oneLine(dockerInfo.stderr || dockerInfo.error?.message || "docker info failed"),
-        hint:
-          dockerInfo.status === 0
-            ? undefined
-            : "start Docker and verify your user can access the daemon",
-      },
+      ...(runtime ? [runtime] : []),
       {
         group: "Host",
         label: "OpenShell CLI",
@@ -506,7 +510,7 @@ async function collectDoctorChecks(
   gatewayName: string | null,
   intent: DoctorIntent,
 ): Promise<DoctorCheck[]> {
-  const host = collectHostChecks();
+  const host = collectHostChecks(sb, gatewayName);
   const gateway: GatewayProbe = gatewayName
     ? await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson)
     : {

@@ -63,6 +63,8 @@ export interface InferenceProviderHostState {
 export interface DetectInferenceProviderHostStateInput {
   gpu: InferenceProviderHostGpu | null | undefined;
   experimental: boolean;
+  /** False for runtime profiles that have not qualified host-local inference. */
+  localInferenceEnabled?: boolean;
   probeOllama?: boolean;
   probeVllm?: boolean;
   platform?: NodeJS.Platform;
@@ -174,6 +176,26 @@ export function detectInferenceProviderHostState(
   const deps = buildDeps(input.deps);
   const log = input.log ?? console.log;
   const platform = input.platform ?? process.platform;
+  if (input.localInferenceEnabled === false) {
+    return {
+      hasOllama: false,
+      ollamaHost: null,
+      ollamaRunning: false,
+      isWindowsHostOllama: false,
+      isWsl: false,
+      hasWindowsOllama: false,
+      winOllamaInstalledPath: "",
+      winOllamaLoopbackOnly: false,
+      windowsOllamaReachable: false,
+      windowsHostOllamaDockerRequirement: deps.getWindowsHostOllamaDockerRequirement(null),
+      vllmRunning: false,
+      vllmProfile: null,
+      hasVllmImage: false,
+      vllmEntries: [],
+      ollamaInstallMenu: { entry: null, hasUpgradableOllama: false },
+      gpuNimCapable: false,
+    };
+  }
   const isWsl = deps.isWsl({ platform, env: input.env });
   const hasOllama = deps.hostCommandExists("ollama");
   const ollamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();

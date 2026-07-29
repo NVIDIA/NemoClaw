@@ -27,7 +27,16 @@ const ONBOARD_ARGS = [
 ];
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
+const HERMES_GATEWAY_URL = "http://127.0.0.1:8642";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
+const DOCKER_ENV_KEYS = [
+  "DOCKER_CONFIG",
+  "DOCKER_CONTEXT",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "DOCKER_API_VERSION",
+] as const;
 const DOCKER_MISSING_PATTERNS = [
   /Cannot connect to the Docker daemon/i,
   /Is the docker daemon running\??/i,
@@ -126,6 +135,48 @@ function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.
   };
 }
 
+function runtimeCommandEnv(
+  environment: EnvironmentReady,
+  sandboxName: string,
+  extra: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
+  const env = commandEnv(sandboxName, extra);
+  if (environment.containerRuntime.driverName !== "podman") {
+    return env;
+  }
+  for (const key of DOCKER_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+
+function runtimeOnlyEnv(driverName: string): NodeJS.ProcessEnv {
+  const env = buildAvailabilityProbeEnv();
+  if (driverName === "podman") {
+    for (const key of DOCKER_ENV_KEYS) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+function onboardingArgs(
+  environment: EnvironmentReady,
+  trailingArgs: readonly string[] = [],
+): string[] {
+  const driverArgs =
+    environment.containerRuntime.driverName === "podman" ? ["--compute-driver", "podman"] : [];
+  return [...ONBOARD_ARGS, ...driverArgs, ...trailingArgs];
+}
+
+function requireAvailableRuntime(environment: EnvironmentReady, onboarding: string): void {
+  if (!environment.containerRuntime.available) {
+    throw new Error(
+      `${onboarding} onboarding requires an available ${environment.containerRuntime.driverName} runtime.`,
+    );
+  }
+}
+
 function noDockerShim(): string {
   // Source of truth for the Vitest fixture path: simulate the invalid state
   // where the Docker client exists but the daemon is unreachable. Keep the
@@ -181,6 +232,9 @@ export class OnboardingPhaseFixture {
         case "cloud-openclaw":
           result = await this.cloudOpenClaw(environment, options);
           break;
+        case "cloud-hermes":
+          result = await this.cloudHermes(environment, options);
+          break;
         case "cloud-openclaw-policy-custom-missing-presets":
           result = await this.cloudOpenClawPolicyCustomMissingPresets(environment, options);
           break;
@@ -205,15 +259,13 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
-      throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
-    }
+    requireAvailableRuntime(environment, "cloud-openclaw");
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
-    this.registerSandboxCleanup(sandboxName);
-    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+    this.registerSandboxCleanup(sandboxName, environment.containerRuntime.driverName);
+    const result = await this.host.nemoclaw(onboardingArgs(environment), {
       artifactName: "onboard-cloud-openclaw",
-      env: commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey }),
+      env: runtimeCommandEnv(environment, sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
@@ -229,21 +281,46 @@ export class OnboardingPhaseFixture {
     };
   }
 
+  async cloudHermes(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    requireAvailableRuntime(environment, "cloud-hermes");
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
+    this.registerSandboxCleanup(sandboxName, environment.containerRuntime.driverName);
+    const result = await this.host.nemoclaw(onboardingArgs(environment), {
+      artifactName: "onboard-cloud-hermes",
+      env: runtimeCommandEnv(environment, sandboxName, {
+        NEMOCLAW_AGENT: "hermes",
+        NVIDIA_INFERENCE_API_KEY: apiKey,
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+    assertExitZero(result, "cloud-hermes onboarding");
+    return {
+      onboarding: environment.onboarding,
+      sandboxName,
+      agent: "hermes",
+      provider: "nvidia",
+      providerEnv: "cloud",
+      gatewayUrl: HERMES_GATEWAY_URL,
+      result,
+    };
+  }
+
   async cloudLangchainDeepAgentsCode(
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
-      throw new Error(
-        "cloud-langchain-deepagents-code onboarding requires an available Docker runtime.",
-      );
-    }
+    requireAvailableRuntime(environment, "cloud-langchain-deepagents-code");
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
-    this.registerSandboxCleanup(sandboxName);
-    const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {
+    this.registerSandboxCleanup(sandboxName, environment.containerRuntime.driverName);
+    const result = await this.host.nemoclaw(onboardingArgs(environment, ["--observability"]), {
       artifactName: "onboard-cloud-langchain-deepagents-code",
-      env: commandEnv(sandboxName, {
+      env: runtimeCommandEnv(environment, sandboxName, {
         NEMOCLAW_AGENT: "langchain-deepagents-code",
         NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
         NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
@@ -280,14 +357,17 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (environment.docker.expectation !== "missing") {
+    if (
+      environment.containerRuntime.driverName !== "docker" ||
+      environment.containerRuntime.expectation !== "missing"
+    ) {
       throw new Error(
         "cloud-openclaw-no-docker onboarding requires the docker-missing runtime expectation.",
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
-    this.registerSandboxCleanup(sandboxName);
+    this.registerSandboxCleanup(sandboxName, environment.containerRuntime.driverName);
     const shimDir = await mkdtemp(join(tmpdir(), "e2e-no-docker-"));
     const shimPath = join(shimDir, "docker");
     try {
@@ -332,17 +412,13 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
-      throw new Error(
-        "cloud-openclaw-policy-custom-missing-presets onboarding requires an available Docker runtime.",
-      );
-    }
+    requireAvailableRuntime(environment, "cloud-openclaw-policy-custom-missing-presets");
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
-    this.registerSandboxCleanup(sandboxName);
-    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+    this.registerSandboxCleanup(sandboxName, environment.containerRuntime.driverName);
+    const result = await this.host.nemoclaw(onboardingArgs(environment), {
       artifactName: "onboard-cloud-openclaw-policy-custom-missing-presets",
-      env: commandEnv(sandboxName, {
+      env: runtimeCommandEnv(environment, sandboxName, {
         NVIDIA_INFERENCE_API_KEY: apiKey,
         NEMOCLAW_POLICY_MODE: "custom",
         NEMOCLAW_POLICY_PRESETS: "",
@@ -379,11 +455,15 @@ export class OnboardingPhaseFixture {
     };
   }
 
-  async destroySandbox(sandboxName: string, artifactName?: string): Promise<ShellProbeResult> {
+  async destroySandbox(
+    sandboxName: string,
+    artifactName?: string,
+    driverName = "docker",
+  ): Promise<ShellProbeResult> {
     validateSandboxName(sandboxName);
     const result = await this.host.nemoclaw([sandboxName, "destroy", "--yes"], {
       artifactName: artifactName ?? `cleanup-destroy-${artifactLabel(sandboxName)}`,
-      env: buildAvailabilityProbeEnv(),
+      env: runtimeOnlyEnv(driverName),
       timeoutMs: DEFAULT_TIMEOUT_MS,
     });
     if (result.exitCode !== 0 && !hasMissingSandboxDeleteSignature(result)) {
@@ -392,10 +472,10 @@ export class OnboardingPhaseFixture {
     return result;
   }
 
-  private registerSandboxCleanup(sandboxName: string): void {
+  private registerSandboxCleanup(sandboxName: string, driverName = "docker"): void {
     if (!this.cleanup) return;
     this.cleanup.add(`destroy NemoClaw sandbox ${sandboxName}`, async () => {
-      await this.destroySandbox(sandboxName);
+      await this.destroySandbox(sandboxName, undefined, driverName);
     });
   }
 

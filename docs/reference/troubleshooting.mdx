@@ -165,7 +165,8 @@ It installs Node.js via nvm and NemoClaw via npm, both into user-local directori
 The installer also handles OpenShell installation automatically using a pinned release.
 
 If you see permission errors during installation, they typically come from Docker, not the NemoClaw installer itself.
-Docker must be installed and running before you run the installer, and installing Docker may require elevated privileges on Linux.
+When you use the default Docker driver, Docker must be installed and running before you run the installer, and installing Docker may require elevated privileges on Linux.
+The rootless Podman path instead requires the current user to own and reach the selected Podman API socket.
 
 ### npm install fails with permission errors
 
@@ -404,14 +405,22 @@ Do not guess or copy a binding from another sandbox because lifecycle commands u
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2.
 Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
 
-If onboarding reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
+If onboarding selected the default Docker driver and reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
 
 ```bash
 $$nemoclaw onboard
 ```
 
-Native Podman is not supported by this release.
-Use Docker Desktop, Colima, or Docker Engine and rerun onboarding.
+If onboarding selected Podman and reports a cgroup error, confirm the host uses cgroup v2 and restart the rootless user socket:
+
+```bash
+test "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs
+systemctl --user enable --now podman.socket
+podman --url "unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" info
+```
+
+Podman support requires Linux amd64, rootless Podman 5 or later, and subordinate UID and GID ranges.
+It does not use the older Docker cgroup workaround.
 
 ### Cluster fails with `overlayfs snapshotter cannot be enabled` on Docker 26+
 
@@ -2672,8 +2681,78 @@ For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/qu
 
 ## Podman
 
-Native Podman is not supported by this release.
-Use Docker Engine, Docker Desktop, or Colima and rerun onboarding.
+NemoClaw supports rootless Podman 5 or later for CPU-only OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes on Linux amd64.
+Docker remains the default for new sandboxes.
+Select Podman explicitly with `--compute-driver podman` or `NEMOCLAW_COMPUTE_DRIVER=podman`.
+
+### Podman preflight fails
+
+Verify the complete first-release host contract:
+
+```bash
+podman --version
+test "$(uname -s)" = Linux
+test "$(uname -m)" = x86_64
+test "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs
+podman unshare cat /proc/self/uid_map
+podman unshare cat /proc/self/gid_map
+systemctl --user enable --now podman.socket
+test -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+podman --url "unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" info
+```
+
+The UID and GID maps must each contain a subordinate range longer than one ID.
+If either map does not, configure the current user in `/etc/subuid` and `/etc/subgid`, log in again if required by your distribution, and restart `podman.socket`.
+For a nonstandard rootless socket, set `OPENSHELL_PODMAN_SOCKET` to its absolute path for the first onboarding run.
+
+### Podman onboarding tries to use a Dockerfile or local inference
+
+The Podman driver is buildless.
+It requires the complete immutable managed OCI image for the selected agent and fails closed when the catalog, cohort, digest, or registry pull cannot be verified.
+It rejects `--from <Dockerfile>` and never falls back to a local Dockerfile build or Docker daemon.
+
+The first release supports CPU sandboxes with hosted inference only.
+Remove `--gpu` or `--sandbox-gpu`, use `--no-gpu`, and select a hosted inference provider.
+Host-local Ollama, NIM, and vLLM are not supported on the Podman driver.
+These limits apply equally to OpenClaw, Hermes, and LangChain Deep Agents Code.
+
+### Recover a Podman sandbox after a reboot
+
+Start the rootless Podman API socket, then let NemoClaw recover the exact persisted runtime:
+
+```bash
+systemctl --user start podman.socket
+$$nemoclaw my-assistant status
+$$nemoclaw my-assistant doctor --json
+```
+
+NemoClaw records the selected driver, socket, network, and managed gateway runtime during onboarding.
+Later status, rebuild, doctor, and destroy operations use that protected binding even in a fresh shell.
+You do not need to re-export `OPENSHELL_PODMAN_SOCKET` when the recorded socket still exists.
+If an ambient socket override conflicts with the recorded binding, NemoClaw stops instead of switching runtimes or falling back to Docker.
+Restore the original user socket path, run `doctor --json`, and retry.
+
+To recreate the agent sandbox while preserving its recorded Podman driver, use:
+
+```bash
+$$nemoclaw my-assistant rebuild --yes
+```
+
+To remove the final sandbox and its NemoClaw-managed Podman gateway state, use:
+
+```bash
+$$nemoclaw my-assistant destroy --yes --cleanup-gateway
+```
+
+The cleanup validates the exact persisted Podman binding before removing the gateway, network, and protected runtime state.
+If cleanup cannot prove ownership, it fails closed and retains the binding for diagnosis.
+
+### A Podman sandbox reports Docker runtime state
+
+A sandbox created with Podman must retain `podman` as its persisted compute driver.
+Run `$$nemoclaw my-assistant doctor --json` and inspect the compute-driver and gateway checks.
+Do not delete or rewrite the registry to force a driver change.
+Re-onboard under a new sandbox name if you intentionally need the default Docker path.
 
 <AgentOnly variant="hermes">
 

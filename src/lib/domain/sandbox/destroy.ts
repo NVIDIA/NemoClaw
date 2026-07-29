@@ -39,9 +39,14 @@ export type DockerSandboxContainerSnapshot = {
   probeFailed?: boolean;
 };
 
+export type SandboxRuntimeContainerSnapshot = {
+  present: boolean;
+  probeFailed?: boolean;
+};
+
 export type LiveSandboxProbeSnapshot = {
   liveList: LiveSandboxListSnapshot;
-  dockerContainersBySandboxName: ReadonlyMap<string, DockerSandboxContainerSnapshot>;
+  runtimeContainersBySandboxName: ReadonlyMap<string, SandboxRuntimeContainerSnapshot>;
 };
 
 export function isMissingSandboxDeleteOutput(output = ""): boolean {
@@ -170,6 +175,14 @@ export function hasRunningDockerSandboxContainer(
   );
 }
 
+export function hasRuntimeSandboxContainer(
+  snapshot: SandboxRuntimeContainerSnapshot | undefined,
+): boolean {
+  // Missing or failed runtime evidence cannot prove absence. Preserve the
+  // shared gateway until the driver-specific action-layer probe succeeds.
+  return !snapshot || snapshot.probeFailed === true || snapshot.present;
+}
+
 export function getLiveSandboxNames(liveList: LiveSandboxListSnapshot): string[] {
   if (liveList.status !== 0) {
     return [];
@@ -179,7 +192,7 @@ export function getLiveSandboxNames(liveList: LiveSandboxListSnapshot): string[]
 
 export function hasNoLiveSandboxes({
   liveList,
-  dockerContainersBySandboxName,
+  runtimeContainersBySandboxName,
 }: LiveSandboxProbeSnapshot): boolean {
   // Fail closed: if OpenShell cannot report authoritative sandbox state,
   // preserve the shared gateway so a sandbox never loses its listener.
@@ -187,13 +200,8 @@ export function hasNoLiveSandboxes({
     return false;
   }
   const entries = parseLiveSandboxEntries(liveList.output);
-  const sandboxNames = entries.map((entry) => entry.name);
   return entries.every((entry) => {
     if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningDockerSandboxContainer(
-      entry.name,
-      dockerContainersBySandboxName.get(entry.name),
-      sandboxNames,
-    );
+    return !hasRuntimeSandboxContainer(runtimeContainersBySandboxName.get(entry.name));
   });
 }

@@ -123,6 +123,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          openshellDriver: recreateOptions.computeDriver,
         },
       }),
     );

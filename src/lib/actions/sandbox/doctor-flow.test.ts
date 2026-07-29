@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
@@ -12,8 +13,26 @@ type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 
 const requireDist = createRequire(import.meta.url);
 const doctorModulePath = "./doctor.js";
+const runtimeBindingDirectories: string[] = [];
 
-function createDoctorHarness(provider = "ollama-local"): {
+function createPersistedPodmanBinding(socketPath: string): string {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-podman-binding-"));
+  runtimeBindingDirectories.push(stateDir);
+  const { buildPodmanDriverGatewayEnv } = requireDist(
+    "../../onboard/compute/podman/gateway-env.js",
+  ) as typeof import("../../onboard/compute/podman/gateway-env");
+  buildPodmanDriverGatewayEnv({
+    gatewayPort: 8080,
+    stateDir,
+    podmanSocketPath: socketPath,
+    supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:test",
+  });
+  return stateDir;
+}
+
+function createDoctorHarness(
+  options: { openshellDriver?: string | null; provider?: string } = {},
+): {
   buildToolScopeChecksSpy: MockInstance;
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
@@ -35,6 +54,7 @@ function createDoctorHarness(provider = "ollama-local"): {
   resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
 } {
+  const provider = options.provider ?? "ollama-local";
   delete require.cache[requireDist.resolve(doctorModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -64,7 +84,7 @@ function createDoctorHarness(provider = "ollama-local"): {
     agent: "openclaw",
     model: "registry-model",
     provider,
-    openshellDriver: "docker",
+    openshellDriver: options.openshellDriver ?? "docker",
     openshellVersion: "0.0.72",
     nemoclawVersion: "0.0.83",
     fromDockerfile: null,
@@ -244,7 +264,11 @@ describe("runSandboxDoctor flow", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     delete require.cache[requireDist.resolve(doctorModulePath)];
+    for (const directory of runtimeBindingDirectories.splice(0)) {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it(
@@ -298,7 +322,7 @@ describe("runSandboxDoctor flow", () => {
     ["high", "high"],
     [null, "endpoint-default"],
   ] as const)("reports effective reasoning effort in doctor JSON (%s) (#7659)", async (stored, expected) => {
-    const harness = createDoctorHarness("compatible-endpoint");
+    const harness = createDoctorHarness({ provider: "compatible-endpoint" });
     harness.getSandboxSpy.mockReturnValue({
       name: "alpha",
       agent: "openclaw",
@@ -325,6 +349,81 @@ describe("runSandboxDoctor flow", () => {
       detail: expected,
     });
   });
+
+  it(
+    "probes a Podman sandbox through its exact socket without invoking Docker",
+    testTimeoutOptions(30_000),
+    async () => {
+      const socketPath = "/run/user/1000/podman/podman.sock";
+      const stateDir = createPersistedPodmanBinding(socketPath);
+      vi.stubEnv("OPENSHELL_PODMAN_SOCKET", socketPath);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+      const harness = createDoctorHarness({ openshellDriver: "podman" });
+      harness.captureHostCommandSpy.mockImplementation((command: unknown) => {
+        if (command === "docker") {
+          throw new Error("Docker must not be invoked for Podman doctor");
+        }
+        return { status: 0, stdout: "{}\n", stderr: "" };
+      });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      expect(harness.captureHostCommandSpy).toHaveBeenCalledWith(
+        "podman",
+        ["--url", `unix://${socketPath}`, "info", "--format", "json"],
+        8000,
+      );
+      expect(harness.captureHostCommandSpy).not.toHaveBeenCalledWith(
+        "docker",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ group: "Host", label: "Podman service", status: "ok" }),
+        ]),
+      );
+      expect(report?.checks).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: "Docker daemon" })]),
+      );
+    },
+  );
+
+  it(
+    "recovers the exact Podman socket from the target gateway binding in a fresh shell",
+    testTimeoutOptions(30_000),
+    async () => {
+      const socketPath = "/run/user/1000/podman/persisted.sock";
+      const stateDir = createPersistedPodmanBinding(socketPath);
+      vi.stubEnv("OPENSHELL_PODMAN_SOCKET", "");
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+      const harness = createDoctorHarness({ openshellDriver: "podman" });
+      harness.captureHostCommandSpy.mockImplementation((command: unknown) => {
+        if (command === "docker") {
+          throw new Error("Docker must not be invoked for persisted Podman doctor");
+        }
+        return { status: 0, stdout: "{}\n", stderr: "" };
+      });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      expect(harness.captureHostCommandSpy).toHaveBeenCalledWith(
+        "podman",
+        ["--url", `unix://${socketPath}`, "info", "--format", "json"],
+        8000,
+      );
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            group: "Host",
+            label: "Podman service",
+            status: "ok",
+            detail: `connected via ${socketPath}`,
+          }),
+        ]),
+      );
+    },
+  );
 
   it(
     "reports baseline exclusions and flags content drift since approval (#7194)",

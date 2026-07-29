@@ -11,7 +11,6 @@ import {
   webSearchProviderForConfig,
 } from "../../inference/web-search";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
-import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
 import { initialDockerGpuRoute, resolveDockerGpuRoutePlan } from "../../onboard/docker-gpu-route";
 import { isDockerDesktopWslRuntime } from "../../onboard/docker-gpu-sandbox-create";
@@ -174,8 +173,19 @@ export async function preflightRebuildTargetRuntime(
     );
     return { ok: false };
   }
+  if (recreateOptions.computeDriver === "podman" && sandboxGpuConfig.sandboxGpuEnabled) {
+    printRebuildPreflightFailure(
+      "the recorded Podman sandbox requests GPU passthrough.",
+      "Native Podman support currently covers CPU sandboxes with hosted inference; recreate with sandbox GPU disabled.",
+      "Recorded Podman GPU state is unsupported",
+      bail,
+    );
+    return { ok: false };
+  }
   try {
-    const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
+    // Rebuild is bound to the persisted compute driver before this preflight.
+    // Only the Docker profile may inherit Docker GPU routing semantics.
+    const dockerDriverGateway = recreateOptions.computeDriver === "docker";
     const selectedRoute = initialDockerGpuRoute(
       resolveDockerGpuRoutePlan(sandboxGpuConfig, {
         dockerDriverGateway,

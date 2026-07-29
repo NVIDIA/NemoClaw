@@ -61,8 +61,9 @@ export type SpawnSyncLike = (
   options?: SpawnSyncOptions,
 ) => SpawnSyncLikeResult;
 
-export interface PackageManagedDockerDriverGatewayOptions {
+export interface PackageManagedDriverGatewayOptions {
   clearDockerDriverGatewayRuntimeFiles: () => void;
+  driverLabel?: string;
   exitOnFailure: boolean;
   gatewayName: string;
   hasOpenShellGatewayUserService?: () => boolean;
@@ -88,6 +89,8 @@ export interface PackageManagedDockerDriverGatewayOptions {
     options?: { skip?: boolean },
   ) => Promise<void>;
 }
+
+export type PackageManagedDockerDriverGatewayOptions = PackageManagedDriverGatewayOptions;
 
 interface OpenShellGatewayUserServiceTarget {
   manager: "homebrew" | "systemd";
@@ -642,8 +645,9 @@ export function startOpenShellGatewayUserService(
   };
 }
 
-export async function startPackageManagedDockerDriverGateway({
+export async function startPackageManagedDriverGateway({
   clearDockerDriverGatewayRuntimeFiles,
+  driverLabel = "Docker",
   exitOnFailure,
   gatewayName,
   hasOpenShellGatewayUserService: hasService = hasOpenShellGatewayUserService,
@@ -660,10 +664,10 @@ export async function startPackageManagedDockerDriverGateway({
   startOpenShellGatewayUserService: startService = startOpenShellGatewayUserService,
   validatePortOwnerForOpenShellGatewayUserServiceStart,
   verifySandboxBridgeGatewayReachableOrExit,
-}: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
+}: PackageManagedDriverGatewayOptions): Promise<boolean> {
   if (!hasService()) return false;
 
-  console.log("  Starting OpenShell Docker-driver gateway via managed service...");
+  console.log(`  Starting OpenShell ${driverLabel}-driver gateway via managed service...`);
   const serviceStart = startService({
     preparePortForServiceStart: preparePortForOpenShellGatewayUserServiceStart,
     prepareServiceEnv: prepareOpenShellGatewayUserServiceEnv,
@@ -733,4 +737,10 @@ export async function startPackageManagedDockerDriverGateway({
   console.error(`  Check: ${serviceStart.statusCommand}`);
   if (exitOnFailure) process.exit(1);
   throw new Error(message);
+}
+
+export function startPackageManagedDockerDriverGateway(
+  options: PackageManagedDockerDriverGatewayOptions,
+): Promise<boolean> {
+  return startPackageManagedDriverGateway({ ...options, driverLabel: "Docker" });
 }

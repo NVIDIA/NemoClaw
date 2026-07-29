@@ -94,5 +94,9 @@
   {
     "name": "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
     "reason": "Internal one-process handoff from Docker GPU patch preparation into sandbox creation. Rebuild scopes and restores it; users must not set it."
+  },
+  {
+    "name": "NEMOCLAW_PODMAN_BIN",
+    "reason": "Internal test/runtime injection for the trusted Podman executable. Users select Podman with --compute-driver and must not override the executable path."
   }
 ]

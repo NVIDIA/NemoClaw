@@ -3,7 +3,23 @@
 
 import { describe, expect, it } from "vitest";
 import { isLinuxDockerDriverGatewayEnabled } from "../docker-driver-platform";
-import { resolveCurrentOpenShellComputePlan, usesManagedDockerGateway } from "./plan";
+import {
+  CURRENT_OPEN_SHELL_COMPUTE_PLANS,
+  type OpenShellComputeCapabilitiesRegistry,
+  type OpenShellComputePlan,
+  type OpenShellComputePlanRegistry,
+  OpenShellComputeSelectionError,
+  resolveCurrentOpenShellComputePlan,
+  resolveOpenShellComputeCapabilities,
+  resolveOpenShellComputeSelection,
+  resolvePersistedOpenShellComputeDriver,
+  usesManagedDockerGateway,
+} from "./plan";
+
+const AUTO_DOCKER_PLAN: OpenShellComputePlan = {
+  driverName: "docker",
+  gatewayLauncher: "nemoclaw",
+};
 
 describe("current OpenShell compute plan", () => {
   it.each([
@@ -66,5 +82,126 @@ describe("current OpenShell compute plan", () => {
     expected,
   }) => {
     expect(usesManagedDockerGateway({ driverName, gatewayLauncher })).toBe(expected);
+  });
+
+  it("resolves an internal Podman request without exposing public wiring (#7744)", () => {
+    expect(
+      resolveOpenShellComputeSelection({
+        requestedDriver: "podman",
+        autoPlan: AUTO_DOCKER_PLAN,
+      }),
+    ).toEqual({
+      driverName: "podman",
+      gatewayLauncher: "nemoclaw",
+    });
+  });
+
+  it("keeps auto deterministic and preserves a persisted driver (#7744)", () => {
+    expect(
+      resolveOpenShellComputeSelection({
+        requestedDriver: "auto",
+        persistedDriver: "podman",
+        autoPlan: AUTO_DOCKER_PLAN,
+      }),
+    ).toEqual({
+      driverName: "podman",
+      gatewayLauncher: "nemoclaw",
+    });
+    expect(
+      resolveOpenShellComputeSelection({
+        requestedDriver: "auto",
+        autoPlan: AUTO_DOCKER_PLAN,
+      }),
+    ).toEqual(AUTO_DOCKER_PLAN);
+  });
+
+  it("collapses matching durable driver evidence and rejects drift (#7744)", () => {
+    expect(
+      resolvePersistedOpenShellComputeDriver([
+        { source: "onboarding session", driverName: " podman " },
+        { source: "sandbox registry", driverName: "podman" },
+        { source: "empty legacy record", driverName: null },
+      ]),
+    ).toBe("podman");
+
+    expect(() =>
+      resolvePersistedOpenShellComputeDriver([
+        { source: "onboarding session", driverName: "docker" },
+        { source: "sandbox registry", driverName: "podman" },
+      ]),
+    ).toThrow(
+      "Conflicting persisted OpenShell compute drivers: onboarding session='docker', sandbox registry='podman'.",
+    );
+  });
+
+  it("rejects an explicit driver that differs from persisted identity (#7744)", () => {
+    expect(() =>
+      resolveOpenShellComputeSelection({
+        requestedDriver: "podman",
+        persistedDriver: "docker",
+        autoPlan: AUTO_DOCKER_PLAN,
+      }),
+    ).toThrow(
+      "Requested OpenShell compute driver 'podman' does not match existing sandbox driver 'docker'.",
+    );
+  });
+
+  it("fails an unknown driver closed (#7744)", () => {
+    expect(() =>
+      resolveOpenShellComputeSelection({
+        requestedDriver: "future-runtime",
+        autoPlan: AUTO_DOCKER_PLAN,
+      }),
+    ).toThrow(OpenShellComputeSelectionError);
+  });
+
+  it("accepts an injected MXC-shaped plan without inheriting Podman lifecycle (#7744)", () => {
+    const plans: OpenShellComputePlanRegistry = {
+      ...CURRENT_OPEN_SHELL_COMPUTE_PLANS,
+      mxc: {
+        driverName: "mxc",
+        gatewayLauncher: "openshell",
+      },
+    };
+
+    expect(
+      resolveOpenShellComputeSelection(
+        {
+          requestedDriver: "mxc",
+          autoPlan: AUTO_DOCKER_PLAN,
+        },
+        plans,
+      ),
+    ).toEqual({
+      driverName: "mxc",
+      gatewayLauncher: "openshell",
+    });
+
+    const capabilities: OpenShellComputeCapabilitiesRegistry = {
+      mxc: { hostLocalInference: false },
+    };
+    expect(resolveOpenShellComputeCapabilities({ driverName: "mxc" }, capabilities)).toEqual({
+      hostLocalInference: false,
+    });
+  });
+
+  it("keeps compute capabilities independent from gateway ownership", () => {
+    expect(resolveOpenShellComputeCapabilities(CURRENT_OPEN_SHELL_COMPUTE_PLANS.docker)).toEqual({
+      hostLocalInference: true,
+    });
+    expect(resolveOpenShellComputeCapabilities(CURRENT_OPEN_SHELL_COMPUTE_PLANS.podman)).toEqual({
+      hostLocalInference: false,
+    });
+    expect(
+      resolveOpenShellComputeCapabilities(CURRENT_OPEN_SHELL_COMPUTE_PLANS.kubernetes),
+    ).toEqual({
+      hostLocalInference: true,
+    });
+  });
+
+  it("fails an unregistered compute capability profile closed", () => {
+    expect(() => resolveOpenShellComputeCapabilities({ driverName: "mxc" })).toThrow(
+      "has no registered capability profile",
+    );
   });
 });

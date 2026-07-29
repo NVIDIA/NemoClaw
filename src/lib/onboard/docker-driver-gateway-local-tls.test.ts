@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildDockerDriverGatewayCertgenArgs,
   dockerDriverGatewayLocalTlsBundleIsComplete,
   ensureDockerDriverGatewayLocalTlsBundle,
   getDockerDriverGatewayLocalTlsBundle,
@@ -219,6 +220,37 @@ describe("docker-driver-gateway-local-tls", () => {
         ],
       });
       expect(calls[0]?.env?.OPENSHELL_LOCAL_TLS_DIR).toBe(path.join(stateDir, "tls"));
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds the Podman host callback name without changing the Docker default SAN set", () => {
+    expect(buildDockerDriverGatewayCertgenArgs("/state/tls")).toEqual([
+      "generate-certs",
+      "--output-dir",
+      "/state/tls",
+      "--server-san",
+      "host.openshell.internal",
+      "--server-san",
+      "localhost",
+      "--server-san",
+      "127.0.0.1",
+    ]);
+    expect(
+      buildDockerDriverGatewayCertgenArgs("/state/tls", ["host.containers.internal"]),
+    ).toContain("host.containers.internal");
+  });
+
+  it("does not accept a Docker-only certificate for the Podman callback hostname", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-tls-"));
+    writeBundle(stateDir, TEST_CERT_PEM, TEST_KEY_PEM);
+    useTestCertificateClock();
+    try {
+      expect(dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)).toBe(true);
+      expect(
+        dockerDriverGatewayLocalTlsBundleIsComplete(stateDir, ["host.containers.internal"]),
+      ).toBe(false);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

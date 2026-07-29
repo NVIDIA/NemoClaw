@@ -24,6 +24,7 @@ export type SandboxListRecoveryResult = {
 };
 
 export type CaptureSandboxListWithGatewayRecoveryOptions = {
+  computeDriver?: string;
   gatewayName?: string;
 };
 
@@ -46,6 +47,9 @@ export async function captureSandboxListWithGatewayRecovery(
   const recoveryOptions: Parameters<typeof recoverNamedGatewayRuntime>[0] = {
     recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
   };
+  if (options.computeDriver) {
+    recoveryOptions.computeDriver = options.computeDriver;
+  }
   if (options.gatewayName) {
     recoveryOptions.gatewayName = options.gatewayName;
   }

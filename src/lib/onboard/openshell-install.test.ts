@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  areRequiredDockerDriverBinariesPresent,
   ensureOpenshellForOnboard,
   type OpenShellInstallDeps,
   type OpenShellInstallResult,
@@ -48,6 +49,39 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
 }
 
 describe("ensureOpenshellForOnboard", () => {
+  it("requires only the binaries declared by a pluggable managed-driver profile", () => {
+    const deps = makeDeps({
+      getManagedGatewayBinaryRequirements: () => ({
+        driverLabel: "Podman",
+        gateway: true,
+        sandbox: false,
+      }),
+      resolveOpenShellGatewayBinary: () => "/tmp/openshell-gateway",
+      resolveOpenShellSandboxBinary: () => null,
+    });
+
+    expect(areRequiredDockerDriverBinariesPresent(deps, "linux")).toBe(true);
+  });
+
+  it("reinstalls for a missing Podman gateway binary without requiring a host sandbox binary", () => {
+    const deps = makeDeps({
+      getManagedGatewayBinaryRequirements: () => ({
+        driverLabel: "Podman",
+        gateway: true,
+        sandbox: false,
+      }),
+      resolveOpenShellGatewayBinary: () => null,
+      resolveOpenShellSandboxBinary: () => null,
+    });
+
+    ensureOpenshellForOnboard(deps);
+
+    expect(deps.installOpenshell).toHaveBeenCalledOnce();
+    expect(deps.log).toHaveBeenCalledWith(
+      "  OpenShell Podman-driver gateway onboarding requires the gateway binaries. Reinstalling...",
+    );
+  });
+
   it("reinstalls when the installed OpenShell lacks messaging rewrite or MCP L7 support", () => {
     const hasFeatures = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
     const deps = makeDeps({

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MANAGED_GATEWAY_RUNTIME_BINDING_NAME } from "../../onboard/docker-driver-gateway-config";
 
 const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
@@ -61,8 +62,10 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     let pidIsAlive = true;
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
     const runtimeMarker = path.join(stateDir, "runtime.json");
+    const managedRuntimeBinding = path.join(stateDir, MANAGED_GATEWAY_RUNTIME_BINDING_NAME);
     fs.writeFileSync(pidFile, `${pid}\n`);
     fs.writeFileSync(runtimeMarker, '{"evidence":"keep-until-safe"}\n');
+    fs.writeFileSync(managedRuntimeBinding, '{"driverName":"podman"}\n');
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const missingProcess = () => ({ status: 1, stdout: "", stderr: "" });
     const processResponses = new Map([
@@ -86,6 +89,7 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     );
     expect(fs.readFileSync(pidFile, "utf-8")).toBe(`${pid}\n`);
     expect(fs.readFileSync(runtimeMarker, "utf-8")).toContain("keep-until-safe");
+    expect(fs.readFileSync(managedRuntimeBinding, "utf-8")).toContain("podman");
     expect(runOpenshell).not.toHaveBeenCalledWith(
       ["gateway", "remove", "nemoclaw-8081"],
       expect.anything(),
@@ -96,6 +100,7 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).not.toThrow();
     expect(fs.existsSync(pidFile)).toBe(false);
     expect(fs.existsSync(runtimeMarker)).toBe(false);
+    expect(fs.existsSync(managedRuntimeBinding)).toBe(false);
     expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
