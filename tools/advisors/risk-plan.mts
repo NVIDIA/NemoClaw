@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 6 as const;
+export const RISK_PLAN_VERSION = 7 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
 
@@ -267,7 +267,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Credential and security-boundary changes must preserve secrecy, sanitization, and fail-closed policy behavior.",
     tier: 3,
-    requiredJobs: ["credential-sanitization", "security-posture"],
+    requiredJobs: ["cloud-inference", "security-posture"],
     invariants: [
       "plaintext credentials do not cross logs, snapshots, artifacts, or sandbox boundaries",
       "invalid or missing security state fails closed",
@@ -285,7 +285,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "E2E selection, execution, and evidence changes must preserve trusted dispatch and fail-closed result classification.",
     tier: 3,
-    requiredJobs: ["cloud-onboard", "credential-sanitization", "security-posture"],
+    requiredJobs: ["cloud-onboard", "cloud-inference", "security-posture"],
     invariants: [
       "the controller selects only trusted jobs and binds results to the intended PR commit",
       "single-shard and matrix jobs both emit complete evidence through the canonical reporter",

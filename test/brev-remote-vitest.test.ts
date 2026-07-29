@@ -20,7 +20,7 @@ import {
   buildBrevRemoteVitestCommand,
 } from "../tools/e2e/brev-remote-vitest.mts";
 
-const TARGET = "test/e2e/live/credential-sanitization.test.ts";
+const TARGET = "test/e2e/live/telegram-injection.test.ts";
 
 type Fixture = {
   fakeBin: string;
@@ -109,18 +109,15 @@ describe("Brev remote Vitest command", () => {
   });
 
   it("does not seed shared harness state for suites that own their sandbox lifecycle", () => {
-    expect(brevSuiteNeedsHarnessSandbox("all")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("full")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("gpu")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("messaging-compatible-endpoint")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("messaging-providers")).toBe(false);
-    expect(brevSuiteHarnessSandboxName("all")).toBeUndefined();
     expect(brevSuiteHarnessSandboxName("messaging-compatible-endpoint")).toBeUndefined();
     expect(brevSuiteHarnessSandboxName("messaging-providers")).toBeUndefined();
   });
 
   it("preserves harness onboarding for single-target suites", () => {
-    expect(brevSuiteNeedsHarnessSandbox("credential-sanitization")).toBe(true);
     expect(brevSuiteNeedsHarnessSandbox("telegram-injection")).toBe(true);
     expect(brevSuiteNeedsHarnessSandbox("dashboard-remote-bind")).toBe(true);
     expect(brevSuiteHarnessSandboxName("dashboard-remote-bind")).toBe("e2e-test");

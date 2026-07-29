@@ -324,6 +324,7 @@ describe("runtime shared gateway route containment", () => {
         onboardEndpointUrl: null,
         getSandboxes: () => [alpha, peer],
         rewriteUrlWithDnsPinning,
+        resolveCredentialValue: () => "",
         ensureHttpsPinRuntimeAdapter,
       }),
     ).rejects.toThrow("custom-peer");
@@ -371,6 +372,7 @@ describe("runtime shared gateway route containment", () => {
       onboardEndpointUrl: null,
       getSandboxes: () => [alpha, peer],
       rewriteUrlWithDnsPinning: vi.fn(async (value: unknown) => value as string),
+      resolveCredentialValue: () => "upstream-token",
       ensureHttpsPinRuntimeAdapter: vi.fn(async () => ({
         baseUrl: adapterBaseUrl as string,
         credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
@@ -459,6 +461,7 @@ describe("runtime shared gateway route containment", () => {
         onboardEndpointUrl: null,
         getSandboxes: () => [alpha, beta],
         rewriteUrlWithDnsPinning,
+        resolveCredentialValue: () => "upstream-token",
         ensureHttpsPinRuntimeAdapter,
       });
 

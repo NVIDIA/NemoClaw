@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -12,7 +12,7 @@ export interface FullE2eEvidenceInput {
   cleanup: unknown;
   dispatch: unknown;
   jobs: unknown;
-  qualification: unknown;
+  launchableE2e: unknown;
   run: unknown;
 }
 
@@ -30,7 +30,7 @@ export interface FullE2eEvidenceSummary {
     includeStagingBrevLaunchable: true;
   };
   jobUrl: string;
-  qualification: {
+  launchableE2e: {
     fullE2e: "passed";
     producerRunId: string;
     provisionSha: string;
@@ -127,20 +127,20 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
     throw new Error("Exact staging Brev Launchable html_url must belong to the workflow run");
   }
 
-  const qualification = record(input.qualification, "qualification");
-  requireEqual(qualification.candidateSha, input.candidateSha, "qualification.candidateSha");
-  requireEqual(qualification.fullE2e, "passed", "qualification.fullE2e");
-  const producer = record(qualification.producer, "qualification.producer");
-  requireEqual(producer.status, "success", "qualification.producer.status");
-  const producerRunId = stringField(producer, "runId", "qualification.producer");
-  const boot = record(qualification.boot, "qualification.boot");
-  requireEqual(boot.repoSha, input.candidateSha, "qualification.boot.repoSha");
-  requireEqual(boot.provisionSha, input.candidateSha, "qualification.boot.provisionSha");
-  requireEqual(boot.repoClean, true, "qualification.boot.repoClean");
+  const launchableE2e = record(input.launchableE2e, "launchableE2e");
+  requireEqual(launchableE2e.candidateSha, input.candidateSha, "launchableE2e.candidateSha");
+  requireEqual(launchableE2e.fullE2e, "passed", "launchableE2e.fullE2e");
+  const producer = record(launchableE2e.producer, "launchableE2e.producer");
+  requireEqual(producer.status, "success", "launchableE2e.producer.status");
+  const producerRunId = stringField(producer, "runId", "launchableE2e.producer");
+  const boot = record(launchableE2e.boot, "launchableE2e.boot");
+  requireEqual(boot.repoSha, input.candidateSha, "launchableE2e.boot.repoSha");
+  requireEqual(boot.provisionSha, input.candidateSha, "launchableE2e.boot.provisionSha");
+  requireEqual(boot.repoClean, true, "launchableE2e.boot.repoClean");
 
-  const workspace = record(qualification.workspace, "qualification.workspace");
-  const workspaceName = stringField(workspace, "name", "qualification.workspace");
-  const workspaceId = stringField(workspace, "id", "qualification.workspace");
+  const workspace = record(launchableE2e.workspace, "launchableE2e.workspace");
+  const workspaceName = stringField(workspace, "name", "launchableE2e.workspace");
+  const workspaceId = stringField(workspace, "id", "launchableE2e.workspace");
   const cleanup = record(input.cleanup, "cleanup");
   requireEqual(cleanup.workspaceName, workspaceName, "cleanup.workspaceName");
   requireEqual(cleanup.workspaceId, workspaceId, "cleanup.workspaceId");
@@ -164,7 +164,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
       includeStagingBrevLaunchable: true,
     },
     jobUrl,
-    qualification: {
+    launchableE2e: {
       fullE2e: "passed",
       producerRunId,
       provisionSha: input.candidateSha,
@@ -186,7 +186,7 @@ function main(): void {
       "cleanup-json": { type: "string" },
       "dispatch-json": { type: "string" },
       "jobs-json": { type: "string" },
-      "qualification-json": { type: "string" },
+      "launchable-e2e-json": { type: "string" },
       "run-json": { type: "string" },
     },
     strict: true,
@@ -196,7 +196,7 @@ function main(): void {
     "cleanup-json",
     "dispatch-json",
     "jobs-json",
-    "qualification-json",
+    "launchable-e2e-json",
     "run-json",
   ] as const) {
     if (!values[name]) throw new Error(`--${name} is required`);
@@ -207,7 +207,7 @@ function main(): void {
     cleanup: readJson(values["cleanup-json"]!),
     dispatch: readJson(values["dispatch-json"]!),
     jobs: readJson(values["jobs-json"]!),
-    qualification: readJson(values["qualification-json"]!),
+    launchableE2e: readJson(values["launchable-e2e-json"]!),
     run: readJson(values["run-json"]!),
   });
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);

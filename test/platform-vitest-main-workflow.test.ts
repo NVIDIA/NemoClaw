@@ -12,8 +12,12 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
+const WSL_E2E_WORKFLOW_PATH = ".github/workflows/wsl-e2e.yaml";
+const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
 const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
+const wslE2eWorkflow = readYaml<Workflow>(WSL_E2E_WORKFLOW_PATH);
+const wslHelperSource = readRepoText(WSL_HELPER_PATH);
 
 function job(name: string): WorkflowJob {
   const candidate = workflow.jobs[name];
@@ -28,6 +32,107 @@ function step(jobName: string, name: string): WorkflowStep {
 }
 
 describe("platform Vitest main workflow", () => {
+  // source-shape-contract: security -- The trusted helper installs only checksum-verified official Node.js archives
+  it("pins and verifies the Node.js archive in the trusted WSL helper", () => {
+    const installSteps = [{ run: wslHelperSource }];
+
+    for (const installStep of installSteps) {
+      expect(installStep, "missing WSL Node.js install step").toBeDefined();
+      const run = installStep?.run ?? "";
+      expect(run).toContain('node_version="22.23.1"');
+      expect(run).toMatch(
+        /x86_64\)[\s\S]*?node_arch="x64"[\s\S]*?node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"[\s\S]*?;;/u,
+      );
+      expect(run).toMatch(
+        /aarch64 \| arm64\)[\s\S]*?node_arch="arm64"[\s\S]*?node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"[\s\S]*?;;/u,
+      );
+      expect(run).toContain(
+        'node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"',
+      );
+      expect(run).toContain('temp_dir="$(mktemp -d)"');
+      expect(run).toContain(`trap 'rm -rf "$temp_dir"' EXIT`);
+      expect(run).toContain("--proto '=https'");
+      expect(run).toContain("--connect-timeout 15");
+      expect(run).toContain("--max-time 180");
+      expect(run).toContain("--retry 3");
+      expect(run).toContain("--retry-max-time 240");
+      expect(run).toContain("sha256sum --check --status");
+      expect(run.indexOf("sha256sum --check --status")).toBeLessThan(run.indexOf("tar --extract"));
+      expect(run).toContain('test "$(node --version)" = "v${node_version}"');
+      expect(run).toContain("Unsupported Node.js architecture");
+      expect(run).not.toContain("deb.nodesource.com");
+      expect(run).not.toMatch(/\bcurl\b[^\n]*\|\s*bash\b/u);
+    }
+    expect(step("wsl-vitest", "Install Node.js 22 in WSL").run).toContain("Install-WslNode");
+    expect(
+      wslE2eWorkflow.jobs["wsl-e2e"]?.steps?.find(
+        (entry) => entry.name === "Install Node.js 22 in WSL",
+      )?.run,
+    ).toContain("Install-WslNode");
+  });
+
+  // source-shape-contract: security -- Sparse immutable helper checkouts must precede candidate code before root-capable WSL execution
+  it("loads the WSL helper from trusted revisions before candidate execution (#6958)", () => {
+    expect(
+      (workflow as Workflow & { on?: Record<string, unknown> }).on,
+      "platform main-watch workflow must not execute candidate code on pull requests",
+    ).not.toHaveProperty("pull_request");
+
+    const cases = [
+      {
+        helperRef: "${{ github.workflow_sha }}",
+        job: job("wsl-vitest"),
+      },
+      {
+        helperRef:
+          "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}",
+        job: wslE2eWorkflow.jobs["wsl-e2e"],
+      },
+    ];
+
+    for (const workflowCase of cases) {
+      expect(workflowCase.job, "missing WSL job").toBeDefined();
+      const steps = workflowCase.job?.steps ?? [];
+      const trustedCheckout = steps.find(
+        (entry) => entry.name === "Check out the trusted WSL helper",
+      );
+      const candidateCheckout = steps.find((entry) => entry.name === "Check out candidate source");
+      expect(trustedCheckout?.with).toMatchObject({
+        ref: workflowCase.helperRef,
+        path: "trusted-wsl-ci",
+        "persist-credentials": false,
+        "sparse-checkout": `${WSL_HELPER_PATH}\n`,
+        "sparse-checkout-cone-mode": false,
+      });
+      expect(candidateCheckout?.with).toMatchObject({
+        path: "source",
+        "persist-credentials": false,
+      });
+      expect(steps.map((entry) => entry.name)).not.toContain("Detect trusted WSL helper");
+      expect(steps.map((entry) => entry.name)).not.toContain(
+        "Explain deferred trusted WSL helper rollout",
+      );
+      expect(
+        steps.some((entry) => (entry.if ?? "").includes("steps.helper.outputs.present")),
+        "missing trusted helper must fail instead of skipping candidate validation",
+      ).toBe(false);
+      expect(steps.indexOf(trustedCheckout!)).toBeLessThan(steps.indexOf(candidateCheckout!));
+
+      for (const entry of steps.filter((candidate) =>
+        /(?:Ensure|Install|Invoke|Sync)-Wsl/u.test(candidate.run ?? ""),
+      )) {
+        expect(entry.run, `${entry.name} must load the trusted helper`).toContain(
+          '. "$env:TRUSTED_WSL_HELPER"',
+        );
+      }
+    }
+
+    expect(readRepoText(WORKFLOW_PATH)).not.toMatch(/WriteAllText|wslpath|wsl\s+--install/u);
+    expect(readRepoText(WSL_E2E_WORKFLOW_PATH)).not.toMatch(
+      /WriteAllText|wslpath|wsl\s+--install/u,
+    );
+  });
+
   // source-shape-contract: compatibility -- macOS must use the same modern shell/tool semantics as the Linux sandbox fixtures
   it("provisions the pinned macOS test runtime before running the full suite", () => {
     const stepNames = job("macos-vitest").steps?.map((entry) => entry.name) ?? [];
@@ -94,7 +199,7 @@ describe("platform Vitest main workflow", () => {
   // source-shape-contract: security -- ordinary tests stay non-root while the five UID-0 contracts remain isolated
   it("keeps the WSL suite unprivileged with explicit root-only contracts", () => {
     const stepNames = job("wsl-vitest").steps?.map((entry) => entry.name) ?? [];
-    const checkout = step("wsl-vitest", "Checkout");
+    const checkout = step("wsl-vitest", "Check out candidate source");
     const install = step("wsl-vitest", "Install Ubuntu dependencies").run ?? "";
     const fullSuite = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
@@ -111,15 +216,17 @@ describe("platform Vitest main workflow", () => {
     expect(stepNames.indexOf("Install Ubuntu dependencies")).toBeLessThan(
       stepNames.indexOf("Run full Vitest suite in WSL"),
     );
-    expect(install).toMatch(/apt-get install[^\n]*\bpython3-venv\b/u);
-    expect(install).toMatch(/apt-get install[^\n]*\bripgrep\b/u);
+    expect(install).toContain("Install-WslUbuntuDependencies");
+    expect(install).toContain("'python3-venv'");
+    expect(install).toContain("'ripgrep'");
+    expect(wslHelperSource).toContain("apt-get install -y $packageList");
     expect(install).not.toMatch(/\bsudo\b|sudoers|NOPASSWD/u);
-    expect(fullSuite).toContain("--user $env:WSL_TEST_USER");
+    expect(fullSuite).toContain("-User $env:WSL_TEST_USER");
     expect(fullSuite).toContain("NEMOCLAW_EXEC_TIMEOUT=60000");
     expect(fullSuite).toContain("NEMOCLAW_TEST_TIMEOUT=60000");
     expect(fullSuite).toContain("--shard='${{ matrix.shard }}/4'");
     expect(fullSuite).not.toMatch(/\bsudo\b|sudoers|NOPASSWD/u);
-    expect(rootSuite).toContain("--user root");
+    expect(rootSuite).toContain("-User root");
     expect(step("wsl-vitest", "Run root-required Vitest contracts in WSL").if).toBe(
       "${{ matrix.shard == 1 }}",
     );

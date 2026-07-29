@@ -26,8 +26,8 @@
  *
  * Optional env vars:
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
- *                             credential-sanitization, telegram-injection, messaging-providers,
- *                             messaging-compatible-endpoint, dashboard-remote-bind, all
+ *                             telegram-injection, messaging-providers,
+ *                             messaging-compatible-endpoint, dashboard-remote-bind
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp for CPU, any for GPU)
@@ -1213,8 +1213,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   }, 120_000); // 2 min for cleanup
 
   // NOTE: The full E2E test runs install.sh --non-interactive and owns the
-  // complete sandbox lifecycle. The composite security suite also lets each
-  // remote target own that lifecycle, without a shared harness registry.
+  // complete sandbox lifecycle.
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
@@ -1233,20 +1232,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     1_800_000,
   );
 
-  it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
-    "credential sanitization suite passes on remote VM",
-    () => {
-      const output = runRemoteVitest(
-        "e2e-live",
-        "test/e2e/live/credential-sanitization.test.ts",
-        BREV_SECURITY_SUITE_TIMEOUT_MS,
-      );
-      expectVitestPassed(output);
-    },
-    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
-  );
-
-  it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
+  it.runIf(TEST_SUITE === "telegram-injection")(
     "telegram bridge injection suite passes on remote VM",
     () => {
       const output = runRemoteVitest(

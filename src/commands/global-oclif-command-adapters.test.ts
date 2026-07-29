@@ -251,6 +251,7 @@ describe("global oclif command adapters", () => {
       endpointUrl: "https://example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       inferenceApi: "openai-completions",
+      reasoningEffort: null,
     });
   });
 
