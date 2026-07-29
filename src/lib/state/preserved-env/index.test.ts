@@ -6,9 +6,12 @@ import { describe, expect, it } from "vitest";
 import { applyMessagingAgentRenderToEnvLines } from "../../messaging/applier/build/messaging-build-applier.mts";
 import type { SandboxMessagingPlan } from "../../messaging/manifest/types";
 import {
+  encodePreservedEnvFiles,
   extractPreservedEnvAssignments,
   HERMES_PRESERVED_ENV_INVENTORY,
   mergeHermesPreservedEnvIntoMessagingPlan,
+  PRESERVED_ENV_REBUILD_KEY,
+  readPreservedEnvFilesFromEnv,
   validatePreservedEnvFiles,
 } from "./index";
 
@@ -108,6 +111,16 @@ describe("preserved environment inventory", () => {
         HERMES_PRESERVED_ENV_INVENTORY,
       ),
     ).toBe(false);
+  });
+
+  it("round-trips only validated assignments through the recreate carrier (#7803)", () => {
+    const files = [{ path: ".env", assignments: ["SLACK_HOME_CHANNEL=C1"] }];
+    const env = { [PRESERVED_ENV_REBUILD_KEY]: encodePreservedEnvFiles(files) };
+
+    expect(readPreservedEnvFilesFromEnv(env)).toEqual(files);
+    expect(() =>
+      encodePreservedEnvFiles([{ path: ".env", assignments: ["SLACK_BOT_TOKEN=xoxb-secret"] }]),
+    ).toThrow("Invalid preserved environment assignments");
   });
 
   it("applies restored values before current manifest renders (#7803)", () => {

@@ -3,16 +3,15 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
-import {
-  hydrateDerivedSandboxMessagingPlanFields,
-  MessagingSetupApplier,
-  type SandboxMessagingPlan,
-} from "../../messaging";
+import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import { mergeHermesPreservedEnvIntoMessagingPlan } from "../../state/preserved-env/index";
+import {
+  encodePreservedEnvFiles,
+  PRESERVED_ENV_REBUILD_KEY,
+} from "../../state/preserved-env/index";
 import * as registry from "../../state/registry";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -98,15 +97,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     log,
     bail,
   } = input;
-  const hydratedRebuildMessagingPlan = rebuildMessagingPlan
-    ? hydrateDerivedSandboxMessagingPlanFields(rebuildMessagingPlan)
-    : null;
-  const recreateMessagingPlan = hydratedRebuildMessagingPlan
-    ? mergeHermesPreservedEnvIntoMessagingPlan(
-        hydratedRebuildMessagingPlan,
-        rebuildsHermesSandbox ? backupManifest?.preservedEnv : undefined,
-      )
-    : null;
   console.log("");
   console.log("  Creating new sandbox with current image...");
 
@@ -151,7 +141,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.resumable = true;
     s.status = "in_progress";
     s.agent = rebuildAgent;
-    s.messagingPlan = recreateMessagingPlan;
+    s.messagingPlan = rebuildMessagingPlan;
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.policyPresets = rebuildSessionPolicyPresets;
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
@@ -196,6 +186,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+  const previousPreservedEnv = process.env[PRESERVED_ENV_REBUILD_KEY];
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
   // The outer rebuild already made its sole backup before the destroy phase deleted
   // the sandbox without tearing down the gateway/session needed by onboard --resume.
@@ -203,7 +194,15 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // where a second backup is impossible after deletion. Keep the bypass scoped to
   // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  if (recreateMessagingPlan) MessagingSetupApplier.writePlanToEnv(recreateMessagingPlan);
+  if (rebuildMessagingPlan) MessagingSetupApplier.writePlanToEnv(rebuildMessagingPlan);
+  // Inner onboarding may refresh the ordinary messaging plan from durable
+  // channel state. Carry the validated rebuild-only inventory separately so
+  // patchStagedDockerfile can merge it at the final image-build boundary.
+  if (rebuildsHermesSandbox && backupManifest?.preservedEnv) {
+    process.env[PRESERVED_ENV_REBUILD_KEY] = encodePreservedEnvFiles(backupManifest.preservedEnv);
+  } else {
+    delete process.env[PRESERVED_ENV_REBUILD_KEY];
+  }
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
   }
@@ -227,6 +226,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       delete process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
     } else {
       process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = previousRecreateWithoutBackup;
+    }
+    if (previousPreservedEnv === undefined) {
+      delete process.env[PRESERVED_ENV_REBUILD_KEY];
+    } else {
+      process.env[PRESERVED_ENV_REBUILD_KEY] = previousPreservedEnv;
     }
   }
 

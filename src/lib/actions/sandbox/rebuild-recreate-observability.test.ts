@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import { MessagingSetupApplier } from "../../messaging";
+import {
+  PRESERVED_ENV_REBUILD_KEY,
+  readPreservedEnvFilesFromEnv,
+} from "../../state/preserved-env/index";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
@@ -220,12 +223,15 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
-  it("adds preserved Hermes home channels to the image build plan (#7803)", async () => {
+  it("carries preserved Hermes home channels to the Dockerfile patch boundary (#7803)", async () => {
+    const previousPreservedEnv = process.env[PRESERVED_ENV_REBUILD_KEY];
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
-      expect(MessagingSetupApplier.readPlanFromEnv()?.agentRender[0]).toMatchObject({
-        renderId: "hermes-preserved-home-channels",
-        lines: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
-      });
+      expect(readPreservedEnvFilesFromEnv()).toEqual([
+        {
+          path: ".env",
+          assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+        },
+      ]);
     });
 
     await expect(
@@ -276,6 +282,7 @@ describe("runRebuildRecreatePhase handoff", () => {
         }),
       ),
     ).resolves.toBe(true);
+    expect(process.env[PRESERVED_ENV_REBUILD_KEY]).toBe(previousPreservedEnv);
   });
 
   it("restores the caller backup marker after inner recreate failure", async () => {
