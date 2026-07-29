@@ -418,7 +418,9 @@ describe("base-image publication behavior", () => {
       expect(renderMatrixValue(build.with?.["cache-to"], matrix)).toContain(
         `${cacheSuffix},mode=max`,
       );
+      expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
       expect(digestExport?.run).toContain("^sha256:[0-9a-f]{64}$");
+      expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
       expect(digestUpload?.with?.name).toBe("openclaw-base-digest-${{ matrix.arch }}");
       for (const step of steps.filter((step) => step.uses)) {
         expect(step.uses, `${matrix.arch}: ${step.name}`).toMatch(FULL_SHA_ACTION);
@@ -444,11 +446,21 @@ describe("base-image publication behavior", () => {
     expect(metadata?.with?.tags).toContain("type=raw,value=latest");
     expect(metadata?.with?.tags).toContain("type=ref,event=tag");
     expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
-    expect(createManifest?.run).toContain('"${#digest_files[@]}" -ne 2');
-    expect(createManifest?.run).toContain(
+    const openClawManifestScript = createManifest?.run ?? "";
+    expect(openClawManifestScript).toContain('"${#digest_files[@]}" -ne 2');
+    expect(openClawManifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
+    expect(openClawManifestScript).toContain("--format '{{.Image.OS}}/{{.Image.Architecture}}'");
+    expect(openClawManifestScript).toContain(
+      'if [ "$source_platform" != "linux/$expected_arch" ]; then',
+    );
+    expect(openClawManifestScript).toContain("duplicate platform digest");
+    expect(openClawManifestScript.indexOf("source_platform=")).toBeLessThan(
+      openClawManifestScript.indexOf("docker buildx imagetools create"),
+    );
+    expect(openClawManifestScript).toContain(
       'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
     );
-    expect(createManifest?.run).toContain('"amd64,arm64"');
+    expect(openClawManifestScript).toContain('"amd64,arm64"');
     for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
       expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
     }
@@ -515,11 +527,14 @@ describe("base-image publication behavior", () => {
 
     for (const { job, build, matrix } of publishers) {
       const steps = job.steps ?? [];
+      const digestExport = steps.find((step) => step.name === "Export platform digest");
       const digestUpload = steps.find((step) => step.name === "Upload platform digest");
 
       expect(steps.some((step) => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(false);
       expect(build.with?.platforms).toBe("${{ matrix.platform }}");
       expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
+      expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
+      expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
       expect(digestUpload?.with?.name).toBe("${{ matrix.agent }}-base-digest-${{ matrix.arch }}");
       expect(renderMatrixValue(digestUpload?.with?.name, matrix)).toBe(
         `${matrix.agent}-base-digest-${matrix.arch}`,
@@ -550,11 +565,19 @@ describe("base-image publication behavior", () => {
       expect(metadata?.with?.tags).toContain("type=ref,event=tag");
       expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
       expect(createManifest?.env?.IMAGE).toBe(imagePublisher.image);
-      expect(createManifest?.run).toContain('"${#digest_files[@]}" -ne 2');
-      expect(createManifest?.run).toContain(
+      const manifestScript = createManifest?.run ?? "";
+      expect(manifestScript).toContain('"${#digest_files[@]}" -ne 2');
+      expect(manifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
+      expect(manifestScript).toContain("--format '{{.Image.OS}}/{{.Image.Architecture}}'");
+      expect(manifestScript).toContain('if [ "$source_platform" != "linux/$expected_arch" ]; then');
+      expect(manifestScript).toContain("duplicate platform digest");
+      expect(manifestScript.indexOf("source_platform=")).toBeLessThan(
+        manifestScript.indexOf("docker buildx imagetools create"),
+      );
+      expect(manifestScript).toContain(
         'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
       );
-      expect(createManifest?.run).toContain('"amd64,arm64"');
+      expect(manifestScript).toContain('"amd64,arm64"');
       for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
         expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
       }
