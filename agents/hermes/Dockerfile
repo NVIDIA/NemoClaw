@@ -32,6 +32,7 @@ FROM scratch AS hermes-agent-payload
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -331,6 +332,37 @@ assert main_source.count("refresh_cua_driver = True") == 0
 assert main_source.count("refresh_cua_driver = False") == 1
 assert main_source.count('_update_cfg.get("refresh_cua_driver", True)') == 0
 assert main_source.count('_update_cfg.get("refresh_cua_driver", False)') == 1
+PY
+
+# Hermes v0.18.0 writes gateway lifecycle metadata directly below HERMES_HOME.
+# Shields-up deliberately makes that config root root-owned and non-writable,
+# so a replacement cannot remove the old PID file and exits with a false PID
+# race. Keep config/hash locks intact and relocate only Hermes's central
+# PID/lock/status path helpers to the existing writable runtime directory.
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
+        /opt/hermes/gateway/status.py \
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python - <<'PY'
+from pathlib import Path
+
+from gateway.status import (
+    _get_gateway_lock_path,
+    _get_pid_path,
+    _get_runtime_status_path,
+)
+from hermes_constants import get_hermes_home
+
+home = get_hermes_home()
+runtime = home / "runtime"
+assert _get_pid_path() == runtime / "gateway.pid"
+assert _get_gateway_lock_path() == runtime / "gateway.lock"
+assert _get_runtime_status_path() == runtime / "gateway_state.json"
+assert all(path.parent == runtime for path in (
+    _get_pid_path(),
+    _get_gateway_lock_path(),
+    _get_runtime_status_path(),
+))
+assert isinstance(home, Path)
 PY
 
 # Hermes v0.19.0 computes `sessions list` preview from the first user message,

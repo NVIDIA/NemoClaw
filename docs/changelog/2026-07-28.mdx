@@ -28,7 +28,10 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
   Host-side `config set` also accepts the exact `http://host.openshell.internal:<unprivileged-port>` shape only for supported provider `baseUrl` fields, while generic keys and other private URL shapes remain rejected.
   Retired NVIDIA Build MiniMax and Qwen model paths are no longer offered.
   For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers), [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), and [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
-- Docker-driver recovery now unpauses a paused original container before reporting recovery, and resumed onboarding writes a secret-free same-name recreation journal before deletion so an interrupted run can continue or fail closed on ambiguous identity.
+- Docker-driver post-reboot recovery now waits for the labeled container to reach Docker readiness.
+  It restores the in-sandbox gateway and host forwards before reporting success, refreshes stale stopped-container evidence, and fails closed when delivery cannot be proven.
+  Recovery also unpauses a paused original container before reporting success.
+  Resumed onboarding writes a secret-free same-name recreation journal before deletion so an interrupted run can continue or fail closed on ambiguous identity.
   Uninstall checks for the `openshell` command after confirmation and before cleanup mutation, while source-checkout installation preserves an absolute `NEMOCLAW_OPENSHELL_BIN` selection during user-local OpenShell discovery.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 - Jetson setup now explains why host preparation was skipped when it encounters an unrecognized or unparseable release.
@@ -38,6 +41,8 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
 - Telegram channel status now returns `unreachable` with a nonzero exit when the Bot API startup probe receives a definitive HTTP error.
   Managed MCP tool discovery accepts compliant case-variant or parameterized SSE media types through the reviewed SDK runtime.
   Hermes image assembly normalizes executable modes before metadata validation, and locked restart integrity accepts the generated v1 managed MCP state record while retaining fail-closed hashing and failed-reload rollback.
+  Hermes now keeps gateway PID, lock, and status records in the writable runtime directory.
+  This lets a restart replace the tracked gateway while shields are up without weakening config locks or crash quarantine.
   For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels), [Manage MCP Servers with OpenClaw](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), [Manage MCP Servers with Hermes](/user-guide/hermes/manage-sandboxes/mcp-servers/manage-mcp-servers), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Deep Agents now publishes the bounded approval, baseline, preset, custom-preset, and live-policy tasks that apply to its maintained runtime.
   The `claude-code` preset permits browser login only through `GET` and `POST` on `platform.claude.com/v1/oauth/**`, without widening unrelated Anthropic or telemetry access.

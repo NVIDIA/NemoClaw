@@ -1152,6 +1152,17 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           "the primary dashboard/API host forward is owned by another sandbox",
       };
     }
+    if (forwardHealthy === null) {
+      return {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail:
+          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
+      };
+    }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
     const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
