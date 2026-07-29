@@ -218,15 +218,16 @@ process.exit(2);
   pyIt("approves one exact local clone transition from listed or gated state (#7818)", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
-    const script = buildAutoPairApprovalScript(
-      Buffer.from(policy as string, "utf-8").toString("base64"),
-      {
+    const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
+    const buildScript = (listTimeoutS: number) =>
+      buildAutoPairApprovalScript(policyB64, {
         emitSummary: true,
         emitReceipt: true,
         localDeviceOnly: true,
-        budget: { maxApprovals: 1, listTimeoutS: 0.5 },
-      },
-    );
+        budget: { maxApprovals: 1, listTimeoutS },
+      });
+    const script = buildScript(0.5);
+    const timeoutScript = buildScript(0.02);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-clone-pair-"));
     try {
       const stateDir = path.join(tmpDir, "openclaw-state");
@@ -296,6 +297,7 @@ process.exit(2);
           listStderr?: string;
           localPending?: Record<string, unknown>;
           failApproval?: boolean;
+          approvalScript?: string;
         } = {},
       ) => {
         const pendingByRequestId = Object.fromEntries(
@@ -312,7 +314,7 @@ process.exit(2);
           path.join(devicesDir, "pending.json"),
           JSON.stringify(options.localPending ?? pendingByRequestId),
         );
-        return spawnSync("sh", ["-c", script], {
+        return spawnSync("sh", ["-c", options.approvalScript ?? script], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -407,6 +409,45 @@ process.exit(2);
         expect(gated.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
         expect(`${gated.stdout}${gated.stderr}`).not.toContain("raw detail");
         expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+      }
+
+      resetLogs();
+      const timedOut = run([repairRequest], {
+        listSleepMs: 800,
+        approvalScript: timeoutScript,
+      });
+      expect(timedOut.status).toBe(0);
+      expect(timedOut.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
+      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+
+      for (const [pending, options, receipt] of [
+        [[], { listSleepMs: 800, approvalScript: timeoutScript }, "list-timeout"],
+        [
+          [repairRequest],
+          {
+            listSleepMs: 800,
+            localPending: { "different-request": repairRequest },
+            approvalScript: timeoutScript,
+          },
+          "list-timeout",
+        ],
+        [[foreignRequest], { listSleepMs: 800, approvalScript: timeoutScript }, "clone-no-match"],
+        [
+          [repairRequest, { ...repairRequest, requestId: "second-clone-upgrade" }],
+          { listSleepMs: 800, approvalScript: timeoutScript },
+          "clone-ambiguous",
+        ],
+        [
+          [{ ...repairRequest, publicKey: "mismatched-public-key" }],
+          { listSleepMs: 800, approvalScript: timeoutScript },
+          "request-rejected",
+        ],
+      ] as const) {
+        resetLogs();
+        const rejectedTimeout = run([...pending], options);
+        expect(rejectedTimeout.status).toBe(0);
+        expect(rejectedTimeout.stdout).toContain(`${RECEIPT_MARKER}=${receipt}`);
+        expect(readApprovals()).toEqual([]);
       }
 
       resetLogs();

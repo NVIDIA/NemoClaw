@@ -177,12 +177,12 @@ def exit_with_receipt(receipt):
   const gatedListHelper = options.localDeviceOnly
     ? `
 # A restored clone can create an exact pending request while its device-list
-# call is denied by that same pairing or scope-upgrade gate. Read local state
-# only to recover candidates for the existing identity/scope filter below;
-# canonical OpenClaw approval remains the only writer. This matches the
-# reviewed first-run watcher boundary in scripts/nemoclaw-start.sh (#7818).
-# Delete this fallback once pinned OpenClaw returns pending entries from an
-# authenticated devices list while that pairing or scope-upgrade gate is active.
+# call is denied or blocked by that same pairing or scope-upgrade gate. Read
+# local state only to recover candidates for the identity/scope filter below.
+# Canonical OpenClaw approval remains the only writer. This matches the reviewed
+# first-run watcher boundary in scripts/nemoclaw-start.sh (#7818).
+# Delete this fallback once pinned OpenClaw returns pending entries before the
+# authenticated devices list fails or times out.
 def local_pending_after_gated_list():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
     try:
@@ -213,6 +213,17 @@ def local_pending_after_gated_list():
         if pending is None:
             ${exitWithReceipt("list-missing-pending")}`
       : exitWithReceipt(receipt);
+  const timedOutListAction = options.localDeviceOnly
+    ? `pending = local_pending_after_gated_list()
+    if not pending:
+        ${exitWithReceipt("list-timeout")}
+    proc = subprocess.CompletedProcess(
+        [OPENCLAW, 'devices', 'list', '--json'],
+        0,
+        stdout=json.dumps({'pending': pending}),
+        stderr='',
+    )`
+    : exitWithReceipt("list-timeout");
   const localDeviceFilter = options.localDeviceOnly
     ? `
 # Snapshot restore shares one gateway across the source sandbox and its clone.
@@ -384,7 +395,7 @@ try:
         capture_output=True, text=True, timeout=${listTimeoutS},
     )
 except subprocess.TimeoutExpired:
-    ${exitWithReceipt("list-timeout")}
+    ${timedOutListAction}
 except (FileNotFoundError, OSError):
     ${exitWithReceipt("list-exec-failed")}
 if proc.returncode != 0:
