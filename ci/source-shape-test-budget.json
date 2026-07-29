@@ -558,7 +558,7 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
-      "test": "runs repository checks for every operational dependency-pin authority and consumer",
+      "test": "preserves repository validation file routing, command scopes, and compatibility aliases",
       "category": "compatibility"
     },
     {
