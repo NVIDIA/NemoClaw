@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type * as TypeScript from "typescript";
@@ -498,6 +500,68 @@ describe("inference setup navigation", () => {
       expect(markdown).not.toMatch(positionalSecret);
     }
     expect(markdown).toContain('os.environ["NVIDIA_API_KEY"]');
+  });
+
+  it("produces the hosted Omni model references from the documented patch (#7729)", () => {
+    const markdown = fs.readFileSync(subAgentSetupPath, "utf8");
+    const patchScript = markdown.match(
+      /python3 -c '\n([\s\S]*?)\n' < "\$OPENCLAW_CONFIG_FILE" > "\$OPENCLAW_UPDATED_FILE"/,
+    )?.[1];
+
+    expect(patchScript).toBeTruthy();
+    const result = spawnSync("python3", ["-c", patchScript as string], {
+      encoding: "utf8",
+      env: { ...process.env, NVIDIA_API_KEY: "test-api-key" },
+      input: JSON.stringify({
+        agents: { defaults: {} },
+        models: { providers: {} },
+      }),
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    const config = JSON.parse(result.stdout);
+    expect(config.models.providers["nvidia-omni"].models[0].id).toBe(
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    );
+    expect(
+      config.agents.list.find((agent: { id: string }) => agent.id === "vision-operator"),
+    ).toHaveProperty("model.primary", "nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning");
+    expect(markdown).toContain("nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning");
+    expect(markdown).not.toContain(
+      "nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
+    );
+    expect(markdown).not.toContain("vlm-demo");
+  });
+
+  it("creates unique host-only temp files when a legacy fixed path exists (#7729)", () => {
+    const markdown = fs.readFileSync(subAgentSetupPath, "utf8");
+    const assignments = [
+      ...markdown.matchAll(
+        /^((OPENCLAW_CONFIG_FILE|OPENCLAW_UPDATED_FILE|AUTH_PROFILES_FILE)=\$\(mktemp "\$\{TMPDIR:-\/tmp\}\/[^"]+\.XXXXXX"\))$/gm,
+      ),
+    ];
+    expect(assignments).toHaveLength(3);
+
+    const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sub-agent-docs-"));
+    const legacyPath = path.join(tempDirectory, "openclaw.updated.json");
+    fs.writeFileSync(legacyPath, "legacy");
+    fs.chmodSync(legacyPath, 0o644);
+
+    try {
+      for (const [, assignment, variable] of assignments) {
+        const result = spawnSync("sh", ["-c", `${assignment}\nprintf '%s' "$${variable}"`], {
+          encoding: "utf8",
+          env: { ...process.env, TMPDIR: tempDirectory },
+        });
+        expect(result.stderr).toBe("");
+        expect(result.status).toBe(0);
+        expect(result.stdout).not.toBe(legacyPath);
+        expect(fs.statSync(result.stdout).mode & 0o777).toBe(0o600);
+      }
+      expect(fs.statSync(legacyPath).mode & 0o777).toBe(0o644);
+    } finally {
+      fs.rmSync(tempDirectory, { force: true, recursive: true });
+    }
   });
 
   it("retains self-hosted setup and verification guidance across focused pages", () => {
