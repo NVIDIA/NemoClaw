@@ -3467,7 +3467,7 @@ For contributor guidance on how these command files are structured, refer to
 | `$$nemoclaw internal uninstall classify-shim` | `uninstall.sh` / `$$nemoclaw uninstall` | Classify whether a shim path is safe for the uninstaller to remove. |
 | `$$nemoclaw internal dns setup-proxy` | onboarding / sandbox setup | Configure the DNS forwarder bridge inside a sandbox pod. |
 | `$$nemoclaw internal dns fix-coredns` | onboarding / sandbox setup | Patch CoreDNS to use a non-loopback upstream resolver. |
-| `$$nemoclaw internal voice-access serve` | deployment-owned service supervisor | Serve an authenticated loopback gateway for VoiceClaw WebRTC signaling. |
+| `$$nemoclaw internal voice-access serve` | deployment-owned service supervisor | Serve the experimental, authenticated loopback gateway for VoiceClaw WebRTC signaling. Non-loopback access requires deployment-owned TLS termination; NemoClaw does not own public endpoint management, the Talker lifecycle, or service supervision. |
 | `$$nemoclaw internal dev npm-link-or-shim` | `scripts/npm-link-or-shim.sh` (development) | Run `npm link`, falling back to a user-local NemoClaw development shim. |
 
 These commands do not appear in the command-level parity check, which compares

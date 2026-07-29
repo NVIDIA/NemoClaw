@@ -108,6 +108,21 @@ describe("internal command documentation (#3782)", () => {
     const offendingHeadings = text.split("\n").filter((line) => line.startsWith(headingPrefix));
     expect(offendingHeadings).toEqual([]);
   });
+
+  it.each(references)("pins the experimental voice access ownership boundary in $name", ({
+    text,
+    binary,
+  }) => {
+    const entry = text
+      .split("\n")
+      .find((line) => line.includes(`${binary} internal voice-access serve`));
+
+    expect(entry).toContain("experimental");
+    expect(entry).toContain("deployment-owned TLS termination");
+    expect(entry).toContain("NemoClaw does not own public endpoint management");
+    expect(entry).toContain("the Talker lifecycle");
+    expect(entry).toContain("service supervision");
+  });
 });
 
 describe("exec command documentation", () => {
