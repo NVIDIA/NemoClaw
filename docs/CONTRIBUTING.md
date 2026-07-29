@@ -172,7 +172,8 @@ Navigation in `docs/index.yml` points Fern at generated pages for shared entries
 OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.
 
 When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
-Do not duplicate fenced code blocks or inline command examples only to switch between `nemoclaw` and `nemohermes`.
+Do not duplicate fenced code blocks or inline command examples only to switch among `nemoclaw`,
+`nemohermes`, and `nemo-deepagents`.
 Use literal command names on those single-variant pages rather than `$$nemoclaw`, because no generated page will rewrite the placeholder.
 
 Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
@@ -181,6 +182,13 @@ If content differs by behavior, setup flow, state layout, or agent-specific word
 Treat `<AgentOnly>` as a build-time directive rather than a React component, and do not import it from `AgentGuide.tsx`.
 Put each opening and closing tag at the first column on its own line, and do not nest the blocks.
 The generated pages must contain only statically resolved content, with no `AgentGuide` imports or runtime agent components.
+
+Before review, render every guide variant that uses a changed shared page.
+Confirm that commands, paths, state locations, and capabilities are correct in each variant.
+Use `$$nemoclaw` when only the host CLI binary differs.
+Use an `<AgentOnly>` block when behavior, setup, paths, state locations, capabilities, or
+agent-specific wording differ.
+State when a variant has no equivalent operation.
 
 ## Route-Style Links
 
@@ -261,11 +269,26 @@ position: 1
 3. Use Fern components like `<Note>`, `<Tip>`, `<Warning>`, `<Cards>`, and `<Card>` for callouts and landing-page navigation.
 4. Add a "Next Steps" or "Related Topics" section at the bottom when it helps users continue.
 
+### Procedure Structure
+
+Present an operational procedure in this order:
+
+1. State the prerequisites and risks.
+2. Show the command or action.
+3. State the resulting state changes, external traffic, credential changes, and other effects.
+4. Give the verification command or observation and its acceptance criterion.
+5. Give recovery or rollback instructions when failure can leave state behind or create risk.
+
+Put warnings about security relaxation, data loss, credential exposure, external traffic, and
+public ingress before the action that creates the risk.
+
 ## Style Guide
 
 Write like you are explaining something to a colleague. Be direct, specific, and concise.
 Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
-The guide defines shared terms, sentence rules, rewrite examples, and review policy.
+Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md) for shared terms and exact product
+names.
+The writing guide defines sentence rules, rewrite examples, and review policy.
 The rules below add documentation-specific voice, formatting, and product-name conventions.
 
 ### Voice and Tone
@@ -291,8 +314,10 @@ Remove them during review.
 
 ### Formatting Rules
 
-- End every sentence with a period.
-- One sentence per line in the source file (makes diffs readable).
+- End prose sentences with a period.
+- Put one prose sentence per source line where practical.
+- Exempt frontmatter, headings, navigation labels, diagrams, code, output, UI labels, and compact
+  table fragments from the prose sentence rules.
 - Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
 - Use language-specific code blocks for commands that readers should copy.
   Put only the command text in copyable blocks:
@@ -304,8 +329,9 @@ Remove them during review.
 - Use `$$nemoclaw` as a build-time placeholder for NemoClaw host CLI command examples in shared variant pages.
   The docs build resolves it to `nemoclaw` for OpenClaw pages, `nemohermes` for Hermes pages, and `nemo-deepagents` for Deep Agents pages before Fern renders code blocks.
   This preserves Fern's native fenced-code UI while keeping one source sample.
-- Do not write duplicate `<AgentOnly>` fenced code blocks when the only difference is `nemoclaw` versus `nemohermes`.
-  Use `<AgentOnly>` blocks only when the surrounding content differs between the OpenClaw and Hermes variants.
+- Do not write duplicate `<AgentOnly>` fenced code blocks when only the host CLI binary differs.
+  Use `<AgentOnly>` blocks when behavior, setup, paths, state locations, capabilities, or
+  agent-specific wording differ between guide variants.
 
 - Use `powershell` for Windows PowerShell commands.
   Use `bash` or `sh` for Linux, macOS, and WSL shell commands.
@@ -321,24 +347,14 @@ Remove them during review.
 - Avoid nested admonitions.
 - Do not number section titles. Write "Deploy a Gateway" not "Section 1: Deploy a Gateway" or "Step 3: Verify."
 - Do not use colons in titles. Write "Deploy and Manage Gateways" not "Gateways: Deploy and Manage."
-- Use colons only to introduce a list. Do not use colons as general-purpose punctuation between clauses.
+- Use colons to introduce a list or define a term or value.
+  Do not use a colon to join independent clauses.
 
-### Word List
+### Controlled Word List
 
-Use these consistently:
-
-| Use | Do not use |
-|---|---|
-| gateway | Gateway (unless starting a sentence) |
-| sandbox | Sandbox (unless starting a sentence) |
-| CLI | cli, Cli |
-| API key | api key, API Key |
-| NVIDIA | Nvidia, nvidia |
-| NemoClaw | nemoclaw (in prose), Nemoclaw |
-| OpenClaw | openclaw (in prose), Openclaw |
-| OpenShell | Open Shell, openShell, Openshell, openshell |
-| mTLS | MTLS, mtls |
-| YAML | yaml, Yaml |
+Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md) for product spellings, technical
+terms, lifecycle operations, and engineering evidence.
+Keep shared terms in that list instead of adding a second documentation-only table.
 
 ## Submitting Doc Changes
 
@@ -361,6 +377,8 @@ feat(cli): add policy-add command
 
 When reviewing documentation:
 
+- Follow the
+  [shared documentation writing and review contract](../.agents/skills/_shared/documentation-writing-review.md).
 - Confirm that the page documents an approved and maintained NemoClaw product surface.
 - Do not approve a new integration or solution solely because its instructions work or its checks pass.
 - Route independent third-party solutions to [Community Solutions](resources/community-contributions.mdx) when no product decision establishes core ownership.

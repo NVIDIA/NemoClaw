@@ -8,12 +8,7 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import config from "../../../vitest.config.ts";
-import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
-import {
-  shouldRunBranchValidationE2E,
-  shouldRunInstallerIntegration,
-  shouldRunLiveE2E,
-} from "../fixtures/live-project-gate.ts";
+import { shouldRunInstallerIntegration, shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 
 interface ProjectConfig {
   test?: {
@@ -32,10 +27,6 @@ interface RootConfig {
     projects?: ProjectConfig[];
   };
 }
-
-type BranchValidationWorkflow = {
-  jobs?: Record<string, { steps?: WorkflowStep[] }>;
-};
 
 const DRIFT_PREFLIGHT_BYPASS = "NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT";
 const FIXTURE_UMASK_SETUP = "test/helpers/normalize-fixture-umask.ts";
@@ -60,15 +51,6 @@ describe("gated E2E Vitest projects", () => {
     expect(shouldRunLiveE2E({ NEMOCLAW_RUN_LIVE_E2E: "1" })).toBe(true);
     expect(shouldRunLiveE2E({ NEMOCLAW_RUN_LIVE_E2E: "true" })).toBe(true);
     expect(shouldRunLiveE2E({ NEMOCLAW_RUN_LIVE_E2E: " TRUE " })).toBe(true);
-  });
-
-  it("enables branch validation from the workflow sentinel or Brev auth env", () => {
-    expect(shouldRunBranchValidationE2E({})).toBe(false);
-    expect(shouldRunBranchValidationE2E({ BREV_API_KEY: "key" })).toBe(false);
-    expect(shouldRunBranchValidationE2E({ BREV_API_KEY: "key", BREV_ORG_ID: "org" })).toBe(true);
-    expect(shouldRunBranchValidationE2E({ BREV_API_TOKEN: "token" })).toBe(true);
-    expect(shouldRunBranchValidationE2E({ NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "true" })).toBe(true);
-    expect(shouldRunBranchValidationE2E({ NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1" })).toBe(true);
   });
 
   it("keeps stateful E2E project retries disabled and aggregate live files serial (#6692)", () => {
@@ -153,39 +135,5 @@ describe("gated E2E Vitest projects", () => {
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }
-  });
-
-  it("uses the reusable workflow sentinel to collect branch validation tests", () => {
-    const workflow = readYaml<BranchValidationWorkflow>(
-      ".github/workflows/e2e-branch-validation.yaml",
-    );
-    const workflowSentinel = Object.values(workflow.jobs ?? {})
-      .flatMap((job) => job.steps ?? [])
-      .find((step) => step.env?.NEMOCLAW_RUN_BRANCH_VALIDATION_E2E !== undefined)
-      ?.env?.NEMOCLAW_RUN_BRANCH_VALIDATION_E2E;
-    const vitest = join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
-    const listBranchValidation = (sentinel: string | undefined) =>
-      spawnSync(
-        process.execPath,
-        [vitest, "list", "--project", "e2e-branch-validation", "--filesOnly", "--passWithNoTests"],
-        {
-          cwd: process.cwd(),
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            BREV_API_KEY: undefined,
-            BREV_API_TOKEN: undefined,
-            BREV_ORG_ID: undefined,
-            NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: sentinel,
-          },
-        },
-      );
-
-    const enabled = listBranchValidation(workflowSentinel);
-    const disabled = listBranchValidation(undefined);
-    expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-    expect(enabled.stdout).toContain("[e2e-branch-validation]");
-    expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-    expect(disabled.stdout).not.toContain("[e2e-branch-validation]");
   });
 });

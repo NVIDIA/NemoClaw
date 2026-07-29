@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { compatibleAnthropicSwitchBinding } from "../fixtures/compatible-anthropic-switch.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -329,18 +330,26 @@ describe("Hermes inference switch command shape", () => {
         stdout: "",
       })
       .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
+    const compatibleBinding = compatibleAnthropicSwitchBinding(
+      "http://host.openshell.internal:18766/v1",
+      { COMPATIBLE_ANTHROPIC_API_KEY: "switch-key" },
+    );
 
     await expect(
       runHermesInferenceSetWithRetry(
         { command } as unknown as HostCliClient,
-        ["hosted-key"],
-        ["--inference-api", "anthropic-messages"],
-        { attempts: 1, delay: async () => {} },
+        ["hosted-key", compatibleBinding.credentialValue],
+        compatibleAnthropicMetadataArgs(compatibleBinding.endpointUrl),
+        { attempts: 1, compatibleBinding, delay: async () => {} },
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(command.mock.calls[0]?.[1]).not.toContain("--no-verify");
     expect(command.mock.calls[1]?.[1]).toContain("--no-verify");
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      env: { COMPATIBLE_ANTHROPIC_API_KEY: "switch-key" },
+      redactionValues: ["hosted-key", "switch-key"],
+    });
     expect(command.mock.calls[0]?.[2]?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   });
 });

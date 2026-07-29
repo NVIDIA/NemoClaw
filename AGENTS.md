@@ -21,6 +21,7 @@ Stop and request maintainer direction, or route an independent solution through 
 This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
+Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
 
 ## Architecture
 
@@ -97,7 +98,6 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
    aggregate checks for code-changing PRs and code-changing pushes to `main`
 7. **`e2e-live`** — opt-in live targets that mutate real external state
-8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:
 
@@ -200,6 +200,7 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
 - Follow the [NemoClaw Writing Guide](WRITING.md) for changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
   The guide defines the review scope and the conditions that make a language finding blocking.
+- Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.

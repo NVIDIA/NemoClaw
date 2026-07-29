@@ -11,13 +11,18 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 - Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
-- Verify behavior against source code, tests, scripts, or existing docs before documenting it.
+- Verify commands, defaults, and behavior against checked-in source, tests, or scripts.
+- Use existing documentation, issues, and PRs to locate claims and rationale, not as behavior
+  authority.
+- Verify support claims against an accepted issue or accepted design decision.
 
 ## Writing Style Guide
 
 Apply these rules to documentation, examples, headings, UI text, and release notes that you create or edit.
 
 - Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
+- Use the [NemoClaw Controlled Word List](../.agents/skills/_shared/controlled-words.md)
+  for project terms and evidence claims.
 - Write in a professional, active, conversational, and engaging voice.
 - Use active voice whenever possible. Use present tense for product behavior.
   Address the reader in second person as "you."
@@ -92,6 +97,8 @@ Continue using the Writing Style Guide above.
 ## Before Editing
 
 - Read `docs/CONTRIBUTING.md` before changing documentation.
+- Follow the
+  [shared documentation writing and review contract](../.agents/skills/_shared/documentation-writing-review.md).
 - Check `docs/.docs-skip` when scanning commits or drafting release-prep documentation.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
