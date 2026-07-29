@@ -5,11 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { assessHost, planHostRemediation } from "./preflight";
 
-// Regression: NemoClaw #7731. An invalid DOCKER_HOST (a TCP endpoint or a
-// relative path) makes `docker info` fail, but the local docker.service is
-// still active, so preflight used to emit the docker-group remediation. The
-// host assessment now flags the invalid DOCKER_HOST so onboarding names it
-// instead.
+// Regression: NemoClaw #7731. This invalid TCP endpoint makes `docker info`
+// fail, but the local docker.service is still active. Preflight used to emit
+// the docker-group remediation. The host assessment now flags the invalid
+// DOCKER_HOST so onboarding names it instead.
 describe("assessHost invalid DOCKER_HOST (#7731)", () => {
   it("flags an invalid DOCKER_HOST so onboarding names the endpoint, not a docker-group fix", () => {
     const assessment = assessHost({

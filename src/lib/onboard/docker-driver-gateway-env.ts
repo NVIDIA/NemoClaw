@@ -257,7 +257,7 @@ function formatEnvironmentFileAssignment(key: string, value: string): string {
 function normalizePackageServiceDockerHost(value: string | undefined): string | undefined {
   const candidate = String(value || "").trim();
   if (!candidate) return undefined;
-  if (isSupportedGatewayDockerHost(candidate)) {
+  if (isSupportedGatewayDockerHost(value)) {
     return candidate;
   }
   throw new Error(

@@ -80,7 +80,9 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
       kind: "manual",
       reason:
         "DOCKER_HOST is set to an endpoint onboarding cannot use. " +
-        "Onboarding supports only an absolute unix:// Docker socket with no quotes or line breaks; TCP and SSH endpoints and relative paths are not supported, even when reachable. " +
+        "Onboarding supports only an absolute unix:// Docker socket. " +
+        "The socket path cannot contain a single quote or line break. " +
+        "TCP and SSH endpoints and relative paths are not supported, even when reachable. " +
         "This is a DOCKER_HOST configuration problem, not a docker-group permission or stopped-daemon issue.",
       commands: [
         "unset DOCKER_HOST   # use Docker's default socket",

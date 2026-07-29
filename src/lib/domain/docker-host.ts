@@ -4,9 +4,10 @@
 import path from "node:path";
 
 // A DOCKER_HOST value onboarding can use. Unset means Docker's default socket,
-// which is supported; a set value must be an absolute `unix://` socket with no
-// serialization-hostile characters. TCP and SSH endpoints and relative paths
-// are unsupported, so onboarding cannot use them even when they are reachable.
+// which is supported; a set value must be an absolute `unix://` socket that can
+// be written to the gateway environment file. TCP and SSH endpoints and
+// relative paths are unsupported, so onboarding cannot use them even when they
+// are reachable.
 //
 // The raw value is checked for null bytes and line breaks before trimming, so a
 // trailing `\n` cannot be trimmed away and then accepted; the socket path is
