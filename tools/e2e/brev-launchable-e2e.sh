@@ -6,7 +6,7 @@
 set -euo pipefail
 
 IMAGE_REPOSITORY=brevdev/nemoclaw-image
-IMAGE_WORKFLOW=build-qualification-image.yml
+IMAGE_WORKFLOW=build-launchable-e2e-image.yml
 cleanup_required=0
 
 log() {
@@ -94,7 +94,7 @@ log "Candidate $CANDIDATE_SHA"
 
 # Dispatch #80 once, then bind the uniquely correlated producer run.
 requested_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-title="Qualify NemoClaw $CANDIDATE_SHA ($CORRELATION_ID)"
+title="Build Launchable E2E image for NemoClaw $CANDIDATE_SHA ($CORRELATION_ID)"
 gh api --method POST "repos/$IMAGE_REPOSITORY/actions/workflows/$IMAGE_WORKFLOW/dispatches" \
   -f ref=main -f "inputs[nemoclaw_sha]=$CANDIDATE_SHA" \
   -f "inputs[correlation_id]=$CORRELATION_ID" \
@@ -139,11 +139,16 @@ jq -e --arg sha "$CANDIDATE_SHA" --arg correlation "$CORRELATION_ID" \
   .kind == "nemoclaw-exact-image-manifest" and .nemoclawSha == $sha and
   .correlationId == $correlation and .requesterWorkflowRunId == $requester and
   .requesterWorkflowRunAttempt == $attempt and .imageRepository == "brevdev/nemoclaw-image" and
-  .producerWorkflow == ".github/workflows/build-qualification-image.yml" and
+  .producerWorkflow == ".github/workflows/build-launchable-e2e-image.yml" and
   .workflowRunId == $run and .workflowRunAttempt == 1 and .status == "READY" and
   .channel == "staging" and .variant == "cpu" and
-  .observedFamily == "nemoclaw-brev-staging-cpu"' \
+  .observedFamily == "nemoclaw-brev-staging-cpu" and
+  (.project | type) == "string" and (.project | length) > 0 and
+  (.imageName | type) == "string" and (.imageName | length) > 0 and
+  (.imageRepositorySha | test("^[0-9a-f]{40}$"))' \
   "$manifest" >/dev/null || die "producer receipt does not match the candidate"
+expected_boot_image="projects/$(jq -er .project "$manifest")/global/images/$(jq -er .imageName "$manifest")"
+image_repository_sha="$(jq -er .imageRepositorySha "$manifest")"
 rm -rf "$WORK_DIR/handoff"
 
 # The standing Launchable resolves the staging family; the guest must contain the exact clean candidate.
@@ -167,25 +172,46 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 
-# launchable-e2e-identity: return only the baked SHA and clean-checkout verdict.
+# Return the booted image and the baked runtime receipt.
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
 identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
-  repo_sha=$(git -C "$HOME/NemoClaw" rev-parse HEAD)
+  boot_image=$(curl -fsS --max-time 10 -H "Metadata-Flavor: Google" \
+    http://metadata.google.internal/computeMetadata/v1/instance/image)
+  schema_version=$(sudo -n jq -er .schemaVersion /etc/nemoclaw/provision.json)
+  source_repository=$(sudo -n jq -er .sourceRepository /etc/nemoclaw/provision.json)
+  source_path=$(sudo -n jq -er .sourcePath /etc/nemoclaw/provision.json)
   provision_sha=$(sudo -n jq -er .gitSha /etc/nemoclaw/provision.json)
-  if [ -z "$(git -C "$HOME/NemoClaw" status --porcelain --untracked-files=normal)" ]; then
+  image_repository_sha=$(sudo -n jq -er .imageRepositorySha /etc/nemoclaw/provision.json)
+  repo_sha=$(git -C "$source_path" rev-parse HEAD)
+  if [ -z "$(git -C "$source_path" status --porcelain --untracked-files=normal)" ]; then
     repo_clean=true
   else
     repo_clean=false
   fi
+  if sudo -n test -e /etc/nemoclaw/runtime-overrides.json; then
+    runtime_overrides=true
+  else
+    runtime_overrides=false
+  fi
   printf "NEMOCLAW_IDENTITY="
-  jq -cn --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
-    --argjson repoClean "$repo_clean" \
-    "{repoSha:\$repoSha,provisionSha:\$provisionSha,repoClean:\$repoClean}"' --host \
+  jq -cn --arg bootImage "$boot_image" --argjson schemaVersion "$schema_version" \
+    --arg sourceRepository "$source_repository" --arg sourcePath "$source_path" \
+    --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
+    --arg imageRepositorySha "$image_repository_sha" --argjson repoClean "$repo_clean" \
+    --argjson runtimeOverrides "$runtime_overrides" \
+    "{bootImage:\$bootImage,schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' --host \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
-jq -e --arg sha "$CANDIDATE_SHA" '
-  .repoSha == $sha and .provisionSha == $sha and .repoClean == true' \
-  <<<"$identity" >/dev/null || die "booted checkout does not match candidate"
+jq -e --arg sha "$CANDIDATE_SHA" --arg bootImage "$expected_boot_image" \
+  --arg imageRepositorySha "$image_repository_sha" '
+  .bootImage == $bootImage and .schemaVersion == 1 and
+  .sourceRepository == "NVIDIA/NemoClaw" and
+  .sourcePath == "/opt/nemoclaw-image/NemoClaw" and
+  .repoSha == $sha and .provisionSha == $sha and
+  .imageRepositorySha == $imageRepositorySha and
+  .repoClean == true and .runtimeOverrides == false' \
+  <<<"$identity" >/dev/null || die "booted image runtime does not match the producer handoff"
+source_path="$(jq -er .sourcePath <<<"$identity")"
 
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
   --argjson boot "$identity" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
@@ -197,9 +223,11 @@ raw_log="${RUNNER_TEMP:-/tmp}/brev-launchable-e2e-${GITHUB_RUN_ID}.raw"
 set +e
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_INFERENCE_API_KEY"
+  printf 'export NEMOCLAW_SOURCE_PATH=%q\n' "$source_path"
   cat <<'REMOTE'
 set -euo pipefail
-cd "$HOME/NemoClaw"
+sudo -n test ! -e /etc/nemoclaw/runtime-overrides.json
+cd "$NEMOCLAW_SOURCE_PATH"
 test -x ./node_modules/.bin/vitest
 export CI=true GITHUB_ACTIONS=true E2E_TARGET_ID=staging-brev-launchable
 export NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable NEMOCLAW_RUN_LIVE_E2E=1

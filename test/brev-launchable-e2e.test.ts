@@ -22,13 +22,21 @@ function executable(file: string, source: string): void {
 
 function fixture(
   options: {
+    bootImage?: string;
     deleteFails?: boolean;
     e2eFails?: boolean;
+    imageRepositorySha?: string;
+    omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
+    provisionImageRepositorySha?: string;
     provisionSha?: string;
     ready?: boolean;
     receiptSha?: string;
     repoClean?: boolean;
     repoSha?: string;
+    runtimeOverrides?: boolean;
+    schemaVersion?: number;
+    sourceRepository?: string;
+    sourcePath?: string;
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-e2e-"));
@@ -49,8 +57,8 @@ printf 'gh %s\\n' "$*" >> "$FAKE_CALLS"
 if [ "$1" = api ]; then
   case "$*" in
     *'/dispatches'*) exit 0 ;;
-    *'/workflows/build-qualification-image.yml/runs'*)
-      jq -cn --arg title "Qualify NemoClaw $CANDIDATE_SHA ($CORRELATION_ID)" \
+    *'/workflows/build-launchable-e2e-image.yml/runs'*)
+      jq -cn --arg title "Build Launchable E2E image for NemoClaw $CANDIDATE_SHA ($CORRELATION_ID)" \
         '{workflow_runs:[{id:123,display_title:$title,head_branch:"main",created_at:"2099-01-01T00:00:00Z"}]}' ;;
     *'/actions/runs/123'*) jq -cn '{status:"completed",conclusion:"success"}' ;;
     *) exit 2 ;;
@@ -61,13 +69,16 @@ elif [ "$1 $2" = 'run download' ]; then
     shift
   done
   mkdir -p "$directory"
-  jq -n --arg sha "$FAKE_RECEIPT_SHA" --arg correlation "$CORRELATION_ID" '{
+  jq -n --arg sha "$FAKE_RECEIPT_SHA" --arg correlation "$CORRELATION_ID" \
+    --arg imageRepositorySha "$FAKE_IMAGE_REPOSITORY_SHA" \
+    --arg omit "$FAKE_OMIT_RECEIPT_FIELD" '{
     kind:"nemoclaw-exact-image-manifest",nemoclawSha:$sha,correlationId:$correlation,
     requesterWorkflowRunId:"789",requesterWorkflowRunAttempt:1,
-    imageRepository:"brevdev/nemoclaw-image",producerWorkflow:".github/workflows/build-qualification-image.yml",
+    imageRepository:"brevdev/nemoclaw-image",producerWorkflow:".github/workflows/build-launchable-e2e-image.yml",
     workflowRunId:"123",workflowRunAttempt:1,
-    status:"READY",channel:"staging",variant:"cpu",observedFamily:"nemoclaw-brev-staging-cpu"
-  }' > "$directory/nemoclaw-image-manifest.v1.json"
+    status:"READY",channel:"staging",variant:"cpu",observedFamily:"nemoclaw-brev-staging-cpu",
+    project:"brevdevprod",imageName:"nemoclaw-test-image",imageRepositorySha:$imageRepositorySha
+  } | if $omit == "" then . else del(.[$omit]) end' > "$directory/nemoclaw-image-manifest.v1.json"
 else
   exit 2
 fi
@@ -89,8 +100,15 @@ case "$1" in
     case "$3" in
       *repo_clean*)
         printf 'NEMOCLAW_IDENTITY='
-        jq -cn --arg repo "$FAKE_REPO_SHA" --arg provision "$FAKE_PROVISION_SHA" \
-          --argjson clean "$FAKE_REPO_CLEAN" '{repoSha:$repo,provisionSha:$provision,repoClean:$clean}'
+        jq -cn --arg bootImage "$FAKE_BOOT_IMAGE" --arg sourcePath "$FAKE_SOURCE_PATH" \
+          --arg repo "$FAKE_REPO_SHA" --arg provision "$FAKE_PROVISION_SHA" \
+          --arg sourceRepository "$FAKE_SOURCE_REPOSITORY" \
+          --arg imageRepositorySha "$FAKE_PROVISION_IMAGE_REPOSITORY_SHA" \
+          --argjson schemaVersion "$FAKE_SCHEMA_VERSION" --argjson clean "$FAKE_REPO_CLEAN" \
+          --argjson overrides "$FAKE_RUNTIME_OVERRIDES" \
+          '{bootImage:$bootImage,schemaVersion:$schemaVersion,sourceRepository:$sourceRepository,
+            sourcePath:$sourcePath,repoSha:$repo,provisionSha:$provision,
+            imageRepositorySha:$imageRepositorySha,repoClean:$clean,runtimeOverrides:$overrides}'
         printf '%s\\n' "$INSTANCE_NAME" ;;
       *) exit 2 ;;
     esac ;;
@@ -106,6 +124,8 @@ esac
 set -euo pipefail
 script="$(cat)"
 grep -q 'NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable' <<<"$script"
+grep -q 'NEMOCLAW_SOURCE_PATH=/opt/nemoclaw-image/NemoClaw' <<<"$script"
+grep -q 'runtime-overrides.json' <<<"$script"
 printf 'ssh preinstalled full-e2e.test.ts\\n' >> "$FAKE_CALLS"
 printf 'remote output contains %s\\n' "$NVIDIA_INFERENCE_API_KEY"
 [ "$FAKE_E2E_FAILS" != 1 ] || exit 7
@@ -121,14 +141,23 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     BREV_LAUNCHABLE_ID: "env-staging123",
     CANDIDATE_SHA: candidateSha,
     CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
+    FAKE_BOOT_IMAGE: options.bootImage ?? "projects/brevdevprod/global/images/nemoclaw-test-image",
     FAKE_CALLS: calls,
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
+    FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
+    FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
+    FAKE_PROVISION_IMAGE_REPOSITORY_SHA:
+      options.provisionImageRepositorySha ?? options.imageRepositorySha ?? "b".repeat(40),
     FAKE_PROVISION_SHA: options.provisionSha ?? candidateSha,
     FAKE_READY: options.ready === false ? "0" : "1",
     FAKE_RECEIPT_SHA: options.receiptSha ?? candidateSha,
     FAKE_REPO_CLEAN: options.repoClean === false ? "false" : "true",
     FAKE_REPO_SHA: options.repoSha ?? candidateSha,
+    FAKE_RUNTIME_OVERRIDES: options.runtimeOverrides ? "true" : "false",
+    FAKE_SCHEMA_VERSION: String(options.schemaVersion ?? 1),
+    FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
+    FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
     FAKE_STATE: state,
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
@@ -173,7 +202,14 @@ describe("focused staging Brev Launchable lane", () => {
       candidateSha,
       fullE2e: "passed",
       producer: { runId: "123", status: "success" },
-      boot: { repoSha: candidateSha, provisionSha: candidateSha, repoClean: true },
+      boot: {
+        bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        sourcePath: "/opt/nemoclaw-image/NemoClaw",
+        repoSha: candidateSha,
+        provisionSha: candidateSha,
+        repoClean: true,
+        runtimeOverrides: false,
+      },
       workspace: { id: "ws-1" },
     });
   });
@@ -185,6 +221,19 @@ describe("focused staging Brev Launchable lane", () => {
     expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
 
+    for (const malformed of [
+      fixture({ omitReceiptField: "project" }),
+      fixture({ omitReceiptField: "imageName" }),
+      fixture({ imageRepositorySha: "not-a-sha" }),
+    ]) {
+      const malformedResult = run(malformed.env);
+      expect(malformedResult.status).not.toBe(0);
+      expect(malformedResult.stderr).toContain("producer receipt does not match the candidate");
+      expect(fs.readFileSync(malformed.calls, "utf8")).not.toMatch(
+        /brev create|full-e2e\.test\.ts/u,
+      );
+    }
+
     const unready = fixture({ ready: false });
     const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
     expect(unreadyResult.status).not.toBe(0);
@@ -192,13 +241,21 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.existsSync(unready.state)).toBe(false);
 
     for (const boot of [
+      fixture({ bootImage: "projects/brevdevprod/global/images/wrong-image" }),
       fixture({ repoSha: "b".repeat(40) }),
       fixture({ provisionSha: "b".repeat(40) }),
+      fixture({ provisionImageRepositorySha: "c".repeat(40) }),
       fixture({ repoClean: false }),
+      fixture({ runtimeOverrides: true }),
+      fixture({ schemaVersion: 2 }),
+      fixture({ sourceRepository: "example/NemoClaw" }),
+      fixture({ sourcePath: "/home/ubuntu/NemoClaw" }),
     ]) {
       const bootResult = run(boot.env);
       expect(bootResult.status).not.toBe(0);
-      expect(bootResult.stderr).toContain("booted checkout does not match candidate");
+      expect(bootResult.stderr).toContain(
+        "booted image runtime does not match the producer handoff",
+      );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
     }
