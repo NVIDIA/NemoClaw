@@ -389,7 +389,9 @@ jobs:
           '
 
       - name: Install managed-image OpenShell harness dependencies
-        run: npm ci --ignore-scripts
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
 
       - name: Install pinned OpenShell runtime
         env:
