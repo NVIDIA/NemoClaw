@@ -82,7 +82,12 @@ function writeGatewayState(test: Fixture): string {
   return configPath;
 }
 
-function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<UninstallRunDeps> = {}) {
+function uninstall(
+  test: Fixture,
+  keepOpenShell: boolean,
+  deps: Partial<UninstallRunDeps> = {},
+  gateways: { name: string }[] = [{ name: "nemoclaw" }],
+) {
   const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
   return runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell },
@@ -107,7 +112,7 @@ function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<Uninstal
       commandExists: (command) => command === "openshell" || commandExists(command),
       run: (command, args, options) =>
         command === "openshell" && args[0] === "gateway" && args[1] === "list"
-          ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+          ? ok(JSON.stringify(gateways))
           : run(command, args, options),
     },
   );
@@ -129,6 +134,23 @@ describe("uninstall OpenShell gateway user service", () => {
       "-f",
       HOST_GATEWAY_PGREP_PATTERN,
     ]);
+  });
+
+  it("keeps selected gateway state when sibling gateways require scoped cleanup (#7830)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    const envPath = writeGatewayEnv(test);
+    const gatewayStatePath = writeGatewayState(test);
+
+    const result = uninstall(test, true, { commandExists: () => true }, [
+      { name: "nemoclaw" },
+      { name: "sibling" },
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(fs.existsSync(envPath)).toBe(true);
+    expect(fs.existsSync(gatewayStatePath)).toBe(true);
   });
 
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {

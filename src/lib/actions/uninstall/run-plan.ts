@@ -1719,7 +1719,8 @@ function executePlan(
         ) {
           return { ok: false };
         }
-        removePath(paths.selectedGatewayLocalStateDir, runtime);
+        if (!options.keepOpenShell) removePath(paths.selectedGatewayLocalStateDir, runtime);
+        else runtime.log("Keeping OpenShell gateway configuration as requested.");
         runtime.log(
           "Legacy sibling gateway rows remain; kept the shared default-root state for their recovery.",
         );
@@ -1748,7 +1749,8 @@ function executePlan(
       )
         ok = false;
       if (scopedToSelectedGateway) {
-        removePath(paths.selectedGatewayLocalStateDir, runtime);
+        if (!options.keepOpenShell) removePath(paths.selectedGatewayLocalStateDir, runtime);
+        else runtime.log("Keeping OpenShell gateway configuration as requested.");
         if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT && !options.keepOpenShell) {
           const envCleanup = removeNemoclawOpenShellGatewayEnv(paths, runtime);
           if (!envCleanup.ok) ok = false;
