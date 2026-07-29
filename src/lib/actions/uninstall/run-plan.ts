@@ -1755,7 +1755,7 @@ function executePlan(
         }
         runtime.log("Sibling gateways remain; kept shared OpenShell and NemoClaw config.");
       } else {
-        removePath(paths.gatewayLocalStateDir, runtime);
+        if (!options.keepOpenShell) removePath(paths.gatewayLocalStateDir, runtime);
         if (options.keepOpenShell)
           runtime.log("Keeping OpenShell gateway configuration as requested.");
         else if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT) {

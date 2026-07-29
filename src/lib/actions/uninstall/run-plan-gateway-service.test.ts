@@ -14,7 +14,7 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
 } from "../../onboard/docker-driver-gateway-service";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../../onboard/host-gateway-process";
-import { type RunResult, type UninstallRunDeps, runUninstallPlan } from "./run-plan";
+import { type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -68,6 +68,20 @@ function writeGatewayEnv(test: Fixture, contents = "OPENSHELL_SERVER_PORT=8080\n
   return envPath;
 }
 
+function writeGatewayState(test: Fixture): string {
+  const configPath = path.join(
+    test.home,
+    ".local",
+    "state",
+    "nemoclaw",
+    "openshell-docker-gateway",
+    "openshell-gateway.toml",
+  );
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, 'listen_address = "127.0.0.1:8080"\n');
+  return configPath;
+}
+
 function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<UninstallRunDeps> = {}) {
   const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
   return runUninstallPlan(
@@ -100,15 +114,17 @@ function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<Uninstal
 }
 
 describe("uninstall OpenShell gateway user service", () => {
-  it("keeps the service, env, and gateway process with --keep-openshell (#6903)", () => {
+  it("keeps the service, env, gateway process, and state with --keep-openshell (#7830)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const envPath = writeGatewayEnv(test);
+    const gatewayStatePath = writeGatewayState(test);
     const run = vi.fn((_command: string, _args: string[]) => ok());
 
     expect(uninstall(test, true, { commandExists: () => true, run }).exitCode).toBe(0);
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(fs.existsSync(envPath)).toBe(true);
+    expect(fs.existsSync(gatewayStatePath)).toBe(true);
     expect(run.mock.calls.map(([, args]) => args)).not.toContainEqual([
       "-f",
       HOST_GATEWAY_PGREP_PATTERN,
@@ -119,6 +135,7 @@ describe("uninstall OpenShell gateway user service", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const envPath = writeGatewayEnv(test);
+    const gatewayStatePath = writeGatewayState(test);
     const calls: string[][] = [];
 
     const result = uninstall(test, false, {
@@ -132,6 +149,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(result.exitCode).toBe(0);
     expect(fs.existsSync(servicePath)).toBe(false);
     expect(fs.existsSync(envPath)).toBe(false);
+    expect(fs.existsSync(gatewayStatePath)).toBe(false);
     expect(calls).toContainEqual([
       "systemctl",
       "--user",
