@@ -200,8 +200,11 @@ These are the primary npm scripts for day-to-day development:
 | `npm run dev:setup` | Install or repair repository-local contributor tooling |
 | `npm run dev:doctor` | Run read-only contributor environment readiness checks |
 | `npm run agent` | Launch the repository-pinned Pi coding agent |
-| `npm run check` | Run repo-wide pre-commit and full CLI/plugin coverage checks |
-| `npm run check:diff` | Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the diff from `origin/main` |
+| `npm run validate:pr` | Validate a routine PR diff with `pre-commit`, `commit-msg`, and `pre-push` checks from `origin/main` |
+| `npm run checks:repository` | Run the narrow custom repository checks used by lint and hooks |
+| `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
+| `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
+| `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
 | `npm run format` | Auto-format Biome-supported source files |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
@@ -352,17 +355,18 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
-If hooks were skipped, missing, failed, or uncertain, run `npm run check:diff` once to reproduce those checks for the diff from `origin/main`.
-Refresh that remote-tracking base with `git fetch origin main` before relying on the fallback.
+If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
 
 Pre-push selects the root TypeScript, checked-JavaScript, and plugin type checks from the paths changed relative to the push base, and uses incremental compilation for the TypeScript projects.
-The `check:diff` fallback applies the same path selection, so do not rerun type checks separately solely to prepare a PR.
+The `validate:pr` command applies the same path selection, so do not rerun type checks separately solely to prepare a PR.
 CI runs the complete type-check gates independently; local path selection is a fast-feedback optimization, not the authoritative trust boundary.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
+`npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
+
 `npm run check` is the whole-repository pre-commit and full CLI/plugin coverage baseline for broad changes to hooks, formatters, generated checks, or shared validation behavior.
-It is not part of routine PR preparation for a focused change.
+It is not part of routine PR preparation for a focused change. The `npm run check:diff` alias remains available for consumers migrating to `npm run validate:pr`.
 Full coverage enforces the aggregate ratchets in `ci/coverage-threshold-*.json` and per-file floors
 for security-sensitive SSRF, credential filtering and redaction, policy mutation, and state-lock
 modules. CLI coverage shards defer the per-file checks until their reports are merged. Pull requests
@@ -376,7 +380,7 @@ npm run docs
 ```
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
-If hooks were skipped or unavailable, run `npm run check:diff` before opening the PR.
+If hooks were skipped or unavailable, refresh `origin/main`, then run `npm run validate:pr` before opening the PR.
 For code changes, map each success criterion to the narrowest stable test or other evidence that proves it, then run those targeted checks once per relevant change set and record the commands as evidence.
 Reproduce defects before fixing them when feasible; when reproduction is not feasible, record why and preserve the strongest available pre-fix evidence.
 Add regression coverage at the earliest stable behavior boundary that could have caught the defect, and add higher-level coverage only when it protects a distinct integration boundary.
@@ -556,7 +560,7 @@ Follow these steps to submit a pull request.
 2. Make your changes with tests.
 3. Run the relevant checks.
    Run targeted tests once per relevant change set, let normal hooks provide verification, and run `npm run docs` for doc changes.
-   Rerun targeted tests after later behavior-affecting edits or hook autofixes. If hooks were skipped or unavailable, run `npm run check:diff` once instead of reproducing the checks separately.
+   Rerun targeted tests after later behavior-affecting edits or hook autofixes. If hooks were skipped or unavailable, refresh `origin/main`, then run `npm run validate:pr` once instead of reproducing the checks separately.
 4. Confirm the PR description includes the DCO declaration and every commit appears as `Verified` in GitHub.
 5. Open a PR.
 
