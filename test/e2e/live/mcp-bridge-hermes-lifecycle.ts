@@ -195,7 +195,7 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
  * require its real rollback reload to restore the prior config, both integrity
  * anchors, and a healthy managed gateway in the live sandbox.
  */
-async function assertHermesReloadRollback(
+export async function assertHermesReloadRollback(
   sandbox: SandboxClient,
   sandboxName: string,
   mcpUrl: string,
@@ -289,7 +289,7 @@ async function assertHermesReloadRollback(
   expectExitZero(result, "Hermes failed MCP reload restores config, hashes, and gateway");
   expect(JSON.parse(result.stdout)).toEqual({
     ok: true,
-    state: "current",
+    state: "matched",
   });
 }
 
