@@ -42,6 +42,9 @@ describe("Hermes MCP live rollback inspection", () => {
         "hermes-e2e",
         "https://mcp.example.test",
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      actual: { ok: true, state: "current" },
+      expected: { ok: true, state: "matched" },
+    });
   });
 });
