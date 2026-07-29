@@ -15,13 +15,9 @@ NemoClaw preserves manual command approval instead of inheriting Hermes 0.19's n
 Named-profile copies remain inside the raw `profiles` directory capture under the existing generic snapshot limitation; this bounded residual is recorded rather than described as online backup.
 The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
-The selected Python graph is hardened before installation with a reviewed,
-exact-source patch that updates the published dependency metadata and frozen
-lock together. It selects `cryptography==48.0.1`, `Pillow==12.3.0`, and
-`starlette==1.3.1`, then verifies those installed versions and the complete
-environment with `uv pip check`.
-The final image also replaces the published `python-multipart==0.0.27` lock
-resolution with the hash-verified and attested `python-multipart==0.0.32`.
+The selected Python graph is hardened before installation with a reviewed, exact-source patch that updates the published dependency metadata and frozen lock together.
+It selects `cryptography==48.0.1`, `Pillow==12.3.0`, and `starlette==1.3.1`, then verifies those installed versions and the complete environment with `uv pip check`.
+The final image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 
 The source-pin commit must publish a fresh multi-platform Hermes base image before the final Dockerfile can name its immutable digest.
 The PR is not approval-ready until the pinned final image and required live E2E gates pass on the exact PR head.
@@ -144,32 +140,17 @@ Their PyPI Trusted Publisher attestations bind Apache-2.0 artifacts to `Kludex/p
 The override clears `GHSA-5rvq-cxj2-64vf`, `GHSA-6jv3-5f52-599m`, and `GHSA-v9pg-7xvm-68hf`.
 A Python 3.13 FastAPI `TestClient` probe covered ordinary forms, file upload, and dense CRLF input with the replacement parser.
 
-The source patch changes the published constraints and `uv.lock` as one
-transaction rather than overlaying packages after `uv sync`. In addition to
-the three direct selections, the resolver necessarily moves
-`alibabacloud-tea-openapi` from `0.4.4` to `0.4.5`, `darabonba-core` from
-`1.0.5` to `1.0.8`, and adds `websocket-client==1.9.0`. The changed packages
-remain under Apache-2.0, BSD-3-Clause, MIT-CMU, or compatible dual-license
-terms; no restrictive license enters the selected graph.
+The source patch changes the published constraints and `uv.lock` as one transaction rather than overlaying packages after `uv sync`.
+In addition to the three direct selections, the resolver necessarily moves `alibabacloud-tea-openapi` from `0.4.4` to `0.4.5`, `darabonba-core` from `1.0.5` to `1.0.8`, and adds `websocket-client==1.9.0`.
+The changed packages remain under Apache-2.0, BSD-3-Clause, MIT-CMU, or compatible dual-license terms; no restrictive license enters the selected graph.
 
-The 2026-07-29 point-in-time audit reports no advisory for
-`cryptography==48.0.1`, `Pillow==12.3.0`, or `starlette==1.3.1`.
-The exported patched lock still reports 14 records in seven other packages,
-but three records are for the published `python-multipart==0.0.27` resolution
-that the final image already replaces with `0.0.32`, for which the same
-point-in-time audit reports no advisories. The effective image therefore
-retains 11 newly published records in six unrelated packages:
-`click==8.3.1`, `mcp==1.26.0`, `pydantic-settings==2.13.1`,
-`Pygments==2.19.2`, `PyNaCl==1.5.0`, and `tornado==6.5.5`.
-Those records are not introduced by this targeted remediation and remain
-visible for a separate dependency-lifecycle review; this review does not
-describe the complete image as vulnerability-free.
+The 2026-07-29 point-in-time audit reports no advisory for `cryptography==48.0.1`, `Pillow==12.3.0`, or `starlette==1.3.1`.
+The exported patched lock still reports 14 records in seven other packages, but three records are for the published `python-multipart==0.0.27` resolution that the final image already replaces with `0.0.32`, for which the same point-in-time audit reports no advisories.
+The effective image therefore retains 11 newly published records in six unrelated packages: `click==8.3.1`, `mcp==1.26.0`, `pydantic-settings==2.13.1`, `Pygments==2.19.2`, `PyNaCl==1.5.0`, and `tornado==6.5.5`.
+Those records are not introduced by this targeted remediation and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
 
-Compatibility evidence covers all 97 upstream image-routing tests with Pillow
-`12.3.0`, plus a real FastAPI `0.133.1`, Starlette `1.3.1`, and multipart
-`0.0.32` form and upload `TestClient` smoke. The image build additionally
-requires the frozen environment to remain consistent and asserts the exact
-installed versions before continuing.
+Compatibility evidence covers all 97 upstream image-routing tests with Pillow `12.3.0`, plus a real FastAPI `0.133.1`, Starlette `1.3.1`, and multipart `0.0.32` form and upload `TestClient` smoke.
+The image build additionally requires the frozen environment to remain consistent and asserts the exact installed versions before continuing.
 
 The remaining high records have evidence-backed exclusions from currently enabled Hermes paths.
 Hermes-owned MCP servers use stdio and do not enable authenticated stateful HTTP, custom WebSocket servers, or MCP tasks.
@@ -221,8 +202,7 @@ Unresolved upgrade-created high-impact concerns: `0`.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation and one inherited Medium direct-runtime-consumer limitation remain explicitly accepted for this upgrade scope.
 
 The remaining exact-head gates are repository CI, automated review, documentation review, security review, and protected Hermes E2E.
-The exact-source dependency patch and its residual audit record require
-security review before merge.
+The exact-source dependency patch and its residual audit record require security review before merge.
 
 ## Verification and remaining gates
 
