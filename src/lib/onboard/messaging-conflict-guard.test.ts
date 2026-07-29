@@ -69,34 +69,61 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 
 describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#4953)", () => {
   it("aborts a second Slack sandbox on the same gateway in non-interactive mode", async () => {
-    const { deps, log, error } = makeDeps();
+    const { deps, error, promptContinue } = makeDeps();
     await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
       AbortError,
     );
-    expect(log).toHaveBeenCalledWith(
+    expect(error).toHaveBeenCalledWith(
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'alice'"),
     );
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("resolve the messaging pre-enable conflict above"),
     );
+    expect(promptContinue).not.toHaveBeenCalled();
   });
 
-  it("aborts when the interactive operator declines to continue", async () => {
-    const promptContinue = vi.fn(async () => false);
-    const { deps } = makeDeps({ isNonInteractive: () => false, promptContinue });
+  it("aborts an interactive Slack gateway conflict without prompting (#7808)", async () => {
+    const promptContinue = vi.fn(async () => true);
+    const { deps, error } = makeDeps({ isNonInteractive: () => false, promptContinue });
     await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
       AbortError,
     );
-    expect(promptContinue).toHaveBeenCalled();
-  });
-
-  it("proceeds when the interactive operator overrides the conflict", async () => {
-    const promptContinue = vi.fn(async () => true);
-    const { deps, log } = makeDeps({ isNonInteractive: () => false, promptContinue });
-    await expect(enforceMessagingChannelConflicts(deps as never)).resolves.toBeUndefined();
-    expect(log).toHaveBeenCalledWith(
+    expect(error).toHaveBeenCalledWith(
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'alice'"),
     );
+    expect(promptContinue).not.toHaveBeenCalled();
+  });
+
+  it("aborts a reused Slack app token across gateways without prompting (#7808)", async () => {
+    const sharedAppHash = "shared-app-hash";
+    const currentPlan = {
+      ...slackPlan("bob"),
+      credentialBindings: slackBindings("bob-bot-hash", sharedAppHash, "bob"),
+    };
+    const otherPlan = {
+      ...slackPlan("alice"),
+      credentialBindings: slackBindings("alice-bot-hash", sharedAppHash, "alice"),
+    };
+    const otherSlack = {
+      ...planEntry("alice", otherPlan),
+      gatewayName: "nemoclaw-9090",
+    };
+    const promptContinue = vi.fn(async () => true);
+    const { deps, error } = makeDeps({
+      currentPlan,
+      registry: {
+        listSandboxes: () => ({ sandboxes: [otherSlack], defaultSandbox: "alice" }),
+        updateSandbox: vi.fn(() => true),
+      },
+      isNonInteractive: () => false,
+      promptContinue,
+    });
+
+    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
+      AbortError,
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("same slack credential"));
+    expect(promptContinue).not.toHaveBeenCalled();
   });
 
   it("does not warn when the only other Slack sandbox is on a different gateway", async () => {

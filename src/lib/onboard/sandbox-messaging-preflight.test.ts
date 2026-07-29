@@ -216,7 +216,7 @@ describe("prepareSandboxMessagingPreflight", () => {
     expect(deps.promptYesNoOrDefault).not.toHaveBeenCalled();
   });
 
-  it("aborts a second Slack Socket Mode sandbox on the same gateway", async () => {
+  it("aborts a second Slack Socket Mode sandbox on the same gateway (#7808)", async () => {
     let gatewayName = "startup-gateway";
     const deps = createDeps({
       gatewayName: vi.fn(() => gatewayName),
@@ -239,7 +239,7 @@ describe("prepareSandboxMessagingPreflight", () => {
     await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
       code: 1,
     });
-    expect(deps.log).toHaveBeenCalledWith(
+    expect(deps.error).toHaveBeenCalledWith(
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'other'"),
     );
     expect(deps.error).toHaveBeenCalledWith(

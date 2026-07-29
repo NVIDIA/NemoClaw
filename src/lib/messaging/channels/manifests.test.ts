@@ -34,6 +34,11 @@ describe("built-in channel manifests", () => {
     );
   });
 
+  it("requires --force to override Slack conflicts (#7808)", () => {
+    const slack = BUILT_IN_CHANNEL_MANIFESTS.find((manifest) => manifest.id === "slack");
+    expect(slack?.requireForceForConflictOverride).toBe(true);
+  });
+
   it("keeps rendered config parsers aligned with built-in manifests", () => {
     expect(
       BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [

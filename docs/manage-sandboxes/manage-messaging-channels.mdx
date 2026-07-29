@@ -81,15 +81,20 @@ If policy restoration fails, the command keeps the channel disabled and exits wi
 
 Telegram, Discord, Slack, and WeChat allow one active consumer per channel credential.
 Multiple sandboxes can use the same channel type when each uses a distinct token or WeChat bot account.
+Slack sandboxes must also use different gateways.
 
 For WeChat, each sandbox must own a distinct iLink `accountId`.
 Running two sandboxes against the same account causes one to lose messages.
 
 If another sandbox already uses the same token, interactive onboarding prompts for confirmation and non-interactive onboarding exits nonzero.
-For Slack, NemoClaw checks both bot and Socket Mode app tokens.
+Slack conflicts exit nonzero without an interactive confirmation.
+Pass `--force` to `channels add slack` only when you explicitly accept the duplicate-session risk.
+For Slack, NemoClaw checks both bot and Socket Mode app tokens across gateways.
+It also rejects another Slack sandbox on the same gateway, even when the credentials differ.
 
 For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share it.
-If NemoClaw has only legacy metadata and cannot compare credential hashes, it keeps the conservative warning.
+For non-Slack channels, if NemoClaw has only legacy metadata and cannot compare credential hashes, it keeps the conservative warning.
+Slack aborts when it cannot complete the conflict check unless you pass `--force` to `channels add slack`.
 
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 

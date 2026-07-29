@@ -54,6 +54,7 @@ export function createSlackSocketModeGatewayConflictHook(
     const formatConflict = options.formatConflict ?? formatSlackSocketModeConflictMessage;
     throw new MessagingHookConflictError(
       conflicts.map(({ sandbox }) => formatConflict(sandbox)).join("\n"),
+      context.channelId,
     );
   };
 }

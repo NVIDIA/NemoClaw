@@ -19,12 +19,15 @@ import {
   findChannelConflictsFromPlan,
   MessagingSetupApplier,
 } from "../messaging/applier";
+import { createBuiltInChannelManifestRegistry } from "../messaging/channels/built-ins";
 import {
   createBuiltInMessagingHookRegistry,
   isMessagingHookConflictError,
   runMessagingHook,
 } from "../messaging/hooks";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+
+const channelManifestRegistry = createBuiltInChannelManifestRegistry();
 
 export interface MessagingConflictGuardDeps {
   readonly sandboxName: string;
@@ -55,6 +58,12 @@ export interface MessagingConflictGuardDeps {
 
 function abort(deps: MessagingConflictGuardDeps): never {
   return (deps.exit ?? ((code: number) => process.exit(code)))(1);
+}
+
+function requiresForceForConflictOverride(channelId: string | undefined): boolean {
+  return Boolean(
+    channelId && channelManifestRegistry.get(channelId)?.requireForceForConflictOverride,
+  );
 }
 
 /**
@@ -95,9 +104,18 @@ export async function enforceMessagingChannelConflicts(
           reason === "matching-token"
             ? `uses the same ${channel} credential`
             : `already has ${channel} enabled, but its credential hash is unavailable`;
-        deps.log(
-          `  ⚠ Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges.`,
+        const message = `Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect.`;
+        if (requiresForceForConflictOverride(channel)) {
+          deps.error(`  Conflict: ${message}`);
+        } else {
+          deps.log(`  ⚠ ${message} Continuing may break both bridges.`);
+        }
+      }
+      if (conflicts.some(({ channel }) => requiresForceForConflictOverride(channel))) {
+        deps.error(
+          `  Aborting: resolve the messaging channel conflict above or run \`${deps.cliName()} <sandbox> channels stop <channel>\` / \`${deps.cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
         );
+        abort(deps);
       }
       if (deps.isNonInteractive()) {
         deps.error(
@@ -158,8 +176,19 @@ async function enforceMessagingPreEnableHooks(
   } catch (error) {
     if (!isMessagingHookConflictError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
+    const requiresForce = requiresForceForConflictOverride(error.channelId);
     for (const line of message.split("\n").filter((entry) => entry.trim().length > 0)) {
-      deps.log(`  ⚠ ${line}`);
+      if (requiresForce) {
+        deps.error(`  Conflict: ${line}`);
+      } else {
+        deps.log(`  ⚠ ${line}`);
+      }
+    }
+    if (requiresForce) {
+      deps.error(
+        `  Aborting: resolve the messaging pre-enable conflict above or run \`${deps.cliName()} <sandbox> channels stop <channel>\` / \`${deps.cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
+      );
+      abort(deps);
     }
     if (deps.isNonInteractive()) {
       deps.error(

@@ -5,10 +5,12 @@ export const MESSAGING_HOOK_CONFLICT_CODE = "MESSAGING_HOOK_CONFLICT";
 
 export class MessagingHookConflictError extends Error {
   readonly code = MESSAGING_HOOK_CONFLICT_CODE;
+  readonly channelId: string | undefined;
 
-  constructor(message: string) {
+  constructor(message: string, channelId?: string) {
     super(message);
     this.name = "MessagingHookConflictError";
+    this.channelId = channelId;
   }
 }
 

@@ -37,6 +37,11 @@ export interface ChannelManifest {
   readonly enrollmentNotes?: readonly string[];
   readonly supportedAgents: readonly MessagingAgentId[];
   readonly auth: ChannelAuthSpec;
+  /**
+   * Whether conflict overrides require an explicit force flag instead of an
+   * interactive confirmation. Defaults to false.
+   */
+  readonly requireForceForConflictOverride?: boolean;
   readonly inputs: readonly ChannelInputSpec[];
   readonly credentials: readonly ChannelCredentialSpec[];
   /** Policy presets needed when this channel is active. */
