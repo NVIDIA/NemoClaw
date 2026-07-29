@@ -36,7 +36,7 @@ const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 
 runner.run = (command) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   if (_n(command).includes("sandbox delete")) {
     throw new Error("unexpected sandbox delete");
   }
@@ -118,7 +118,7 @@ const { EventEmitter } = require("node:events");
 
 const commands = []; let registeredSandbox = null;
 runner.run = (command, opts = {}) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
@@ -232,7 +232,7 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   events.push({ kind: "run", cmd: _n(command) });
   return { status: 0 };
 };
@@ -382,7 +382,7 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   events.push({ kind: "run", cmd: _n(command) });
   return { status: 0 };
 };
@@ -507,7 +507,7 @@ const { EventEmitter } = require("node:events");
 const events = [];
 let sandboxDeleted = false;
 runner.run = (command) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
@@ -654,7 +654,7 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
@@ -777,7 +777,7 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (_n(command).includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
@@ -909,7 +909,7 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (_n(command).includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
@@ -1053,7 +1053,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 let sandboxDeleted = false;
 runner.run = (command, opts = {}) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   commands.push({ command: _n(command), env: opts.env || null });
   if (_n(command).includes("sandbox delete")) sandboxDeleted = true;
   return { status: 0 };
@@ -1195,7 +1195,7 @@ const commands = [];
 let sandboxListCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
-  if (_n(command).includes("sandbox delete")) _deleted = true;
+  _deleted = _deleted || _n(command).includes("sandbox delete");
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
