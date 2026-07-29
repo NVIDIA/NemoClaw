@@ -38,7 +38,10 @@ type RestoredSandboxGatewayRestartDeps = {
   ) => GatewayRestartResult;
   checkAndRecoverSandboxProcesses: (
     sandboxName: string,
-    options?: { quiet?: boolean },
+    options?: {
+      quiet?: boolean;
+      isSandboxGatewayRunningImpl?: (sandboxName: string) => boolean | null;
+    },
   ) => {
     checked: boolean;
     recovered: boolean;
@@ -65,7 +68,15 @@ export function restartRestoredSandboxGateway(
     // supervisor session exists. Reuse the existing transactional relaunch
     // path only for that exact classified failure. Recovery must prove both
     // the gateway and its primary forward before pairing work can continue.
-    const recovery = deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    const recovery = deps.checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      // The failed supervisor restart already proves the gateway cannot be
+      // managed through the current container. Skip the redundant sandbox-exec
+      // probe, which is itself unavailable when that supervisor is missing.
+      // The transactional relaunch still re-confirms the exact missing
+      // supervisor against the pinned container before replacing it.
+      isSandboxGatewayRunningImpl: () => false,
+    });
     if (
       recovery.checked &&
       recovery.recovered &&

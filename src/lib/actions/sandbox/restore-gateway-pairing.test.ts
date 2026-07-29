@@ -225,18 +225,31 @@ describe("restartRestoredSandboxGateway", () => {
       failureLayer: "supervisor not running" as const,
       detail: "SUPERVISOR_NOT_RUNNING",
     }));
-    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
-      checked: true,
-      recovered: true,
-      forwardRecovered: true,
-    }));
+    const checkAndRecoverSandboxProcesses = vi.fn(
+      (
+        _sandboxName: string,
+        _options?: {
+          quiet?: boolean;
+          isSandboxGatewayRunningImpl?: (sandboxName: string) => boolean | null;
+        },
+      ) => ({
+        checked: true,
+        recovered: true,
+        forwardRecovered: true,
+      }),
+    );
 
     restartRestoredSandboxGateway("beta", {
       restartSandboxGateway,
       checkAndRecoverSandboxProcesses,
     });
 
-    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledWith("beta", { quiet: true });
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledWith("beta", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: expect.any(Function),
+    });
+    const recoveryOptions = checkAndRecoverSandboxProcesses.mock.calls[0]?.[1];
+    expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("beta")).toBe(false);
   });
 
   it("preserves the supervisor classification when relaunch is not fully proven (#7818)", () => {
