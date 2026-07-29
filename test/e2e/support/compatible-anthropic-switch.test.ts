@@ -28,6 +28,22 @@ describe("compatible Anthropic inference switch setup", () => {
     expect(compatibleAnthropicSwitchEnv(null)).toEqual({});
   });
 
+  it("rejects a blank compatible Anthropic endpoint URL", () => {
+    expect(() =>
+      compatibleAnthropicSwitchBinding("   ", {
+        COMPATIBLE_ANTHROPIC_API_KEY: "fixture-key",
+      }),
+    ).toThrow("NEMOCLAW_SWITCH_ENDPOINT_URL is required");
+  });
+
+  it("rejects a blank compatible Anthropic credential", () => {
+    expect(() =>
+      compatibleAnthropicSwitchBinding("http://host.openshell.internal:18766", {
+        COMPATIBLE_ANTHROPIC_API_KEY: "   ",
+      }),
+    ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
+  });
+
   it("requires the direct provider to be absent before inference set owns its creation", async () => {
     const command = vi.fn().mockResolvedValue({
       exitCode: 1,
