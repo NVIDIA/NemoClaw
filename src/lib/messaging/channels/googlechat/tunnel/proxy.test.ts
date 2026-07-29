@@ -129,11 +129,10 @@ describe("Google Chat webhook route proxy", () => {
   it("rejects a state directory not owned by the effective user", async () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));
     cleanupDirs.add(pidDir);
-    const effectiveUid = process.geteuid?.();
-    if (effectiveUid === undefined) throw new Error("Test requires process.geteuid().");
-    const getEffectiveUid = vi
-      .spyOn(process, "geteuid")
-      .mockReturnValue(effectiveUid === 0 ? 1 : 0);
+    // Report a uid that differs from the directory's real owner so the ownership
+    // guard trips, without an in-body branch (keeps the test linear).
+    const foreignUid = statSync(pidDir).uid + 1;
+    const getEffectiveUid = vi.spyOn(process, "geteuid").mockReturnValue(foreignUid);
 
     try {
       await expect(startGooglechatWebhookProxy(pidDir, 18789)).rejects.toThrow(

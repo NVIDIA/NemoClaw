@@ -53,13 +53,11 @@ describe("googlechat tunnel/audience gate hook", () => {
       baseOptions({ startTunnel, stopTunnel, readTunnelState: () => ({ running: false }) }),
     );
 
-    const result = await hook(
-      gateContext({ audience: "https://named.example.com/hooks/googlechat" }),
-    );
+    const result = await hook(gateContext({ audience: "https://named.example.com/googlechat" }));
 
     expect(result).toEqual({
       outputs: {
-        audience: { kind: "config", value: "https://named.example.com/hooks/googlechat" },
+        audience: { kind: "config", value: "https://named.example.com/googlechat" },
       },
     });
     expect(startTunnel).not.toHaveBeenCalled();
@@ -69,14 +67,13 @@ describe("googlechat tunnel/audience gate hook", () => {
   it.each([
     "https://named.example.com/other",
     "https://named.example.com/googlechat/",
+    "https://named.example.com/hooks/googlechat",
     "http://named.example.com/googlechat",
   ])("rejects an invalid pre-supplied app-url audience: %s", async (audience) => {
     const startTunnel = vi.fn(async () => {});
     const hook = createGooglechatTunnelAudienceGateHook(baseOptions({ startTunnel }));
 
-    await expect(hook(gateContext({ audience }))).rejects.toThrow(
-      /valid HTTPS URL ending in \/googlechat/,
-    );
+    await expect(hook(gateContext({ audience }))).rejects.toThrow(/path is exactly \/googlechat/);
     expect(startTunnel).not.toHaveBeenCalled();
   });
 
@@ -252,7 +249,7 @@ describe("googlechat tunnel/audience gate hook", () => {
 
     await expect(
       hook(gateContext({ audience: "https://e2e-fake.trycloudflare.com/other" }, false)),
-    ).rejects.toThrow(/valid HTTPS URL ending in \/googlechat/);
+    ).rejects.toThrow(/path is exactly \/googlechat/);
   });
 
   it("still skips non-interactively when the skip flag is set but no audience is supplied", async () => {

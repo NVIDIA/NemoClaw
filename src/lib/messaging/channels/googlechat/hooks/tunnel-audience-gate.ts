@@ -48,12 +48,12 @@ function requireAppUrlAudience(value: string): string {
     audience = new URL(value);
   } catch {
     throw new Error(
-      "Google Chat app-url audience must be a valid HTTPS URL ending in /googlechat.",
+      "Google Chat app-url audience must be a valid HTTPS URL whose path is exactly /googlechat.",
     );
   }
-  if (audience.protocol !== "https:" || !audience.pathname.endsWith(DEFAULT_WEBHOOK_PATH)) {
+  if (audience.protocol !== "https:" || audience.pathname !== DEFAULT_WEBHOOK_PATH) {
     throw new Error(
-      "Google Chat app-url audience must be a valid HTTPS URL ending in /googlechat.",
+      "Google Chat app-url audience must be a valid HTTPS URL whose path is exactly /googlechat.",
     );
   }
   return value;
