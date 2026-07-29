@@ -1840,9 +1840,9 @@ $$nemoclaw my-cua cua task result \
 }
 ```
 
-### `$$nemoclaw <name> cua task events|logs|plans`
+### `$$nemoclaw <name> cua task events`
 
-Retrieve a content-addressed index for one private evidence category.
+Retrieve a content-addressed index for private task events.
 The record never embeds event data, logs, plans, paths, URLs, page content, or screenshots.
 
 ```bash
@@ -1870,12 +1870,44 @@ $$nemoclaw my-cua cua task events \
 }
 ```
 
-Use the same form with `logs` or `plans` to select that category.
+### `$$nemoclaw <name> cua task logs`
 
-### `$$nemoclaw <name> cua task pause|cancel`
+Retrieve a content-addressed index for private task logs.
 
-`pause` returns the updated active attachment when the runtime advertises `task.pause`.
-`cancel` must return a terminal cancelled result and clear active-task state.
+```bash
+$$nemoclaw my-cua cua task logs \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task plans`
+
+Retrieve a content-addressed index for private task plans.
+
+```bash
+$$nemoclaw my-cua cua task plans \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task pause`
+
+Pause an active task when the runtime advertises `task.pause`.
+The runtime must return an updated attachment whose task state is `paused`; any other state fails validation without changing the recorded task.
+
+```bash
+$$nemoclaw my-cua cua task pause \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --json
+```
+
+### `$$nemoclaw <name> cua task cancel`
+
+Cancel an active task.
+The runtime must return a terminal cancelled result and clear active-task state.
 A timeout or classified cancellation also clears active-task state so reconnect cannot report a task that is no longer running.
 
 ```bash
@@ -1885,10 +1917,22 @@ $$nemoclaw my-cua cua task cancel \
   --json
 ```
 
-### `$$nemoclaw <name> cua task guide|respond`
+### `$$nemoclaw <name> cua task guide`
 
-`guide` injects private guidance when the runtime advertises `task.guide`.
-`respond` supplies private input after the runtime reports `input-required` when it advertises `task.respond`.
+Inject private guidance when the runtime advertises `task.guide`.
+The command uses the same private `--input-file` boundary as `cua task respond`.
+
+```bash
+$$nemoclaw my-cua cua task guide \
+  --adapter /absolute/path/to/task-adapter \
+  --task-id task-001 \
+  --input-file ./guidance.txt \
+  --json
+```
+
+### `$$nemoclaw <name> cua task respond`
+
+Supply private input after the runtime reports `input-required` when it advertises `task.respond`.
 An unadvertised optional operation returns `lifecycle_unavailable` and does not invoke the adapter.
 
 ```bash

@@ -212,6 +212,11 @@ function operationAccepts(
   if (operation === "task.status") {
     return adapterResult.kind === "target-attachment" || adapterResult.kind === "task-result";
   }
+  if (operation === "task.pause") {
+    return (
+      adapterResult.kind === "target-attachment" && adapterResult.activeTask?.status === "paused"
+    );
+  }
   return adapterResult.kind === "target-attachment";
 }
 
