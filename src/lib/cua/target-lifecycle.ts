@@ -336,9 +336,18 @@ export function executeCuaTargetLifecycle(
 }
 
 export function readCuaTargetManifest(filePath: string): CuaTargetManifest {
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile() || stat.size > MAX_TARGET_MANIFEST_BYTES) {
-    throw new Error("CUA target manifest must be a JSON file no larger than 64 KiB");
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > MAX_TARGET_MANIFEST_BYTES) {
+      throw new Error("CUA target manifest must be a JSON file no larger than 64 KiB");
+    }
+    const contents = fs.readFileSync(descriptor);
+    if (contents.byteLength > MAX_TARGET_MANIFEST_BYTES) {
+      throw new Error("CUA target manifest must be a JSON file no larger than 64 KiB");
+    }
+    return parseCuaTargetManifest(JSON.parse(contents.toString("utf8")));
+  } finally {
+    fs.closeSync(descriptor);
   }
-  return parseCuaTargetManifest(JSON.parse(fs.readFileSync(filePath, "utf8")));
 }
