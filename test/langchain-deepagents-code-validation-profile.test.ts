@@ -401,6 +401,7 @@ subprocess.run(
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL,
 )
+managed._VALIDATION_EXECUTABLE_OWNER_UID = delayed_executable.stat().st_uid
 context = multiprocessing.get_context("fork")
 queue = context.Queue()
 workers = [context.Process(target=run_concurrent, args=(queue,)) for _index in range(2)]
@@ -409,6 +410,7 @@ for worker in workers:
 for worker in workers:
     worker.join(timeout=10)
 results["concurrent"] = sorted(queue.get(timeout=1) for _index in workers)
+managed._VALIDATION_EXECUTABLE_OWNER_UID = Path(executables["echo"]).stat().st_uid
 subprocess.run(
     [
         git_executable,
