@@ -425,7 +425,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          'run_headless_session() { printf "PONG\\n"; }',
+          'run_headless_session() { printf "NEMOCLAW_DCODE_JSON_ENVELOPE_OK\\n"; }',
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() {",
           '  value="$(sed -n "1p" "$COUNT_FILE")"',
@@ -446,7 +446,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
       const repeatedSanitizedText = fs.readFileSync(repeatedSanitizedCapture, "utf8");
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("headless dcode request returned PONG");
+      expect(result.stdout).toContain("headless dcode request returned one valid JSON envelope");
       expect(result.stdout).toContain(
         "headless completion returned the DCode/LangGraph process count to baseline",
       );
@@ -479,7 +479,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          'run_headless_session() { printf "PONG\\n"; }',
+          'run_headless_session() { printf "NEMOCLAW_DCODE_JSON_ENVELOPE_OK\\n"; }',
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() { printf 'NEMOCLAW_DCODE_PROCESS_COUNT:0\\n'; }",
           "wait_for_dcode_process_baseline() { return 0; }",

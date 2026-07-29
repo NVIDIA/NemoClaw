@@ -154,6 +154,15 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.acp = False
     if hasattr(args, "startup_cmd"):
         args.startup_cmd = None
+    if (
+        getattr(args, "output_format", "text") == "json"
+        and getattr(args, "non_interactive_message", None)
+    ):
+        # The managed JSON runner owns stdout framing. Upstream quiet and
+        # buffered modes keep progress on stderr and make the assistant
+        # response available as one final write.
+        args.quiet = True
+        args.no_stream = True
 
     _nemoclaw_assert_safe_runtime()
     if (
@@ -762,11 +771,25 @@ NON_INTERACTIVE_ERROR_PATCH = '''    except Exception:
         return 1
 '''
 
+NON_INTERACTIVE_CALL_MARKER = '''                            message=args.non_interactive_message,
+                            assistant_id=assistant_id,
+'''
+
+NON_INTERACTIVE_CALL_PATCH = '''                            message=args.non_interactive_message,
+                            assistant_id=assistant_id,
+                            _nemoclaw_json_output=output_format == "json",
+                            _nemoclaw_json_timeout=timeout,
+'''
+
 NON_INTERACTIVE_PATCH = r'''
+import asyncio as _nemoclaw_asyncio
+import json as _nemoclaw_json
 import logging as _nemoclaw_logging
 import os as _nemoclaw_os
 import re as _nemoclaw_re
 import sqlite3 as _nemoclaw_sqlite3
+import sys as _nemoclaw_sys
+import time as _nemoclaw_time
 
 # NemoClaw-managed Deep Agents Code hardening v2.
 _NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
@@ -777,6 +800,272 @@ _NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
 )
 
 _NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
+_NEMOCLAW_JSON_SCHEMA = "nemoclaw.dcode.non-interactive-result"
+_NEMOCLAW_JSON_SCHEMA_VERSION = 1
+_NEMOCLAW_JSON_MAX_BYTES = 1_048_576
+_nemoclaw_json_capture = None
+_nemoclaw_failure_classification = "process_failure"
+
+
+class _NemoClawBoundedCapture:
+    """Count UTF-8 bytes while retaining at most the managed output limit."""
+
+    encoding = "utf-8"
+    errors = "strict"
+
+    def __init__(self):
+        self.byte_count = 0
+        self.chunks = []
+        self.invalid_utf8 = False
+        self.overflow = False
+        self.thread_id = None
+
+    def append(self, value):
+        if not isinstance(value, str):
+            value = str(value)
+        try:
+            encoded = value.encode("utf-8")
+        except UnicodeEncodeError:
+            self.invalid_utf8 = True
+            return len(value)
+        self.byte_count += len(encoded)
+        if self.byte_count > _NEMOCLAW_JSON_MAX_BYTES:
+            self.overflow = True
+            return len(value)
+        self.chunks.append(value)
+        return len(value)
+
+    def write(self, value):
+        return self.append(value)
+
+    def flush(self):
+        return None
+
+    def isatty(self):
+        return False
+
+    @property
+    def buffer(self):
+        return _NemoClawBoundedBinaryCapture(self)
+
+    def text(self):
+        return "".join(self.chunks)
+
+
+class _NemoClawBoundedBinaryCapture:
+    """Provide a bounded ``sys.stdout.buffer`` quarantine."""
+
+    def __init__(self, capture):
+        self._capture = capture
+
+    def write(self, value):
+        if not isinstance(value, (bytes, bytearray, memoryview)):
+            raise TypeError("a bytes-like object is required")
+        payload = bytes(value)
+        self._capture.byte_count += len(payload)
+        if self._capture.byte_count > _NEMOCLAW_JSON_MAX_BYTES:
+            self._capture.overflow = True
+        return len(payload)
+
+    def flush(self):
+        return None
+
+
+class _NemoClawJsonRunCapture:
+    """Keep trusted response writes separate from quarantined stdout."""
+
+    def __init__(self):
+        self.response = _NemoClawBoundedCapture()
+        self.unexpected_stdout = _NemoClawBoundedCapture()
+        self.thread_id = None
+
+
+_nemoclaw_original_write_text = _write_text
+_nemoclaw_original_write_newline = _write_newline
+_nemoclaw_original_generate_thread_id = generate_thread_id
+
+
+def _write_text(text):
+    """Capture the final assistant response while managed JSON mode is active."""
+    if _nemoclaw_json_capture is not None:
+        _nemoclaw_json_capture.response.append(text)
+        return
+    _nemoclaw_original_write_text(text)
+
+
+def _write_newline():
+    """Exclude upstream's presentation newline from the response string."""
+    if _nemoclaw_json_capture is not None:
+        return
+    _nemoclaw_original_write_newline()
+
+
+def generate_thread_id():
+    """Record the managed thread identifier as completion metadata."""
+    thread_id = _nemoclaw_original_generate_thread_id()
+    if _nemoclaw_json_capture is not None:
+        _nemoclaw_json_capture.thread_id = thread_id
+    return thread_id
+
+
+def _nemoclaw_write_json_envelope(stream, envelope):
+    encoded = (
+        _nemoclaw_json.dumps(
+            envelope,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
+    if len(encoded) > _NEMOCLAW_JSON_MAX_BYTES:
+        raise ValueError("managed JSON envelope exceeds its output limit")
+    binary_stream = getattr(stream, "buffer", None)
+    if binary_stream is not None:
+        binary_stream.write(encoded)
+        binary_stream.flush()
+        return
+    stream.write(encoded.decode("utf-8"))
+    stream.flush()
+
+
+def _nemoclaw_emit_json_result(
+    stream,
+    capture,
+    *,
+    classification,
+    exit_code,
+    duration_ms,
+):
+    response = capture.response.text()
+    reason = None
+    if capture.response.invalid_utf8:
+        classification = "process_failure"
+        exit_code = 1
+        response = ""
+        reason = "response_encoding_error"
+    elif capture.response.overflow:
+        classification = "process_failure"
+        exit_code = 1
+        response = ""
+        reason = "output_limit_exceeded"
+    elif (
+        capture.unexpected_stdout.byte_count
+        or capture.unexpected_stdout.invalid_utf8
+        or capture.unexpected_stdout.overflow
+    ):
+        classification = "process_failure"
+        exit_code = 1
+        response = ""
+        reason = "unframed_stdout"
+    elif classification != "success":
+        response = ""
+        reason = classification
+
+    status = {
+        "success": "succeeded",
+        "timeout": "timed_out",
+        "cancelled": "cancelled",
+    }.get(classification, "failed")
+    envelope = {
+        "schema": _NEMOCLAW_JSON_SCHEMA,
+        "schemaVersion": _NEMOCLAW_JSON_SCHEMA_VERSION,
+        "command": "dcode",
+        "mode": "non-interactive",
+        "status": status,
+        "exit": {
+            "code": exit_code,
+            "classification": classification,
+        },
+        "response": response,
+        "completion": {
+            "threadId": capture.thread_id,
+            "durationMs": duration_ms,
+            "responseBytes": capture.response.byte_count,
+            "responseComplete": classification == "success",
+            "outputLimitBytes": _NEMOCLAW_JSON_MAX_BYTES,
+        },
+        "failure": {"reason": reason} if reason is not None else None,
+    }
+    try:
+        _nemoclaw_write_json_envelope(stream, envelope)
+    except (TypeError, ValueError, UnicodeError):
+        classification = "process_failure"
+        exit_code = 1
+        fallback = {
+            "schema": _NEMOCLAW_JSON_SCHEMA,
+            "schemaVersion": _NEMOCLAW_JSON_SCHEMA_VERSION,
+            "command": "dcode",
+            "mode": "non-interactive",
+            "status": "failed",
+            "exit": {
+                "code": 1,
+                "classification": classification,
+            },
+            "response": "",
+            "completion": {
+                "threadId": capture.thread_id,
+                "durationMs": duration_ms,
+                "responseBytes": capture.response.byte_count,
+                "responseComplete": False,
+                "outputLimitBytes": _NEMOCLAW_JSON_MAX_BYTES,
+            },
+            "failure": {"reason": "envelope_encoding_error"},
+        }
+        _nemoclaw_write_json_envelope(stream, fallback)
+    return exit_code
+
+
+async def _nemoclaw_run_json(original_call, timeout):
+    """Run one managed task with stdout quarantined behind one JSON envelope."""
+    global _nemoclaw_failure_classification, _nemoclaw_json_capture
+
+    capture = _NemoClawJsonRunCapture()
+    original_stdout = _nemoclaw_sys.stdout
+    started = _nemoclaw_time.monotonic()
+    _nemoclaw_failure_classification = "process_failure"
+    _nemoclaw_json_capture = capture
+    _nemoclaw_sys.stdout = capture.unexpected_stdout
+    classification = "process_failure"
+    exit_code = 1
+    raised = None
+    try:
+        result = await original_call
+        exit_code = result if isinstance(result, int) else 1
+        classification = {
+            0: "success",
+            124: "timeout",
+            130: "cancelled",
+        }.get(exit_code, _nemoclaw_failure_classification)
+    except BaseException as exc:
+        raised = exc
+        elapsed = _nemoclaw_time.monotonic() - started
+        if isinstance(exc, _nemoclaw_asyncio.CancelledError):
+            timed_out = (
+                isinstance(timeout, (int, float))
+                and timeout > 0
+                and elapsed >= max(0, timeout - 0.05)
+            )
+            classification = "timeout" if timed_out else "cancelled"
+            exit_code = 124 if timed_out else 130
+    finally:
+        duration_ms = max(
+            0,
+            round((_nemoclaw_time.monotonic() - started) * 1000),
+        )
+        _nemoclaw_sys.stdout = original_stdout
+        _nemoclaw_json_capture = None
+
+    exit_code = _nemoclaw_emit_json_result(
+        original_stdout,
+        capture,
+        classification=classification,
+        exit_code=exit_code,
+        duration_ms=duration_ms,
+    )
+    if raised is not None:
+        raise raised
+    return exit_code
 
 
 def _nemoclaw_classify_persisted_error(thread_id):
@@ -817,9 +1106,12 @@ def _nemoclaw_classify_persisted_error(thread_id):
 
 def _nemoclaw_report_non_interactive_error(thread_id, console):
     """Emit bounded diagnostics without logging the exception or checkpoint row."""
+    global _nemoclaw_failure_classification
+
     classified = _nemoclaw_classify_persisted_error(thread_id)
     logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
     if classified:
+        _nemoclaw_failure_classification = "agent_failure"
         error_class, category, retryable = classified
         logger.warning(
             "managed non-interactive error: error_class=%s category=%s "
@@ -834,6 +1126,7 @@ def _nemoclaw_report_non_interactive_error(thread_id, console):
             f"(correlation_id={thread_id})[/red]"
         )
         return
+    _nemoclaw_failure_classification = "process_failure"
     logger.warning(
         "managed non-interactive error: error_class=unknown category=unknown "
         "retryable=false correlation_id=%s",
@@ -847,8 +1140,8 @@ def _nemoclaw_report_non_interactive_error(thread_id, console):
 _nemoclaw_original_run_non_interactive = run_non_interactive
 
 
-async def run_non_interactive(*args, **kwargs):
-    """Enforce the managed headless boundary at the final Python call site."""
+async def _nemoclaw_run_original_non_interactive(args, kwargs):
+    """Apply managed arguments before the pinned upstream implementation."""
     settings.shell_allow_list = None
     kwargs["startup_cmd"] = None
     from deepagents_code.config import CLI_MAX_RETRIES_KEY
@@ -872,6 +1165,16 @@ async def run_non_interactive(*args, **kwargs):
     kwargs["interpreter_ptc"] = None
     kwargs["rubric_model"] = None
     return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
+
+
+async def run_non_interactive(*args, **kwargs):
+    """Enforce the managed headless boundary at the final Python call site."""
+    json_output = kwargs.pop("_nemoclaw_json_output", False)
+    json_timeout = kwargs.pop("_nemoclaw_json_timeout", None)
+    original_call = _nemoclaw_run_original_non_interactive(args, kwargs)
+    if json_output:
+        return await _nemoclaw_run_json(original_call, json_timeout)
+    return await original_call
 
 
 async def _run_startup_command(command, console, *, quiet: bool) -> None:
@@ -1484,6 +1787,11 @@ def main() -> None:
                 "Managed package non-interactive error patch is incomplete in "
                 f"{paths['non_interactive']}"
             )
+        if texts["main"].count(NON_INTERACTIVE_CALL_PATCH) != 1:
+            raise RuntimeError(
+                "Managed package non-interactive JSON call patch is incomplete in "
+                f"{paths['main']}"
+            )
         return
     if marker_states != {False} or helper_path.exists():
         raise RuntimeError("Managed package patch is partial; refusing mixed source state")
@@ -1660,12 +1968,21 @@ def main() -> None:
             "Expected one Deep Agents Code non-interactive error marker in "
             f"{paths['non_interactive']}"
         )
+    if texts["main"].count(NON_INTERACTIVE_CALL_MARKER) != 1:
+        raise RuntimeError(
+            "Expected one Deep Agents Code non-interactive call marker in "
+            f"{paths['main']}"
+        )
     transformed = dict(texts)
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
     )
     transformed["main"] = texts["main"].replace(
         MAIN_MARKER, f"{MAIN_MARKER}{MAIN_PATCH}", 1
+    ).replace(
+        NON_INTERACTIVE_CALL_MARKER,
+        NON_INTERACTIVE_CALL_PATCH,
+        1,
     )
     transformed["app"] = _append_patch(paths["app"], texts["app"], APP_PATCH)
     transformed["auth_store"] = _append_patch(

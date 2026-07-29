@@ -52,9 +52,73 @@ sandbox_exec() {
 }
 
 run_headless_session() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  local capture_dir stdout_file stderr_file dcode_status validation_status
+  capture_dir="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}.headless.XXXXXX")"
+  stdout_file="${capture_dir}/stdout.json"
+  stderr_file="${capture_dir}/stderr.log"
+
+  if openshell sandbox exec --name "$SANDBOX_NAME" -- \
     dcode -n 'Reply with exactly one word: PONG' \
-    --json --max-turns 1 --timeout "$HEADLESS_TIMEOUT" 2>&1
+    --json --max-turns 1 --timeout "$HEADLESS_TIMEOUT" \
+    >"$stdout_file" 2>"$stderr_file"; then
+    dcode_status=0
+  else
+    dcode_status=$?
+  fi
+  cat "$stderr_file" >&2
+  if [ "$dcode_status" -ne 0 ]; then
+    cat "$stdout_file"
+    rm -rf -- "$capture_dir"
+    return "$dcode_status"
+  fi
+
+  if python3 - "$stdout_file" <<'PY'; then
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+raw = path.read_bytes()
+if len(raw) > 1_048_576:
+    raise SystemExit("managed JSON envelope exceeds 1048576 bytes")
+text = raw.decode("utf-8")
+leading = len(text) - len(text.lstrip())
+value, end = json.JSONDecoder().raw_decode(text, leading)
+if text[end:].strip():
+    raise SystemExit("managed JSON stdout contains trailing data")
+if not isinstance(value, dict):
+    raise SystemExit("managed JSON stdout is not an object")
+expected = {
+    "schema": "nemoclaw.dcode.non-interactive-result",
+    "schemaVersion": 1,
+    "command": "dcode",
+    "mode": "non-interactive",
+    "status": "succeeded",
+    "exit": {"code": 0, "classification": "success"},
+    "response": "PONG",
+}
+for key, expected_value in expected.items():
+    if value.get(key) != expected_value:
+        raise SystemExit(f"managed JSON field {key} did not match")
+completion = value.get("completion")
+if (
+    not isinstance(completion, dict)
+    or not isinstance(completion.get("threadId"), str)
+    or not completion["threadId"]
+    or completion.get("responseBytes") != 4
+    or completion.get("responseComplete") is not True
+    or completion.get("outputLimitBytes") != 1_048_576
+):
+    raise SystemExit("managed JSON completion metadata did not match")
+print("NEMOCLAW_DCODE_JSON_ENVELOPE_OK")
+PY
+    validation_status=0
+  else
+    validation_status=$?
+    cat "$stdout_file"
+  fi
+  rm -rf -- "$capture_dir"
+  return "$validation_status"
 }
 
 sandbox_is_ready() {
@@ -472,10 +536,10 @@ main() {
   headless_output="$(run_headless_session)"
   headless_rc=$?
   set -e
-  if [ "$headless_rc" -eq 0 ] && grep -Eiq '(^|[^A-Za-z])PONG([^A-Za-z]|$)' <<<"$headless_output"; then
-    pass "headless dcode request returned PONG"
+  if [ "$headless_rc" -eq 0 ] && grep -Fxq NEMOCLAW_DCODE_JSON_ENVELOPE_OK <<<"$headless_output"; then
+    pass "headless dcode request returned one valid JSON envelope"
   else
-    fail_test "headless dcode request did not return exit-zero PONG"
+    fail_test "headless dcode request did not return one valid JSON envelope"
   fi
   if wait_for_dcode_process_baseline "$baseline_process_count"; then
     pass "headless completion returned the DCode/LangGraph process count to baseline"

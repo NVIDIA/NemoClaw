@@ -53,6 +53,7 @@ if __name__ == "__main__":
     `
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from types import SimpleNamespace
@@ -62,6 +63,14 @@ class Parser:
     def parse_args(self):
         argv = sys.argv[1:]
         command = next((arg for arg in argv if not arg.startswith("-") and arg != "none"), None)
+        non_interactive_message = None
+        for index, arg in enumerate(argv):
+            if arg in {"-n", "--non-interactive"} and len(argv) > index + 1:
+                non_interactive_message = argv[index + 1]
+                break
+        timeout = None
+        if "--timeout" in argv:
+            timeout = int(argv[argv.index("--timeout") + 1])
         tools_command = None
         if command == "tools":
             index = argv.index("tools")
@@ -89,6 +98,11 @@ class Parser:
             no_mcp=False,
             trust_project_mcp=True,
             shell_allow_list=["bash"],
+            non_interactive_message=non_interactive_message,
+            output_format=("json" if "--json" in argv else "text"),
+            quiet=("--quiet" in argv or "-q" in argv),
+            no_stream="--no-stream" in argv,
+            timeout=timeout,
         )
 
     def error(self, message):
@@ -119,6 +133,30 @@ def cli_main():
     assert all(os.environ.get(name) == "false" for name in tracing_flags)
     assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["HOME"] == "/sandbox"
+    if args.non_interactive_message:
+        from deepagents_code.client.non_interactive import run_non_interactive
+
+        output_format = args.output_format
+        timeout = args.timeout
+        assistant_id = "assistant"
+        try:
+            exit_code = asyncio.run(
+                asyncio.wait_for(
+                    run_non_interactive(
+                            message=args.non_interactive_message,
+                            assistant_id=assistant_id,
+                            quiet=args.quiet,
+                            stream=not args.no_stream,
+                        ),
+                    timeout=timeout,
+                )
+            )
+        except TimeoutError:
+            print(f"agent timed out after {timeout}s", file=sys.stderr)
+            raise SystemExit(124)
+        except KeyboardInterrupt:
+            raise SystemExit(130)
+        raise SystemExit(exit_code)
     print(f"managed-posture-ok auto_approve={args.auto_approve}")
 `,
   );
@@ -430,7 +468,9 @@ def _run_single_hook(command, event, payload_bytes):
     `
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 from types import SimpleNamespace
 
 settings = SimpleNamespace(shell_allow_list=["bash"])
@@ -438,8 +478,11 @@ logger = logging.getLogger(__name__)
 
 
 class _Console:
+    def __init__(self, *, stderr=False):
+        self.stderr = stderr
+
     def print(self, message):
-        print(message)
+        print(message, file=sys.stderr if self.stderr else sys.stdout)
 
 
 def escape_markup(value):
@@ -450,13 +493,42 @@ def generate_thread_id():
     return "thread-1"
 
 
+def _write_text(text):
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def _write_newline():
+    sys.stdout.write("\\n")
+    sys.stdout.flush()
+
+
 async def _run_non_interactive_impl(*args, **kwargs):
+    message = kwargs.get("message", args[0] if args else "")
+    if not str(message).startswith("fixture-json-"):
+        del args
+        return kwargs
+    print("fixture progress", file=sys.stderr if kwargs.get("quiet") else sys.stdout)
+    print("fixture tool use: read_file", file=sys.stderr if kwargs.get("quiet") else sys.stdout)
+    if message == "fixture-json-process-failure":
+        raise RuntimeError("fixture process failure")
+    if message == "fixture-json-timeout":
+        await asyncio.sleep(10)
+    if message == "fixture-json-turn-limit":
+        return 124
+    if message == "fixture-json-output-limit":
+        _write_text("x" * 1_100_000)
+        return 0
+    if message == "fixture-json-unframed":
+        print("unexpected stdout")
+    _write_text("PONG")
+    _write_newline()
     del args
-    return kwargs
+    return 0
 
 
 async def run_non_interactive(*args, **kwargs):
-    console = _Console()
+    console = _Console(stderr=kwargs.get("quiet", False))
     thread_id = generate_thread_id()
     try:
         return await _run_non_interactive_impl(*args, **kwargs)

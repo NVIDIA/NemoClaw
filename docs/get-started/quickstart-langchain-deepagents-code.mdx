@@ -158,6 +158,57 @@ For a single headless task, run:
 dcode -n "Summarize this repository"
 ```
 
+For a machine-readable headless result, add `--json` and set explicit execution bounds.
+
+```bash
+dcode -n "Summarize this repository" --json --max-turns 1 --timeout 120
+```
+
+Managed `dcode -n --json` writes exactly one UTF-8 JSON object to `stdout`.
+Progress, tool activity, and diagnostics use `stderr`.
+The complete JSON object cannot exceed `1048576` bytes.
+If the response or an unexpected `stdout` write would break that limit or framing, the command returns a bounded failure envelope with exit code `1`.
+
+Expected output:
+
+```json
+{
+  "schema": "nemoclaw.dcode.non-interactive-result",
+  "schemaVersion": 1,
+  "command": "dcode",
+  "mode": "non-interactive",
+  "status": "succeeded",
+  "exit": {
+    "code": 0,
+    "classification": "success"
+  },
+  "response": "Repository summary",
+  "completion": {
+    "threadId": "thread-id",
+    "durationMs": 1234,
+    "responseBytes": 18,
+    "responseComplete": true,
+    "outputLimitBytes": 1048576
+  },
+  "failure": null
+}
+```
+
+Use `response` only when `status` is `succeeded` and `exit.classification` is `success`.
+For other results, `response` is empty and `completion.responseComplete` is `false`.
+
+| `status` | `exit.code` | `exit.classification` | Meaning |
+|---|---:|---|---|
+| `succeeded` | `0` | `success` | The final assistant response is complete. |
+| `failed` | `1` | `agent_failure` | The managed agent or its model request failed. |
+| `failed` | `1` | `process_failure` | The runtime, framing, encoding, or output limit failed. |
+| `timed_out` | `124` | `timeout` | The `--timeout` or `--max-turns` bound ended the run. |
+| `cancelled` | `130` | `cancelled` | The caller interrupted the run. |
+
+The `completion` object reports the thread ID, elapsed milliseconds, observed response bytes, completion state, and envelope limit.
+`failure` is `null` on success.
+For all other results, `failure.reason` is the exit classification or a specific framing, encoding, or output-limit reason.
+
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
 For interactive and headless sessions, each launcher supervises its own process descendants so completion, terminal exit, or disconnect terminates the associated LangGraph server tree without affecting another session.
 After a disconnect, the supervisor uses bounded grace periods before it kills unresponsive processes from that session.
