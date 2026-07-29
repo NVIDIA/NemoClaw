@@ -8,8 +8,6 @@ import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { CONNECT_AUTO_PAIR_LIST_TIMEOUT_S } from "../../src/lib/actions/sandbox/connect-autopair-budget";
-
 interface ProofOptions {
   dist: string;
   nodeExecutable: string;
@@ -215,18 +213,6 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
   requireOrderedMarkers(
     cliSource.source,
     [
-      "async function resolveApprovePairingGatewayContext(opts, requestId)",
-      "NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL",
-      "nemoclaw: require stored device auth for restored-clone approval",
-      "let nemoclawLocalStoredAuthCandidate = false;",
-      "if (nemoclawRequireStoredDeviceAuth && !nemoclawLocalStoredAuthCandidate)",
-      "nemoclawRefuseUnsafeApproval: true",
-    ],
-    "devices CLI restored-clone required stored auth",
-  );
-  requireOrderedMarkers(
-    cliSource.source,
-    [
       "async function listPairingWithFallback(opts, callOpts)",
       "nemoclaw: preflight bounded stored device auth before live pairing list",
       'callGatewayCli("device.pair.list", opts, {}, callOpts)',
@@ -237,20 +223,6 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "nemoclawRefuseUnsafeApproval",
     ],
     "devices CLI bounded pairing-list preflight",
-  );
-  requireOrderedMarkers(
-    cliSource.source,
-    [
-      "async function resolveNemoClawStoredDeviceListCallOpts(opts)",
-      "NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH",
-      "nemoclawCandidates.length !== 1",
-      "useStoredDeviceAuth: true",
-      "async function runDevicesListCommand(opts)",
-      "await resolveNemoClawStoredDeviceListCallOpts(opts)",
-      'callGatewayCli("device.pair.list", opts, {}, nemoclawListCallOpts)',
-      "nemoclaw: select stored device auth for bounded standalone pairing list",
-    ],
-    "devices CLI bounded standalone stored-auth list",
   );
   requireOrderedMarkers(
     cliSource.source,
@@ -990,9 +962,6 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     );
   writeGatewayConfig({ mode: "none" });
   const {
-    NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: _forceDevicePairing,
-    NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL: _requireStoredDeviceApproval,
-    NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH: _useStoredDeviceListAuth,
     OPENCLAW_GATEWAY_PASSWORD: _gatewayPassword,
     OPENCLAW_GATEWAY_PORT: _gatewayPort,
     OPENCLAW_GATEWAY_TOKEN: _gatewayToken,
@@ -1009,19 +978,13 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     OPENCLAW_SKIP_CHANNELS: "1",
     OPENCLAW_SKIP_PROVIDERS: "1",
     OPENCLAW_STATE_DIR: stateDir,
-    // The child inherits VITEST=true, which otherwise suppresses real CLI JSON.
-    OPENCLAW_TEST_RUNTIME_LOG: "1",
   };
-  const runCli = (
-    args: string[],
-    cliEnv: NodeJS.ProcessEnv = env,
-    timeoutMs = Math.min(options.timeoutMs, 60_000),
-  ) =>
+  const runCli = (args: string[]) =>
     spawnSync(options.nodeExecutable, [openclawEntry, ...args], {
       cwd: packageDir,
       encoding: "utf8",
-      env: cliEnv,
-      timeout: Math.min(options.timeoutMs, timeoutMs),
+      env,
+      timeout: Math.min(options.timeoutMs, 60_000),
     });
 
   const startGateway = (gatewayEnv: NodeJS.ProcessEnv, append: boolean) => {
@@ -1080,7 +1043,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     );
 
     await stopChild(gateway);
-    writeGatewayConfig({ mode: "token", token: gatewayToken });
+    writeGatewayConfig({ mode: "token" });
     gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
     await waitForGatewayReady(gateway, port, options.timeoutMs);
 
@@ -1134,108 +1097,15 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
       typeof repair.requestId === "string" && repair.requestId.length > 0,
       "real same-device repair request id missing",
     );
-    // Snapshot clone startup can retain the initial isRepair=false request
-    // after the pairing-only approval creates the matching paired baseline.
-    // Exercise that production ordering through the real CLI/gateway path,
-    // not only the standalone classifier proof below.
-    repair.isRepair = false;
-    fs.writeFileSync(pendingPath, JSON.stringify(pending));
     const configuredBeforeApproval = readJsonObject(configPath, "real gateway config");
     const configuredGateway = asRecord(configuredBeforeApproval.gateway);
     const configuredAuth = asRecord(configuredGateway?.auth);
     requireLiveProof(
-      configuredAuth?.mode === "token" && configuredAuth.token === gatewayToken,
-      "production-shaped gateway token auth configuration missing",
+      configuredAuth?.mode === "token" && configuredAuth.token === undefined,
+      "gateway token auth was not isolated from the stored-device-auth client",
     );
 
-    const markedListEnv = {
-      ...env,
-      NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH: "1",
-    };
-    const hiddenDeviceAuthPath = `${deviceAuthPath}.hidden`;
-    fs.renameSync(deviceAuthPath, hiddenDeviceAuthPath);
-    const listWithoutStoredAuth = runCli(
-      ["devices", "list", "--json"],
-      markedListEnv,
-      CONNECT_AUTO_PAIR_LIST_TIMEOUT_S * 1000,
-    );
-    requireLiveProof(
-      listWithoutStoredAuth.status !== 0,
-      "marked device list fell back to the configured shared token without stored device auth",
-    );
-
-    const credentialList = runCli(
-      ["devices", "list", "--json"],
-      {
-        ...env,
-        NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
-        OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-      },
-      CONNECT_AUTO_PAIR_LIST_TIMEOUT_S * 1000,
-    );
-    requireSuccess(
-      credentialList,
-      "converge the real pairing-scoped local device credential through shared auth",
-    );
-    const convergedAuthStore = readJsonObject(deviceAuthPath, "converged real stored device auth");
-    const convergedOperator = requireOperatorToken(
-      convergedAuthStore,
-      "converged real stored device auth",
-    );
-    requireLiveProof(
-      convergedOperator.token === serverTokenBefore,
-      "credential convergence stored a token outside the paired device baseline",
-    );
-    requireExactScopes(
-      convergedOperator.scopes,
-      ["operator.pairing"],
-      "converged real stored operator scopes",
-    );
-    fs.rmSync(hiddenDeviceAuthPath);
-
-    const strippedList = runCli(
-      ["devices", "list", "--json"],
-      markedListEnv,
-      CONNECT_AUTO_PAIR_LIST_TIMEOUT_S * 1000,
-    );
-    requireSuccess(
-      strippedList,
-      "list the exact real same-device repair with the stripped post-bootstrap client",
-    );
-    const strippedListValue: unknown = JSON.parse(String(strippedList.stdout));
-    const strippedListObject = asRecord(strippedListValue);
-    requireLiveProof(strippedListObject, "stripped post-bootstrap device list was not an object");
-    requireLiveProof(
-      Array.isArray(strippedListObject.pending) && Array.isArray(strippedListObject.paired),
-      "stripped post-bootstrap device list did not contain pending and paired arrays",
-    );
-    const strippedPending = strippedListObject.pending
-      .map(asRecord)
-      .filter((request) => request !== null);
-    requireLiveProof(
-      strippedPending.length === 1,
-      `stripped post-bootstrap device list returned ${strippedPending.length} pending requests`,
-    );
-    const listedRepair = strippedPending[0] as Record<string, unknown>;
-    requireLiveProof(
-      listedRepair.requestId === repair.requestId &&
-        listedRepair.deviceId === repair.deviceId &&
-        listedRepair.publicKey === repair.publicKey &&
-        listedRepair.clientId === repair.clientId &&
-        listedRepair.clientMode === repair.clientMode &&
-        listedRepair.isRepair === repair.isRepair,
-      "stripped post-bootstrap device list did not return the exact same-device repair",
-    );
-    requireExactScopes(
-      listedRepair.scopes,
-      ["operator.write"],
-      "stripped post-bootstrap same-device repair scopes",
-    );
-
-    const approval = runCli(["devices", "approve", String(repair.requestId), "--json"], {
-      ...env,
-      NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL: "1",
-    });
+    const approval = runCli(["devices", "approve", String(repair.requestId), "--json"]);
     requireSuccess(approval, "approve real same-device repair with stored device auth");
 
     const pendingAfter = readJsonObject(pendingPath, "real pending state after approval");
@@ -1282,7 +1152,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     const configuredGatewayAfter = asRecord(configuredAfterApproval.gateway);
     const configuredAuthAfter = asRecord(configuredGatewayAfter?.auth);
     requireLiveProof(
-      configuredAuthAfter?.mode === "token" && configuredAuthAfter.token === gatewayToken,
+      configuredAuthAfter?.mode === "token" && configuredAuthAfter.token === undefined,
       "gateway token auth configuration changed during stored-device-auth approval",
     );
   } catch (error) {

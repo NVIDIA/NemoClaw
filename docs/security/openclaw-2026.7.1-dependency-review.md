@@ -250,56 +250,8 @@ stored device token. Once that credential exists, the patch automatically
 retains CLI identity on ordinary loopback shared-token calls; the upstream
 local-backend omission remains unchanged. This restores device-scope
 enforcement without moving the gateway credential into OpenClaw state. After
-bootstrap, every `devices approve` removes the gateway URL, port, and shared
-token so the bounded approval flow uses that device credential.
-
-Restored-clone approval first runs a list-only CLI subprocess with the shared
-gateway URL, port, and token plus the child-only
-`NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1` marker. The marker preserves the
-clone's device identity for this loopback shared-token handshake. OpenClaw
-requests `operator.pairing`, receives the canonical server-issued device token,
-and stores that token in its private device-auth store. The subprocess only
-invokes `devices list`; it cannot approve or select a pending request. NemoClaw
-uses the response only to confirm that it is valid JSON with a pending-request
-array. No request from this shared-auth response is selected or approved.
-
-NemoClaw then removes the shared gateway URL, port, and token and clears the
-forced-identity marker before adding the separate child-only
-`NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH=1` marker to the next JSON list
-subprocess. The compiled CLI honors that marker only when OpenClaw's own pairing
-state contains exactly one unambiguous same-device CLI transition requesting
-`operator.write` against a paired `operator.pairing` baseline. The accepted
-transition can be an explicit repair or the paired pre-convergence form with
-`isRepair: false`. It then performs one live `device.pair.list` call with
-pairing-scoped stored-device authentication, bypassing any
-`gateway.auth.token` in config. The host helper independently validates the
-listed request against the clone's device identity, public key, client, role,
-and bounded scopes before it invokes OpenClaw's canonical approval command with
-the shared credential triplet removed. The selected list never retries with
-shared credentials or returns local pairing-state output.
-
-For the separate approval subprocess, NemoClaw keeps the shared credential
-triplet removed and adds the child-only
-`NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL=1` marker. The patched CLI
-rechecks the exact local request, paired baseline, and stored-device
-authentication context before it performs the live list and approval. If that
-evidence is missing, changes, or cannot authenticate between the host's list
-and the approval, OpenClaw aborts before `device.pair.approve` and before its
-ordinary gateway or `operator.admin` fallback. The marker does not affect
-ordinary approval callers. The host helper never reads or writes OpenClaw's
-pending or paired state; OpenClaw uses that state only to select the narrower
-authentication mode and remains the only pairing-state writer.
-
-Each list subprocess has a 15-second external deadline, which exceeds
-OpenClaw's internal 10-second device-list deadline. The single approval attempt
-has a 10-second deadline, and the restored-clone pass has a 45-second outer
-bound that preserves five seconds for shell and Python startup. Fixed,
-output-free receipts distinguish credential-list timeout or failure,
-stored-list timeout, execution failure, nonzero exit, empty output, invalid
-output, selector rejection or ambiguity, approval failure, and success. They
-never include child command output or request identifiers. NemoClaw retries the
-pass once only when its authenticated verifier independently reports that the
-scope upgrade is still pending.
+bootstrap, list calls and every `devices approve` remove the gateway URL, port,
+and shared token so the bounded approval flow uses that device credential.
 
 ## Gateway Startup Migration Compatibility
 

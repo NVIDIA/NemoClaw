@@ -49,36 +49,19 @@ const OPERATOR_ROLE = "operator";
 const GATEWAY_CLIENT_NAMES = { CLI: "cli" };
 const GATEWAY_CLIENT_MODES = { CLI: "cli" };
 const KNOWN_NON_ADMIN_OPERATOR_SCOPES = new Set(["operator.pairing", "operator.read", "operator.write"]);
-const process = { env: {} };
 const gatewayCalls = [];
-const runtimeJson = [];
 let pairingList = { pending: [], paired: [] };
 let localPairingList = { pending: [], paired: [] };
-let localPairingFailure;
-let listFailures = [];
 let approvalFailures = [];
 function setPairingLists(localList, liveList = localList) {
   localPairingList = localList;
   pairingList = liveList;
 }
-function setStoredDeviceListMarker(value) {
-  if (value) process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH = "1";
-  else delete process.env.NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH;
-}
-function setRequireStoredDeviceApprovalMarker(value) {
-  if (value) process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL = "1";
-  else delete process.env.NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL;
-}
-function setLocalPairingFailure(value) { localPairingFailure = value; }
-function setListFailures(errors) { listFailures = errors; }
 function withProgress(_options, callback) { return callback(); }
 function parseTimeoutMsWithFallback(value, fallback) { return value ?? fallback; }
 async function callGateway(options) {
   gatewayCalls.push(options);
-  if (options.method === "device.pair.list") {
-    if (listFailures.length > 0) throw listFailures.shift();
-    return pairingList;
-  }
+  if (options.method === "device.pair.list") return pairingList;
   if (options.method === "device.pair.approve" && approvalFailures.length > 0) {
     throw approvalFailures.shift();
   }
@@ -149,7 +132,6 @@ function lookupPairedDevice(pairedByDeviceId, request) {
   return pairedByDeviceId.get(normalizeOptionalString(request.deviceId));
 }
 async function listDevicePairing() {
-  if (localPairingFailure) throw localPairingFailure;
   return localPairingList;
 }
 async function listPairingWithFallback(opts) {
@@ -157,19 +139,6 @@ async function listPairingWithFallback(opts) {
     return parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));
   } catch (error) {
     throw error;
-  }
-}
-const defaultRuntime = { writeJson(value) { runtimeJson.push(value); } };
-async function runDevicesListCommand(opts) {
-  let list;
-  try {
-    list = await listPairingWithFallback(opts);
-  } catch (error) {
-    throw error;
-  }
-  if (opts.json) {
-    defaultRuntime.writeJson(list);
-    return;
   }
 }
 function resolveApprovePairingScopesForRequest(request, paired) {

@@ -9,11 +9,11 @@
 export const CONNECT_AUTO_PAIR_MAX_APPROVALS = 1;
 // `openclaw devices list` budget (seconds), interpolated into the in-sandbox
 // script so the invariant below is asserted on real values, not source text.
-// OpenClaw 2026.7.1 gives its device-list gateway call 10s after CLI startup.
-// Keep the enclosing subprocess above that internal deadline so a supported
-// but resource-constrained host cannot terminate the command before OpenClaw
-// can classify its own result (#4504).
-export const CONNECT_AUTO_PAIR_LIST_TIMEOUT_S = 15;
+// A cold OpenClaw 2026.6.10 CLI can take just over 2s to load its runtime
+// preloads on supported but resource-constrained hosts, so 5s prevents the
+// finalization recovery from timing out before it can observe the pending
+// request (#4504).
+export const CONNECT_AUTO_PAIR_LIST_TIMEOUT_S = 5;
 // `openclaw devices approve` budget (seconds); matches the in-sandbox watcher's
 // RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh).
 export const CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S = 10;
@@ -23,4 +23,4 @@ export const CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S = 10;
 // timer starts at `sh` spawn before the proxy env is sourced and python3
 // launches; the 5s slack prevents the outer timeout from terminating a
 // legitimate slow approve mid-loop, which would strand the allowlisted request.
-export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 30_000;
+export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 20_000;

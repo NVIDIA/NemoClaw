@@ -23,22 +23,17 @@
  * unknown clients are ignored, never approved.
  *
  * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
- * semantics. In the reviewed OpenClaw 2026.7.1, a gateway-pinned
+ * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
  * `devices approve` for a scope-upgrade can request the upgraded scopes for
  * its own connection and return the pending-scope failure it is trying to
- * resolve. The sourced runtime environment makes an ordinary recovery list
- * call inspect the same live gateway through local loopback. A restored clone
- * can have the server-side pairing baseline before its CLI has stored the
- * matching pairing-only token, so it first performs one forced-identity
- * shared-auth list to converge that local credential. Its request-enumeration
- * list and every approval call then strip OPENCLAW_GATEWAY_URL/PORT/TOKEN from
- * the child env. A clone-only marker lets the reviewed dist patch select
- * stored-device auth for the list only after an exact local repair preflight.
- * The approval command independently forces that same local-only
- * stored-device-auth path for the exact bounded self-repair shape, so a shared
- * token reloaded from config cannot take precedence. Remove this compatibility
- * path when OpenClaw can complete scope upgrades natively through device-token
- * auth using operator.pairing.
+ * resolve. The sourced runtime environment makes the list call inspect the
+ * same live gateway through local loopback, while the approval call also
+ * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. The reviewed dist
+ * patch then forces OpenClaw's existing local-only stored-device-auth path for
+ * the exact bounded self-repair shape so a shared token reloaded from config
+ * cannot take precedence. Remove this compatibility path when OpenClaw can
+ * complete scope upgrades natively through device-token auth using
+ * operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";
@@ -60,7 +55,7 @@ const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
-// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 30s
+// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 15s
 // outer cap — via ./connect-autopair-budget. The doctor surface (#4616) uses
 // the defaults above to drain a backlog. Callers that omit a field inherit the
 // default, so the historical doctor payload stays byte-stable.
@@ -92,13 +87,6 @@ export type AutoPairApprovalResult = {
 export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
-  | "credential-list-timeout"
-  | "credential-list-failed"
-  | "list-timeout"
-  | "list-exec-failed"
-  | "list-command-failed"
-  | "list-empty-output"
-  | "list-invalid-output"
   | "list-failed"
   | "clone-no-match"
   | "clone-ambiguous"
@@ -107,7 +95,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|credential-list-timeout|credential-list-failed|list-timeout|list-exec-failed|list-command-failed|list-empty-output|list-invalid-output|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -177,68 +165,6 @@ def exit_with_receipt(receipt):
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
-  // A restored clone already has post-bootstrap device identity but can still
-  // be missing its locally stored pairing token. Converge that credential
-  // through one forced-identity shared-auth handshake, then match the startup
-  // watcher's post-bootstrap list path by dropping the explicit shared gateway
-  // credential triplet and privately requesting the patched bounded
-  // stored-device list path. Ordinary connect/doctor recovery keeps its
-  // existing bootstrap-capable list environment.
-  const listEnvPrelude = options.localDeviceOnly
-    ? `
-def local_device_credential_env(source_env):
-    env = dict(source_env)
-    env.pop('NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH', None)
-    env.pop('NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL', None)
-    env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
-    return env
-
-def local_device_list_env(source_env):
-    env = gateway_approval_env(source_env)
-    env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
-    env.pop('NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL', None)
-    env['NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH'] = '1'
-    return env
-
-def local_device_approval_env(source_env):
-    env = gateway_approval_env(source_env)
-    env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
-    env.pop('NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH', None)
-    env['NEMOCLAW_OPENCLAW_REQUIRE_STORED_DEVICE_APPROVAL'] = '1'
-    return env
-`
-    : "";
-  const listEnv = options.localDeviceOnly ? "local_device_list_env(os.environ)" : "None";
-  const approveEnv = options.localDeviceOnly
-    ? "local_device_approval_env(os.environ)"
-    : "gateway_approval_env(os.environ)";
-  const localDeviceCredentialConvergence = options.localDeviceOnly
-    ? `
-# A fresh clone can have a canonical pairing record before the requesting CLI
-# has received and stored its pairing-scoped device token. Complete one
-# forced-identity, shared-auth handshake first; it cannot approve a request and
-# requests only the device-list pairing scope. The marked list below then
-# strips shared credentials and requires the converged stored device token.
-try:
-    credential_proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
-        env=local_device_credential_env(os.environ),
-    )
-except subprocess.TimeoutExpired:
-    ${exitWithReceipt("credential-list-timeout")}
-except (FileNotFoundError, OSError):
-    ${exitWithReceipt("credential-list-failed")}
-if credential_proc.returncode != 0 or not credential_proc.stdout.strip():
-    ${exitWithReceipt("credential-list-failed")}
-try:
-    credential_data = json.loads(credential_proc.stdout)
-except ValueError:
-    ${exitWithReceipt("credential-list-failed")}
-if not isinstance(credential_data, dict) or not isinstance(credential_data.get('pending'), list):
-    ${exitWithReceipt("credential-list-failed")}
-`
-    : "";
   const localDeviceFilter = options.localDeviceOnly
     ? `
 # Snapshot restore shares one gateway across the source sandbox and its clone.
@@ -399,33 +325,28 @@ try:
     gateway_approval_env = policy_globals['gateway_approval_env']
 except Exception:
     ${exitWithReceipt("policy-missing")}
-${listEnvPrelude}
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${maxApprovals}
-${localDeviceCredentialConvergence}
+
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS}, env=${listEnv},
+        capture_output=True, text=True, timeout=${listTimeoutS},
     )
-except subprocess.TimeoutExpired:
-    ${exitWithReceipt("list-timeout")}
-except (FileNotFoundError, OSError):
-    ${exitWithReceipt("list-exec-failed")}
-if proc.returncode != 0:
-    ${exitWithReceipt("list-command-failed")}
-if not proc.stdout.strip():
-    ${exitWithReceipt("list-empty-output")}
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    ${exitWithReceipt("list-failed")}
+if proc.returncode != 0 or not proc.stdout.strip():
+    ${exitWithReceipt("list-failed")}
 try:
     data = json.loads(proc.stdout)
 except ValueError:
-    ${exitWithReceipt("list-invalid-output")}
+    ${exitWithReceipt("list-failed")}
 if not isinstance(data, dict):
-    ${exitWithReceipt("list-invalid-output")}
+    ${exitWithReceipt("list-failed")}
 pending = data.get('pending')
 if not isinstance(pending, list):
-    ${exitWithReceipt("list-invalid-output")}${localDeviceFilter}
+    ${exitWithReceipt("list-failed")}${localDeviceFilter}
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()
@@ -441,7 +362,7 @@ for device in pending:
     if not decision['allowed']:
         ${rejectedRequestAction}
     seen_request_ids.add(request_id)
-    approve_env = ${approveEnv}
+    approve_env = gateway_approval_env(os.environ)
     attempted_count += 1
     try:
         approve_proc = subprocess.run(

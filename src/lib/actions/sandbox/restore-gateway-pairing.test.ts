@@ -4,27 +4,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-} from "./connect-autopair-budget";
-import {
   establishRestoredSandboxGatewayPairing,
-  RESTORED_CLONE_PAIRING_TIMEOUT_MS,
   restartRestoredSandboxGateway,
 } from "./restore-gateway-pairing";
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe("restored clone pairing budget", () => {
-  it("covers credential convergence, stored-auth list, and one approval with startup slack", () => {
-    const innerWorstCaseMs =
-      (CONNECT_AUTO_PAIR_LIST_TIMEOUT_S * 2 + CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S) * 1000;
-
-    expect(RESTORED_CLONE_PAIRING_TIMEOUT_MS).toBeGreaterThan(innerWorstCaseMs);
-    expect(RESTORED_CLONE_PAIRING_TIMEOUT_MS - innerWorstCaseMs).toBeGreaterThanOrEqual(5000);
-  });
 });
 
 describe("establishRestoredSandboxGatewayPairing", () => {
@@ -186,60 +171,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
   });
 
-  it("retries one failed clone approval when verification reports a pending scope upgrade (#7431)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        order.push("approve:failed");
-        return "approve-failed" as const;
-      })
-      .mockImplementationOnce(() => {
-        order.push("approve:succeeded");
-        return "approved-one" as const;
-      });
-    const verifyGatewayPairing = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        order.push("verify:pending");
-        return {
-          ok: false as const,
-          failureLayer: "scope-upgrade-pending" as const,
-        };
-      })
-      .mockImplementationOnce(() => {
-        order.push("verify:authenticated");
-        return { ok: true as const };
-      });
-
-    await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway,
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    });
-
-    expect(order).toEqual([
-      "restart",
-      "warmup",
-      "approve:failed",
-      "restart",
-      "verify:pending",
-      "restart",
-      "warmup",
-      "approve:succeeded",
-      "restart",
-      "verify:authenticated",
-    ]);
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
-    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
-    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
-  });
-
-  it("fails after the bounded clone approval retry cannot authenticate pairing (#7431)", async () => {
+  it("fails after one ordinary verifier without retrying the handshake (#7431)", async () => {
     const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
     const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
@@ -257,178 +189,6 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       }),
     ).rejects.toThrow(
       "authenticated gateway verification run failed (scope-upgrade-pending; approval=approve-failed)",
-    );
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
-    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
-    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
-  });
-
-  it("retries one failed credential-convergence list when verification reports a pending scope upgrade (#7431)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        order.push("approve:credential-list-failed");
-        return "credential-list-failed" as const;
-      })
-      .mockImplementationOnce(() => {
-        order.push("approve:succeeded");
-        return "approved-one" as const;
-      });
-    const verifyGatewayPairing = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        order.push("verify:pending");
-        return {
-          ok: false as const,
-          failureLayer: "scope-upgrade-pending" as const,
-        };
-      })
-      .mockImplementationOnce(() => {
-        order.push("verify:authenticated");
-        return { ok: true as const };
-      });
-
-    await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway,
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    });
-
-    expect(order).toEqual([
-      "restart",
-      "warmup",
-      "approve:credential-list-failed",
-      "restart",
-      "verify:pending",
-      "restart",
-      "warmup",
-      "approve:succeeded",
-      "restart",
-      "verify:authenticated",
-    ]);
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
-    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
-    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
-  });
-
-  it("retries one timed-out stored-auth list for a pending scope upgrade, then fails closed (#7431)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi.fn(() => {
-      order.push("approve:list-timeout");
-      return "list-timeout" as const;
-    });
-    const verifyGatewayPairing = vi.fn(() => {
-      order.push("verify:pending");
-      return {
-        ok: false as const,
-        failureLayer: "scope-upgrade-pending" as const,
-      };
-    });
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (scope-upgrade-pending; approval=list-timeout)",
-    );
-    expect(order).toEqual([
-      "restart",
-      "warmup",
-      "approve:list-timeout",
-      "restart",
-      "verify:pending",
-      "restart",
-      "warmup",
-      "approve:list-timeout",
-      "restart",
-      "verify:pending",
-    ]);
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(4);
-    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
-    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not retry a failed clone list for an unrelated verifier failure (#7431)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "list-failed" as const);
-    const verifyGatewayPairing = vi.fn(() => ({
-      ok: false as const,
-      failureLayer: "gateway-connect-failure" as const,
-    }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (gateway-connect-failure; approval=list-failed)",
-    );
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
-  });
-
-  it("does not retry a failed clone approval for an unrelated verifier failure (#7431)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
-    const verifyGatewayPairing = vi.fn(() => ({
-      ok: false as const,
-      failureLayer: "gateway-connect-failure" as const,
-    }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (gateway-connect-failure; approval=approve-failed)",
-    );
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
-  });
-
-  it("does not retry a completed clone approval when verification remains pending (#7431)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "approved-one" as const);
-    const verifyGatewayPairing = vi.fn(() => ({
-      ok: false as const,
-      failureLayer: "scope-upgrade-pending" as const,
-    }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (scope-upgrade-pending; approval=approved-one)",
     );
     expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
     expect(warmupScopeUpgrade).toHaveBeenCalledOnce();

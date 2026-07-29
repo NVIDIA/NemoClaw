@@ -32,17 +32,8 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
   It restores the in-sandbox gateway and host forwards before reporting success, refreshes stale stopped-container evidence, and fails closed when delivery cannot be proven.
   Recovery also unpauses a paused original container before reporting success.
   Resumed onboarding writes a secret-free same-name recreation journal before deletion so an interrupted run can continue or fail closed on ambiguous identity.
-  Restored snapshot clones now run one list-only, forced-identity handshake with the shared gateway credential to request and store the clone's `operator.pairing` device credential.
-  That handshake cannot approve a request.
-  NemoClaw then removes the shared gateway URL, port, and token before an exact stored-device-auth list and the canonical approval of one matching local scope transition.
-  The stored-auth list cannot fall back to the shared gateway credential or local pairing-state output, and the approval command independently uses the same stripped credential boundary.
-  If the exact stored-auth evidence changes between listing and approval, a child-only guard stops the approval before OpenClaw can use its ordinary gateway or `operator.admin` fallback.
-  Both list subprocesses have 15-second deadlines, and each clone approval pass has a 45-second outer bound.
-  Fixed output-free receipts classify failures without returning command output or request identifiers.
-  When that local pairing pass cannot list or approve the request, the clone retries pairing once only if the authenticated verifier reports a pending scope upgrade.
-  The credential transition and retry preserve the local-device and single-request bounds.
   Uninstall checks for the `openshell` command after confirmation and before cleanup mutation, while source-checkout installation preserves an absolute `NEMOCLAW_OPENSHELL_BIN` selection during user-local OpenShell discovery.
-  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 - Jetson setup now explains why host preparation was skipped when it encounters an unrecognized or unparseable release.
   GPU onboarding carries eligible numeric group IDs for real, non-symlink DRI render character devices into the recreated container while preserving the established Tegra device allowlist.
   The sandbox CUDA proof remains fail-closed, and physical IGX Orin validation of the reported configuration remains pending.

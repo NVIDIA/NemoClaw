@@ -16,160 +16,6 @@ import {
 } from "./helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
-  it("uses pairing-scoped stored auth only for a marked exact same-device write transition", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-marked-list-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
-      const runtime = runFixture<{
-        calls: Array<Record<string, unknown>>;
-        output: Array<Record<string, unknown>>;
-        list: (opts: Record<string, unknown>) => Promise<void>;
-        setListFailures: (errors: Error[]) => void;
-        setMarker: (value: boolean) => void;
-        setPairingLists: (local: Record<string, unknown>, live?: Record<string, unknown>) => void;
-      }>(
-        source,
-        `({
-          calls: gatewayCalls,
-          output: runtimeJson,
-          list: runDevicesListCommand,
-          setListFailures,
-          setMarker: setStoredDeviceListMarker,
-          setPairingLists,
-        })`,
-      );
-      const exactRepairList = { pending: [validPending()], paired: [validPaired()] };
-      runtime.setPairingLists(exactRepairList);
-
-      await runtime.list({ json: true });
-      expect(runtime.calls).toHaveLength(1);
-      expect(runtime.calls[0]).not.toHaveProperty("useStoredDeviceAuth");
-      expect(runtime.output).toEqual([exactRepairList]);
-
-      runtime.setMarker(true);
-      for (const exactList of [
-        exactRepairList,
-        {
-          pending: [validPending({ isRepair: false })],
-          paired: [validPaired()],
-        },
-      ]) {
-        runtime.calls.length = 0;
-        runtime.output.length = 0;
-        runtime.setPairingLists(exactList);
-        await runtime.list({ json: true });
-        expect(runtime.calls).toHaveLength(1);
-        expect(runtime.calls[0]).toMatchObject({
-          method: "device.pair.list",
-          scopes: ["operator.pairing"],
-          useStoredDeviceAuth: true,
-          requiredStoredDeviceAuthScopes: ["operator.pairing"],
-        });
-        expect(runtime.output).toEqual([exactList]);
-      }
-
-      runtime.calls.length = 0;
-      runtime.output.length = 0;
-      runtime.setListFailures([new Error("stored device list denied")]);
-      await expect(runtime.list({ json: true })).rejects.toThrow("stored device list denied");
-      expect(runtime.calls).toHaveLength(1);
-      expect(runtime.calls[0]).toMatchObject({ useStoredDeviceAuth: true });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("fails closed to the ordinary list path when marked local repair evidence is unsafe", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-list-bounds-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
-      const runtime = runFixture<{
-        resolve: (opts: Record<string, unknown>) => Promise<Record<string, unknown> | undefined>;
-        setFailure: (value: Error | undefined) => void;
-        setMarker: (value: boolean) => void;
-        setPairingLists: (local: Record<string, unknown>, live?: Record<string, unknown>) => void;
-      }>(
-        source,
-        `({
-          resolve: resolveNemoClawStoredDeviceListCallOpts,
-          setFailure: setLocalPairingFailure,
-          setMarker: setStoredDeviceListMarker,
-          setPairingLists,
-        })`,
-      );
-      const exactList = { pending: [validPending()], paired: [validPaired()] };
-
-      runtime.setPairingLists(exactList);
-      expect(await runtime.resolve({ json: true })).toBeUndefined();
-      runtime.setMarker(true);
-      expect(await runtime.resolve({ json: false })).toBeUndefined();
-      for (const explicit of [
-        { url: "ws://127.0.0.1:18789" },
-        { token: "explicit-token" },
-        { password: "explicit-password" },
-      ]) {
-        expect(await runtime.resolve({ json: true, ...explicit })).toBeUndefined();
-      }
-      expect(await runtime.resolve({ json: true })).toEqual({
-        scopes: ["operator.pairing"],
-        useStoredDeviceAuth: true,
-        requiredStoredDeviceAuthScopes: ["operator.pairing"],
-      });
-
-      const unsafeLists = [
-        { pending: null, paired: null },
-        { pending: [], paired: [validPaired()] },
-        { pending: [validPending({ requestId: " " })], paired: [validPaired()] },
-        { pending: [validPending()], paired: [] },
-        { pending: [validPending({ publicKey: "other-key" })], paired: [validPaired()] },
-        { pending: [validPending({ clientId: "openclaw-control-ui" })], paired: [validPaired()] },
-        { pending: [validPending({ clientMode: "webchat" })], paired: [validPaired()] },
-        { pending: [validPending({ role: "node", roles: ["node"] })], paired: [validPaired()] },
-        {
-          pending: [validPending({ roles: ["operator", "node"] })],
-          paired: [validPaired()],
-        },
-        { pending: [validPending({ scopes: [] })], paired: [validPaired()] },
-        { pending: [validPending({ scopes: ["operator.pairing"] })], paired: [validPaired()] },
-        { pending: [validPending({ scopes: ["operator.admin"] })], paired: [validPaired()] },
-        { pending: [validPending({ scopes: ["operator.unknown"] })], paired: [validPaired()] },
-        {
-          pending: [validPending({ scopes: ["operator.write", "operator.write"] })],
-          paired: [validPaired()],
-        },
-        { pending: [validPending({ isRepair: false })], paired: [] },
-        {
-          pending: [validPending(), validPending({ requestId: "request-2" })],
-          paired: [validPaired()],
-        },
-        {
-          pending: [validPending(), validPending({ deviceId: "device-2" })],
-          paired: [validPaired()],
-        },
-        { pending: [validPending()], paired: [validPaired(), validPaired()] },
-      ];
-      for (const unsafeList of unsafeLists) {
-        runtime.setPairingLists(unsafeList);
-        expect(await runtime.resolve({ json: true })).toBeUndefined();
-      }
-
-      runtime.setPairingLists(exactList);
-      runtime.setFailure(new Error("local pairing state unreadable"));
-      expect(await runtime.resolve({ json: true })).toBeUndefined();
-      runtime.setFailure(undefined);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("forwards stored device auth only for exact same-device transitions", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-stored-auth-"));
     const dist = path.join(tmp, "dist");
@@ -181,18 +27,15 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
       const runtime = runFixture<{
         approve: (opts: Record<string, unknown>, requestId: string) => Promise<unknown>;
         calls: Array<Record<string, unknown>>;
-        setMarker: (value: boolean) => void;
         setList: (value: Record<string, unknown>) => void;
       }>(
         source,
         `({
           approve: approvePairingWithFallback,
           calls: gatewayCalls,
-          setMarker: setRequireStoredDeviceApprovalMarker,
           setList: setPairingLists,
         })`,
       );
-      runtime.setMarker(true);
       for (const pending of [validPending(), validPending({ isRepair: false })]) {
         runtime.calls.length = 0;
         runtime.setList({ pending: [pending], paired: [validPaired()] });
@@ -212,62 +55,6 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           });
         }
       }
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("does not downgrade a marked restored-clone approval when local evidence disappears", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-required-auth-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
-      const runtime = runFixture<{
-        approve: (opts: Record<string, unknown>, requestId: string) => Promise<unknown>;
-        calls: Array<Record<string, unknown>>;
-        setMarker: (value: boolean) => void;
-        setLists: (local: Record<string, unknown>, live?: Record<string, unknown>) => void;
-      }>(
-        source,
-        `({
-          approve: approvePairingWithFallback,
-          calls: gatewayCalls,
-          setMarker: setRequireStoredDeviceApprovalMarker,
-          setLists: setPairingLists,
-        })`,
-      );
-      runtime.setLists(
-        { pending: [], paired: [] },
-        { pending: [validPending()], paired: [validPaired()] },
-      );
-      runtime.setMarker(true);
-
-      await expect(
-        runtime.approve({ json: true, token: "configured-shared-token" }, "request-1"),
-      ).rejects.toThrow("bounded same-device approval context changed before gateway approval");
-      expect(runtime.calls).toEqual([]);
-
-      runtime.setMarker(false);
-      await expect(
-        runtime.approve({ json: true, token: "configured-shared-token" }, "request-1"),
-      ).resolves.toEqual({ requestId: "request-1", approved: true });
-      expect(runtime.calls).toHaveLength(2);
-      expect(runtime.calls).toEqual([
-        expect.objectContaining({
-          method: "device.pair.list",
-          token: "configured-shared-token",
-        }),
-        expect.objectContaining({
-          method: "device.pair.approve",
-          token: "configured-shared-token",
-        }),
-      ]);
-      expect(runtime.calls).not.toContainEqual(
-        expect.objectContaining({ useStoredDeviceAuth: true }),
-      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
