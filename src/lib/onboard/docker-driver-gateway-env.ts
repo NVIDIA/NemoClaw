@@ -253,12 +253,24 @@ function formatEnvironmentFileAssignment(key: string, value: string): string {
   return `${key}=${value}`;
 }
 
+// A DOCKER_HOST value onboarding can use. Unset means Docker's default socket,
+// which is supported; a set value must be an absolute `unix://` socket with no
+// serialization-hostile characters. TCP endpoints and relative paths are
+// unsupported, so when DOCKER_HOST points at one, `docker info` cannot reach the
+// daemon and onboarding treats the host as invalid.
+export function isSupportedGatewayDockerHost(value: string | undefined): boolean {
+  const candidate = String(value ?? "").trim();
+  if (!candidate) return true;
+  const prefix = "unix://";
+  if (!candidate.startsWith(prefix)) return false;
+  const socketPath = candidate.slice(prefix.length);
+  return path.isAbsolute(socketPath) && !/[\0\r\n']/.test(socketPath);
+}
+
 function normalizePackageServiceDockerHost(value: string | undefined): string | undefined {
   const candidate = String(value || "").trim();
   if (!candidate) return undefined;
-  const prefix = "unix://";
-  const socketPath = candidate.startsWith(prefix) ? candidate.slice(prefix.length) : "";
-  if (path.isAbsolute(socketPath) && !/[\0\r\n']/.test(socketPath)) {
+  if (isSupportedGatewayDockerHost(candidate)) {
     return candidate;
   }
   throw new Error(
