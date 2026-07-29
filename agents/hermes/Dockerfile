@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:61feb0e33fae77ad2fcd1ae3aca2d6c484d7ef2c6ed8ebd431d3e514eab6cf2b
 ARG NEMOCLAW_CORPORATE_CA_B64=
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
@@ -1147,9 +1147,10 @@ RUN check_metadata() { \
     check_absent() { \
         path="$1"; \
         { [ ! -e "$path" ] && [ ! -L "$path" ]; } \
-            || { echo "ERROR: build-only Hermes cache leaked into the final image: $path" >&2; return 1; }; \
+            || { echo "ERROR: build-only Hermes path leaked into the final image: $path" >&2; return 1; }; \
     }; \
-    check_absent /root/.npm \
+    check_absent /opt/hermes/tests \
+    && check_absent /root/.npm \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \
     && check_absent /sandbox/.cache \
