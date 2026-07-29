@@ -986,30 +986,26 @@ async function runSnapshotRestoreUnlocked(
       );
       snapshotExit(1);
     }
-    // Cross-sandbox restore — whether dst exists (with --force) or not,
-    // we must be able to clone the source's running pod image. Resolve it
-    // upfront so a missing source / unresolvable image cannot delete the
-    // destination first (#3756 P1).
-    if (!sourceLiveNames.has(sandboxName)) {
-      if (targetExists) {
-        console.error(
-          `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
-        );
-      } else {
-        console.error(
-          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
-        );
-        console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
-      }
-      snapshotExit(1);
-    }
+    // Cross-sandbox restore — whether dst exists (with --force) or not, we
+    // must be able to clone the source's image. Resolve it upfront so a
+    // missing source / unresolvable image cannot delete the destination first
+    // (#3756 P1). A source that is no longer running stays restorable while
+    // its registry entry still records the image and inference route, because
+    // that is the case a replacement sandbox exists to recover from.
     const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
     const fromImage = resolveSrcPodImage(sandboxName, srcEntry);
     if (!fromImage) {
-      console.error(
-        `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
-          (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
-      );
+      if (!sourceLiveNames.has(sandboxName)) {
+        console.error(
+          `  Cannot ${targetExists ? "recreate" : "auto-create"} '${targetSandbox}': source '${sandboxName}' is not running and its registry entry records no image.`,
+        );
+        console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
+      } else {
+        console.error(
+          `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
+            (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
+        );
+      }
       snapshotExit(1);
     }
     if (targetExists) {
