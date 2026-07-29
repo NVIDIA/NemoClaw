@@ -79,36 +79,25 @@ If policy restoration fails, the command keeps the channel disabled and exits wi
 
 ## Avoid Cross-Sandbox Conflicts
 
-NemoClaw applies the same fail-closed conflict policy to every supported messaging channel.
-The policy checks for these conditions:
+Use distinct credentials and resources for each active messaging sandbox.
+Follow these channel-specific rules:
 
-- Another registered sandbox uses the same channel credential.
-- A channel-owned pre-enable check finds a shared resource conflict.
-- NemoClaw cannot complete a required conflict check.
+- Use a distinct iLink `accountId` for each WeChat sandbox.
+- Use distinct bot and Socket Mode app tokens for each Slack sandbox.
+- Use a different gateway for each Slack sandbox.
+- Use a different local webhook port for each Microsoft Teams sandbox.
 
-Onboarding, rebuild, and `channels add` exit nonzero when a required check reports a conflict.
-Onboarding and rebuild do not have a conflict override.
-Pass `--force` to `channels add <channel>` only when you explicitly accept the duplicate-consumer or shared-resource risk.
+When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check.
+Legacy entries without credential hashes count as incomplete.
+An unreadable messaging registry also causes onboarding and rebuild to abort.
+Onboarding and rebuild have no conflict override.
 
-Channel manifests define the credential and resource checks for each channel.
-The built-in checks include these channel-specific rules:
-
-- Each active sandbox must use distinct credentials for a credential-backed channel.
-- WeChat requires a distinct iLink `accountId` for each active sandbox.
-- Slack checks both bot and Socket Mode app tokens across gateways.
-- Slack also requires each active sandbox to use a different gateway.
-- Microsoft Teams requires each active sandbox to use a different local webhook port.
-
-If NemoClaw has only legacy metadata and cannot compare credential hashes, it treats the active channel as a conflict.
-If onboarding or rebuild cannot read the messaging registry, the operation aborts.
-If `channels add` cannot complete a required check, it aborts unless you pass `--force`.
-
+For `channels add` only, pass `--force` to accept the duplicate-consumer or shared-resource risk.
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 
-Before any rebuild, NemoClaw rechecks the staged messaging plan against other registered sandboxes.
-A credential or resource conflict aborts before backup or deletion and leaves the original sandbox registered and intact.
-
-Resolve the conflict, then rerun the operation.
+Before a rebuild, NemoClaw checks the messaging plan before backup or deletion.
+A conflict leaves the original sandbox intact.
+Resolve any conflict, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps.
 
 ## Stop All Delivery

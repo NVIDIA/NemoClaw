@@ -45,15 +45,11 @@ This uses the existing Slack credentials and does not require additional scopes 
 
 ## Avoid Duplicate Socket Mode Sessions
 
-These Slack checks are part of the [cross-sandbox conflict policy](manage-messaging-channels) for all supported messaging channels.
-Slack Socket Mode allows one active connection per app-level token.
-By default, onboarding, rebuild, and `channels add slack` abort when another sandbox uses the same Slack bot or app token.
-This check applies across gateways.
-NemoClaw also aborts when another Slack sandbox uses the same gateway, even when the credentials differ.
-
-`channels add slack` does not offer an interactive conflict override.
-Stop or remove Slack from the other sandbox, or use a different gateway with different credentials.
-For `channels add slack` only, pass `--force` to accept the conflict risk explicitly; onboarding and rebuild have no override.
+The [cross-sandbox conflict policy](manage-messaging-channels) applies to Slack.
+Use different bot tokens, app tokens, and gateways for each active Slack sandbox.
+Onboarding, rebuild, and `channels add slack` abort on a conflict.
+Onboarding and rebuild have no override.
+For `channels add slack` only, pass `--force` to accept the conflict risk.
 
 ## Enable Slack
 
