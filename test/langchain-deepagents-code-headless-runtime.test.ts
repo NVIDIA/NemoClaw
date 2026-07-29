@@ -167,7 +167,9 @@ describe("LangChain Deep Agents Code headless runtime contracts", () => {
         },
       });
 
-    expect(classify("0", `startup log\n${envelope()}\nDCODE_EXIT:0`)).toBe("pass:json-pong");
+    expect(classify("0", `startup log\n${envelope()}\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
+    );
     expect(
       classify("1", "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1"),
     ).toBe("fail:actionable-inference-error");
@@ -197,7 +199,10 @@ describe("LangChain Deep Agents Code headless runtime contracts", () => {
     );
     expect(classify("0", `${envelope()}\nDCODE_EXIT:0`)).toBe("pass:json-pong");
     expect(classify("0", `dcode version 0.1.12\n${envelope()}\nDCODE_EXIT:0`)).toBe(
-      "pass:json-pong",
+      "fail:invalid-json-envelope",
+    );
+    expect(classify("0", `${envelope()}\ntrailing banner\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
     );
     expect(classify("0", "something happened\nDCODE_EXIT:0")).toBe("fail:invalid-json-envelope");
     expect(classify("0", "Reply with exactly one word: PONG\nDCODE_EXIT:0")).toBe(

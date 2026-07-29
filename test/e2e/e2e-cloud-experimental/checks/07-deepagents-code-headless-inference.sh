@@ -367,7 +367,10 @@ classify_headless_output() {
   local dcode_exit="$1"
   local headless_output="$2"
   local payload
-  payload="$(printf '%s' "$headless_output" | sed 's/DCODE_EXIT:[0-9]*//g')"
+  payload="$(
+    printf '%s' "$headless_output" \
+      | sed '$ { /^DCODE_EXIT:[0-9][0-9]*$/d; }'
+  )"
 
   if [ "$dcode_exit" = "124" ]; then
     printf '%s\n' "timeout"
@@ -408,18 +411,12 @@ classify_headless_output() {
 import json
 import sys
 
-objects = []
-for line in sys.stdin:
-    try:
-        value = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if isinstance(value, dict):
-        objects.append(value)
-
-if len(objects) != 1:
+try:
+    envelope = json.load(sys.stdin)
+except json.JSONDecodeError:
     raise SystemExit(1)
-envelope = objects[0]
+if not isinstance(envelope, dict):
+    raise SystemExit(1)
 if set(envelope) != {"schema_version", "command", "data"}:
     raise SystemExit(1)
 if envelope["schema_version"] != 1 or envelope["command"] != "non-interactive":
