@@ -49,7 +49,7 @@ process.stdout.write("RESULT " + JSON.stringify({ kid, signingKeyHash }) + "\n")
 `;
   const child = spawn(
     process.execPath,
-    ["--import", "tsx", "--input-type=module", "--eval", script],
+    ["--no-warnings", "--import", "tsx", "--input-type=module", "--eval", script],
     {
       cwd: path.resolve(import.meta.dirname, "../../.."),
       env: {
