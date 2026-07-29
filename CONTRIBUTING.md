@@ -203,7 +203,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run checks:repository` | Run the narrow custom repository checks used by lint and hooks |
 | `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
 | `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
-| `npm run checks` | Compatibility alias for `npm run checks:repository` |
+| `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
 | `npm run format` | Auto-format Biome-supported source files |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
@@ -362,7 +362,7 @@ CI runs the complete type-check gates independently; local path selection is a f
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
-`npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility.
+`npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
 
 `npm run check` is the whole-repository pre-commit and full CLI/plugin coverage baseline for broad changes to hooks, formatters, generated checks, or shared validation behavior.
 It is not part of routine PR preparation for a focused change. The `npm run check:diff` alias remains available for consumers migrating to `npm run validate:pr`.

@@ -201,7 +201,12 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
-function runLoggedPackageScript(script: string): string[][] {
+type LoggedPackageScript = {
+  calls: string[][];
+  stderr: string;
+};
+
+function runLoggedPackageScriptWithOutput(script: string): LoggedPackageScript {
   const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
   const fakeBin = join(temp, "bin");
   const commandLog = join(temp, "commands.jsonl");
@@ -229,14 +234,21 @@ function runLoggedPackageScript(script: string): string[][] {
       },
     });
     expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
-    return readFileSync(commandLog, "utf8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as string[]);
+    return {
+      calls: readFileSync(commandLog, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as string[]),
+      stderr: result.stderr,
+    };
   } finally {
     rmSync(temp, { force: true, recursive: true });
   }
+}
+
+function runLoggedPackageScript(script: string): string[][] {
+  return runLoggedPackageScriptWithOutput(script).calls;
 }
 
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
@@ -655,6 +667,7 @@ describe("pull request and main workflow contracts", () => {
     const broadCheckCalls = runLoggedPackageScript(scripts.check);
     const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
     const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
+    const legacyRepositoryChecks = runLoggedPackageScriptWithOutput(scripts.checks);
 
     expect(cliCoverageCalls.map(([command]) => command)).toEqual(
       "npm npm tsx vitest tsx".split(" "),
@@ -693,7 +706,12 @@ describe("pull request and main workflow contracts", () => {
       "tsx scripts/checks/run.mts",
     ]);
     expect(scripts["check:diff"]).toBe("npm run validate:pr");
-    expect(scripts.checks).toBe("npm run checks:repository");
+    expect(legacyRepositoryChecks.calls.map((call) => call.join(" "))).toEqual([
+      "npm run checks:repository",
+    ]);
+    expect(legacyRepositoryChecks.stderr).toContain("npm run validate:pr");
+    expect(legacyRepositoryChecks.stderr).toContain("npm run checks:repository");
+    expect(legacyRepositoryChecks.stderr).toContain("runs only narrow repository checks");
     expect(scripts.lint).toContain("npm run checks:repository");
     expect(scripts["lint:fix"]).toContain("npm run checks:repository");
     expect(repositoryChecks?.entry).toBe("npm run checks:repository");
