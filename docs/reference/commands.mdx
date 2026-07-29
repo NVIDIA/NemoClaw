@@ -1367,7 +1367,7 @@ If the owning OpenShell gateway is healthy but no longer lists the registered Do
 It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference.
 A successful recovery clears the stale stopped-container failure.
 <AgentOnly variant="openclaw">
-If OpenShell already reports the registered Docker-driver sandbox as present, status verifies the OpenClaw gateway and host forward.
+If OpenShell already reports the registered Docker-driver sandbox as present and `Ready`, status verifies the OpenClaw gateway and host forward.
 It recovers either component when the verification reports it absent.
 </AgentOnly>
 If Docker readiness or the agent delivery chain cannot be proven, status exits non-zero and reports the failed recovery layer.

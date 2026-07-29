@@ -417,7 +417,9 @@ export async function collectSandboxStatusSnapshot(
   const managedOpenClawDeliveryMustBeProven =
     lookup.state === "present" &&
     sb?.openshellDriver === "docker" &&
-    (sb.agent ?? "openclaw") === "openclaw";
+    (sb.agent ?? "openclaw") === "openclaw" &&
+    parseSandboxPhase(lookup.output || "") === "Ready" &&
+    !opts.preflight?.failure;
   if (
     lookup.state === "present" &&
     (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
