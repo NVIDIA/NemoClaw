@@ -22,7 +22,7 @@ const DETERMINISTIC_PROJECTS = [
   "e2e-support",
 ] as const;
 
-const LIVE_PROJECTS = ["e2e-live", "e2e-branch-validation"] as const;
+const LIVE_PROJECTS = ["e2e-live"] as const;
 
 const AUTOMATIC_CLEANUP_OPTIONS = [
   "clearMocks",

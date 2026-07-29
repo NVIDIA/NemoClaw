@@ -490,8 +490,87 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Retry `openshell gateway start --name nemoclaw`");
     expect(output).toContain("If the gateway never becomes healthy");
     expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", {
-      suppressInferenceProbe: true,
+      preflight: {
+        failure: null,
+        failureLayer: "docker_unreachable",
+        suppressInferenceProbe: true,
+        exitCode: 1,
+      },
     });
+  });
+
+  it("renders the refreshed preflight after Docker recovery", async () => {
+    const preflight = {
+      failure: {
+        layer: "sandbox_container_stopped" as const,
+        dockerUnreachable: false,
+      },
+      failureLayer: "sandbox_container_stopped" as const,
+      suppressInferenceProbe: true,
+      exitCode: 1 as const,
+    };
+    const harness = createStatusFlowHarness({
+      preflight,
+      postRecoveryPreflight: {
+        failure: null,
+        failureLayer: null,
+        suppressInferenceProbe: false,
+        exitCode: 0,
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).not.toContain("Failure layer: sandbox_container_stopped");
+    expect(process.exitCode).toBeUndefined();
+    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", {
+      preflight,
+    });
+  });
+
+  it("does not erase a dashboard-port conflict during Docker recovery", async () => {
+    const conflict = {
+      failure: {
+        layer: "sandbox_dashboard_port_conflict" as const,
+        dockerUnreachable: false,
+      },
+      failureLayer: "sandbox_dashboard_port_conflict" as const,
+      suppressInferenceProbe: true,
+      exitCode: 1 as const,
+    };
+    const harness = createStatusFlowHarness({
+      preflight: conflict,
+      postRecoveryPreflight: conflict,
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Failure layer: sandbox_dashboard_port_conflict");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("renders an agent delivery recovery failure as actionable and nonzero", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: null,
+      lookup: {
+        state: "sandbox_recovery_failed",
+        output:
+          "  Docker restored sandbox 'alpha', but its agent delivery chain is not ready " +
+          "(forward-recovery: OpenShell forward state unavailable).",
+        recoveredSandbox: true,
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("restored from Docker");
+    expect(output).toContain("agent delivery chain could not be recovered safely");
+    expect(output).toContain("forward-recovery: OpenShell forward state unavailable");
+    expect(output).toContain("Retry `nemoclaw alpha recover`");
+    expect(output).not.toContain("Could not verify against live gateway");
   });
 
   it("renders missing gateway metadata after restart without claiming recovery", async () => {

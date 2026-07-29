@@ -202,8 +202,7 @@ What to do (works from any harness, including non-TTY agent contexts):
 
 Headless / no-browser alternatives (when option 1 isn't available):
   - brev login --skip-browser            # prints a URL, paste into any browser
-  - brev login --token "$BREV_API_TOKEN" # non-interactive; same env var used
-                                         # by test/e2e/brev-e2e.test.ts
+  - brev login --token "$BREV_API_TOKEN" # non-interactive
 
 MSG
   exit 1
