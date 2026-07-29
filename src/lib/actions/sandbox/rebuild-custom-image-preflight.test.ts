@@ -253,17 +253,23 @@ describe("preflightRebuildImage", () => {
     }
   });
 
-  it("requires Buildx repair before deleting the existing sandbox (#7111)", async () => {
+  it.each([
+    ["error string", "error", false],
+    ["error buffer", "error", true],
+    ["stderr string", "stderr", false],
+    ["stderr buffer", "stderr", true],
+    ["stdout string", "stdout", false],
+    ["stdout buffer", "stdout", true],
+  ] as const)("requires Buildx repair when %s contains the diagnostic before sandbox deletion (#7111)", async (_case, stream, buffered) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-required-"));
     const dockerfile = path.join(dir, "Dockerfile.custom");
     fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const diagnostic = "ERROR: BuildKit is enabled but the buildx component is missing or broken.";
     const buildImage = vi.fn(
       () =>
         ({
           status: 1,
-          stderr: Buffer.from(
-            "ERROR: BuildKit is enabled but the buildx component is missing or broken.",
-          ),
+          [stream]: buffered ? Buffer.from(diagnostic) : diagnostic,
         }) as never,
     );
     const cleanupBuildCtx = vi.fn(() => true);
