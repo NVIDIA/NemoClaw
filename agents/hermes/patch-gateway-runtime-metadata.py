@@ -5,13 +5,16 @@
 
 Hermes v0.19.0 stores ``gateway.pid``, ``gateway.lock``, and
 ``gateway_state.json`` directly below ``HERMES_HOME``. NemoClaw shields-up
-correctly makes that config root root-owned and non-writable, so a managed
-gateway replacement cannot remove the old PID file or atomically refresh
-runtime status. The resulting replacement exits with "PID file race lost".
+correctly makes that config root root-owned and non-writable, so NemoClaw's
+managed stop/start recovery cannot remove the old PID file or atomically
+refresh runtime status. The next managed start exits with "PID file race lost".
 
 NemoClaw already provisions ``HERMES_HOME/runtime`` as the writable lifecycle
-boundary. Patch only Hermes's central path helpers so all of its PID, lock,
-status, health, and CLI readers agree on that directory. The exact source-shape
+boundary. Patch only the central helpers exercised by NemoClaw's managed
+default-gateway lifecycle. Direct upstream ``--replace`` cleanup,
+planned-stop/takeover markers, and named-profile or service readers still use
+top-level paths; that inherited bounded residual is documented in the
+dependency review and is not claimed by this patch. The exact source-shape
 checks fail closed when the pinned Hermes implementation changes.
 
 Remove this patch when the minimum supported Hermes release natively separates

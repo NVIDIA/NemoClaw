@@ -113,8 +113,15 @@ Build probes use the real cron and Discord APIs to prove gateway creation, sandb
 
 Base SHA `fa96c91f` contributes the workaround that moves gateway PID, lock, and runtime-status files below the writable `HERMES_HOME/runtime` directory.
 Hermes 0.19 retains the top-level paths but changes their home selector from `get_hermes_home()` to `_get_process_hermes_home()` so profile-context tasks cannot redirect process-owned gateway metadata.
-The upgrade retargets the exact-source patch to that target shape and preserves the process-scoped selector while relocating only the three central metadata paths.
-The final image hash-binds the patcher and probes the installed PID, lock, and status readers against the writable runtime directory.
+The upgrade retargets the exact-source patch to that target shape and preserves the process-scoped selector while relocating the three central metadata helpers used by NemoClaw's managed default gateway.
+The final image hash-binds the patcher and probes those installed PID, lock, and status helpers against the writable runtime directory.
+
+The inherited workaround is not a complete upstream metadata migration.
+Hermes still force-unlinks a top-level PID during direct `gateway run --replace`, keeps planned-stop and takeover markers at the top level, and has explicit top-level PID or status readers in named-profile, multiplexer, service-manager, web, container-boot, Windows, backup, and upstream Docker paths.
+Those same direct-consumer gaps exist in base SHA `fa96c91f`'s Hermes 0.18 patch, so the 0.19 retarget does not regress NemoClaw's managed default-gateway lifecycle.
+Under shields-up, direct Hermes replacement or stop and named-profile lifecycle commands can nevertheless fail or observe stale state.
+NemoClaw uses plain `gateway run` plus its host-owned managed stop/start recovery; the protected managed-restart E2E proves only that supported path.
+Completing the upstream relocation requires a separate exact-source audit and runtime matrix for every explicit consumer rather than extending this dependency upgrade's claim.
 
 The target MCP tool names use the `mcp__server__tool` shape.
 Progressive disclosure and the managed MCP bridge therefore require exact-head runtime proof rather than inference from the image build.
@@ -189,10 +196,11 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-17` | High | Migrate and test | In-place update now defaults to duplicating state and refreshing a mutable CUA driver. NemoClaw's immutable image workflow owns dependency updates, so generated configuration explicitly disables both side effects. |
 | `HERMES-18` | High | Migrate and test | Fresh named profiles omit `config.yaml`, so generated pins do not cover every `HERMES_HOME`. The final image hash-binds the exact `v2026.7.20` config, classic-CLI config copy, raw browser-policy, TUI raw-YAML, agent-commentary, update-command, and gateway-policy sources, patches their fail-safe defaults, and creates a real config-less profile to exercise all affected installed loaders. |
 | `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
-| `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving PID, lock, and status files below `runtime`, hash-binds the helper, and adds unit and final-image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
+| `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose central helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving the managed default gateway's central PID, lock, and status helpers below `runtime`, hash-binds the patcher, and adds unit and final-image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
+| `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. Under shields-up those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
 
 Unresolved upgrade-created high-impact concerns: `0`.
-One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation remains explicitly accepted for this upgrade scope.
+One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation and one inherited Medium direct-runtime-consumer limitation remain explicitly accepted for this upgrade scope.
 
 The remaining exact-head gates are repository CI, automated review, documentation review, security review, and protected Hermes E2E.
 The reachable pre-existing Pillow and Starlette debt also requires an explicit security-review disposition before merge.

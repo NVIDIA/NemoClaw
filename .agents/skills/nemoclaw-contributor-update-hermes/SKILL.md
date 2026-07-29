@@ -114,6 +114,11 @@ Map each material change through these NemoClaw surfaces:
 Inventory every downstream workaround.
 Remove one only when target source and runtime evidence satisfy its recorded removal condition.
 Retarget comments, exact-source guards, integrity hashes, and regression tests for every retained workaround.
+When a workaround relocates a runtime path helper, search the entire pinned source tree for literal
+path joins, marker helpers, profile and multiplexer readers, service and boot adapters, and
+packaging scripts. Either retarget and runtime-test every supported consumer or narrow the
+supported managed path and record the remaining direct-CLI consumers as inherited residuals.
+A helper-level image probe does not prove that every explicit path consumer agrees.
 
 Record silent default changes as migration concerns.
 Do not inherit an authorization, network, credential, or persistence default through a version-only bump.

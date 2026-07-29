@@ -79,7 +79,7 @@ Audit each workaround against target source and its removal condition:
 | Provider plus model proxy routing | `agents/hermes/hermes-wrapper.py` and `test/hermes-wrapper-provider-merge.test.ts`. |
 | Latest session-list preview | `agents/hermes/patch-session-list-preview.py` and the Dockerfile smoke test. |
 | Config-less profile policy defaults | `agents/hermes/patch-profile-policy-defaults.py`, `test/hermes-profile-policy-defaults.test.ts`, and the final-image named-profile probe. |
-| Writable gateway runtime metadata | `agents/hermes/patch-gateway-runtime-metadata.py`, `test/hermes-gateway-runtime-metadata-patch.test.ts`, and the final-image source-shape, integrity, and path probes. Preserve Hermes' process-scoped home selector while relocating the PID, lock, and status files. |
+| Writable managed gateway runtime metadata | `agents/hermes/patch-gateway-runtime-metadata.py`, `test/hermes-gateway-runtime-metadata-patch.test.ts`, and the final-image source-shape, integrity, and path probes. Preserve Hermes' process-scoped home selector while relocating central default-gateway PID, lock, and status helpers. Search the full pinned tree for explicit metadata paths before claiming broader support; patch and runtime-test each supported direct consumer or document inherited `--replace`, marker, profile/multiplexer, service/boot, and packaging residuals. |
 | OpenShell Langfuse placeholders | `agents/hermes/patch-langfuse-credentials.mts` and its Dockerfile source-shape probe. |
 | Managed light-terminal skin | `src/lib/domain/sandbox/connect-env.ts` and `test/hermes-light-skin-boundary.test.ts`. |
 | Config output masking and gateway secret boundary | `agents/hermes/hermes-wrapper.py`, validator scripts, and live secret-boundary tests. |

@@ -336,11 +336,13 @@ PY
 
 # Hermes v0.19.0 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Shields-up deliberately makes that config root root-owned and non-writable,
-# so a replacement cannot remove the old PID file and exits with a false PID
-# race. Keep config/hash locks intact and relocate only Hermes's central
-# PID/lock/status path helpers to the existing writable runtime directory while
-# preserving Hermes's process-scoped home selection.
-ARG NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256=b2be73d89f554e09d44d91479ec7eb9325dd44bf1b06c62745eec18b21cb71e6
+# so managed stop/start recovery cannot remove the old PID file and exits with
+# a false PID race. Keep config/hash locks intact and relocate only Hermes's
+# central PID/lock/status path helpers to the existing writable runtime
+# directory while preserving Hermes's process-scoped home selection. Direct
+# upstream --replace/stop and named-profile consumers remain the documented
+# inherited residual; this probe does not claim a complete upstream relocation.
+ARG NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256=eacc7403702bc3ba7a6997abffe4f41ffc8ab84947cb8e5b474b21469b2f1152
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
