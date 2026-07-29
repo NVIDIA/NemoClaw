@@ -1366,6 +1366,10 @@ When the host Docker daemon is reachable but the per-sandbox container is stoppe
 If the owning OpenShell gateway is healthy but no longer lists the registered Docker-driver sandbox, status attempts post-reboot recovery from the labeled container.
 It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference.
 A successful recovery clears the stale stopped-container failure.
+<AgentOnly variant="openclaw">
+If OpenShell already reports the registered Docker-driver sandbox as present and `Ready`, status verifies the OpenClaw gateway and host forward.
+It recovers either component when the verification reports it absent.
+</AgentOnly>
 If Docker readiness or the agent delivery chain cannot be proven, status exits non-zero and reports the failed recovery layer.
 <AgentOnly variant="openclaw,hermes">
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to the `sandbox_dashboard_port_conflict` failure layer with the message `sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
