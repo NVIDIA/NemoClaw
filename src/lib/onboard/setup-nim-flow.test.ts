@@ -667,6 +667,7 @@ describe("createSetupNim", () => {
     expect(readRecordedProvider).not.toHaveBeenCalled();
     expect(readRecordedNimContainer).not.toHaveBeenCalled();
     expect(readRecordedModel).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledTimes(1);
     expect(note).toHaveBeenCalledWith("  [non-interactive] Provider: build");
     expect(result).toMatchObject({
       model: "nvidia/test-model",
