@@ -156,7 +156,17 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("SSH sessions: none");
-    expect(output).not.toContain("Connected: no");
+    expect(output).not.toMatch(/^\s*Connected:/m);
+  });
+
+  it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {
+    const harness = createStatusFlowHarness();
+    harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: false, sessions: [] });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toMatch(/^\s*(?:Connected|SSH sessions):/m);
   });
 
   it("reports active baseline exclusions and their support impact (#7178)", async () => {
