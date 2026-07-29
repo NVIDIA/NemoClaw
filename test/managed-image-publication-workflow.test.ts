@@ -9,6 +9,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import {
+  managedImageOpenShellProbe,
+  parseManagedImageOpenShellE2eInputs,
+} from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 type Step = {
   env?: Record<string, unknown>;
@@ -35,6 +39,7 @@ type MatrixEntry = {
 
 type Job = {
   if?: string;
+  name?: string;
   needs?: string | string[];
   permissions?: Record<string, string>;
   "runs-on"?: string;
@@ -72,7 +77,7 @@ const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
-const managedInputPaths = [
+const managedArtifactInputPaths = [
   ".dockerignore",
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
@@ -93,6 +98,7 @@ const managedInputPaths = [
   "tools/mcp-tool-discovery-runtime/**",
   "tsconfig.runtime-preloads.json",
 ] as const;
+const managedPrRuntimeInputPaths = [...managedArtifactInputPaths, "src/lib/**"] as const;
 
 function readWorkflow(file: string): Workflow {
   return YAML.parse(
@@ -268,7 +274,7 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
   );
 
   return [
-    ...managedInputPaths
+    ...managedArtifactInputPaths
       .filter((input) => !triggerPaths.includes(input))
       .map((input) => `managed image trigger is missing ${input}`),
     ...(baseWorkflow.concurrency?.group === "base-image-${{ github.ref }}"
@@ -491,17 +497,21 @@ describe("complete managed-image publication workflow", () => {
     expect(unverifiedGetTag).toHaveBeenCalledTimes(10);
   });
 
-  it("builds all three images and exercises real entrypoints for stacked and main-target pull requests", () => {
+  it("builds all three images and exercises real entrypoints and OpenShell for every relevant pull request", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const prBuilder = managedPrBuilder(workflow);
     const steps = prBuilder.steps ?? [];
     const build = step(prBuilder, "Build PR managed image locally");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
     const gate = step(prBuilder, "Exercise real managed-image entrypoint");
+    const dependencies = step(prBuilder, "Install managed-image OpenShell harness dependencies");
+    const install = step(prBuilder, "Install pinned OpenShell runtime");
+    const openshell = step(prBuilder, "Exercise exact PR image through real OpenShell");
     const prPaths = workflow.on?.pull_request?.paths ?? [];
 
     expect(prBuilder).toMatchObject({
       if: "github.event_name == 'pull_request'",
+      name: "PR build, entrypoint, and OpenShell (${{ matrix.display_name }})",
       permissions: { contents: "read", packages: "read" },
       "runs-on": "ubuntu-24.04",
       "timeout-minutes": 90,
@@ -534,7 +544,7 @@ describe("complete managed-image publication workflow", () => {
       },
     ]);
     expect(workflow.on?.pull_request?.branches).toBeUndefined();
-    expect(managedInputPaths.filter((path) => !prPaths.includes(path))).toEqual([]);
+    expect(managedPrRuntimeInputPaths.filter((path) => !prPaths.includes(path))).toEqual([]);
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
@@ -569,6 +579,9 @@ describe("complete managed-image publication workflow", () => {
     expect(build.with?.["cache-to"]).toBeUndefined();
     expect(steps.indexOf(build)).toBeLessThan(steps.indexOf(contract));
     expect(steps.indexOf(contract)).toBeLessThan(steps.indexOf(gate));
+    expect(steps.indexOf(gate)).toBeLessThan(steps.indexOf(dependencies));
+    expect(steps.indexOf(dependencies)).toBeLessThan(steps.indexOf(install));
+    expect(steps.indexOf(install)).toBeLessThan(steps.indexOf(openshell));
     expect(contract).toMatchObject({
       id: "contract",
       env: {
@@ -643,6 +656,128 @@ describe("complete managed-image publication workflow", () => {
     expect(gate.run).not.toContain(
       'expected_http_proxy="http://upper-http:upper-secret@upper-http.example.test:18080"',
     );
+
+    expect(dependencies.run).toBe("npm ci --ignore-scripts");
+    expect(install.env).toMatchObject({
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85",
+      NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.85",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85",
+    });
+    for (const marker of [
+      "env -u DOCKER_CONFIG",
+      "-u DOCKERHUB_USERNAME",
+      "-u DOCKERHUB_TOKEN",
+      "-u NVIDIA_API_KEY",
+      "-u NVIDIA_INFERENCE_API_KEY",
+      "-u GITHUB_TOKEN",
+      "-u GH_TOKEN",
+      "bash scripts/install-openshell.sh",
+    ]) {
+      expect(install.run).toContain(marker);
+    }
+    expect(openshell.env).toEqual({
+      AGENT: "${{ matrix.agent }}",
+      IMAGE_REFERENCE: "${{ steps.contract.outputs.reference }}",
+      SANDBOX_NAME: "nemoclaw-pr-${{ matrix.agent }}",
+    });
+    for (const marker of [
+      'export PATH="$HOME/.local/bin:$PATH"',
+      "npx tsx scripts/checks/run-managed-image-openshell-e2e.ts",
+      '--agent "$AGENT"',
+      '--image "$IMAGE_REFERENCE"',
+      '--sandbox "$SANDBOX_NAME"',
+    ]) {
+      expect(openshell.run).toContain(marker);
+    }
+    const harness = fs.readFileSync(
+      path.join(repoRoot, "scripts", "checks", "run-managed-image-openshell-e2e.ts"),
+      "utf8",
+    );
+    for (const marker of [
+      "onboard.startGatewayForRecovery({",
+      "await assertGatewayPortAvailable()",
+      "process.env.XDG_CONFIG_HOME",
+      "process.env.XDG_STATE_HOME",
+      "process.env.OPENSHELL_DOCKER_NETWORK_NAME",
+      "const deadline = Date.now() + 240_000",
+      "createChild.signalCode",
+      'killSignal: "SIGKILL"',
+      "prepareSandboxCreateManagedImageLaunch",
+      'createArgs: ["--from", input.image, "--name", input.sandbox]',
+      "openshellArgv: onboard.openshellArgv",
+      '"sandbox",\n        "exec"',
+      'commandResult(["docker", "inspect", candidate], env)',
+      "record.Image === input.image",
+      "label=openshell.ai/managed-by=openshell",
+      "Object.hasOwn(record.NetworkSettings?.Networks ?? {}, networkName)",
+      'child.kill("SIGKILL")',
+      "resolved.exactIds.length === 1",
+      '["docker", "container", "inspect", cleanupContainerId]',
+      '["docker", "network", "inspect", networkName]',
+      "15_000",
+      "managedStartupE2eProfile(input.agent, false, true, true)",
+    ]) {
+      expect(harness).toContain(marker);
+    }
+    expect(harness).not.toContain("Dockerfile");
+    expect(harness).not.toContain("packages: write");
+  });
+
+  it("fails the real OpenShell harness closed on mutable images and probes each shipped agent", () => {
+    const image = `sha256:${"a".repeat(64)}`;
+    expect(
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-pr-openclaw",
+      ]),
+    ).toEqual({
+      agent: "openclaw",
+      image,
+      sandbox: "nemoclaw-pr-openclaw",
+    });
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "hermes",
+        "--image",
+        "ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest",
+        "--sandbox",
+        "nemoclaw-pr-hermes",
+      ]),
+    ).toThrow("--image must be an immutable local sha256 image ID");
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "unshipped",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-pr-unshipped",
+      ]),
+    ).toThrow("--agent must identify a shipped managed-image agent");
+
+    const probes = {
+      openclaw: managedImageOpenShellProbe("openclaw"),
+      hermes: managedImageOpenShellProbe("hermes"),
+      "langchain-deepagents-code": managedImageOpenShellProbe("langchain-deepagents-code"),
+    };
+    expect(probes.openclaw).toContain("/sandbox/.openclaw/openclaw.json");
+    expect(probes.openclaw).toContain("http://127.0.0.1:18789/health");
+    expect(probes.hermes).toContain("/sandbox/.hermes/config.yaml");
+    expect(probes.hermes).toContain("http://127.0.0.1:8642/health");
+    expect(probes["langchain-deepagents-code"]).toContain("/sandbox/.deepagents/config.toml");
+    expect(probes["langchain-deepagents-code"]).toContain("/usr/local/bin/dcode --version");
+    for (const probe of Object.values(probes)) {
+      expect(probe).toContain("nvidia/nemotron-3-ultra-550b-a55b");
+      expect(probe).toContain("/run/nemoclaw/managed-startup-runtime.env");
+      expect(probe).toContain("/usr/local/share/nemoclaw/corporate-ca.pem");
+      expect(probe).toContain("/run/nemoclaw/managed-startup-ca-bundle.pem");
+    }
   });
 
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
