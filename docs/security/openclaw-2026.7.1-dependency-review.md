@@ -257,8 +257,10 @@ Restored-clone approval adds a separate child-only
 `NEMOCLAW_OPENCLAW_USE_STORED_DEVICE_LIST_AUTH=1` marker to its JSON list
 subprocess after removing the gateway URL, port, and shared token. The compiled
 CLI honors that marker only when OpenClaw's own pairing state contains exactly
-one unambiguous same-device CLI repair requesting `operator.write` against a
-paired `operator.pairing` baseline. It then performs one live
+one unambiguous same-device CLI transition requesting `operator.write` against
+a paired `operator.pairing` baseline. The accepted transition can be an
+explicit repair or the paired pre-convergence form with `isRepair: false`.
+It then performs one live
 `device.pair.list` call with pairing-scoped stored-device authentication,
 bypassing any `gateway.auth.token` in config. The selected path does not retry
 with shared credentials or return local pairing-state output. The host helper

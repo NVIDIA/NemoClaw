@@ -16,7 +16,7 @@ import {
 } from "./helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
-  it("uses pairing-scoped stored auth only for a marked exact repair list", async () => {
+  it("uses pairing-scoped stored auth only for a marked exact same-device write transition", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-marked-list-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -42,26 +42,35 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           setPairingLists,
         })`,
       );
-      const exactList = { pending: [validPending()], paired: [validPaired()] };
-      runtime.setPairingLists(exactList);
+      const exactRepairList = { pending: [validPending()], paired: [validPaired()] };
+      runtime.setPairingLists(exactRepairList);
 
       await runtime.list({ json: true });
       expect(runtime.calls).toHaveLength(1);
       expect(runtime.calls[0]).not.toHaveProperty("useStoredDeviceAuth");
-      expect(runtime.output).toEqual([exactList]);
+      expect(runtime.output).toEqual([exactRepairList]);
 
-      runtime.calls.length = 0;
-      runtime.output.length = 0;
       runtime.setMarker(true);
-      await runtime.list({ json: true });
-      expect(runtime.calls).toHaveLength(1);
-      expect(runtime.calls[0]).toMatchObject({
-        method: "device.pair.list",
-        scopes: ["operator.pairing"],
-        useStoredDeviceAuth: true,
-        requiredStoredDeviceAuthScopes: ["operator.pairing"],
-      });
-      expect(runtime.output).toEqual([exactList]);
+      for (const exactList of [
+        exactRepairList,
+        {
+          pending: [validPending({ isRepair: false })],
+          paired: [validPaired()],
+        },
+      ]) {
+        runtime.calls.length = 0;
+        runtime.output.length = 0;
+        runtime.setPairingLists(exactList);
+        await runtime.list({ json: true });
+        expect(runtime.calls).toHaveLength(1);
+        expect(runtime.calls[0]).toMatchObject({
+          method: "device.pair.list",
+          scopes: ["operator.pairing"],
+          useStoredDeviceAuth: true,
+          requiredStoredDeviceAuthScopes: ["operator.pairing"],
+        });
+        expect(runtime.output).toEqual([exactList]);
+      }
 
       runtime.calls.length = 0;
       runtime.output.length = 0;
@@ -136,7 +145,7 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           pending: [validPending({ scopes: ["operator.write", "operator.write"] })],
           paired: [validPaired()],
         },
-        { pending: [validPending({ isRepair: false })], paired: [validPaired()] },
+        { pending: [validPending({ isRepair: false })], paired: [] },
         {
           pending: [validPending(), validPending({ requestId: "request-2" })],
           paired: [validPaired()],

@@ -230,7 +230,7 @@ const CLI_HELPER = [
   '\t\t\tif (!request || typeof request !== "object" || Array.isArray(request)) return false;',
   "\t\t\tconst nemoclawRequestId = normalizeOptionalString(request.requestId);",
   "\t\t\tconst nemoclawDeviceId = normalizeOptionalString(request.deviceId);",
-  "\t\t\tif (!nemoclawRequestId || !nemoclawDeviceId || request.isRepair !== true) return false;",
+  "\t\t\tif (!nemoclawRequestId || !nemoclawDeviceId) return false;",
   "\t\t\tif (nemoclawLocalPending.filter((candidate) => normalizeOptionalString(candidate?.requestId) === nemoclawRequestId).length !== 1) return false;",
   "\t\t\tconst nemoclawRawScopes = request.scopes;",
   '\t\t\tif (!Array.isArray(nemoclawRawScopes) || !nemoclawRawScopes.some((scope) => normalizeOptionalString(scope) === "operator.write")) return false;',

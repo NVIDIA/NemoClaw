@@ -1113,6 +1113,12 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
       typeof repair.requestId === "string" && repair.requestId.length > 0,
       "real same-device repair request id missing",
     );
+    // Snapshot clone startup can retain the initial isRepair=false request
+    // after the pairing-only approval creates the matching paired baseline.
+    // Exercise that production ordering through the real CLI/gateway path,
+    // not only the standalone classifier proof below.
+    repair.isRepair = false;
+    fs.writeFileSync(pendingPath, JSON.stringify(pending));
     const configuredBeforeApproval = readJsonObject(configPath, "real gateway config");
     const configuredGateway = asRecord(configuredBeforeApproval.gateway);
     const configuredAuth = asRecord(configuredGateway?.auth);

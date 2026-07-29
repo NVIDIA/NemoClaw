@@ -32,7 +32,7 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
   It restores the in-sandbox gateway and host forwards before reporting success, refreshes stale stopped-container evidence, and fails closed when delivery cannot be proven.
   Recovery also unpauses a paused original container before reporting success.
   Resumed onboarding writes a secret-free same-name recreation journal before deletion so an interrupted run can continue or fail closed on ambiguous identity.
-  Restored snapshot clones now remove the shared gateway URL, port, and token before listing the clone request, then select pairing-scoped stored-device authentication only after an exact local repair preflight.
+  Restored snapshot clones now remove the shared gateway URL, port, and token before listing the clone request, then select pairing-scoped stored-device authentication only after an exact local paired scope-transition preflight.
   The selected list path cannot fall back to the shared gateway credential or local pairing-state output.
   When that local pairing pass cannot list or approve the request, the clone retries pairing once only if the authenticated verifier reports a pending scope upgrade.
   The credential transition and retry preserve the local-device and single-request bounds.
