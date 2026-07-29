@@ -356,7 +356,7 @@ describe("prepareSandboxCreateLaunch", () => {
 });
 
 describe("prepareSandboxCreateLaunchWithPrebuild", () => {
-  it("hands the legacy-builder image to the canonical launch renderer", async () => {
+  it("hands the build-qualified image to the canonical launch renderer", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const buildImage = vi.fn(async () => 0);
@@ -381,10 +381,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
         inspectImageId: () => IMAGE_ID,
         log: vi.fn(),
         origin: "generated",
-        prepared: {
-          prebuildBuilder: "legacy",
-          prebuildDockerEnv: Object.freeze({ DOCKER_CONTEXT: "verified-builder" }),
-        },
       },
     });
 
@@ -396,13 +392,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.createCommand).toContain(
       "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
     );
-    expect(buildImage).toHaveBeenCalledWith(
-      expect.any(Array),
-      expect.objectContaining({
-        cwd: expect.any(String),
-        env: expect.objectContaining({ DOCKER_BUILDKIT: "0" }),
-      }),
-    );
+    expect(buildImage).toHaveBeenCalledOnce();
   });
 
   it("renders the original Dockerfile for Hermes after a local build failure", async () => {

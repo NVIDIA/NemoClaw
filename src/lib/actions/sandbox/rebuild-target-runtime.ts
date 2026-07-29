@@ -21,7 +21,6 @@ import {
   readGatewayProviderMetadata,
 } from "../../onboard/gateway-provider-metadata";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
-import { resolveSandboxPrebuildEnabled } from "../../onboard/sandbox-prebuild";
 import { agentSupportsWebSearchProvider } from "../../onboard/web-search-support";
 import { redact } from "../../security/redact";
 import {
@@ -175,8 +174,8 @@ export async function preflightRebuildTargetRuntime(
     );
     return { ok: false };
   }
-  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   try {
+    const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
     const selectedRoute = initialDockerGpuRoute(
       resolveDockerGpuRoutePlan(sandboxGpuConfig, {
         dockerDriverGateway,
@@ -214,7 +213,6 @@ export async function preflightRebuildTargetRuntime(
       toolDisclosure: target.durableConfig.toolDisclosure,
       hermesToolGateways: target.hermesToolGateways,
       sandboxGpuConfig,
-      localPrebuildEnabled: resolveSandboxPrebuildEnabled(process.env, dockerDriverGateway),
       preResolvedBaseImageMetadata: recreateOptions.preResolvedBaseImageMetadata ?? null,
       gatewayPort: recreateOptions.targetGatewayPort,
       chatUiUrl: managesDashboard

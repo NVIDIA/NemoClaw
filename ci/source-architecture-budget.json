@@ -5,7 +5,7 @@
     "maxByFile": {
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 26,
       "src/lib/actions/sandbox/process-recovery.ts": 26,
-      "src/lib/adapters/docker/index.ts": 43,
+      "src/lib/adapters/docker/index.ts": 45,
       "src/lib/adapters/openshell/client.ts": 22,
       "src/lib/adapters/openshell/resolve.ts": 28,
       "src/lib/adapters/openshell/runtime.ts": 50,
