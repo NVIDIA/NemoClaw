@@ -13,6 +13,6 @@ export function printRebuildPreflightFailure(
   console.error("");
   console.error(`  ${_RD}Rebuild preflight failed:${R} ${summary}`);
   console.error(`  ${detail}`);
-  console.error("  Sandbox is untouched — no data was lost.");
+  console.error("  Aborting rebuild — sandbox is untouched, no data was lost.");
   bail(bailMessage);
 }
