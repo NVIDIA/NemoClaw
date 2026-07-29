@@ -160,7 +160,9 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
 # each launcher validates the build args before the image can complete. The
 # empty-prompt probe targets the installed wrapper directly: it validates the
 # public parser contract without requiring the image builder's kernel to support
-# the runtime-only child-subreaper supervisor.
+# the runtime-only child-subreaper supervisor. Keep that parser-only probe
+# hermetic so base-image or builder observability variables cannot mask the
+# diagnostic under test; the post-build workflow probes the real managed chain.
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
@@ -169,7 +171,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
     && empty_prompt_log="$(mktemp)" \
-    && if timeout 10 /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
+    && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && empty_prompt_output="$(cat "$empty_prompt_log")" \
     && if [ "$empty_prompt_status" -ne 2 ] \
         || [ "$empty_prompt_output" != "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then \

@@ -159,6 +159,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
+    expect(dockerfile).toContain(
+      'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',
+    );
     expect(dockerfile).toContain("chown root:root /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chown -R root:root /sandbox/.nemoclaw/blueprints");
