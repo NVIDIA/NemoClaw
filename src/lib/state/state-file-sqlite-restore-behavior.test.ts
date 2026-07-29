@@ -39,6 +39,10 @@ function makeFixture(): { dir: string; backup: Buffer } {
   return { dir, backup: fs.readFileSync(sourceDb) };
 }
 
+function occupyRollbackJournalPath(restored: string): void {
+  fs.mkdirSync(`${restored}-journal`, { recursive: true });
+}
+
 function runRestore(stateDir: string, backup: Buffer): { status: number | null; stderr: string } {
   const command = buildStateFileRestoreCommand(stateDir, {
     path: "runtime/state.db",
@@ -50,7 +54,6 @@ function runRestore(stateDir: string, backup: Buffer): { status: number | null; 
 
 afterEach(() => {
   for (const fixture of fixtures.splice(0)) {
-    fs.chmodSync(fixture, 0o700);
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
@@ -74,15 +77,17 @@ describe.skipIf(!hasSystemPython)("sqlite state-file restore", () => {
     expect(rows.trim()).toBe("2");
   });
 
-  it("reports failure when the restored database cannot be written", () => {
+  it("reports failure when the swapped database cannot open a write transaction", () => {
     const { dir, backup } = makeFixture();
     const stateDir = path.join(dir, "state");
+    const restored = path.join(stateDir, "runtime", "state.db");
     fs.mkdirSync(path.join(stateDir, "runtime"), { recursive: true });
-    fs.chmodSync(path.join(stateDir, "runtime"), 0o500);
+    occupyRollbackJournalPath(restored);
 
     const result = runRestore(stateDir, backup);
 
-    expect(result.status).not.toBe(0);
-    fs.chmodSync(path.join(stateDir, "runtime"), 0o700);
+    expect(fs.existsSync(restored)).toBe(true);
+    expect(result.stderr).toContain(`restored database is not writable: ${restored}`);
+    expect(result.status).toBe(12);
   });
 });
