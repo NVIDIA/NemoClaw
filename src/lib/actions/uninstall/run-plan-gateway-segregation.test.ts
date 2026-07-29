@@ -67,9 +67,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "openshell-docker-gateway",
         "openshell-gateway.toml",
       );
+      const gatewayState = 'listen_address = "127.0.0.1:8080"\n';
       fs.mkdirSync(stateDir, { recursive: true });
       fs.mkdirSync(path.dirname(gatewayStatePath), { recursive: true });
-      fs.writeFileSync(gatewayStatePath, 'listen_address = "127.0.0.1:8080"\n');
+      fs.writeFileSync(gatewayStatePath, gatewayState);
       const prepareScope = {
         full: () => undefined,
         scoped: () =>
@@ -140,6 +141,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         ),
       ).toBe(false);
       expect(fs.existsSync(gatewayStatePath)).toBe(true);
+      expect(fs.readFileSync(gatewayStatePath, "utf8")).toBe(gatewayState);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
