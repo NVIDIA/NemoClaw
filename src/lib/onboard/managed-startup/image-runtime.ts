@@ -31,6 +31,10 @@ const ROOT_STATE_PARENT = "/var/lib/nemoclaw";
 const ROOT_RUNTIME_DIRECTORY = "/run/nemoclaw";
 const ROOT_OWNED_DIRECTORY_MODE = 0o755;
 const MAX_TRUST_BUNDLE_BYTES = 4 * 1024 * 1024;
+const HERMES_MANAGED_CONFIG_FILES = [
+  "/sandbox/.hermes/config.yaml",
+  "/sandbox/.hermes/.env",
+] as const;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 
@@ -447,28 +451,176 @@ function sealOpenClawConfiguration(
   runInternalSandboxAction("write-openclaw-hash", configurationEnvironment);
 }
 
-function readStableRegularFile(target: string, maxBytes: number): Buffer {
-  const before = fs.lstatSync(target);
-  if (
-    before.isSymbolicLink() ||
-    !before.isFile() ||
-    before.nlink !== 1 ||
-    before.size < 1 ||
-    before.size > maxBytes
-  ) {
-    fail(`refusing unsafe or oversized file ${target}`);
+interface StableRegularFile {
+  readonly bytes: Buffer;
+  readonly stat: fs.BigIntStats;
+}
+
+interface NumericIdentity {
+  readonly uid: number;
+  readonly gid: number;
+}
+
+function sameStableFileMetadata(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function readStableRegularFileSnapshot(target: string, maxBytes: number): StableRegularFile {
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    fail("O_NOFOLLOW is unavailable for managed startup file reads");
   }
-  const bytes = fs.readFileSync(target);
-  const after = fs.lstatSync(target);
-  if (
-    before.dev !== after.dev ||
-    before.ino !== after.ino ||
-    before.size !== after.size ||
-    bytes.length !== before.size
-  ) {
-    fail(`${target} changed while it was read`);
+  const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | nonblock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw error;
+    fail(`refusing unsafe or unreadable file ${target}`);
   }
-  return bytes;
+
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      before.size < 1n ||
+      before.size > BigInt(maxBytes)
+    ) {
+      fail(`refusing unsafe or oversized file ${target}`);
+    }
+
+    const bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const bytesRead = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const overflow = Buffer.alloc(1);
+    const overflowBytes = fs.readSync(descriptor, overflow, 0, 1, offset);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (offset !== bytes.length || overflowBytes !== 0 || !sameStableFileMetadata(before, after)) {
+      fail(`${target} changed while it was read`);
+    }
+    return { bytes, stat: before };
+  } finally {
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      fail(`could not close safely opened file ${target}`);
+    }
+  }
+}
+
+export function readStableRegularFile(target: string, maxBytes: number): Buffer {
+  return readStableRegularFileSnapshot(target, maxBytes).bytes;
+}
+
+/**
+ * Restore the mutable Hermes image contract after its sandbox-side generator
+ * atomically replaces config.yaml or .env with mode 0600. The mode transition
+ * is performed through the already-authenticated descriptor, never by path.
+ *
+ * Shields-up turns these files into root:root 0444 trust anchors. That state is
+ * valid on an already-committed replay and must not be made mutable again.
+ */
+export function normalizeHermesManagedConfigDescriptor(
+  target: string,
+  sandboxIdentity: NumericIdentity,
+): void {
+  if (
+    !Number.isSafeInteger(sandboxIdentity.uid) ||
+    sandboxIdentity.uid <= 0 ||
+    !Number.isSafeInteger(sandboxIdentity.gid) ||
+    sandboxIdentity.gid <= 0
+  ) {
+    fail("invalid sandbox identity for Hermes descriptor normalization");
+  }
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    fail("O_NOFOLLOW is unavailable for Hermes descriptor normalization");
+  }
+  const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | nonblock);
+  } catch {
+    fail(`refusing unsafe Hermes managed config descriptor ${target}`);
+  }
+
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const beforeMode = Number(before.mode & 0o777n);
+    const mutable =
+      before.uid === BigInt(sandboxIdentity.uid) &&
+      before.gid === BigInt(sandboxIdentity.gid) &&
+      (beforeMode === 0o600 || beforeMode === 0o640);
+    const shielded = before.uid === 0n && before.gid === 0n && beforeMode === 0o444;
+    if (!before.isFile() || before.nlink !== 1n || (!mutable && !shielded)) {
+      fail(`refusing unexpected Hermes managed config descriptor ${target}`);
+    }
+
+    const expectedMode = mutable ? 0o640 : 0o444;
+    if (mutable && beforeMode === 0o600) {
+      try {
+        fs.fchmodSync(descriptor, expectedMode);
+      } catch {
+        fail(`could not normalize Hermes managed config descriptor ${target}`);
+      }
+    }
+
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    let pathAfter: fs.BigIntStats;
+    try {
+      pathAfter = fs.lstatSync(target, { bigint: true });
+    } catch {
+      fail(`Hermes managed config descriptor disappeared during normalization: ${target}`);
+    }
+    const expectedUid = mutable ? BigInt(sandboxIdentity.uid) : 0n;
+    const expectedGid = mutable ? BigInt(sandboxIdentity.gid) : 0n;
+    if (
+      !after.isFile() ||
+      after.nlink !== 1n ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.uid !== expectedUid ||
+      after.gid !== expectedGid ||
+      Number(after.mode & 0o777n) !== expectedMode ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      pathAfter.isSymbolicLink() ||
+      !pathAfter.isFile() ||
+      !sameStableFileMetadata(after, pathAfter)
+    ) {
+      fail(`Hermes managed config descriptor changed during normalization: ${target}`);
+    }
+  } finally {
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      fail(`could not close Hermes managed config descriptor ${target}`);
+    }
+  }
+}
+
+function normalizeHermesManagedConfiguration(): void {
+  const identity = readSandboxIdentity();
+  const sandboxIdentity = {
+    uid: Number(identity.uid),
+    gid: Number(identity.gid),
+  };
+  for (const target of HERMES_MANAGED_CONFIG_FILES) {
+    normalizeHermesManagedConfigDescriptor(target, sandboxIdentity);
+  }
 }
 
 function sealHermesConfiguration(configurationEnvironment: Readonly<Record<string, string>>): void {
@@ -518,15 +670,14 @@ function installRootOwnedMaterials(materials: readonly ManagedStartupAgentMateri
 function verifyRootOwnedMaterials(materials: readonly ManagedStartupAgentMaterial[]): void {
   for (const material of materials) {
     if (material.kind !== "root-owned-file") continue;
-    const stat = fs.lstatSync(material.path);
+    const expected = Buffer.from(material.contents, "utf8");
+    const { bytes, stat } = readStableRegularFileSnapshot(material.path, expected.length);
     if (
-      stat.isSymbolicLink() ||
-      !stat.isFile() ||
-      stat.nlink !== 1 ||
-      stat.uid !== 0 ||
-      stat.gid !== 0 ||
-      modeOf(stat) !== material.mode ||
-      fs.readFileSync(material.path, "utf8") !== material.contents
+      stat.nlink !== 1n ||
+      stat.uid !== 0n ||
+      stat.gid !== 0n ||
+      Number(stat.mode & 0o777n) !== material.mode ||
+      !bytes.equals(expected)
     ) {
       fail(`committed root-owned material drifted: ${material.path}`);
     }
@@ -544,18 +695,11 @@ function installCorporateCa(corporateCaPath: string | null): void {
 
 function safeTrustBundle(target: string): Buffer | null {
   try {
-    const stat = fs.lstatSync(target);
-    if (
-      stat.isSymbolicLink() ||
-      !stat.isFile() ||
-      stat.nlink !== 1 ||
-      stat.size < 1 ||
-      stat.size > MAX_TRUST_BUNDLE_BYTES ||
-      (modeOf(stat) & 0o022) !== 0
-    ) {
+    const { bytes, stat } = readStableRegularFileSnapshot(target, MAX_TRUST_BUNDLE_BYTES);
+    if (Number(stat.mode & 0o022n) !== 0) {
       fail(`refusing unsafe trust bundle ${target}`);
     }
-    return readStableRegularFile(target, MAX_TRUST_BUNDLE_BYTES);
+    return bytes;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -670,6 +814,10 @@ function applyAdapter(context: ManagedStartupAdapterContext): void {
       break;
     case "hermes":
       sealHermesConfiguration(mapped.configurationEnvironment);
+      // Normalize before the coordinator commits a newly applied profile so
+      // the durable transaction never records generator-created 0600 files as
+      // a completed mutable image contract.
+      normalizeHermesManagedConfiguration();
       break;
     case "langchain-deepagents-code":
       break;
@@ -711,6 +859,11 @@ export async function applyManagedStartupImageProfile(
     adapters(),
   );
   const mapped = mapManagedStartupProfileToAgentEnvironment(result.application.profile);
+  if (expectedAgent === "hermes" && !result.adapterApplied) {
+    // Committed startup replays still repair generator-created 0600 files,
+    // while the descriptor guard preserves root-owned shields-up files.
+    normalizeHermesManagedConfiguration();
+  }
   let corporateCaMerged: boolean;
   if (result.adapterApplied) {
     corporateCaMerged = result.application.corporateCaPath !== null;

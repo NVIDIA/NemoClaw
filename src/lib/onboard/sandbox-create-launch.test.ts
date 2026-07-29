@@ -58,77 +58,78 @@ function managedProfileForAgent(
     tuning: { contextWindow: null, maxTokens: null, reasoning: null },
     corporateCa: { bundleSha256 },
   };
-  if (agent === "openclaw") {
-    return {
-      ...shared,
-      agent,
-      agentConfig: {
+  switch (agent) {
+    case "openclaw":
+      return {
+        ...shared,
         agent,
-        webSearch: { enabled: false, provider: "tavily" },
-        otel: {
-          enabled: false,
-          endpointUrl: "http://host.openshell.internal:4318",
-          serviceName: "openclaw-gateway",
-          sampleRate: 1,
+        agentConfig: {
+          agent,
+          webSearch: { enabled: false, provider: "tavily" },
+          otel: {
+            enabled: false,
+            endpointUrl: "http://host.openshell.internal:4318",
+            serviceName: "openclaw-gateway",
+            sampleRate: 1,
+          },
+          agentTimeoutSeconds: 900,
+          heartbeatEvery: null,
+          extraAgents: { agents: [], defaults: {}, main: {} },
+          deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
+          minimalBootstrap: false,
         },
-        agentTimeoutSeconds: 900,
-        heartbeatEvery: null,
-        extraAgents: { agents: [], defaults: {}, main: {} },
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
-        minimalBootstrap: false,
-      },
-      inference: {
-        ...shared.inference,
-        primaryModelRef: "inference/nvidia/test-model",
-        inputModalities: ["text"],
-      },
-      tuning: {
-        contextWindow: 131_072,
-        maxTokens: 8192,
-        reasoning: false,
-      },
-      dashboard: {
+        inference: {
+          ...shared.inference,
+          primaryModelRef: "inference/nvidia/test-model",
+          inputModalities: ["text"],
+        },
+        tuning: {
+          contextWindow: 131_072,
+          maxTokens: 8192,
+          reasoning: false,
+        },
+        dashboard: {
+          agent,
+          mode: "loopback",
+          url: "http://127.0.0.1:18789",
+          port: 18_789,
+          bindAddress: "127.0.0.1",
+          wslExposure: false,
+        },
+      };
+    case "hermes":
+      return {
+        ...shared,
         agent,
-        mode: "loopback",
-        url: "http://127.0.0.1:18789",
-        port: 18_789,
-        bindAddress: "127.0.0.1",
-        wslExposure: false,
-      },
-    };
+        agentConfig: {
+          agent,
+          webSearch: { enabled: false, provider: "tavily" },
+        },
+        dashboard: {
+          agent,
+          mode: "disabled",
+          url: "http://127.0.0.1:19189",
+          publicPort: null,
+          internalPort: null,
+          tuiEnabled: false,
+        },
+      };
+    case "langchain-deepagents-code":
+      return {
+        ...shared,
+        agent,
+        agentConfig: {
+          agent,
+          autoApprovalMode: "disabled",
+          observabilityEnabled: false,
+        },
+        inference: {
+          ...shared.inference,
+          upstreamEndpointUrl: "https://integrate.api.nvidia.com/v1",
+        },
+        dashboard: { agent, mode: "disabled" },
+      };
   }
-  if (agent === "hermes") {
-    return {
-      ...shared,
-      agent,
-      agentConfig: {
-        agent,
-        webSearch: { enabled: false, provider: "tavily" },
-      },
-      dashboard: {
-        agent,
-        mode: "disabled",
-        url: "http://127.0.0.1:19189",
-        publicPort: null,
-        internalPort: null,
-        tuiEnabled: false,
-      },
-    };
-  }
-  return {
-    ...shared,
-    agent,
-    agentConfig: {
-      agent,
-      autoApprovalMode: "disabled",
-      observabilityEnabled: false,
-    },
-    inference: {
-      ...shared.inference,
-      upstreamEndpointUrl: "https://integrate.api.nvidia.com/v1",
-    },
-    dashboard: { agent, mode: "disabled" },
-  };
 }
 
 function createTrustedBuildContext(): string {

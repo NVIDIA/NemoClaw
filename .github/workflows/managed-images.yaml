@@ -207,7 +207,13 @@ jobs:
               "no_proxy=lower.internal" \
               nemoclaw-start \
               /bin/sh -c \
-              'id -u > /tmp/nemoclaw-pr-command-uid
+              'if [ -x /usr/local/bin/dcode ]; then
+                timeout 10 /usr/local/bin/dcode -n "" \
+                  > /tmp/nemoclaw-pr-dcode-empty-prompt-output 2>&1
+                printf "%s\n" "$?" \
+                  > /tmp/nemoclaw-pr-dcode-empty-prompt-status
+              fi
+              id -u > /tmp/nemoclaw-pr-command-uid
               printf "%s\n" "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-}" \
                 > /tmp/nemoclaw-pr-applied
               {
@@ -247,20 +253,29 @@ jobs:
             exit 1
           fi
           if [ "$AGENT" = "langchain-deepagents-code" ]; then
-            expected_http_proxy="http://10.200.0.1:3128"
-            expected_https_proxy="$expected_http_proxy"
-            expected_no_proxy="localhost,127.0.0.1,::1,10.200.0.1"
-            expected_lower_http_proxy="$expected_http_proxy"
-            expected_lower_https_proxy="$expected_https_proxy"
-            expected_lower_no_proxy="$expected_no_proxy"
-          else
-            expected_http_proxy="http://upper-http:upper-secret@upper-http.example.test:18080"
-            expected_https_proxy="http://upper-https:upper-secret@upper-https.example.test:18443"
-            expected_no_proxy="upper.internal"
-            expected_lower_http_proxy="http://lower-http:lower-secret@lower-http.example.test:28080"
-            expected_lower_https_proxy="http://lower-https:lower-secret@lower-https.example.test:28443"
-            expected_lower_no_proxy="lower.internal"
+            dcode_empty_prompt_status="$(
+              docker exec -u 0 "$container" \
+                cat /tmp/nemoclaw-pr-dcode-empty-prompt-status
+            )"
+            dcode_empty_prompt_output="$(
+              docker exec -u 0 "$container" \
+                cat /tmp/nemoclaw-pr-dcode-empty-prompt-output
+            )"
+            if [ "$dcode_empty_prompt_status" != "2" ] \
+              || [ "$dcode_empty_prompt_output" != \
+                "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then
+              echo "ERROR: managed DCode launcher/supervisor empty-prompt contract failed." >&2
+              printf 'Status: %s\nOutput:\n%s\n' \
+                "$dcode_empty_prompt_status" "$dcode_empty_prompt_output" >&2
+              exit 1
+            fi
           fi
+          expected_http_proxy="http://10.200.0.1:3128"
+          expected_https_proxy="$expected_http_proxy"
+          expected_no_proxy="localhost,127.0.0.1,::1,10.200.0.1"
+          expected_lower_http_proxy="$expected_http_proxy"
+          expected_lower_https_proxy="$expected_https_proxy"
+          expected_lower_no_proxy="$expected_no_proxy"
           expected_proxy_environment="$(
             printf 'HTTP_PROXY=%s\n' "$expected_http_proxy"
             printf 'HTTPS_PROXY=%s\n' "$expected_https_proxy"
@@ -702,7 +717,13 @@ jobs:
               "NEMOCLAW_CORPORATE_CA_B64=$corporate_ca_b64" \
               nemoclaw-start \
               /bin/sh -c \
-              'id -u > /tmp/nemoclaw-managed-command-uid
+              'if [ -x /usr/local/bin/dcode ]; then
+                timeout 10 /usr/local/bin/dcode -n "" \
+                  > /tmp/nemoclaw-managed-dcode-empty-prompt-output 2>&1
+                printf "%s\n" "$?" \
+                  > /tmp/nemoclaw-managed-dcode-empty-prompt-status
+              fi
+              id -u > /tmp/nemoclaw-managed-command-uid
               {
                 printf "HTTP_PROXY=%s\n" "${HTTP_PROXY-__UNSET__}"
                 printf "HTTPS_PROXY=%s\n" "${HTTPS_PROXY-__UNSET__}"
@@ -744,14 +765,26 @@ jobs:
             exit 1
           fi
           if [ "$AGENT" = "langchain-deepagents-code" ]; then
-            expected_http_proxy="http://10.200.0.1:3128"
-            expected_https_proxy="$expected_http_proxy"
-            expected_no_proxy="localhost,127.0.0.1,::1,10.200.0.1"
-          else
-            expected_http_proxy="http://fixture-http-proxy.example.test:18080"
-            expected_https_proxy="http://fixture-https-proxy.example.test:18443"
-            expected_no_proxy="localhost,127.0.0.1,.example.test"
+            dcode_empty_prompt_status="$(
+              docker exec -u 0 "$managed_container" \
+                /usr/bin/cat /tmp/nemoclaw-managed-dcode-empty-prompt-status
+            )"
+            dcode_empty_prompt_output="$(
+              docker exec -u 0 "$managed_container" \
+                /usr/bin/cat /tmp/nemoclaw-managed-dcode-empty-prompt-output
+            )"
+            if [ "$dcode_empty_prompt_status" != "2" ] \
+              || [ "$dcode_empty_prompt_output" != \
+                "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then
+              echo "ERROR: managed DCode launcher/supervisor empty-prompt contract failed." >&2
+              printf 'Status: %s\nOutput:\n%s\n' \
+                "$dcode_empty_prompt_status" "$dcode_empty_prompt_output" >&2
+              exit 1
+            fi
           fi
+          expected_http_proxy="http://10.200.0.1:3128"
+          expected_https_proxy="$expected_http_proxy"
+          expected_no_proxy="localhost,127.0.0.1,::1,10.200.0.1"
           expected_proxy_environment="$(
             printf 'HTTP_PROXY=%s\n' "$expected_http_proxy"
             printf 'HTTPS_PROXY=%s\n' "$expected_https_proxy"

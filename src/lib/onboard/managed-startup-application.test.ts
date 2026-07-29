@@ -28,27 +28,28 @@ function sha256(bytes: string | Buffer): string {
 }
 
 function agentConfigFor(agent: ManagedStartupAgent): ManagedStartupAgentConfig {
-  if (agent === "openclaw") {
-    return {
-      agent,
-      webSearch: { enabled: false, provider: "brave" },
-      otel: {
-        enabled: false,
-        endpointUrl: "http://host.openshell.internal:4318",
-        serviceName: "openclaw-gateway",
-        sampleRate: 1,
-      },
-      agentTimeoutSeconds: 900,
-      heartbeatEvery: null,
-      extraAgents: { agents: [], defaults: {}, main: {} },
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
-      minimalBootstrap: true,
-    };
+  switch (agent) {
+    case "openclaw":
+      return {
+        agent,
+        webSearch: { enabled: false, provider: "brave" },
+        otel: {
+          enabled: false,
+          endpointUrl: "http://host.openshell.internal:4318",
+          serviceName: "openclaw-gateway",
+          sampleRate: 1,
+        },
+        agentTimeoutSeconds: 900,
+        heartbeatEvery: null,
+        extraAgents: { agents: [], defaults: {}, main: {} },
+        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
+        minimalBootstrap: true,
+      };
+    case "hermes":
+      return { agent, webSearch: { enabled: false, provider: "tavily" } };
+    case "langchain-deepagents-code":
+      return { agent, autoApprovalMode: "thread-opt-in", observabilityEnabled: true };
   }
-  if (agent === "hermes") {
-    return { agent, webSearch: { enabled: false, provider: "tavily" } };
-  }
-  return { agent, autoApprovalMode: "thread-opt-in", observabilityEnabled: true };
 }
 
 function profileFor(

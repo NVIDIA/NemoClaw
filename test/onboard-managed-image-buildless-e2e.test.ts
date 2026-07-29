@@ -358,8 +358,8 @@ function parsePayload(stdout: string): ChildPayload {
     .split(/\r?\n/u)
     .reverse()
     .find((line) => line.startsWith("{") && line.endsWith("}"));
-  if (!payload) throw new Error(`managed onboard child did not emit evidence:\n${stdout}`);
-  return JSON.parse(payload) as ChildPayload;
+  expect(payload, `managed onboard child did not emit evidence:\n${stdout}`).toBeDefined();
+  return JSON.parse(payload as string) as ChildPayload;
 }
 
 function runManagedOnboard(
@@ -467,18 +467,17 @@ function assertManagedLaunch(
   });
 
   const serializedCreate = createArgs.join("\n");
-  if (agent === "langchain-deepagents-code") {
-    expect(serializedCreate).not.toContain("upper-secret");
-    expect(serializedCreate).not.toContain("lower-secret");
-  } else {
-    for (const [name, value] of Object.entries(AUTHENTICATED_PROXY_ENVIRONMENT)) {
-      const forwarded = createArgs.find((argument) => argument.startsWith(`${name}=`));
-      if (name === "NO_PROXY" || name === "no_proxy") {
-        expect(forwarded).toContain(`${name}=${value},localhost,`);
-      } else {
-        expect(forwarded).toBe(`${name}=${value}`);
-      }
-    }
+  expect(serializedCreate.includes("upper-secret")).toBe(agent !== "langchain-deepagents-code");
+  expect(serializedCreate.includes("lower-secret")).toBe(agent !== "langchain-deepagents-code");
+  const expectedForwardedProxyEntries =
+    agent === "langchain-deepagents-code" ? [] : Object.entries(AUTHENTICATED_PROXY_ENVIRONMENT);
+  for (const [name, value] of expectedForwardedProxyEntries) {
+    const forwarded = createArgs.find((argument) => argument.startsWith(`${name}=`));
+    const expected =
+      name === "NO_PROXY" || name === "no_proxy"
+        ? expect.stringContaining(`${name}=${value},localhost,`)
+        : `${name}=${value}`;
+    expect(forwarded).toEqual(expected);
   }
 
   const registration = result.payload.registerCalls.find(
@@ -491,7 +490,7 @@ function assertManagedLaunch(
       result.payload.registerCalls,
     )}`,
   ).toBeDefined();
-  if (agent !== "openclaw") expect(registration?.agent).toBe(agent);
+  expect(registration?.agent ?? "openclaw").toBe(agent);
   expect(registration?.workload).toEqual({
     schemaVersion: 1,
     kind: "managed-image",

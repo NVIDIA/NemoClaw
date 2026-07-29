@@ -1106,6 +1106,7 @@ describe("Hermes sandbox provisioning", () => {
     const bashrcPath = path.join(etcDir, "bash.bashrc");
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
+    const entrypointEnvWrapperPath = path.join(localLib, "entrypoint-env-wrapper.sh");
     const buildMcpDigestPath = path.join(localLib, "build-hermes-mcp-digest.py");
     const mcpConfigTransactionPath = path.join(localLib, "hermes-mcp-config-transaction.py");
     const langfuseCredentialPatcherPath = path.join(
@@ -1129,6 +1130,7 @@ describe("Hermes sandbox provisioning", () => {
       mcpConfigTransactionPath,
       mcpManifest,
       gatewaySupervisorPath,
+      entrypointEnvWrapperPath,
       stateDirGuardPath,
       managedGatewayControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
@@ -1162,6 +1164,7 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(entrypointEnvWrapperPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {

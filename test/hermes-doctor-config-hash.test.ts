@@ -75,6 +75,7 @@ describe("Hermes doctor and config hash boundary", () => {
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
     );
+    const entrypointEnvWrapperPath = path.join(libDir, "entrypoint-env-wrapper.sh");
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");
     const bashrcPath = path.join(tmp, "bash.bashrc");
@@ -90,6 +91,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(binDir, "nemoclaw-gateway-control"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
+        entrypointEnvWrapperPath,
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
         langfuseCredentialPatcherPath,
@@ -144,6 +146,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
+      expect(mode(entrypointEnvWrapperPath)).toBe("444");
       expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
       expect(mode(path.join(libDir, "managed-gateway-control.py"))).toBe("500");
       expect(mode(preloadsDir)).toBe("755");

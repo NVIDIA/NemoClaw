@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, X509Certificate } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
@@ -12,6 +15,8 @@ import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/ag
 import {
   buildManagedStartupImageActionPlan,
   MANAGED_STARTUP_MERGED_CA_FILE,
+  normalizeHermesManagedConfigDescriptor,
+  readStableRegularFile,
   serializeManagedStartupRuntimeEnvironment,
 } from "./managed-startup/image-runtime";
 import {
@@ -20,10 +25,56 @@ import {
   validateManagedStartupProfile,
 } from "./managed-startup/profile";
 
+const PROXY_ENV_NAMES = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+] as const;
+
 describe("managed startup image runtime", () => {
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("maps the complete %s profile to an offline image-side action plan", (agent) => {
+  let temporaryDirectoryPath = "";
+
+  beforeEach(() => {
+    temporaryDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-"));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(temporaryDirectoryPath, { force: true, recursive: true });
+  });
+
+  function temporaryDirectory(): string {
+    return temporaryDirectoryPath;
+  }
+
+  function mockDescriptorOwnership(uid: bigint, gid: bigint): void {
+    const realFstatSync = fs.fstatSync.bind(fs);
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const ownership = new Map<PropertyKey, unknown>([
+      ["uid", uid],
+      ["gid", gid],
+    ]);
+    const owned = (stat: fs.BigIntStats): fs.BigIntStats =>
+      new Proxy(stat, {
+        get(inner, property) {
+          const value = ownership.has(property)
+            ? ownership.get(property)
+            : (Reflect.get(inner, property, inner) as unknown);
+          return typeof value === "function" ? value.bind(inner) : value;
+        },
+      });
+    vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number, options: { bigint: true }) =>
+      owned(realFstatSync(descriptor, options))) as typeof fs.fstatSync);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((file: fs.PathLike, options: { bigint: true }) =>
+      owned(realLstatSync(file, options))) as typeof fs.lstatSync);
+  }
+
+  it.each([
+    "openclaw",
+    "hermes",
+  ] as const)("maps the complete %s profile to an offline messaging and config action plan", (agent) => {
     const profile = managedStartupE2eProfile(agent);
     const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
     const plan = buildManagedStartupImageActionPlan(mapped);
@@ -34,22 +85,6 @@ describe("managed startup image runtime", () => {
         command.argv.some((argument) => /^(?:npm|npx|pip|pip3|uv)$/u.test(argument)),
       ),
     ).toBe(false);
-
-    if (agent === "langchain-deepagents-code") {
-      expect(plan).toEqual([
-        {
-          action: "generate-agent-config",
-          runAs: "sandbox",
-          argv: [
-            "/usr/local/bin/node",
-            "--experimental-strip-types",
-            "/opt/nemoclaw-deepagents-code/generate-config.ts",
-          ],
-        },
-      ]);
-      return;
-    }
-
     expect(plan.map(({ action, runAs }) => ({ action, runAs }))).toEqual([
       { action: "messaging-runtime-setup", runAs: "root" },
       { action: "generate-agent-config", runAs: "sandbox" },
@@ -57,6 +92,31 @@ describe("managed startup image runtime", () => {
     ]);
     expect(plan[0]?.argv).toContain("runtime-setup");
     expect(plan[2]?.argv).toContain("post-agent-install");
+  });
+
+  it("maps the complete DCode profile to its offline config action plan", () => {
+    const agent = "langchain-deepagents-code";
+    const profile = managedStartupE2eProfile(agent);
+    const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
+    const plan = buildManagedStartupImageActionPlan(mapped);
+
+    expect(plan.some((command) => command.argv.includes("agent-install"))).toBe(false);
+    expect(
+      plan.some((command) =>
+        command.argv.some((argument) => /^(?:npm|npx|pip|pip3|uv)$/u.test(argument)),
+      ),
+    ).toBe(false);
+    expect(plan).toEqual([
+      {
+        action: "generate-agent-config",
+        runAs: "sandbox",
+        argv: [
+          "/usr/local/bin/node",
+          "--experimental-strip-types",
+          "/opt/nemoclaw-deepagents-code/generate-config.ts",
+        ],
+      },
+    ]);
   });
 
   it.each(
@@ -104,9 +164,7 @@ describe("managed startup image runtime", () => {
     expect(script.endsWith("\n")).toBe(true);
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("preserves launch-only proxy env for %s unless the agent pins managed routing", (agent) => {
+  it.each(["openclaw", "hermes"] as const)("preserves launch-only proxy env for %s", (agent) => {
     const mapped = mapManagedStartupProfileToAgentEnvironment(
       managedStartupE2eProfile(agent, false, false, true),
     );
@@ -115,19 +173,22 @@ describe("managed startup image runtime", () => {
       false,
       mapped.configurationEnvironment,
     );
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ]) {
-      if (agent === "langchain-deepagents-code") {
-        expect(script).toContain(`unset ${name}`);
-      } else {
-        expect(script).not.toMatch(new RegExp(`(?:export|unset) ${name}(?:=|$)`, "mu"));
-      }
+    for (const name of PROXY_ENV_NAMES) {
+      expect(script).not.toMatch(new RegExp(`(?:export|unset) ${name}(?:=|$)`, "mu"));
+    }
+  });
+
+  it("clears launch-only proxy env when DCode pins managed routing", () => {
+    const mapped = mapManagedStartupProfileToAgentEnvironment(
+      managedStartupE2eProfile("langchain-deepagents-code", false, false, true),
+    );
+    const script = serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      false,
+      mapped.configurationEnvironment,
+    );
+    for (const name of PROXY_ENV_NAMES) {
+      expect(script).toContain(`unset ${name}`);
     }
   });
 
@@ -135,5 +196,123 @@ describe("managed startup image runtime", () => {
     expect(() =>
       serializeManagedStartupRuntimeEnvironment({ NEMOCLAW_MODEL: "bad\nvalue" }, false),
     ).toThrow(/single-line/u);
+  });
+
+  it("refuses a symlink instead of opening its target", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "target");
+    const link = path.join(directory, "link");
+    fs.writeFileSync(target, "trusted\n");
+    fs.symlinkSync(target, link);
+
+    expect(() => readStableRegularFile(link, 1024)).toThrow(/unsafe or unreadable/u);
+  });
+
+  it("rejects descriptor metadata drift after a bounded read", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "material");
+    fs.writeFileSync(target, "trusted\n", { mode: 0o600 });
+    const realReadSync = fs.readSync.bind(fs);
+    vi.spyOn(fs, "readSync")
+      .mockImplementationOnce(((
+        descriptor: number,
+        buffer: NodeJS.ArrayBufferView,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => {
+        const bytesRead = realReadSync(descriptor, buffer, offset, length, position);
+        fs.chmodSync(target, 0o644);
+        return bytesRead;
+      }) as typeof fs.readSync)
+      .mockImplementation(realReadSync as typeof fs.readSync);
+
+    expect(() => readStableRegularFile(target, 1024)).toThrow(/changed while it was read/u);
+  });
+
+  it("normalizes mutable sandbox-owned Hermes config descriptors to mode 0640", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "config.yaml");
+    fs.writeFileSync(target, "model: managed\n", { mode: 0o600 });
+    mockDescriptorOwnership(501n, 20n);
+
+    normalizeHermesManagedConfigDescriptor(target, {
+      uid: 501,
+      gid: 20,
+    });
+
+    expect(fs.readFileSync(target, "utf8")).toBe("model: managed\n");
+    expect(fs.statSync(target).mode & 0o777).toBe(0o640);
+  });
+
+  it("preserves a root-owned shields-up Hermes descriptor without chmod", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, ".env");
+    fs.writeFileSync(target, "OPENAI_API_KEY=managed\n", { mode: 0o444 });
+    mockDescriptorOwnership(0n, 0n);
+    const chmod = vi.spyOn(fs, "fchmodSync");
+
+    normalizeHermesManagedConfigDescriptor(target, {
+      uid: 501,
+      gid: 20,
+    });
+
+    expect(chmod).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target, "utf8")).toBe("OPENAI_API_KEY=managed\n");
+  });
+
+  it.each([0o440, 0o644, 0o660])("fails closed on unexpected mutable Hermes mode %s", (mode) => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "config.yaml");
+    fs.writeFileSync(target, "model: managed\n", { mode });
+    fs.chmodSync(target, mode);
+    mockDescriptorOwnership(501n, 20n);
+
+    expect(() =>
+      normalizeHermesManagedConfigDescriptor(target, {
+        uid: 501,
+        gid: 20,
+      }),
+    ).toThrow(/unexpected Hermes managed config descriptor/u);
+    expect(fs.statSync(target).mode & 0o777).toBe(mode);
+  });
+
+  it("fails closed on an unexpected Hermes descriptor owner", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "config.yaml");
+    fs.writeFileSync(target, "model: managed\n", { mode: 0o600 });
+    mockDescriptorOwnership(502n, 21n);
+
+    expect(() =>
+      normalizeHermesManagedConfigDescriptor(target, {
+        uid: 501,
+        gid: 20,
+      }),
+    ).toThrow(/unexpected Hermes managed config descriptor/u);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("detects a path replacement while normalizing through the trusted descriptor", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "config.yaml");
+    const displaced = path.join(directory, "displaced.yaml");
+    const replacement = path.join(directory, "replacement.yaml");
+    fs.writeFileSync(target, "model: managed\n", { mode: 0o600 });
+    fs.writeFileSync(replacement, "model: replaced\n", { mode: 0o640 });
+    mockDescriptorOwnership(501n, 20n);
+    const realFchmodSync = fs.fchmodSync.bind(fs);
+    vi.spyOn(fs, "fchmodSync").mockImplementation((descriptor, mode) => {
+      realFchmodSync(descriptor, mode);
+      fs.renameSync(target, displaced);
+      fs.renameSync(replacement, target);
+    });
+
+    expect(() =>
+      normalizeHermesManagedConfigDescriptor(target, {
+        uid: 501,
+        gid: 20,
+      }),
+    ).toThrow(/changed during normalization/u);
+    expect(fs.readFileSync(target, "utf8")).toBe("model: replaced\n");
   });
 });

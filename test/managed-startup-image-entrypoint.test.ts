@@ -15,6 +15,7 @@ const ENTRYPOINTS = [
     dockerfile: "Dockerfile",
     managedBlockEnd: "# Reject an invalid explicit dashboard port",
     runtimeUserDefault: "root",
+    postApplicationContract: 'if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then',
   },
   {
     agent: "hermes",
@@ -22,6 +23,7 @@ const ENTRYPOINTS = [
     dockerfile: "agents/hermes/Dockerfile",
     managedBlockEnd: "# ── Source shared sandbox initialisation library",
     runtimeUserDefault: "root",
+    postApplicationContract: 'if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then',
   },
   {
     agent: "langchain-deepagents-code",
@@ -29,6 +31,8 @@ const ENTRYPOINTS = [
     dockerfile: "agents/langchain-deepagents-code/Dockerfile",
     managedBlockEnd: "# The published managed image uses uid 0",
     runtimeUserDefault: "sandbox",
+    postApplicationContract:
+      "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
   },
 ] as const;
 
@@ -57,14 +61,10 @@ describe("managed startup image entrypoint contract", () => {
     expect(managedBlock).toContain("unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64");
     expect(managedBlock).not.toMatch(/\b(?:npm|npx|pip|pip3|uv)\b.*\binstall\b/iu);
 
-    if (contract.agent === "langchain-deepagents-code") {
-      expect(managedBlock).toContain(
-        "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
-      );
-      expect(script).not.toContain("su -c");
-    } else {
-      expect(script).toContain('if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then');
-    }
+    expect(contract.agent === "langchain-deepagents-code" ? managedBlock : script).toContain(
+      contract.postApplicationContract,
+    );
+    expect(script.includes("su -c")).toBe(false);
   });
 
   it.each(
