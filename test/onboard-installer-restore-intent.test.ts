@@ -54,7 +54,7 @@ runner.run = (command) => {
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return "my-assistant";
   if (cmd.includes("sandbox list")) {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
@@ -257,7 +257,7 @@ runner.run = (command) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.

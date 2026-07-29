@@ -66,7 +66,7 @@ runner.run = (command) => {
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return "my-assistant";
   if (cmd.includes("sandbox list")) {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
