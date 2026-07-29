@@ -15,10 +15,6 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import {
-  mergeHermesPreservedEnvIntoMessagingPlan,
-  readPreservedEnvFilesFromEnv,
-} from "../state/preserved-env/index";
-import {
   DEFAULT_TOOL_DISCLOSURE,
   normalizeToolDisclosure,
   type ToolDisclosure,
@@ -419,10 +415,6 @@ export function patchStagedDockerfile(
     const baseMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
       parseSandboxMessagingPlan(messagingPlan) ?? messagingPlan,
     );
-    const hydratedMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
-      baseMessagingPlan,
-      baseMessagingPlan.workflow === "rebuild" ? readPreservedEnvFilesFromEnv() : undefined,
-    );
     const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
     if (!messagingPlanArgPattern.test(dockerfile)) {
       throw new Error(
@@ -431,7 +423,7 @@ export function patchStagedDockerfile(
     }
     dockerfile = dockerfile.replace(
       messagingPlanArgPattern,
-      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(hydratedMessagingPlan))}`,
+      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(baseMessagingPlan))}`,
     );
   }
   if (hermesToolGateways.length > 0) {

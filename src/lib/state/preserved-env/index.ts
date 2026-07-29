@@ -22,8 +22,6 @@ export const HERMES_PRESERVED_ENV_INVENTORY: readonly PreservedEnvInventory[] = 
     patterns: ["*_HOME_CHANNEL", "*_HOME_CHANNEL_NAME", "*_HOME_CHANNEL_THREAD_ID"],
   },
 ];
-export const PRESERVED_ENV_REBUILD_KEY = "NEMOCLAW_REBUILD_PRESERVED_ENV_B64";
-
 const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
 const ENV_PATTERN_RE = /^[A-Z0-9_*]+$/;
 const MAX_ENV_FILE_BYTES = 1024 * 1024;
@@ -122,30 +120,6 @@ export function validatePreservedEnvFiles(
     seenPaths.add(record.path);
     return true;
   });
-}
-
-export function encodePreservedEnvFiles(files: readonly PreservedEnvFile[]): string {
-  if (!validatePreservedEnvFiles(files, HERMES_PRESERVED_ENV_INVENTORY)) {
-    throw new Error("Invalid preserved environment assignments");
-  }
-  return Buffer.from(JSON.stringify(files), "utf8").toString("base64");
-}
-
-export function readPreservedEnvFilesFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): PreservedEnvFile[] | undefined {
-  const encoded = env[PRESERVED_ENV_REBUILD_KEY];
-  if (!encoded) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-  } catch {
-    throw new Error(`${PRESERVED_ENV_REBUILD_KEY} must be base64-encoded JSON`);
-  }
-  if (!validatePreservedEnvFiles(parsed, HERMES_PRESERVED_ENV_INVENTORY)) {
-    throw new Error(`${PRESERVED_ENV_REBUILD_KEY} contains invalid assignments`);
-  }
-  return parsed;
 }
 
 export function mergeHermesPreservedEnvIntoMessagingPlan(
