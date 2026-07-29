@@ -258,6 +258,29 @@ describe("sanitizeConfigFile", () => {
     expect(sanitizeConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toContain("api_key:");
   });
+
+  it("returns failure without changing the source when a YAML rewrite fails", () => {
+    const configPath = join(tmpDir, "config.yaml");
+    const source = "api_key: sk-hermes-secret-key-value\n";
+    writeFileSync(configPath, source);
+
+    expect(
+      sanitizeYamlConfigFile(configPath, () => {
+        throw new Error("injected rewrite failure");
+      }),
+    ).toBe(false);
+    expect(readFileSync(configPath, "utf-8")).toBe(source);
+  });
+
+  it("sanitizes valid JSON arrays instead of treating them as failures", () => {
+    const configPath = join(tmpDir, "config.json");
+    writeFileSync(configPath, JSON.stringify([{ apiKey: "sk-secret-value-long-enough" }]));
+
+    expect(sanitizeConfigFile(configPath)).toBe(true);
+    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual([
+      { apiKey: "[STRIPPED_BY_MIGRATION]" },
+    ]);
+  });
 });
 
 describe("sanitizeEnvFileContent", () => {
@@ -314,10 +337,23 @@ describe("sanitizeEnvFile", () => {
   it("rewrites .env credentials in place", () => {
     const envPath = join(tmpDir, ".env");
     writeFileSync(envPath, "DB_PASS=secret\nLOG_LEVEL=info\n");
-    sanitizeEnvFile(envPath);
+    expect(sanitizeEnvFile(envPath)).toBe(true);
     expect(readFileSync(envPath, "utf-8")).toBe(
       "DB_PASS=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n",
     );
+  });
+
+  it("returns failure without changing the source when an env rewrite fails", () => {
+    const envPath = join(tmpDir, ".env");
+    const source = "DB_PASS=secret\n";
+    writeFileSync(envPath, source);
+
+    expect(
+      sanitizeEnvFile(envPath, () => {
+        throw new Error("injected rewrite failure");
+      }),
+    ).toBe(false);
+    expect(readFileSync(envPath, "utf-8")).toBe(source);
   });
 });
 

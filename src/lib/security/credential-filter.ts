@@ -389,13 +389,23 @@ export function sanitizeEnvFileContent(content: string): string {
 /**
  * Strip credential lines from a `.env` file in-place.
  */
-export function sanitizeEnvFile(filePath: string): void {
+export function sanitizeEnvFile(
+  filePath: string,
+  writeSanitized: (targetPath: string, contents: string) => void = writeFileAtomically,
+): boolean {
   const raw = readRegularFileNoFollow(filePath);
-  if (raw === null) return;
-  writeFileAtomically(filePath, sanitizeEnvFileContent(raw));
+  if (raw === null) return false;
+  try {
+    writeSanitized(filePath, sanitizeEnvFileContent(raw));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function toConfigValue(value: unknown): ConfigValue | undefined {
+const UNREPRESENTABLE_CONFIG_VALUE = Symbol("unrepresentable-config-value");
+
+function toConfigValue(value: unknown): ConfigValue | typeof UNREPRESENTABLE_CONFIG_VALUE {
   if (value === null || value === undefined) return value;
   if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
     return value;
@@ -404,17 +414,17 @@ function toConfigValue(value: unknown): ConfigValue | undefined {
     const items: ConfigValue[] = [];
     for (const entry of value) {
       const converted = toConfigValue(entry);
-      if (converted === undefined && entry !== undefined && entry !== null) return undefined;
-      items.push(converted as ConfigValue);
+      if (converted === UNREPRESENTABLE_CONFIG_VALUE) return UNREPRESENTABLE_CONFIG_VALUE;
+      items.push(converted);
     }
     return items;
   }
-  if (!isObjectRecord(value)) return undefined;
+  if (!isObjectRecord(value)) return UNREPRESENTABLE_CONFIG_VALUE;
   const result: ConfigObject = {};
   for (const [key, entry] of Object.entries(value)) {
     const converted = toConfigValue(entry);
-    if (converted === undefined && entry !== undefined && entry !== null) return undefined;
-    result[key] = converted as ConfigValue;
+    if (converted === UNREPRESENTABLE_CONFIG_VALUE) return UNREPRESENTABLE_CONFIG_VALUE;
+    result[key] = converted;
   }
   return result;
 }
@@ -424,22 +434,26 @@ function toConfigValue(value: unknown): ConfigValue | undefined {
  * Removes the "gateway" section when present (auth tokens — regenerated
  * at startup), matching JSON sanitization.
  */
-export function sanitizeYamlConfigFile(configPath: string): boolean {
+export function sanitizeYamlConfigFile(
+  configPath: string,
+  writeSanitized: (targetPath: string, contents: string) => void = writeFileAtomically,
+): boolean {
   const rawConfig = readRegularFileNoFollow(configPath);
   if (rawConfig === null) return false;
-  let parsed: unknown;
   try {
-    parsed = parseYaml(rawConfig);
+    const parsed = parseYaml(rawConfig);
+    const configValue = toConfigValue(parsed);
+    if (configValue === UNREPRESENTABLE_CONFIG_VALUE || !isConfigObject(configValue)) {
+      return false;
+    }
+
+    const { gateway: _gateway, ...config } = configValue;
+    const sanitized = stripCredentials(config);
+    writeSanitized(configPath, stringifyYaml(sanitized));
+    return true;
   } catch {
     return false;
   }
-  const configValue = toConfigValue(parsed);
-  if (!isConfigObject(configValue)) return false;
-
-  const { gateway: _gateway, ...config } = configValue;
-  const sanitized = stripCredentials(config);
-  writeFileAtomically(configPath, stringifyYaml(sanitized));
-  return true;
 }
 
 /**
@@ -455,9 +469,13 @@ export function sanitizeConfigFile(configPath: string): boolean {
   if (rawConfig === null) return false;
 
   try {
-    const parsed = parseJson<ConfigValue>(rawConfig);
-    if (!isConfigObject(parsed)) return false;
-    const { gateway: _gateway, ...config } = parsed;
+    const parsed = parseJson<ConfigValue | object>(rawConfig);
+    if (!isConfigValue(parsed)) return false;
+    let config = parsed;
+    if (isConfigObject(parsed)) {
+      const { gateway: _gateway, ...withoutGateway } = parsed;
+      config = withoutGateway;
+    }
     const sanitized = stripCredentials(config);
     writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
     return true;

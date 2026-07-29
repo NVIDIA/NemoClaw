@@ -23,6 +23,7 @@ import {
   readlinkSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -628,8 +629,29 @@ function computeBlueprintDigest(): string | null {
  * Walk a local directory and sanitize any JSON config files found.
  * Also removes files that match CREDENTIAL_SENSITIVE_BASENAMES.
  */
-function sanitizeBackupDirectory(dirPath: string): void {
+export interface BackupSanitizationOperations {
+  sanitizeConfigFile: (filePath: string) => boolean;
+  sanitizeEnvFile: (filePath: string) => boolean;
+  unlinkFile: (filePath: string) => void;
+  removeBackup: (backupPath: string) => void;
+  backupExists: (backupPath: string) => boolean;
+}
+
+const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
+  sanitizeConfigFile,
+  sanitizeEnvFile,
+  unlinkFile: unlinkSync,
+  removeBackup: (backupPath) => rmSync(backupPath, { recursive: true, force: true }),
+  backupExists: existsSync,
+};
+
+/** @visibleForTesting */
+export function sanitizeBackupDirectory(
+  dirPath: string,
+  overrides: Partial<BackupSanitizationOperations> = {},
+): void {
   if (!existsSync(dirPath)) return;
+  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
 
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
@@ -639,35 +661,44 @@ function sanitizeBackupDirectory(dirPath: string): void {
       } else if (entry.isFile()) {
         const name = entry.name.toLowerCase();
         if (isSensitiveFile(entry.name)) {
-          try {
-            require("node:fs").unlinkSync(fullPath);
-          } catch {
-            /* best effort */
-          }
+          operations.unlinkFile(fullPath);
         } else if (name.endsWith(".json") || name.endsWith(".yaml") || name.endsWith(".yml")) {
           // JSON (OpenClaw) and YAML (Hermes config.yaml) both carry secrets.
-          // Fail closed for YAML: omit the artifact when sanitization cannot run.
-          const sanitized = sanitizeConfigFile(fullPath);
-          if (!sanitized && (name.endsWith(".yaml") || name.endsWith(".yml"))) {
-            try {
-              require("node:fs").unlinkSync(fullPath);
-            } catch {
-              /* best effort */
-            }
+          // Fail closed: omit the artifact when sanitization cannot run.
+          if (!operations.sanitizeConfigFile(fullPath)) {
+            operations.unlinkFile(fullPath);
           }
         } else if (name === ".env" || name.endsWith(".env")) {
           // Hermes stores API keys in .env alongside config.yaml.
-          try {
-            sanitizeEnvFile(fullPath);
+          if (operations.sanitizeEnvFile(fullPath)) {
             chmodSync(fullPath, 0o600);
-          } catch {
-            /* best effort */
+          } else {
+            operations.unlinkFile(fullPath);
           }
         }
       }
     }
   };
-  walk(dirPath);
+
+  try {
+    walk(dirPath);
+  } catch (error) {
+    try {
+      operations.removeBackup(dirPath);
+    } catch (cleanupError) {
+      throw new Error("Credential sanitization failed and backup cleanup failed", {
+        cause: cleanupError,
+      });
+    }
+    if (operations.backupExists(dirPath)) {
+      throw new Error("Credential sanitization failed and the incomplete backup remains", {
+        cause: error,
+      });
+    }
+    throw new Error("Credential sanitization failed; removed the incomplete backup", {
+      cause: error,
+    });
+  }
 }
 
 // ── Logging ────────────────────────────────────────────────────────

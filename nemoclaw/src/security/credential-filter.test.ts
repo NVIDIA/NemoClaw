@@ -40,6 +40,7 @@ describe("plugin credential-filter", () => {
         env: { GITHUB_TOKEN: "ghp_abcdefghijklmnopqrstuvwxyz0123456789", NODE_ENV: "test" },
         args: ["--api-key", "opaque-secret-value", "--verbose"],
       },
+      customHeader: "Bearer opaque-migration-secret",
       model: "keep-me",
       publicKey: "verify-me",
       apiKey: "openshell:resolve:env:NVIDIA_API_KEY",
@@ -60,6 +61,7 @@ describe("plugin credential-filter", () => {
     expect(mcp.env.GITHUB_TOKEN).toBe(CREDENTIAL_PLACEHOLDER);
     expect(mcp.env.NODE_ENV).toBe("test");
     expect(mcp.args).toEqual(["--api-key", CREDENTIAL_PLACEHOLDER, "--verbose"]);
+    expect(result.customHeader).toBe(CREDENTIAL_PLACEHOLDER);
     expect(result.model).toBe("keep-me");
     expect(result.publicKey).toBe("verify-me");
     expect(result.apiKey).toBe("openshell:resolve:env:NVIDIA_API_KEY");

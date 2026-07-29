@@ -83,6 +83,7 @@ const VALUE_SECRET_PATTERNS: readonly RegExp[] = [
   /tvly-[A-Za-z0-9_-]{10,}/,
   /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/,
   /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/,
+  /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/i,
   /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/,
 ];
 
