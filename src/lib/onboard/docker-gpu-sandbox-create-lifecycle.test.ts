@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as dockerAdapters from "../adapters/docker";
+import { createDockerGpuInspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 
@@ -243,6 +245,123 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(waitForSupervisor).not.toHaveBeenCalled();
     expect(finalizeBackup).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("uses the injected Docker capture for default container discovery", () => {
+    const deps = makeDeps();
+    const recreatePatch = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: { recreatePatch },
+    });
+
+    patch.maybeApplyDuringCreate();
+
+    expect(deps.dockerCapture).toHaveBeenCalledWith(
+      expect.arrayContaining(["ps", "-a", "--filter", "label=openshell.ai/sandbox-name=alpha"]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(recreatePatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps polling recreation and rollback on bound engine A when ambient adapters select B", () => {
+    const failOnEngineB = () => {
+      throw new Error("ambient engine B must not receive Docker operations");
+    };
+    const engineBSpies = [
+      vi.spyOn(dockerAdapters, "dockerCapture").mockImplementation(failOnEngineB),
+      vi.spyOn(dockerAdapters, "dockerRun").mockImplementation(failOnEngineB),
+      vi.spyOn(dockerAdapters, "dockerRunDetached").mockImplementation(failOnEngineB),
+      vi.spyOn(dockerAdapters, "dockerRename").mockImplementation(failOnEngineB),
+      vi.spyOn(dockerAdapters, "dockerRm").mockImplementation(failOnEngineB),
+      vi.spyOn(dockerAdapters, "dockerStart").mockImplementation(failOnEngineB),
+      vi.spyOn(dockerAdapters, "dockerStop").mockImplementation(failOnEngineB),
+    ];
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([createDockerGpuInspectFixture()]);
+      return "";
+    });
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "engine-a-probe\n" }));
+    const dockerRunDetached = vi.fn(() => ({
+      status: 1,
+      stderr: "engine A forced recreate failure",
+    }));
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      dockerDesktopWsl: false,
+      deps: {
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        runCaptureOpenshell: vi.fn(() => ""),
+        sleep: vi.fn(),
+        dockerCapture,
+        dockerRun,
+        dockerRunDetached,
+        dockerRename,
+        dockerRm,
+        dockerStart,
+        dockerStop,
+        now: () => new Date("2026-07-29T00:00:00Z"),
+        detectSandboxFallbackDns: () => null,
+        readDir: () => null,
+        readFile: () => null,
+      },
+      overrides: { onPatchFailureExit },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.exitOnPatchError();
+
+    expect(dockerCapture).toHaveBeenCalledWith(
+      ["inspect", "--type", "container", "old-container-id"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerRun).toHaveBeenCalledWith(
+      expect.arrayContaining(["create", "--gpus", "all"]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStop).toHaveBeenCalledWith(
+      "old-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerRename).toHaveBeenCalledWith(
+      "old-container-id",
+      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerRunDetached).toHaveBeenCalledWith(
+      expect.arrayContaining(["--name", "openshell-alpha", "--gpus", "all"]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStop).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerRm).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerRename).toHaveBeenCalledWith(
+      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStart).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
+    for (const engineBSpy of engineBSpies) expect(engineBSpy).not.toHaveBeenCalled();
   });
 
   it("records patchError when recreate throws and exitOnPatchError reports it via printDockerGpuPatchFailureAndExit", () => {

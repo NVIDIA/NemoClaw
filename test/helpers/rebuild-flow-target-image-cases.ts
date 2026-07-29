@@ -236,7 +236,7 @@ export function registerRebuildFlowTargetImageTests(): void {
       try {
         await expect(
           harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-        ).rejects.toThrow("Replacement sandbox image context changed before delete");
+        ).rejects.toThrow("Replacement sandbox image inputs changed before delete");
 
         expectNoSandboxDelete(harness.runOpenshellSpy);
         expect(harness.onboardSpy).not.toHaveBeenCalled();
@@ -296,7 +296,7 @@ export function registerRebuildFlowTargetImageTests(): void {
         try {
           await expect(
             harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-          ).rejects.toThrow("Replacement sandbox image context changed before delete");
+          ).rejects.toThrow("Replacement sandbox image inputs changed before delete");
           expectNoSandboxDelete(harness.runOpenshellSpy);
           expect(harness.onboardSpy).not.toHaveBeenCalled();
           expect(cleanupBuildCtx).toHaveBeenCalledOnce();

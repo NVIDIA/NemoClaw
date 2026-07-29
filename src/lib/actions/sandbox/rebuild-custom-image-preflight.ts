@@ -3,14 +3,21 @@
 
 import path from "node:path";
 
-import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import type { DockerBuildOptions, DockerRunOptions, DockerRunResult } from "../../adapters/docker";
+import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
 import type { WebSearchConfig } from "../../inference/web-search";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
+import {
+  applyReasoningEffortEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+} from "../../onboard/reasoning-mode";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
+import { dockerBuildSubprocessEnv, sandboxLocalImageRef } from "../../onboard/sandbox-prebuild";
 import { ROOT } from "../../runner";
 import {
   formatBuildFailureDiagnostics,
@@ -18,12 +25,14 @@ import {
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
-import {
-  applyReasoningEffortEnv,
-  REASONING_EFFORT_ENV,
-  type ReasoningEffort,
-} from "../../onboard/reasoning-mode";
 import type { ToolDisclosure } from "../../tool-disclosure";
+import {
+  captureOpenClawLegacyDockerBinding,
+  createPreparedOpenClawLegacyImage,
+  disposeOpenClawLegacyDockerImage,
+  inspectOpenClawLegacyImageId,
+  type OpenClawLegacyDockerBinding,
+} from "./rebuild/openclaw-legacy-image";
 import {
   createBuildContextVerifier,
   createIdempotentBuildContextCleanup,
@@ -42,6 +51,9 @@ type PreflightInput = {
   toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
+  sandboxName: string;
+  /** Whether recreation can consume an image built by the host Docker engine. */
+  localPrebuildEnabled: boolean;
   gatewayPort: number;
   chatUiUrl: string;
   preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata | null;
@@ -50,8 +62,28 @@ type PreflightInput = {
 type PreflightDeps = {
   stageBuildContext?: typeof stageCreateSandboxBuildContext;
   prepareDockerfilePatch?: typeof prepareSandboxDockerfilePatch;
-  buildImage?: typeof dockerBuild;
-  removeImage?: typeof dockerRmi;
+  buildImage?: BuildImage;
+  removeImage?: RemoveImage;
+  buildxAvailable?: (process: DockerProofProcess) => boolean;
+  buildDockerEnv?: () => Record<string, string>;
+  captureLegacyDockerBinding?: typeof captureOpenClawLegacyDockerBinding;
+  inspectLegacyImageId?: typeof inspectOpenClawLegacyImageId;
+  createLegacyImage?: typeof createPreparedOpenClawLegacyImage;
+  disposeLegacyImage?: typeof disposeOpenClawLegacyDockerImage;
+};
+
+type BuildImage = (
+  dockerfilePath: string,
+  tag: string,
+  contextDir: string,
+  options: DockerBuildOptions,
+) => DockerRunResult;
+
+type RemoveImage = (imageRef: string, options: NonNullable<DockerRunOptions>) => DockerRunResult;
+
+type DockerProofProcess = {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
 };
 
 export type PreparedRebuildImage = FingerprintedPreparedBuildContext & {
@@ -80,7 +112,7 @@ function resultDetail(result: {
 const BUILDX_UNAVAILABLE_DIAGNOSTIC =
   "BuildKit is enabled but the buildx component is missing or broken";
 
-function requiresBuildxRepair(result: {
+function hasBuildxUnavailableDiagnostic(result: {
   error?: unknown;
   stderr?: unknown;
   stdout?: unknown;
@@ -92,13 +124,76 @@ function requiresBuildxRepair(result: {
   });
 }
 
-function buildxRepairDetail(): string {
-  return (
-    "Docker Buildx is required for sandbox rebuilds. " +
-    "Install or repair Docker Buildx, then verify it with 'docker buildx version'. " +
-    "Rerun the rebuild after that command succeeds. " +
-    "NemoClaw stopped before deleting the existing sandbox."
+function legacyRetryFailureDetail(
+  buildKitResult: Parameters<typeof resultDetail>[0],
+  legacyResult: Parameters<typeof resultDetail>[0],
+): string {
+  return formatBuildFailureDiagnostics({
+    stderr:
+      `Legacy-builder retry failed:\n${resultDetail(legacyResult)}\n` +
+      `Initial BuildKit attempt failed:\n${resultDetail(buildKitResult)}`,
+  });
+}
+
+function exactDockerBuild(
+  dockerfilePath: string,
+  tag: string,
+  contextDir: string,
+  options: DockerBuildOptions,
+): DockerRunResult {
+  const {
+    env,
+    ignoreError: _ignoreError,
+    quiet,
+    stdio,
+    suppressOutput: _suppressOutput,
+    ...spawnOptions
+  } = options;
+  return dockerSpawnSync(
+    ["build", ...(quiet ? ["--quiet"] : []), "-f", dockerfilePath, "-t", tag, contextDir],
+    {
+      ...spawnOptions,
+      cwd: ROOT,
+      env: { ...env, DOCKER_BUILDKIT: env?.DOCKER_BUILDKIT ?? "1" },
+      shell: false,
+      stdio: stdio ?? ["ignore", "pipe", "pipe"],
+    },
   );
+}
+
+function exactDockerRemoveImage(
+  imageRef: string,
+  options: NonNullable<DockerRunOptions>,
+): DockerRunResult {
+  const {
+    env,
+    ignoreError: _ignoreError,
+    stdio,
+    suppressOutput: _suppressOutput,
+    ...spawnOptions
+  } = options;
+  return dockerSpawnSync(["rmi", imageRef], {
+    ...spawnOptions,
+    cwd: ROOT,
+    env,
+    shell: false,
+    stdio: stdio ?? ["ignore", "pipe", "pipe"],
+  });
+}
+
+function defaultBuildxAvailable(process: DockerProofProcess): boolean {
+  try {
+    return (
+      dockerSpawnSync(["buildx", "version"], {
+        cwd: process.cwd,
+        env: process.env,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).status === 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function preflightRebuildImage(
@@ -107,12 +202,23 @@ export async function preflightRebuildImage(
 ): Promise<RebuildImagePreflightResult> {
   const stage = deps.stageBuildContext ?? stageCreateSandboxBuildContext;
   const preparePatch = deps.prepareDockerfilePatch ?? prepareSandboxDockerfilePatch;
-  const buildImage = deps.buildImage ?? dockerBuild;
-  const removeImage = deps.removeImage ?? dockerRmi;
+  const buildImage = deps.buildImage ?? exactDockerBuild;
+  const removeImage = deps.removeImage ?? exactDockerRemoveImage;
+  const buildxAvailable = deps.buildxAvailable ?? defaultBuildxAvailable;
+  const buildDockerEnv = deps.buildDockerEnv ?? dockerBuildSubprocessEnv;
+  const captureLegacyDockerBinding =
+    deps.captureLegacyDockerBinding ?? captureOpenClawLegacyDockerBinding;
+  const inspectLegacyImageId = deps.inspectLegacyImageId ?? inspectOpenClawLegacyImageId;
+  const createLegacyImage = deps.createLegacyImage ?? createPreparedOpenClawLegacyImage;
+  const disposeLegacyImage = deps.disposeLegacyImage ?? disposeOpenClawLegacyDockerImage;
   let cleanup: (() => boolean) | null = null;
   let imageTag: string | null = null;
   let imageBuilt = false;
   let retainBuildContext = false;
+  let dockerEnv: Readonly<Record<string, string>> | null = null;
+  let legacyBinding: OpenClawLegacyDockerBinding | null = null;
+  let legacyImageId: string | null = null;
+  let preparedLegacyImage: ReturnType<typeof createPreparedOpenClawLegacyImage> | null = null;
   const previousReasoning = process.env.NEMOCLAW_REASONING;
   const previousReasoningEffort = process.env[REASONING_EFFORT_ENV];
   try {
@@ -156,56 +262,158 @@ export async function preflightRebuildImage(
       warn: () => {},
     });
     const contextFingerprint = fingerprintBuildContext(staged.buildCtx);
-    imageTag = `nemoclaw-rebuild-preflight:${String(process.pid)}-${String(Date.now())}`;
-    const result = buildImage(staged.stagedDockerfile, imageTag, staged.buildCtx, {
+    const legacyFallbackEligible =
+      staged.origin === "generated" &&
+      input.agent === null &&
+      input.fromDockerfile === null &&
+      input.localPrebuildEnabled;
+    if (legacyFallbackEligible) {
+      legacyBinding = captureLegacyDockerBinding({ buildDockerEnv, cwd: ROOT });
+      dockerEnv = legacyBinding.dockerEnv;
+    } else {
+      dockerEnv = Object.freeze({ ...buildDockerEnv() });
+    }
+    imageTag = sandboxLocalImageRef(
+      input.sandboxName,
+      `rebuild-preflight-${buildId}-${String(process.pid)}-${String(Date.now())}`,
+    );
+    const buildOptions: DockerBuildOptions = {
+      cwd: ROOT,
+      env: dockerEnv,
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0 && requiresBuildxRepair(result)) {
-      return { ok: false, detail: buildxRepairDetail() };
+    };
+    const buildKitResult = buildImage(
+      staged.stagedDockerfile,
+      imageTag,
+      staged.buildCtx,
+      buildOptions,
+    );
+    let result = buildKitResult;
+    let usedLegacyFallback = false;
+    if (
+      result.status !== 0 &&
+      legacyFallbackEligible &&
+      legacyBinding !== null &&
+      hasBuildxUnavailableDiagnostic(result) &&
+      !buildxAvailable({ cwd: ROOT, env: legacyBinding.dockerEnv })
+    ) {
+      // SOURCE_OF_TRUTH_REVIEW (#7111): the generated OpenClaw final-image
+      // Dockerfile does not use BuildKit-only instructions. Retry its exact
+      // fingerprinted bytes once with Docker's compatibility builder only
+      // after an independent Buildx probe confirms the host CLI lacks it.
+      // Dockerfile.base, other agents, and custom --from contexts never enter
+      // this fallback. Remove it when the supported Docker floor no longer
+      // provides the legacy builder.
+      if (fingerprintBuildContext(staged.buildCtx) !== contextFingerprint) {
+        return { ok: false, detail: "replacement build context changed during preflight" };
+      }
+      console.warn(
+        "  Warning: Docker Buildx is unavailable; retrying the generated OpenClaw rebuild image with Docker's legacy builder.",
+      );
+      usedLegacyFallback = true;
+      result = buildImage(staged.stagedDockerfile, imageTag, staged.buildCtx, {
+        ...buildOptions,
+        env: { ...legacyBinding.dockerEnv, DOCKER_BUILDKIT: "0" },
+      });
+    }
+    if (result.status !== 0 && usedLegacyFallback) {
+      return { ok: false, detail: legacyRetryFailureDetail(buildKitResult, result) };
     }
     if (result.status !== 0) return { ok: false, detail: resultDetail(result) };
     imageBuilt = true;
     if (fingerprintBuildContext(staged.buildCtx) !== contextFingerprint) {
       return { ok: false, detail: "replacement build context changed during preflight" };
     }
+    if (legacyBinding) {
+      legacyImageId = inspectLegacyImageId(legacyBinding, imageTag);
+    }
+    if (usedLegacyFallback && legacyBinding && legacyImageId) {
+      preparedLegacyImage = createLegacyImage(legacyBinding, imageTag, legacyImageId);
+    }
     retainBuildContext = true;
+    const verifyFingerprint = createBuildContextVerifier(staged.buildCtx, contextFingerprint);
+    const prepared: PreparedRebuildImage = {
+      ...staged,
+      cleanupBuildCtx: cleanup,
+      buildId,
+      dashboardRemoteBindPrepared,
+      preparedOpenClawLegacyImage: preparedLegacyImage ?? undefined,
+      contextFingerprint,
+      verifyBuildCtx(this: PreparedRebuildImage) {
+        return (
+          this === prepared &&
+          this.preparedOpenClawLegacyImage === (preparedLegacyImage ?? undefined) &&
+          verifyFingerprint()
+        );
+      },
+      rebuildTarget: {
+        agentName: input.agent?.name ?? null,
+        fromDockerfile: input.fromDockerfile ? path.resolve(input.fromDockerfile) : null,
+      },
+    };
     return {
       ok: true,
       imageTag,
-      prepared: {
-        ...staged,
-        cleanupBuildCtx: cleanup,
-        buildId,
-        dashboardRemoteBindPrepared,
-        contextFingerprint,
-        verifyBuildCtx: createBuildContextVerifier(staged.buildCtx, contextFingerprint),
-        rebuildTarget: {
-          agentName: input.agent?.name ?? null,
-          fromDockerfile: input.fromDockerfile ? path.resolve(input.fromDockerfile) : null,
-        },
-      },
+      prepared,
     };
   } catch (err) {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   } finally {
     let imageRemoved = false;
-    try {
-      imageRemoved =
-        imageTag !== null &&
-        removeImage(imageTag, { ignoreError: true, suppressOutput: true }).status === 0;
-    } catch {
-      // Best effort; retained-context ownership and environment restoration must continue.
+    if (preparedLegacyImage === null && imageTag !== null) {
+      try {
+        imageRemoved = legacyBinding
+          ? legacyImageId !== null && disposeLegacyImage(legacyBinding, imageTag, legacyImageId)
+          : removeImage(imageTag, {
+              cwd: ROOT,
+              env: dockerEnv ?? undefined,
+              ignoreError: true,
+              suppressOutput: true,
+            }).status === 0;
+      } catch {
+        // Best effort; retained-context ownership and environment restoration must continue.
+      }
     }
-    if (imageBuilt && imageTag && !imageRemoved) {
+    if (
+      preparedLegacyImage === null &&
+      imageTag !== null &&
+      legacyBinding !== null &&
+      legacyImageId === null
+    ) {
+      console.warn(
+        `  Warning: temporary rebuild preflight image '${imageTag}' has no verified immutable cleanup identity; leaving its unique tag for maintenance cleanup.`,
+      );
+    }
+    if (
+      imageBuilt &&
+      preparedLegacyImage === null &&
+      imageTag &&
+      !imageRemoved &&
+      (legacyBinding === null || legacyImageId !== null)
+    ) {
       const retainedImageTag = imageTag;
+      const retainedDockerEnv = dockerEnv;
+      const retainedLegacyBinding = legacyBinding;
+      const retainedLegacyImageId = legacyImageId;
       console.warn(
         `  Warning: failed to remove temporary rebuild preflight image '${retainedImageTag}'.`,
       );
       process.once("exit", () => {
         try {
-          removeImage(retainedImageTag, { ignoreError: true, suppressOutput: true });
+          if (retainedLegacyBinding) {
+            if (retainedLegacyImageId !== null) {
+              disposeLegacyImage(retainedLegacyBinding, retainedImageTag, retainedLegacyImageId);
+            }
+          } else {
+            removeImage(retainedImageTag, {
+              cwd: ROOT,
+              env: retainedDockerEnv ?? undefined,
+              ignoreError: true,
+              suppressOutput: true,
+            });
+          }
         } catch {
           // Best effort process-exit retry.
         }

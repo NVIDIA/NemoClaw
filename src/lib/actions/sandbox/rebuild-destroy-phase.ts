@@ -39,6 +39,8 @@ export interface RebuildDestroyPhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateDeleteEdge?: () => RebuildDeleteValidationResult;
+  abortPreparedImageRecreate?: () => boolean;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
 }
@@ -229,6 +231,7 @@ export async function runRebuildDestroyPhase(
     bail,
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
+    validateDeleteEdge,
     onDeleted,
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
@@ -315,6 +318,15 @@ export async function runRebuildDestroyPhase(
   const rebuildMcpEntries = mcpPreparation.entries;
   const rebuildDetachedMcpProviderEntries = mcpPreparation.detachedProviderEntries;
   const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;
+  const abortPreparedImageRecreate = (): void => {
+    try {
+      if (input.abortPreparedImageRecreate?.() === false) {
+        log("The unused retained replacement image could not be released safely.");
+      }
+    } catch {
+      log("The unused retained replacement image could not be released safely.");
+    }
+  };
 
   // Exec-unavailable recovery deliberately made no MCP mutation during
   // preparation. Re-prove target, policy, provider, and registry state while
@@ -356,6 +368,38 @@ export async function runRebuildDestroyPhase(
   }
 
   log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
+
+  // Keep this synchronous and at the final delete edge. A successful check
+  // must be the last executed code before OpenShell receives the delete
+  // command.
+  if (validateDeleteEdge) {
+    let validation: RebuildDeleteValidationResult;
+    try {
+      validation = validateDeleteEdge();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Unexpected rebuild delete-edge validation failure: ${redactFull(detail)}`);
+      validation = {
+        ok: false,
+        message: "Replacement image validation failed before sandbox deletion.",
+      };
+    }
+    if (!validation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+      );
+      relockShieldsIfNeeded(true);
+      bail(
+        mcpRecoveryFailure
+          ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : validation.message,
+        validation.code,
+      );
+      return null;
+    }
+  }
   const deleteResult = runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -387,6 +431,7 @@ export async function runRebuildDestroyPhase(
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
       }
       relockShieldsIfNeeded(true);
+      abortPreparedImageRecreate();
       bail(
         mcpRecoveryFailure
           ? `Failed to delete sandbox; MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -405,6 +450,7 @@ export async function runRebuildDestroyPhase(
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
       }
       input.onDeleteStateAmbiguous?.();
+      abortPreparedImageRecreate();
       bail(
         "Sandbox delete failed and exact post-delete state is ambiguous; recovery state was preserved.",
         deleteResult.status || 1,
@@ -422,6 +468,7 @@ export async function runRebuildDestroyPhase(
       console.error("  State backup is preserved at: " + backupManifest.backupPath);
     }
     input.onDeleteStateAmbiguous?.();
+    abortPreparedImageRecreate();
     bail("Sandbox deletion could not be confirmed.");
     return null;
   }

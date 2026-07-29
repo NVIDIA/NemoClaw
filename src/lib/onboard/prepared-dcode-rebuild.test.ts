@@ -10,7 +10,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createBuildContextVerifier } from "../actions/sandbox/rebuild-prepared-image-context";
 import { fingerprintBuildContext } from "../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../agent/defs";
-import type { PreparedSandboxBuildContext } from "./build-context-stage";
+import type {
+  PreparedOpenClawLegacyImage,
+  PreparedSandboxBuildContext,
+} from "./build-context-stage";
 import {
   createPreparedDcodeRebuildRuntime,
   type PreparedDcodeRebuildOptions,
@@ -62,6 +65,49 @@ const preparedImageOptions: PreparedDcodeRebuildOptions = {
     gatewayName: "nemoclaw",
   },
 };
+const OPENCLAW_IMAGE_ID = `sha256:${"a".repeat(64)}`;
+
+function createPreparedOpenClawLegacyImageFixture(): PreparedOpenClawLegacyImage {
+  return {
+    dockerEnv: { DOCKER_CONTEXT: "retained-context" },
+    engineId: "retained-engine",
+    imageRef: "nemoclaw-sandbox-local:prepared-openclaw",
+    imageId: OPENCLAW_IMAGE_ID,
+    verify: vi.fn(() => true),
+    retainForRecreate: vi.fn(() => true),
+    verifyForCreate: vi.fn(() => true),
+    finalizeAfterCreate: vi.fn(() => ({
+      mutableTagVerified: true,
+      registryImageRef: null,
+    })),
+    abort: vi.fn(() => true),
+    dispose: vi.fn(() => true),
+  };
+}
+
+function createPreparedOpenClawImageOptions(): PreparedDcodeRebuildOptions {
+  return {
+    resume: true,
+    recreateSandbox: true,
+    authoritativeResumeConfig: true,
+    onboardLockAlreadyHeld: true,
+    agent: null,
+    fromDockerfile: null,
+    preparedImageRebuild: {
+      gatewayName: "nemoclaw",
+      buildContext: {
+        buildCtx: "/tmp/prepared-openclaw",
+        stagedDockerfile: "/tmp/prepared-openclaw/Dockerfile",
+        buildId: "openclaw-prepared",
+        cleanupBuildCtx: () => true,
+        origin: "generated",
+        verifyBuildCtx: () => true,
+        rebuildTarget: { agentName: null, fromDockerfile: null },
+        preparedOpenClawLegacyImage: createPreparedOpenClawLegacyImageFixture(),
+      },
+    },
+  };
+}
 const sandboxGpuConfig: SandboxGpuConfig = {
   mode: "0",
   hostGpuDetected: false,
@@ -157,6 +203,69 @@ describe("prepared DCode rebuild adapter", () => {
     expect(() => createPreparedDcodeRebuildRuntime(options, "nemoclaw")).toThrow(
       /only be used by DCode resume recreation/,
     );
+  });
+
+  it.each([
+    ["resume", { resume: false }],
+    ["recreation", { recreateSandbox: false }],
+    ["authoritative configuration", { authoritativeResumeConfig: false }],
+    ["onboard lock", { onboardLockAlreadyHeld: false }],
+  ])("rejects a retained OpenClaw image without authoritative %s", (_label, override) => {
+    expect(() =>
+      createPreparedDcodeRebuildRuntime(
+        { ...createPreparedOpenClawImageOptions(), ...override },
+        "nemoclaw",
+      ),
+    ).toThrow(/only be used by authoritative resume recreation/);
+  });
+
+  it.each([
+    "custom origin",
+    "custom Dockerfile",
+    "Hermes agent",
+  ])("rejects a retained OpenClaw image for a %s", (unsupportedTarget) => {
+    const options = createPreparedOpenClawImageOptions();
+    const buildContext = options.preparedImageRebuild!.buildContext;
+    if (unsupportedTarget === "custom origin") {
+      buildContext.origin = "custom";
+    } else if (unsupportedTarget === "custom Dockerfile") {
+      options.fromDockerfile = "/tmp/custom/Dockerfile";
+      buildContext.rebuildTarget = {
+        agentName: null,
+        fromDockerfile: "/tmp/custom/Dockerfile",
+      };
+    } else {
+      options.agent = "hermes";
+      buildContext.rebuildTarget = { agentName: "hermes", fromDockerfile: null };
+    }
+
+    expect(() => createPreparedDcodeRebuildRuntime(options, "nemoclaw")).toThrow(
+      /retained legacy image can only be used for a generated OpenClaw rebuild/,
+    );
+  });
+
+  it("rejects a retained OpenClaw image attached to a prepared DCode handoff", () => {
+    expect(() =>
+      createPreparedDcodeRebuildRuntime(
+        {
+          ...preparedOptions,
+          preparedDcodeRebuild: {
+            ...preparedOptions.preparedDcodeRebuild!,
+            buildContext: {
+              ...preparedBuildContext,
+              preparedOpenClawLegacyImage: createPreparedOpenClawLegacyImageFixture(),
+            },
+          },
+        },
+        "nemoclaw",
+      ),
+    ).toThrow(/retained legacy image can only be used for a generated OpenClaw rebuild/);
+  });
+
+  it("accepts a retained legacy image for authoritative generated OpenClaw recreation", () => {
+    expect(() =>
+      createPreparedDcodeRebuildRuntime(createPreparedOpenClawImageOptions(), "nemoclaw"),
+    ).not.toThrow();
   });
 
   it("normalizes the exact gateway and clears ordinary ambient selection", () => {

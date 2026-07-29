@@ -28,7 +28,29 @@ export function createIdempotentBuildContextCleanup(cleanup: () => boolean): () 
 /** Confirm that a retained private context still matches the prebuilt bytes. */
 export function verifyPreparedBuildContext(prepared: FingerprintedPreparedBuildContext): boolean {
   try {
-    return fingerprintBuildContext(prepared.buildCtx) === prepared.contextFingerprint;
+    if (!prepared.verifyBuildCtx.call(prepared)) return false;
+    if (fingerprintBuildContext(prepared.buildCtx) !== prepared.contextFingerprint) return false;
+    return prepared.preparedOpenClawLegacyImage?.verify() ?? true;
+  } catch {
+    return false;
+  }
+}
+
+/** Commit a verified retained image to recreation at the synchronous delete edge. */
+export function retainPreparedImageForRecreate(
+  prepared: FingerprintedPreparedBuildContext,
+): boolean {
+  try {
+    return prepared.preparedOpenClawLegacyImage?.retainForRecreate() ?? true;
+  } catch {
+    return false;
+  }
+}
+
+/** Release an unused retained image through its bound immutable cleanup path. */
+export function abortPreparedImageRecreate(prepared: FingerprintedPreparedBuildContext): boolean {
+  try {
+    return prepared.preparedOpenClawLegacyImage?.abort() ?? true;
   } catch {
     return false;
   }
@@ -50,5 +72,12 @@ export function createBuildContextVerifier(
 
 /** Dispose retained build inputs after onboarding consumes them or rebuild aborts. */
 export function disposePreparedBuildContext(prepared: FingerprintedPreparedBuildContext): boolean {
-  return prepared.cleanupBuildCtx();
+  const imageDisposed = abortPreparedImageRecreate(prepared);
+  let contextDisposed = false;
+  try {
+    contextDisposed = prepared.cleanupBuildCtx();
+  } catch {
+    contextDisposed = false;
+  }
+  return imageDisposed && contextDisposed;
 }

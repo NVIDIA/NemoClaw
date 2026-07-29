@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import type { PreparedOpenClawLegacyImage } from "./build-context-stage";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
@@ -20,6 +21,28 @@ import {
 const disabledHermesDashboardState = { config: null, enabled: false };
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryBuildContexts: string[] = [];
+
+function createPreparedOpenClawLegacyImageFixture(): PreparedOpenClawLegacyImage {
+  return {
+    dockerEnv: {
+      DOCKER_HOST: "unix:///captured/docker.sock",
+      DOCKER_CONTEXT: "captured-context",
+      DOCKER_CONFIG: "/captured/docker-config",
+    },
+    engineId: "retained-engine",
+    imageRef: "nemoclaw-sandbox-local:retained-openclaw",
+    imageId: IMAGE_ID,
+    verify: vi.fn(() => true),
+    retainForRecreate: vi.fn(() => true),
+    verifyForCreate: vi.fn(() => true),
+    finalizeAfterCreate: vi.fn(() => ({
+      mutableTagVerified: true,
+      registryImageRef: null,
+    })),
+    abort: vi.fn(() => true),
+    dispose: vi.fn(() => true),
+  };
+}
 
 function createTrustedBuildContext(): string {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
@@ -393,6 +416,74 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
     );
     expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("launches a retained image by immutable ID on its captured Docker selector", async () => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const preparedOpenClawLegacyImage = createPreparedOpenClawLegacyImageFixture();
+    const buildImage = vi.fn(async () => 0);
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      openshellArgv: (args) => ["openshell", ...args],
+      sandboxName: "demo",
+      buildEnv: () => ({
+        HOME: "/ambient/home",
+        DOCKER_HOST: "ssh://ambient-engine",
+        DOCKER_CONTEXT: "ambient-context",
+        DOCKER_CONFIG: "/ambient/docker-config",
+        DOCKER_CERT_PATH: "/ambient/certs",
+        DOCKER_TLS_VERIFY: "1",
+        DOCKER_API_VERSION: "1.41",
+      }),
+      prebuild: {
+        buildCtx,
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        buildImage,
+        origin: "generated",
+        preparedOpenClawLegacyImage,
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", IMAGE_ID, "--name", "demo"],
+      imageRef: preparedOpenClawLegacyImage.imageRef,
+      imageId: IMAGE_ID,
+      preparedOpenClawLegacyImage,
+    });
+    expect(result.createCommand).toContain(`sandbox create --from ${IMAGE_ID} --name demo`);
+    expect(result.createArgv).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      "--from",
+      IMAGE_ID,
+      "--name",
+      "demo",
+      "--",
+      "env",
+      ...result.envArgs,
+      "nemoclaw-start",
+    ]);
+    expect(result.sandboxEnv).toEqual({
+      HOME: "/ambient/home",
+      DOCKER_HOST: "unix:///captured/docker.sock",
+      DOCKER_CONTEXT: "captured-context",
+      DOCKER_CONFIG: "/captured/docker-config",
+    });
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.verifyForCreate).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).not.toHaveBeenCalled();
   });
 
   it("renders the original Dockerfile for Hermes after a local build failure", async () => {

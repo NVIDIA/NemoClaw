@@ -8,7 +8,7 @@ import {
   getDockerGpuPatchNetworkMode,
   printDockerGpuProofFailure,
 } from "./docker-gpu-patch";
-import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
+import type { DockerGpuPatchDeps, DockerGpuPatchMode } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
@@ -389,6 +389,8 @@ export type GpuSandboxAfterReadyOptions = {
   reportGpuProofFailure?: boolean;
   selectedMode: () => DockerGpuPatchMode | null;
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
+  dockerCapture?: DockerGpuPatchDeps["dockerCapture"];
+  dockerLogs?: DockerGpuPatchDeps["dockerLogs"];
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   log?: (message: string) => void;
@@ -433,6 +435,8 @@ export function verifyGpuSandboxAccessAfterReady(
     if (!options.verifyGpuOrExit && options.reportGpuProofFailure !== false) {
       printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
         runCaptureOpenshell: options.runCaptureOpenshell,
+        dockerCapture: options.dockerCapture,
+        dockerLogs: options.dockerLogs,
         additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
           .additionalSummaryLines,
       });

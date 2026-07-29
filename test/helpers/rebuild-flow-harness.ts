@@ -39,6 +39,9 @@ const registryPersistence = requireDist("../../state/registry/persistence.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
+const mcpLifecycleLock = requireDist(
+  "../../state/mcp-lifecycle-lock.js",
+) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
 const destroy = requireDist("./destroy.js");
 const rebuildShields = requireDist("./rebuild-shields.js");
 const nim = requireDist("../../inference/nim.js");
@@ -137,7 +140,13 @@ export type RebuildFlowOverrides = {
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
-  rebuildImagePreflightResult?: { ok: false; detail: string } | { ok: true; imageTag: null };
+  rebuildImagePreflightResult?:
+    | { ok: false; detail: string }
+    | {
+        ok: true;
+        imageTag: string | null;
+        prepared?: unknown;
+      };
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -288,6 +297,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(mcpLifecycleLock, "withMcpLifecycleLock").mockImplementation(
+    async <T>(_sandboxName: string, work: () => Promise<T> | T): Promise<T> => await work(),
+  );
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };

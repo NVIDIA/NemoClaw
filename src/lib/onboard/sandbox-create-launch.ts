@@ -11,6 +11,7 @@ import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
+  DOCKER_SELECTOR_ENV_NAMES,
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
   type SandboxPrebuildResult,
@@ -55,6 +56,7 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
+  dockerSelectorEnv?: Readonly<Record<string, string>>;
 }
 
 export interface SandboxCreateLaunch {
@@ -189,6 +191,13 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // permits for host-side processes but that must not enter the sandbox.
   delete sandboxEnv.KUBECONFIG;
   delete sandboxEnv.SSH_AUTH_SOCK;
+  if (input.dockerSelectorEnv) {
+    for (const key of DOCKER_SELECTOR_ENV_NAMES) {
+      delete sandboxEnv[key];
+      const value = input.dockerSelectorEnv[key];
+      if (value !== undefined) sandboxEnv[key] = value;
+    }
+  }
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
@@ -226,7 +235,11 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
     sandboxName: input.sandboxName,
   });
   return {
-    ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    ...prepareSandboxCreateLaunch({
+      ...launchInput,
+      createArgs: prebuild.createArgs,
+      dockerSelectorEnv: prebuild.preparedOpenClawLegacyImage?.dockerEnv,
+    }),
     prebuild,
   };
 }

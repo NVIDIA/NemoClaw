@@ -23,7 +23,9 @@ import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
+  abortPreparedImageRecreate,
   disposePreparedBuildContext,
+  retainPreparedImageForRecreate,
   verifyPreparedBuildContext,
 } from "./rebuild-prepared-image-context";
 import {
@@ -182,14 +184,14 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
 
-      // The post-delete create must consume the exact context that passed the
-      // image preflight. Revalidate at the last safe point so mutation of the
-      // retained copy cannot cross the destructive boundary.
+      // The post-delete create must consume the exact context and retained
+      // image that passed preflight. Revalidate before any destroy-phase
+      // mutation so drift cannot cross the destructive boundary.
       if (preparedImage && !verifyPreparedBuildContext(preparedImage)) {
         printRebuildPreflightFailure(
-          "the retained replacement image context changed after preflight.",
+          "the retained replacement image inputs changed after preflight.",
           "Retry the rebuild so the replacement inputs can be staged again.",
-          "Replacement sandbox image context changed before delete",
+          "Replacement sandbox image inputs changed before delete",
           bail,
         );
         return;
@@ -220,6 +222,13 @@ async function rebuildSandboxUnlocked(
         bail,
         relockShieldsIfNeeded,
         validateAfterMcpPreparation: async () => {
+          if (preparedImage && !verifyPreparedBuildContext(preparedImage)) {
+            return {
+              ok: false,
+              message:
+                "The retained replacement image inputs changed after MCP preparation. Retry the rebuild.",
+            };
+          }
           const providerReconfigure = recreateOptions.rebuildProviderReconfigure;
           if (providerReconfigure && !hydrateCredentialEnv(providerReconfigure.credentialEnv)) {
             return {
@@ -251,6 +260,27 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
+        validateDeleteEdge: () => {
+          if (!preparedImage) return { ok: true };
+          if (!verifyPreparedBuildContext(preparedImage)) {
+            return {
+              ok: false,
+              message:
+                "The retained replacement image inputs changed before sandbox deletion. Retry the rebuild.",
+            };
+          }
+          if (!retainPreparedImageForRecreate(preparedImage)) {
+            return {
+              ok: false,
+              message:
+                "The retained replacement image could not be committed to sandbox recreation. Retry the rebuild.",
+            };
+          }
+          return { ok: true };
+        },
+        abortPreparedImageRecreate: preparedImage
+          ? () => abortPreparedImageRecreate(preparedImage)
+          : undefined,
         onDeleted: () => {
           sandboxStillExists = false;
         },

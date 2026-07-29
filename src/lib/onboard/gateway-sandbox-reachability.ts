@@ -86,6 +86,9 @@ export interface SandboxBridgeReachabilityOptions {
   port?: number;
   timeoutSec?: number;
   probeImage?: string;
+  dockerCaptureImpl?: typeof dockerCapture;
+  dockerRunImpl?: typeof dockerRun;
+  ensureImageCachedImpl?: typeof ensureProbeImageCached;
   runImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   inspectNetworkImpl?: (networkName: string) => DockerBridgeNetworkInfo | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
@@ -126,25 +129,31 @@ function parseDockerNetworkIpamConfig(raw: string): DockerBridgeNetworkInfo | un
   );
 }
 
-function defaultInspectNetwork(networkName: string): DockerBridgeNetworkInfo | undefined {
-  const raw = dockerCapture(
-    ["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName],
-    { ignoreError: true },
-  );
+function defaultInspectNetwork(
+  networkName: string,
+  capture: typeof dockerCapture = dockerCapture,
+): DockerBridgeNetworkInfo | undefined {
+  const raw = capture(["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName], {
+    ignoreError: true,
+  });
   return parseDockerNetworkIpamConfig(raw);
 }
 
-function defaultUsesHostGatewayRoute(): boolean {
+function defaultUsesHostGatewayRoute(capture: typeof dockerCapture = dockerCapture): boolean {
   if (process.platform !== "linux") return true;
-  const info = dockerCapture(
+  const info = capture(
     ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
     { ignoreError: true },
   );
   return /Docker Desktop|com\.docker\.desktop\./i.test(info);
 }
 
-function defaultRunImpl(args: readonly string[], timeoutMs: number): SandboxBridgeProbeRunResult {
-  const result = dockerRun(args, {
+function defaultRunImpl(
+  args: readonly string[],
+  timeoutMs: number,
+  runDocker: typeof dockerRun = dockerRun,
+): SandboxBridgeProbeRunResult {
+  const result = runDocker(args, {
     timeout: timeoutMs,
     ignoreError: true,
     suppressOutput: true,
@@ -265,9 +274,15 @@ export async function isSandboxBridgeGatewayReachable(
   const port = opts.port ?? GATEWAY_PORT;
   const timeoutSec = opts.timeoutSec ?? DEFAULT_PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? DEFAULT_PROBE_IMAGE;
-  const inspectNetwork = opts.inspectNetworkImpl ?? defaultInspectNetwork;
-  const usesHostGatewayRoute = opts.usesHostGatewayRouteImpl ?? defaultUsesHostGatewayRoute;
-  const runImpl = opts.runImpl ?? defaultRunImpl;
+  const inspectNetwork =
+    opts.inspectNetworkImpl ??
+    ((name: string) => defaultInspectNetwork(name, opts.dockerCaptureImpl));
+  const usesHostGatewayRoute =
+    opts.usesHostGatewayRouteImpl ?? (() => defaultUsesHostGatewayRoute(opts.dockerCaptureImpl));
+  const runImpl =
+    opts.runImpl ??
+    ((args: readonly string[], timeoutMs: number) =>
+      defaultRunImpl(args, timeoutMs, opts.dockerRunImpl));
 
   const network = inspectNetwork(networkName);
   const route = buildOpenShellDockerRoute(networkName, network, usesHostGatewayRoute());
@@ -293,7 +308,9 @@ export async function isSandboxBridgeGatewayReachable(
   // skip the pre-pull there unless the test supplies an explicit
   // ensureImageCachedOverride.
   if (opts.ensureImageCachedOverride !== undefined || opts.runImpl === undefined) {
-    const cached = opts.ensureImageCachedOverride ?? ensureProbeImageCached(probeImage);
+    const cached =
+      opts.ensureImageCachedOverride ??
+      (opts.ensureImageCachedImpl ?? ensureProbeImageCached)(probeImage);
     if (!cached.ok) {
       // A wedged docker daemon (inspect_unavailable) is a fatal Docker
       // outage, not a probe/pull uncertainty — keep onboarding from

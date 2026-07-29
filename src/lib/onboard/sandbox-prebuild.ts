@@ -14,12 +14,14 @@ import {
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
 import { buildSubprocessEnv } from "../subprocess-env";
+import type { PreparedOpenClawLegacyImage } from "./build-context-stage";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
 const LOCAL_IMAGE_REPO = LOCAL_SANDBOX_IMAGE_REPO;
-const DOCKER_ENV_NAMES = [
+export const DOCKER_SELECTOR_ENV_NAMES = [
+  "DOCKER_HOST",
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",
   "DOCKER_CONFIG",
@@ -34,6 +36,7 @@ export interface SandboxPrebuildInput {
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
+  preparedOpenClawLegacyImage?: PreparedOpenClawLegacyImage;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -48,6 +51,7 @@ export interface SandboxPrebuildResult {
   imageRef: string | null;
   /** Immutable local image identity; mutable tags never authorize fallback. */
   imageId: string | null;
+  preparedOpenClawLegacyImage?: PreparedOpenClawLegacyImage;
 }
 
 interface TrustedStagedBuildContext {
@@ -96,7 +100,7 @@ function resolveTrustedStagedBuildContext(buildCtx: string): TrustedStagedBuildC
 /** Restrict the host Docker build to environment values used by Docker itself. */
 export function dockerBuildSubprocessEnv(): Record<string, string> {
   const env = buildSubprocessEnv();
-  for (const key of DOCKER_ENV_NAMES) {
+  for (const key of DOCKER_SELECTOR_ENV_NAMES) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
@@ -153,6 +157,38 @@ export async function prebuildSandboxImageIfEligible(
   input: SandboxPrebuildInput,
 ): Promise<SandboxPrebuildResult> {
   const createArgs = [...input.createArgs];
+  const preparedImage = input.preparedOpenClawLegacyImage;
+  if (preparedImage) {
+    if (!input.dockerDriverGateway) {
+      throw new Error(
+        "A retained OpenClaw rebuild image cannot be used by a nonlocal OpenShell gateway.",
+      );
+    }
+    if (input.origin !== "generated") {
+      throw new Error("A retained OpenClaw rebuild image cannot be used with a custom Dockerfile.");
+    }
+    const fromIndexes = createArgs.flatMap((arg, index) => (arg === "--from" ? [index] : []));
+    const fromIndex = fromIndexes[0] ?? -1;
+    const fromDockerfile = createArgs[fromIndex + 1];
+    if (
+      fromIndexes.length !== 1 ||
+      !fromDockerfile ||
+      path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
+    ) {
+      throw new Error("Retained OpenClaw rebuild image arguments changed before sandbox creation.");
+    }
+    if (!isImmutableDockerImageId(preparedImage.imageId)) {
+      throw new Error("Retained OpenClaw rebuild image identity is invalid.");
+    }
+    const imageId = preparedImage.imageId.toLowerCase();
+    createArgs[fromIndex + 1] = imageId;
+    return {
+      createArgs,
+      imageRef: preparedImage.imageRef,
+      imageId,
+      preparedOpenClawLegacyImage: preparedImage,
+    };
+  }
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {

@@ -117,6 +117,29 @@ function verifyPreparedBuildContextForUse(preparedBuildContext: PreparedSandboxB
   }
 }
 
+function assertPreparedOpenClawLegacyImageScope(
+  preparedBuildContext: PreparedSandboxBuildContext,
+  agentName: string | null | undefined,
+  fromDockerfile: string | null | undefined,
+  handoffKind: "dcode" | "image",
+): void {
+  if (!preparedBuildContext.preparedOpenClawLegacyImage) return;
+  const target = preparedBuildContext.rebuildTarget;
+  if (
+    handoffKind !== "image" ||
+    preparedBuildContext.origin !== "generated" ||
+    normalizedAgentIdentity(agentName) !== "openclaw" ||
+    normalizedDockerfilePath(fromDockerfile) !== null ||
+    !target ||
+    normalizedAgentIdentity(target.agentName) !== "openclaw" ||
+    target.fromDockerfile !== null
+  ) {
+    throw new Error(
+      "A retained legacy image can only be used for a generated OpenClaw rebuild without a custom Dockerfile.",
+    );
+  }
+}
+
 export function assertPreparedDcodeTarget(
   preparedBuildContext: PreparedSandboxBuildContext | null,
   agent: AgentDefinition | null | undefined,
@@ -162,6 +185,14 @@ export function createPreparedDcodeRebuildRuntime(
       "A prepared rebuild image can only be used by authoritative resume recreation.",
     );
   }
+  if (preparedDcode) {
+    assertPreparedOpenClawLegacyImageScope(
+      preparedDcode.buildContext,
+      options.agent,
+      options.fromDockerfile,
+      "dcode",
+    );
+  }
   if (preparedImage) {
     if (!preparedImage.buildContext.rebuildTarget) {
       throw new Error("Prepared rebuild image target is missing or invalid.");
@@ -173,6 +204,12 @@ export function createPreparedDcodeRebuildRuntime(
       preparedImage.buildContext,
       options.agent ?? null,
       normalizedDockerfilePath(options.fromDockerfile),
+    );
+    assertPreparedOpenClawLegacyImageScope(
+      preparedImage.buildContext,
+      options.agent,
+      options.fromDockerfile,
+      "image",
     );
   }
   const prepared = preparedImage ?? preparedDcode;

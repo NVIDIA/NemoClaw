@@ -59,7 +59,9 @@ import {
   setupGpuFlowMocks,
   VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import type { PreparedOpenClawLegacyImage } from "./build-context-stage";
 import {
+  resolveCreatedSandboxRegistryImageRef,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
@@ -79,6 +81,7 @@ const NVIDIA_SMI_FAILED_PROOF: SandboxGpuProofResult = {
   detail: "Failed to initialize NVML: Driver/library version mismatch",
   at: "2026-07-06T00:00:00.000Z",
 };
+const OTHER_IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const DEFAULT_RUNTIME_SNAPSHOT = {
   ok: true as const,
   imageId: IMAGE_ID,
@@ -143,8 +146,279 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
   return input;
 }
 
+function createRetainedImageInput() {
+  const input = createInput();
+  const finalizeAfterCreate = vi.fn<PreparedOpenClawLegacyImage["finalizeAfterCreate"]>(() => ({
+    mutableTagVerified: true,
+    registryImageRef: null,
+  }));
+  const preparedOpenClawLegacyImage = {
+    dockerEnv: { DOCKER_CONTEXT: "retained-context" },
+    engineId: "retained-engine",
+    imageRef: "nemoclaw-sandbox-local:retained-openclaw",
+    imageId: IMAGE_ID,
+    verify: vi.fn(() => true),
+    retainForRecreate: vi.fn(() => true),
+    verifyForCreate: vi.fn(() => true),
+    finalizeAfterCreate,
+    abort: vi.fn(() => true),
+    dispose: vi.fn(() => true),
+  } satisfies PreparedOpenClawLegacyImage;
+  input.createArgv = [
+    "openshell",
+    "sandbox",
+    "create",
+    "--from",
+    IMAGE_ID,
+    "--name",
+    "alpha",
+    "--gpu",
+  ];
+  input.prebuild = {
+    createArgs: ["--from", IMAGE_ID, "--name", "alpha", "--gpu"],
+    imageRef: preparedOpenClawLegacyImage.imageRef,
+    imageId: IMAGE_ID,
+    preparedOpenClawLegacyImage,
+  };
+  return { input, preparedOpenClawLegacyImage };
+}
+
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
+
+describe("runSandboxGpuCreateFlow retained OpenClaw image", () => {
+  it("verifies immediately before streaming and finalizes only after final success", async () => {
+    const { input, preparedOpenClawLegacyImage } = createRetainedImageInput();
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      retainedImageFinalization: {
+        mutableTagVerified: true,
+        registryImageRef: null,
+      },
+      route: "native",
+    });
+
+    expect(preparedOpenClawLegacyImage.verifyForCreate).toHaveBeenCalledOnce();
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).toHaveBeenCalledOnce();
+    expect(preparedOpenClawLegacyImage.abort).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate.mock.invocationCallOrder[0]).toBe(
+      preparedOpenClawLegacyImage.verifyForCreate.mock.invocationCallOrder[0] + 1,
+    );
+    expect(
+      preparedOpenClawLegacyImage.finalizeAfterCreate.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(mocks.waitForCreatedSandboxReadyWithTrace.mock.invocationCallOrder[0]);
+    expect(
+      preparedOpenClawLegacyImage.finalizeAfterCreate.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(mocks.verifyGpuSandboxAccessAfterReady.mock.invocationCallOrder[0]);
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      expect.arrayContaining(["--from", IMAGE_ID]),
+      input.sandboxEnv,
+      expect.any(Object),
+    );
+  });
+
+  it("reverifies for compatibility and finalizes only after the final create succeeds", async () => {
+    const { input, preparedOpenClawLegacyImage } = createRetainedImageInput();
+    failNativeCreate();
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(preparedOpenClawLegacyImage.verifyForCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).toHaveBeenCalledOnce();
+    const verifyOrders = preparedOpenClawLegacyImage.verifyForCreate.mock.invocationCallOrder;
+    const streamOrders = mocks.streamSandboxCreate.mock.invocationCallOrder;
+    const finalizeOrder =
+      preparedOpenClawLegacyImage.finalizeAfterCreate.mock.invocationCallOrder[0];
+    expect(streamOrders[0]).toBe(verifyOrders[0] + 1);
+    expect(streamOrders[1]).toBe(verifyOrders[1] + 1);
+    expect(streamOrders[0]).toBeLessThan(verifyOrders[1]);
+    expect(streamOrders[1]).toBeLessThan(finalizeOrder);
+    expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
+      2,
+      "openshell",
+      expect.arrayContaining(["--from", IMAGE_ID]),
+      input.sandboxEnv,
+      expect.any(Object),
+    );
+  });
+
+  it("refuses a native snapshot for image B before rendering or creating compatibility", async () => {
+    const { input, preparedOpenClawLegacyImage } = createRetainedImageInput();
+    mockRuntimeSnapshot({
+      imageId: OTHER_IMAGE_ID,
+      stateError: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+    });
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      sawProgress: true,
+    });
+    const deps = createDeps();
+
+    await expectFlowExit(input, deps);
+
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.streamSandboxCreate.mock.calls.flat()).not.toContain(OTHER_IMAGE_ID);
+    expect(deps.openshellArgv).not.toHaveBeenCalled();
+    expect(errorOutput()).toContain(
+      "Native sandbox image identity does not match the retained OpenClaw rebuild image",
+    );
+    expect(preparedOpenClawLegacyImage.abort).toHaveBeenCalledOnce();
+  });
+
+  it("uses retained image A when the native snapshot corroborates A", async () => {
+    const { input } = createRetainedImageInput();
+    mockRuntimeSnapshot({
+      imageId: IMAGE_ID,
+      stateError: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+    });
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      sawProgress: true,
+    });
+    const deps = createDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+    expect(deps.openshellArgv).toHaveBeenCalledWith(expect.arrayContaining(["--from", IMAGE_ID]));
+    expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
+      2,
+      "openshell",
+      expect.arrayContaining(["--from", IMAGE_ID]),
+      input.sandboxEnv,
+      expect.any(Object),
+    );
+  });
+
+  it("uses engine A for create, fallback evidence, cleanup, and patch mutation while ambient selects B", async () => {
+    vi.stubEnv("DOCKER_CONTEXT", "engine-b");
+    const { input } = createRetainedImageInput();
+    input.sandboxEnv = { DOCKER_CONTEXT: "engine-a" };
+    failNativeCreate();
+    const engineAQueries: string[][] = [];
+    const engineAMutations: string[][] = [];
+    const engineBCapture = vi.fn(() => "");
+    const engineBRun = vi.fn(() => ({ status: 0, stdout: "" }));
+    const engineBMutations = vi.fn(() => ({ status: 0 }));
+    const boundDockerDeps = {
+      dockerCapture: vi.fn((args: readonly string[]) => {
+        engineAQueries.push([...args]);
+        return "";
+      }),
+      dockerRun: vi.fn((args: readonly string[]) => {
+        engineAQueries.push([...args]);
+        return { status: 0, stdout: "" };
+      }),
+      dockerStop: vi.fn((containerName: string) => {
+        engineAMutations.push(["stop", containerName]);
+        return { status: 0 };
+      }),
+    };
+    const deps = createDeps();
+    deps.dockerCapture = engineBCapture;
+    deps.dockerRun = engineBRun;
+    deps.dockerStop = engineBMutations;
+    deps.createRetainedDockerRuntime = vi.fn(() => ({
+      deps: boundDockerDeps,
+      dockerDesktopWsl: () => false,
+      ensureImageCached: vi.fn(() => ({ ok: true, alreadyCached: true })),
+      reverifyBridgeReachability: vi.fn(async () => {}),
+    }));
+    mocks.queryOpenShellDockerSandboxContainers.mockImplementation(
+      (_sandboxName: string, dockerDeps: typeof boundDockerDeps) => {
+        dockerDeps.dockerRun(["ps", "-a"]);
+        return { ok: true, ids: [] };
+      },
+    );
+    mocks.createDockerGpuSandboxCreatePatch.mockImplementation((options) => {
+      options.deps.dockerCapture(["inspect", "container-a"]);
+      options.deps.dockerStop("container-a");
+      return createPatch();
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.streamSandboxCreate.mock.calls.every(([, , env]) => env === input.sandboxEnv),
+    ).toBe(true);
+    expect(input.sandboxEnv).toEqual({ DOCKER_CONTEXT: "engine-a" });
+    expect(process.env.DOCKER_CONTEXT).toBe("engine-b");
+    expect(engineAQueries).toContainEqual(["ps", "-a"]);
+    expect(engineAQueries).toContainEqual(["inspect", "container-a"]);
+    expect(engineAMutations).toContainEqual(["stop", "container-a"]);
+    expect(engineBCapture).not.toHaveBeenCalled();
+    expect(engineBRun).not.toHaveBeenCalled();
+    expect(engineBMutations).not.toHaveBeenCalled();
+  });
+
+  it("fails before create instead of falling back when retained image verification fails", async () => {
+    const { input, preparedOpenClawLegacyImage } = createRetainedImageInput();
+    preparedOpenClawLegacyImage.verifyForCreate.mockReturnValue(false);
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
+      "Retained OpenClaw rebuild image changed before sandbox creation.",
+    );
+
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.abort).toHaveBeenCalledOnce();
+  });
+
+  it("aborts a retained image after a failed final create", async () => {
+    const { input, preparedOpenClawLegacyImage } = createRetainedImageInput();
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "x509: certificate signed by unknown authority",
+      sawProgress: true,
+    });
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow("process.exit:1");
+
+    expect(preparedOpenClawLegacyImage.verifyForCreate).toHaveBeenCalledOnce();
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.abort).toHaveBeenCalledOnce();
+  });
+
+  it("aborts when post-create finalization cannot prove the bound engine", async () => {
+    const { input, preparedOpenClawLegacyImage } = createRetainedImageInput();
+    preparedOpenClawLegacyImage.finalizeAfterCreate.mockReturnValue(null);
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
+      "Retained OpenClaw rebuild image could not be finalized after creation.",
+    );
+
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).toHaveBeenCalledOnce();
+    expect(preparedOpenClawLegacyImage.abort).toHaveBeenCalledOnce();
+  });
+
+  it("keeps retained-image cleanup suppressed when a later ambient Docker context differs", () => {
+    const retainedImageFinalization = {
+      mutableTagVerified: true,
+      registryImageRef: null,
+    } as const;
+
+    expect(
+      resolveCreatedSandboxRegistryImageRef(retainedImageFinalization, [
+        "nemoclaw-sandbox-local:retargeted-on-ambient-engine",
+        "openshell/sandbox-from:captured-output",
+      ]),
+    ).toBeNull();
+  });
+});
 
 describe("runSandboxGpuCreateFlow proof authorization", () => {
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {

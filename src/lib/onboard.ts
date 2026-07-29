@@ -2246,7 +2246,20 @@ async function createSandboxWithBaseImageResolution(
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
+  const baseResolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
+  const retainedDockerRuntime = preparedBuildContext?.preparedOpenClawLegacyImage
+    ? sandboxGpuCreateFlow.createRetainedOpenClawDockerRuntime(
+        preparedBuildContext.preparedOpenClawLegacyImage,
+      )
+    : null;
+  const resolvedCreateIntent = retainedDockerRuntime
+    ? sandboxGpuCreateFlow.bindRetainedOpenClawGpuRoute(
+        baseResolvedCreateIntent,
+        effectiveSandboxGpuConfig,
+        isLinuxDockerDriverGatewayEnabled(),
+        retainedDockerRuntime,
+      )
+    : baseResolvedCreateIntent;
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2708,7 +2721,13 @@ async function createSandboxWithBaseImageResolution(
       manageDashboard,
       openshellShellCommand,
       openshellArgv,
-      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+      prebuild: {
+        buildCtx,
+        buildId,
+        dockerDriverGateway,
+        origin,
+        preparedOpenClawLegacyImage: preparedBuildContext?.preparedOpenClawLegacyImage,
+      },
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
@@ -2719,6 +2738,7 @@ async function createSandboxWithBaseImageResolution(
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
+    retainedImageFinalization,
   } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
@@ -2744,6 +2764,9 @@ async function createSandboxWithBaseImageResolution(
       sleep: sleepSeconds,
       openshellArgv,
       verifyDirectSandboxGpu,
+      ...(retainedDockerRuntime
+        ? { createRetainedDockerRuntime: () => retainedDockerRuntime }
+        : {}),
     },
   );
 
@@ -2802,11 +2825,18 @@ async function createSandboxWithBaseImageResolution(
   }
 
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
-  const resolvedImageTag =
-    registryImageRef ??
-    prebuild.imageRef ??
-    buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
-    resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
+  const resolvedImageTag = sandboxGpuCreateFlow.resolveCreatedSandboxRegistryImageRef(
+    retainedImageFinalization,
+    [
+      registryImageRef,
+      prebuild.imageRef,
+      buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`),
+      resolveSandboxImageTagFromCreateOutput(
+        `${firstCreateOutput}\n${createResult.output}`,
+        buildId,
+      ),
+    ],
+  );
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   recreateRuntime.recordCreated();
   finalizeCreatedSandbox(

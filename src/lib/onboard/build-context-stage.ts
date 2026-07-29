@@ -37,10 +37,31 @@ export interface CreateSandboxBuildContextResult extends StagedBuildContext {
   cleanupBuildCtx(): boolean;
 }
 
+/** Exact local Docker image retained across an OpenClaw rebuild recreation. */
+export interface PreparedOpenClawLegacyImage {
+  readonly dockerEnv: Readonly<Record<string, string>>;
+  readonly engineId: string;
+  readonly imageRef: string;
+  readonly imageId: string;
+  verify(): boolean;
+  retainForRecreate(): boolean;
+  verifyForCreate(): boolean;
+  finalizeAfterCreate(): PreparedOpenClawLegacyImageFinalization | null;
+  abort(): boolean;
+  dispose(): boolean;
+}
+
+/** Safe registry bookkeeping produced only after final retained-image proof. */
+export interface PreparedOpenClawLegacyImageFinalization {
+  readonly registryImageRef: null;
+  readonly mutableTagVerified: boolean;
+}
+
 /** Exact staged and patched context transferred from rebuild preflight to create. */
 export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextResult {
   buildId: string;
   dashboardRemoteBindPrepared?: boolean;
+  preparedOpenClawLegacyImage?: PreparedOpenClawLegacyImage;
   /** Recheck retained bytes at the final one-shot consumption boundary. */
   verifyBuildCtx?(): boolean;
   /** Exact recorded target authorized to consume a generic rebuild handoff. */

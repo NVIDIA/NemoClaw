@@ -308,6 +308,131 @@ describe("rebuild destroy phase", () => {
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
+  it("reattaches MCP state and keeps the sandbox when the synchronous delete-edge gate fails (#7253)", async () => {
+    const revalidateBeforeDelete = vi.fn().mockResolvedValue(undefined);
+    const assertDeleteEdgeUnchanged = vi.fn();
+    const validateDeleteEdge = vi.fn(() => ({
+      ok: false as const,
+      message: "Replacement image changed before sandbox deletion.",
+      code: 7,
+    }));
+    const detachedProviderEntries = [{ server: "github" }];
+    const scrubbedAdapterEntries = [{ server: "filesystem" }];
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: detachedProviderEntries,
+      detachedProviderEntries,
+      scrubbedAdapterEntries,
+      revalidateBeforeDelete,
+      assertDeleteEdgeUnchanged,
+    });
+    const onDeleted = vi.fn();
+    const relockShieldsIfNeeded = vi.fn(() => true);
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        backupManifest: null,
+        force: true,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded,
+        validateDeleteEdge,
+        onDeleted,
+      }),
+    ).rejects.toThrow("Replacement image changed before sandbox deletion.");
+
+    expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
+    expect(assertDeleteEdgeUnchanged).toHaveBeenCalledOnce();
+    expect(validateDeleteEdge).toHaveBeenCalledOnce();
+    expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
+      assertDeleteEdgeUnchanged.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(assertDeleteEdgeUnchanged.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(mocks.getSandbox.mock.invocationCallOrder[1]).toBeLessThan(
+      validateDeleteEdge.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      detachedProviderEntries,
+      scrubbedAdapterEntries,
+    );
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(bail).toHaveBeenCalledWith("Replacement image changed before sandbox deletion.", 7);
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it("runs the synchronous delete-edge gate after registry validation and before delete (#7253)", async () => {
+    const deleteEdgeEvents: string[] = [];
+    const revalidateBeforeDelete = vi.fn().mockResolvedValue(undefined);
+    const assertDeleteEdgeUnchanged = vi.fn();
+    const validateDeleteEdge = vi.fn(() => {
+      deleteEdgeEvents.push("validate");
+      return { ok: true as const };
+    });
+    const log = vi.fn((message: string) => {
+      if (message.startsWith("Running: openshell sandbox delete")) {
+        deleteEdgeEvents.push("log");
+      }
+    });
+    mocks.runOpenshell.mockImplementation((args: string[]) => {
+      deleteEdgeEvents.push(args[1] ?? "unknown");
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      revalidateBeforeDelete,
+      assertDeleteEdgeUnchanged,
+    });
+
+    await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      backupManifest: null,
+      force: true,
+      log,
+      bail: vi.fn((message: string): never => {
+        throw new Error(message);
+      }),
+      relockShieldsIfNeeded: vi.fn(() => true),
+      validateDeleteEdge,
+      onDeleted: vi.fn(),
+    });
+
+    expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
+    expect(assertDeleteEdgeUnchanged).toHaveBeenCalledOnce();
+    expect(validateDeleteEdge).toHaveBeenCalledOnce();
+    expect(assertDeleteEdgeUnchanged.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(mocks.getSandbox.mock.invocationCallOrder[1]).toBeLessThan(
+      validateDeleteEdge.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(validateDeleteEdge.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(mocks.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
+    expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
+    expect(deleteEdgeEvents).toEqual(["log", "validate", "delete"]);
+  });
+
   it("refuses sandbox deletion when read-only MCP state drifts at the delete edge (#7062)", async () => {
     const revalidateBeforeDelete = vi.fn().mockRejectedValue(new Error("live policy drifted"));
     mocks.prepareMcpForRebuild.mockResolvedValue({
@@ -359,6 +484,7 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({ status: 9, stdout: "", stderr: "delete failed" })
       .mockReturnValueOnce({ status: 0, stdout: "Phase: Ready\n", stderr: "" });
     const onDeleted = vi.fn();
+    const abortPreparedImageRecreate = vi.fn(() => true);
     const relockShieldsIfNeeded = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -374,6 +500,8 @@ describe("rebuild destroy phase", () => {
         log: vi.fn(),
         bail,
         relockShieldsIfNeeded,
+        validateDeleteEdge: vi.fn(() => ({ ok: true as const })),
+        abortPreparedImageRecreate,
         onDeleted,
       }),
     ).rejects.toThrow("Failed to delete sandbox.");
@@ -388,6 +516,7 @@ describe("rebuild destroy phase", () => {
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(abortPreparedImageRecreate).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).toHaveBeenNthCalledWith(
       2,
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
@@ -575,6 +704,7 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({ status: 0, stdout: "Phase: Terminating\n", stderr: "" });
     const onDeleted = vi.fn();
     const onDeleteStateAmbiguous = vi.fn();
+    const abortPreparedImageRecreate = vi.fn(() => true);
     const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
@@ -589,6 +719,8 @@ describe("rebuild destroy phase", () => {
           throw new Error(message);
         }),
         relockShieldsIfNeeded,
+        validateDeleteEdge: vi.fn(() => ({ ok: true as const })),
+        abortPreparedImageRecreate,
         onDeleted,
         onDeleteStateAmbiguous,
       }),
@@ -596,6 +728,7 @@ describe("rebuild destroy phase", () => {
 
     expect(onDeleted).not.toHaveBeenCalled();
     expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
+    expect(abortPreparedImageRecreate).toHaveBeenCalledOnce();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();

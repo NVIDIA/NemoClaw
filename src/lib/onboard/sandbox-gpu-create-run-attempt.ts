@@ -44,6 +44,7 @@ const COMPATIBILITY_STABLE_READY_POLLS = 2;
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
+  dockerDesktopWsl?: boolean,
 ) {
   const state: SandboxGpuCreateAttemptState = {
     firstCreateOutput: "",
@@ -53,11 +54,12 @@ export function createSandboxGpuCreateAttemptRunner(
   };
   const nativeFallbackBaseline =
     input.initialGpuRoute === "native" && input.gpuRoutePlan === "native-with-fallback"
-      ? queryOpenShellDockerSandboxContainers(input.sandboxName)
+      ? queryOpenShellDockerSandboxContainers(input.sandboxName, deps)
       : null;
   const nativeFallbackHasCleanBaseline =
     nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0;
-  const inspectNativeRuntime = () => queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
+  const inspectNativeRuntime = () =>
+    queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName, deps);
 
   const runAttempt = async (route: SelectedDockerGpuRoute) => {
     const compatibility = route === "compatibility";
@@ -83,11 +85,16 @@ export function createSandboxGpuCreateAttemptRunner(
       requiredUlimits: input.requiredUlimits,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
       backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
+      dockerDesktopWsl,
       deps,
     });
     const attemptArgv = state.compatibilityArgv ?? input.createArgv;
     const [createExecutable, ...createExecutableArgs] = attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
+    const preparedImage = input.prebuild.preparedOpenClawLegacyImage;
+    if (preparedImage && !preparedImage.verifyForCreate()) {
+      throw new Error("Retained OpenClaw rebuild image changed before sandbox creation.");
+    }
     const createResult = await streamSandboxCreate(
       createExecutable,
       createExecutableArgs,
@@ -253,6 +260,8 @@ export function createSandboxGpuCreateAttemptRunner(
           reportGpuProofFailure: !deferNativeProofFailure,
           selectedMode: dockerGpuCreatePatch.selectedMode,
           runCaptureOpenshell: deps.runCaptureOpenshell,
+          dockerCapture: deps.dockerCapture,
+          dockerLogs: deps.dockerLogs,
           log: console.log,
         },
       );

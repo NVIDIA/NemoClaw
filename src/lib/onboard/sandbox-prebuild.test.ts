@@ -17,6 +17,7 @@ vi.mock("../adapters/docker/exec", async (importOriginal) => ({
 
 import { withStdoutRedirectedToStderr } from "../cli/stdout-guard";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import type { PreparedOpenClawLegacyImage } from "./build-context-stage";
 import {
   dockerBuildSubprocessEnv,
   prebuildSandboxImageIfEligible,
@@ -27,6 +28,24 @@ import {
 const BUILD_ID = "1234567890";
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryDirectories: string[] = [];
+
+function createPreparedOpenClawLegacyImageFixture(): PreparedOpenClawLegacyImage {
+  return {
+    dockerEnv: { DOCKER_CONTEXT: "retained-context" },
+    engineId: "retained-engine",
+    imageRef: "nemoclaw-sandbox-local:retained-openclaw",
+    imageId: IMAGE_ID,
+    verify: vi.fn(() => true),
+    retainForRecreate: vi.fn(() => true),
+    verifyForCreate: vi.fn(() => true),
+    finalizeAfterCreate: vi.fn(() => ({
+      mutableTagVerified: true,
+      registryImageRef: null,
+    })),
+    abort: vi.fn(() => true),
+    dispose: vi.fn(() => true),
+  };
+}
 
 function createBuildContext(
   parent = os.tmpdir(),
@@ -325,6 +344,59 @@ describe("sandbox BuildKit prebuild", () => {
     expect(buildImage).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("too many open files"));
     expect(log).toHaveBeenCalledWith(expect.stringContaining("could not be inspected"));
+  });
+
+  it("reuses a retained OpenClaw image by immutable ID without rebuilding", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const preparedOpenClawLegacyImage = createPreparedOpenClawLegacyImageFixture();
+    const buildImage = vi.fn(async () => 0);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        preparedOpenClawLegacyImage,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        buildImage,
+      }),
+    ).resolves.toEqual({
+      createArgs: ["--from", IMAGE_ID, "--name", "alpha"],
+      imageRef: preparedOpenClawLegacyImage.imageRef,
+      imageId: IMAGE_ID,
+      preparedOpenClawLegacyImage,
+    });
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.verifyForCreate).not.toHaveBeenCalled();
+    expect(preparedOpenClawLegacyImage.finalizeAfterCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a nonlocal gateway", { dockerDriverGateway: false }],
+    ["a custom Dockerfile", { origin: "custom" as const }],
+    ["changed create arguments", { createArgs: ["--from", "/tmp/changed/Dockerfile"] }],
+  ])("fails closed instead of rebuilding or falling back after %s", async (_label, override) => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        preparedOpenClawLegacyImage: createPreparedOpenClawLegacyImageFixture(),
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        buildImage,
+        ...override,
+      }),
+    ).rejects.toThrow(/retained OpenClaw rebuild image/i);
+    expect(buildImage).not.toHaveBeenCalled();
   });
 
   it("uses the argv-based Docker helper and returns the local image on success", async () => {

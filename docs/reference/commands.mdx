@@ -2702,11 +2702,38 @@ A rebuild preserves the recorded Deep Agents Code auto-approval capability unles
 A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 Auto-mode sandboxes remain auto.
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
+
+Before backup or deletion, `rebuild` builds and validates the replacement image with Docker's BuildKit path.
+For a NemoClaw-generated OpenClaw image on a local Docker-driver gateway, NemoClaw can use one compatibility retry when Docker reports `BuildKit is enabled but the buildx component is missing or broken`.
+NemoClaw runs `docker buildx version` independently and uses the compatibility retry only when that command also fails.
+The retry rebuilds the same verified build context once with Docker's legacy builder.
+NemoClaw then binds the retained image to the verified Docker engine and its immutable image ID.
+It verifies the build context, Docker engine, mutable tag, and immutable image ID again at the final delete boundary.
+Any failed build or pre-delete verification stops the rebuild without deleting the existing sandbox.
+After deletion, Docker operations for replacement creation remain bound to the retained engine and immutable image ID.
+If either identity changes during replacement creation, NemoClaw stops instead of operating on a different Docker target.
+
+The legacy-builder retry does not apply in the following cases:
+
+- The sandbox was recorded with a custom `--from` Dockerfile.
+- The OpenShell gateway is not local.
+- The host-side local prebuild is disabled.
+- The build has an unrelated failure.
+- The independent `docker buildx version` command succeeds.
+
+When the retry does not apply and Buildx is missing or broken, NemoClaw stops and leaves the existing sandbox intact.
+Install or repair Docker Buildx, then verify it with `docker buildx version`.
+Rerun the rebuild after that command succeeds.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
 Before backup or deletion, `rebuild` builds and validates the replacement image with Docker Buildx.
 If Buildx is missing or broken, NemoClaw stops and leaves the existing sandbox intact.
 Install or repair Docker Buildx, then verify it with `docker buildx version`.
 Rerun the rebuild after that command succeeds.
+
 </AgentOnly>
 
 ```bash

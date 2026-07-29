@@ -6,8 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import type { PreparedOpenClawLegacyImage } from "../../onboard/build-context-stage";
 import { ROOT } from "../../runner";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import type { OpenClawLegacyDockerBinding } from "./rebuild/openclaw-legacy-image";
 import {
   preflightRebuildImage,
   type RebuildImagePreflightResult,
@@ -18,6 +20,7 @@ import {
 } from "./rebuild-prepared-image-context";
 
 type SuccessfulPreflight = Extract<RebuildImagePreflightResult, { ok: true }>;
+const LEGACY_IMAGE_ID = `sha256:${"d".repeat(64)}`;
 
 function successful(result: RebuildImagePreflightResult): SuccessfulPreflight {
   expect(result.ok).toBe(true);
@@ -44,9 +47,42 @@ function input(fromDockerfile: string | null) {
       sandboxGpuDevice: null,
       errors: [],
     },
+    sandboxName: "alpha",
+    localPrebuildEnabled: false,
     gatewayPort: 8080,
     chatUiUrl: "http://127.0.0.1:18789",
   };
+}
+
+function createLegacyBinding(): OpenClawLegacyDockerBinding {
+  return Object.freeze({
+    dockerEnv: Object.freeze({
+      DOCKER_CONFIG: "/home/test/.docker",
+      DOCKER_CONTEXT: "verified-builder",
+    }),
+    engineId: "verified-engine",
+  });
+}
+
+function createLegacyLease(
+  binding: OpenClawLegacyDockerBinding,
+  imageRef: string,
+): PreparedOpenClawLegacyImage {
+  return Object.freeze({
+    dockerEnv: binding.dockerEnv,
+    engineId: binding.engineId,
+    imageRef,
+    imageId: LEGACY_IMAGE_ID,
+    verify: vi.fn(() => true),
+    retainForRecreate: vi.fn(() => true),
+    verifyForCreate: vi.fn(() => true),
+    finalizeAfterCreate: vi.fn(() => ({
+      mutableTagVerified: true,
+      registryImageRef: null,
+    })),
+    abort: vi.fn(() => true),
+    dispose: vi.fn(() => true),
+  });
 }
 
 describe("preflightRebuildImage", () => {
@@ -142,6 +178,52 @@ describe("preflightRebuildImage", () => {
       expect(verifyPreparedBuildContext(result.prepared)).toBe(true);
       expect(disposePreparedBuildContext(result.prepared)).toBe(true);
       expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a successful BuildKit candidate only with its captured same-engine image ID", async () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-buildkit-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    const binding = createLegacyBinding();
+    const buildImage = vi.fn(() => ({ status: 0 }) as never);
+    const disposeLegacyImage = vi.fn(() => true);
+
+    try {
+      const result = successful(
+        await preflightRebuildImage(
+          { ...input(null), localPrebuildEnabled: true },
+          {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx,
+              stagedDockerfile,
+              cleanupBuildCtx: vi.fn(() => true),
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch: vi.fn(async () => ({
+              buildId: "buildkit-success",
+              dashboardRemoteBindPrepared: false,
+              resolvedBaseImage: null,
+            })),
+            buildImage,
+            captureLegacyDockerBinding: vi.fn(() => binding),
+            inspectLegacyImageId: vi.fn(() => LEGACY_IMAGE_ID),
+            disposeLegacyImage,
+          },
+        ),
+      );
+
+      expect(buildImage).toHaveBeenCalledWith(
+        stagedDockerfile,
+        result.imageTag,
+        buildCtx,
+        expect.objectContaining({ env: binding.dockerEnv }),
+      );
+      expect(result.prepared.preparedOpenClawLegacyImage).toBeUndefined();
+      expect(disposeLegacyImage).toHaveBeenCalledWith(binding, result.imageTag, LEGACY_IMAGE_ID);
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {
       fs.rmSync(buildCtx, { recursive: true, force: true });
     }
@@ -260,48 +342,374 @@ describe("preflightRebuildImage", () => {
     ["stderr buffer", "stderr", true],
     ["stdout string", "stdout", false],
     ["stdout buffer", "stdout", true],
-  ] as const)("requires Buildx repair when %s contains the diagnostic before sandbox deletion (#7111)", async (_case, stream, buffered) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-required-"));
-    const dockerfile = path.join(dir, "Dockerfile.custom");
+  ] as const)("retains one exact generated OpenClaw legacy image when %s contains the diagnostic (#7111)", async (_case, stream, buffered) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-fallback-"));
+    const dockerfile = path.join(dir, "Dockerfile");
     fs.writeFileSync(dockerfile, "FROM scratch\n");
     const diagnostic = "ERROR: BuildKit is enabled but the buildx component is missing or broken.";
-    const buildImage = vi.fn(
-      () =>
-        ({
-          status: 1,
-          [stream]: buffered ? Buffer.from(diagnostic) : diagnostic,
-        }) as never,
-    );
+    const buildImage = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        [stream]: buffered ? Buffer.from(diagnostic) : diagnostic,
+      } as never)
+      .mockReturnValueOnce({ status: 0 } as never);
+    const cleanupBuildCtx = vi.fn(() => true);
+    const binding = createLegacyBinding();
+    let lease: PreparedOpenClawLegacyImage | null = null;
+    const createLegacyImage = vi.fn((_binding: OpenClawLegacyDockerBinding, imageRef: string) => {
+      lease = createLegacyLease(binding, imageRef);
+      return lease;
+    });
+    const removeImage = vi.fn(() => ({ status: 0 }) as never);
+    const disposeLegacyImage = vi.fn(() => true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = successful(
+        await preflightRebuildImage(
+          { ...input(null), localPrebuildEnabled: true },
+          {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx: dir,
+              stagedDockerfile: dockerfile,
+              cleanupBuildCtx,
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch: vi.fn(async () => ({
+              buildId: "buildx-fallback",
+              dashboardRemoteBindPrepared: false,
+              resolvedBaseImage: null,
+            })),
+            buildImage,
+            removeImage,
+            buildxAvailable: vi.fn(() => false),
+            captureLegacyDockerBinding: vi.fn(() => binding),
+            inspectLegacyImageId: vi.fn(() => LEGACY_IMAGE_ID),
+            createLegacyImage,
+            disposeLegacyImage,
+          },
+        ),
+      );
+
+      expect(buildImage).toHaveBeenCalledTimes(2);
+      expect(buildImage.mock.calls[0]?.slice(0, 3)).toEqual(buildImage.mock.calls[1]?.slice(0, 3));
+      expect(buildImage.mock.calls[0]?.[3]).toEqual(
+        expect.objectContaining({ cwd: ROOT, env: binding.dockerEnv }),
+      );
+      expect(buildImage.mock.calls[1]?.[3]).toEqual(
+        expect.objectContaining({
+          cwd: ROOT,
+          env: { ...binding.dockerEnv, DOCKER_BUILDKIT: "0" },
+        }),
+      );
+      expect(result.imageTag).toMatch(/^nemoclaw-sandbox-local:/);
+      expect(result.prepared.preparedOpenClawLegacyImage).toBe(lease);
+      expect(createLegacyImage).toHaveBeenCalledWith(binding, result.imageTag, LEGACY_IMAGE_ID);
+      expect(removeImage).not.toHaveBeenCalled();
+      expect(disposeLegacyImage).not.toHaveBeenCalled();
+      expect(cleanupBuildCtx).not.toHaveBeenCalled();
+      expect(verifyPreparedBuildContext(result.prepared)).toBe(true);
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+    } finally {
+      warn.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "the independent Buildx probe succeeds",
+      agent: null,
+      fromDockerfile: null,
+      origin: "generated" as const,
+      localPrebuildEnabled: true,
+      buildxAvailable: true,
+      capturesBinding: true,
+    },
+    {
+      label: "the generated target is Hermes",
+      agent: { name: "hermes" },
+      fromDockerfile: null,
+      origin: "generated" as const,
+      localPrebuildEnabled: true,
+      buildxAvailable: false,
+      capturesBinding: false,
+    },
+    {
+      label: "local image consumption is unavailable",
+      agent: null,
+      fromDockerfile: null,
+      origin: "generated" as const,
+      localPrebuildEnabled: false,
+      buildxAvailable: false,
+      capturesBinding: false,
+    },
+    {
+      label: "the Dockerfile is user supplied",
+      agent: null,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      origin: "custom" as const,
+      localPrebuildEnabled: true,
+      buildxAvailable: false,
+      capturesBinding: false,
+    },
+  ])("does not retry when $label (#7111)", async (testCase) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-no-fallback-"));
+    const dockerfile = path.join(dir, "Dockerfile");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const diagnostic = "ERROR: BuildKit is enabled but the buildx component is missing or broken.";
+    const buildImage = vi.fn(() => ({ status: 1, stderr: diagnostic }) as never);
+    const cleanupBuildCtx = vi.fn(() => true);
+    const binding = createLegacyBinding();
+    const captureLegacyDockerBinding = vi.fn(() => binding);
+    const buildxAvailable = vi.fn(() => testCase.buildxAvailable);
+
+    try {
+      const result = await preflightRebuildImage(
+        {
+          ...input(testCase.fromDockerfile),
+          agent: testCase.agent as never,
+          localPrebuildEnabled: testCase.localPrebuildEnabled,
+        },
+        {
+          stageBuildContext: vi.fn(() => ({
+            buildCtx: dir,
+            stagedDockerfile: dockerfile,
+            cleanupBuildCtx,
+            origin: testCase.origin,
+          })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "no-fallback",
+            dashboardRemoteBindPrepared: false,
+            resolvedBaseImage: null,
+          })),
+          buildImage,
+          removeImage: vi.fn(() => ({ status: 0 }) as never),
+          buildxAvailable,
+          captureLegacyDockerBinding,
+          disposeLegacyImage: vi.fn(() => true),
+        },
+      );
+
+      expect(result).toEqual({ ok: false, detail: diagnostic });
+      expect(buildImage).toHaveBeenCalledOnce();
+      expect(captureLegacyDockerBinding).toHaveBeenCalledTimes(testCase.capturesBinding ? 1 : 0);
+      if (testCase.capturesBinding) {
+        expect(captureLegacyDockerBinding).toHaveBeenCalledWith({
+          buildDockerEnv: expect.any(Function),
+          cwd: ROOT,
+        });
+      }
+      expect(buildxAvailable).toHaveBeenCalledTimes(testCase.capturesBinding ? 1 : 0);
+      expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects generated build-context drift before the legacy retry (#7111)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-drift-"));
+    const dockerfile = path.join(dir, "Dockerfile");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const buildImage = vi.fn(() => {
+      fs.writeFileSync(path.join(dir, "mutated"), "changed\n");
+      return {
+        status: 1,
+        stderr: "ERROR: BuildKit is enabled but the buildx component is missing or broken.",
+      } as never;
+    });
     const cleanupBuildCtx = vi.fn(() => true);
 
     try {
-      const result = await preflightRebuildImage(input(dockerfile), {
-        stageBuildContext: vi.fn(() => ({
-          buildCtx: dir,
-          stagedDockerfile: dockerfile,
-          cleanupBuildCtx,
-          origin: "custom" as const,
-        })),
-        prepareDockerfilePatch: vi.fn(async () => ({
-          buildId: "buildx-required",
-          dashboardRemoteBindPrepared: false,
-          resolvedBaseImage: null,
-        })),
-        buildImage,
-        removeImage: vi.fn(() => ({ status: 0 }) as never),
-      });
-
-      expect(result).toEqual({
+      await expect(
+        preflightRebuildImage(
+          { ...input(null), localPrebuildEnabled: true },
+          {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx: dir,
+              stagedDockerfile: dockerfile,
+              cleanupBuildCtx,
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch: vi.fn(async () => ({
+              buildId: "buildx-drift",
+              dashboardRemoteBindPrepared: false,
+              resolvedBaseImage: null,
+            })),
+            buildImage,
+            buildxAvailable: vi.fn(() => false),
+            captureLegacyDockerBinding: vi.fn(() => createLegacyBinding()),
+            disposeLegacyImage: vi.fn(() => true),
+          },
+        ),
+      ).resolves.toEqual({
         ok: false,
-        detail:
-          "Docker Buildx is required for sandbox rebuilds. " +
-          "Install or repair Docker Buildx, then verify it with 'docker buildx version'. " +
-          "Rerun the rebuild after that command succeeds. " +
-          "NemoClaw stopped before deleting the existing sandbox.",
+        detail: "replacement build context changed during preflight",
       });
       expect(buildImage).toHaveBeenCalledOnce();
       expect(cleanupBuildCtx).toHaveBeenCalledOnce();
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a unique GC-visible tag when legacy image identity cannot be established (#7253)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-identity-failure-"));
+    const dockerfile = path.join(dir, "Dockerfile");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const binding = createLegacyBinding();
+    const buildImage = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "ERROR: BuildKit is enabled but the buildx component is missing or broken.",
+      } as never)
+      .mockReturnValueOnce({ status: 0 } as never);
+    const disposeLegacyImage = vi.fn(() => true);
+    const removeImage = vi.fn(() => ({ status: 0 }) as never);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = await preflightRebuildImage(
+        { ...input(null), localPrebuildEnabled: true },
+        {
+          stageBuildContext: vi.fn(() => ({
+            buildCtx: dir,
+            stagedDockerfile: dockerfile,
+            cleanupBuildCtx: vi.fn(() => true),
+            origin: "generated" as const,
+          })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "identity-failure",
+            dashboardRemoteBindPrepared: false,
+            resolvedBaseImage: null,
+          })),
+          buildImage,
+          removeImage,
+          buildxAvailable: vi.fn(() => false),
+          captureLegacyDockerBinding: vi.fn(() => binding),
+          inspectLegacyImageId: vi.fn(() => {
+            throw new Error("OpenClaw legacy-image identity could not be verified.");
+          }),
+          disposeLegacyImage,
+        },
+      );
+
+      expect(result).toEqual({
+        ok: false,
+        detail: "OpenClaw legacy-image identity could not be verified.",
+      });
+      expect(disposeLegacyImage).not.toHaveBeenCalled();
+      expect(removeImage).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /nemoclaw-sandbox-local:.*no verified immutable cleanup identity.*maintenance cleanup/,
+        ),
+      );
+    } finally {
+      warn.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry an unrelated generated-image build failure (#7111)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-no-retry-"));
+    const dockerfile = path.join(dir, "Dockerfile");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const buildImage = vi.fn(() => ({ status: 1, stderr: "registry timeout" }) as never);
+    const buildxAvailable = vi.fn(() => false);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        preflightRebuildImage(
+          { ...input(null), localPrebuildEnabled: true },
+          {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx: dir,
+              stagedDockerfile: dockerfile,
+              cleanupBuildCtx: vi.fn(() => true),
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch: vi.fn(async () => ({
+              buildId: "unrelated-build-failure",
+              dashboardRemoteBindPrepared: false,
+              resolvedBaseImage: null,
+            })),
+            buildImage,
+            buildxAvailable,
+            captureLegacyDockerBinding: vi.fn(() => createLegacyBinding()),
+            disposeLegacyImage: vi.fn(() => true),
+          },
+        ),
+      ).resolves.toEqual({ ok: false, detail: "registry timeout" });
+      expect(buildImage).toHaveBeenCalledOnce();
+      expect(buildxAvailable).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /nemoclaw-sandbox-local:.*no verified immutable cleanup identity.*maintenance cleanup/,
+        ),
+      );
+    } finally {
+      warn.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the redacted legacy retry failure before the BuildKit diagnostic (#7111)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-double-fail-"));
+    const dockerfile = path.join(dir, "Dockerfile");
+    const credential = ["legacy", "retry", "credential"].join("-");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const buildImage = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stderr:
+          "ERROR: BuildKit is enabled but the buildx component is missing or broken.\n" +
+          "x".repeat(9_000),
+      } as never)
+      .mockReturnValueOnce({
+        status: 1,
+        stderr:
+          `legacy build could not read ${os.homedir()}/private-context\n` +
+          `Authorization: Bearer ${credential}`,
+      } as never);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = await preflightRebuildImage(
+        { ...input(null), localPrebuildEnabled: true },
+        {
+          stageBuildContext: vi.fn(() => ({
+            buildCtx: dir,
+            stagedDockerfile: dockerfile,
+            cleanupBuildCtx: vi.fn(() => true),
+            origin: "generated" as const,
+          })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "double-failure",
+            dashboardRemoteBindPrepared: false,
+            resolvedBaseImage: null,
+          })),
+          buildImage,
+          buildxAvailable: vi.fn(() => false),
+          captureLegacyDockerBinding: vi.fn(() => createLegacyBinding()),
+          disposeLegacyImage: vi.fn(() => true),
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      const failure = result as Extract<RebuildImagePreflightResult, { ok: false }>;
+      expect(failure.detail).toContain("Legacy-builder retry failed");
+      expect(failure.detail).toContain("legacy build could not read ~/private-context");
+      expect(failure.detail).toContain("Authorization: Bearer <REDACTED>");
+      expect(failure.detail).not.toContain(credential);
+      expect(failure.detail.length).toBeLessThan(8_100);
+      expect(buildImage).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -326,7 +734,7 @@ describe("preflightRebuildImage", () => {
       );
       expect(buildImage).toHaveBeenCalledWith(
         expect.stringContaining("Dockerfile"),
-        expect.stringMatching(/^nemoclaw-rebuild-preflight:/),
+        expect.stringMatching(/^nemoclaw-sandbox-local:/),
         expect.any(String),
         expect.objectContaining({ ignoreError: true }),
       );
