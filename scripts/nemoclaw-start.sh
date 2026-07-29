@@ -3431,33 +3431,34 @@ GATEWAYURLENVEOF
     # source of the name; capture it here for the renderer below.
     #
     # Apply the same RFC-1123 allowlist the renderer uses (mirrors
-    # NAME_VALID_PATTERN in src/lib/name-validation.ts) so a value that did not
-    # come from the host's validated name cannot reach a copyable command; the
-    # allowlisted result is limited to [a-z0-9-] and needs no further escaping.
+    # NAME_VALID_PATTERN in src/lib/name-validation.ts). Missing or invalid
+    # values cannot reach a copyable command. An accepted value is limited to
+    # [a-z0-9-] and needs no further escaping.
     # Evaluate the ranges in a subshell under the C locale so [a-z0-9-] stays
     # ASCII and is not widened by the entrypoint's LC_COLLATE/LC_CTYPE.
     local _sandbox_label_src _sandbox_label
     _sandbox_label_src="${NEMOCLAW_SANDBOX_NAME:-}"
-    _sandbox_label="$(
+    (
       LC_ALL=C
+      _sandbox_label=""
       case "$_sandbox_label_src" in
         "" | 0 | 1 | true | TRUE | false | FALSE) ;;
         [!a-z]* | *- | *[!a-z0-9-]*) ;;
         *)
           if [ "${#_sandbox_label_src}" -le 63 ]; then
-            printf '%s' "$_sandbox_label_src"
+            _sandbox_label="$_sandbox_label_src"
           fi
           ;;
       esac
-    )"
-    # Emit the negative case too, never nothing: the file is sourced into a shell
-    # the sandbox controls, so an explicit unset stops a pre-set value from
-    # surviving into a copyable host command when no trusted name is available.
-    if [ -n "$_sandbox_label" ]; then
-      printf "export _NEMOCLAW_SANDBOX_LABEL='%s'\n" "$_sandbox_label"
-    else
-      printf 'unset _NEMOCLAW_SANDBOX_LABEL\n'
-    fi
+      # Emit the negative case too, never nothing: the file is sourced into a
+      # shell the sandbox controls, so an explicit unset stops a pre-set value
+      # from surviving when no valid name is available.
+      if [ -n "$_sandbox_label" ]; then
+        printf "export _NEMOCLAW_SANDBOX_LABEL='%s'\n" "$_sandbox_label"
+      else
+        printf 'unset _NEMOCLAW_SANDBOX_LABEL\n'
+      fi
+    )
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
 # #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
@@ -3946,16 +3947,16 @@ _nemoclaw_policy_denial_hint_label() {
   # Render the first source that yields a valid sandbox name.
   #
   # OPENSHELL_SANDBOX is the runtime value. OpenShell exports it as the boolean
-  # "1" to sandbox processes, so in a connect shell it never carries the name;
-  # it is still checked first because a caller that does supply a real name
-  # should win, which keeps the documented OpenShell >=0.0.44 contract intact.
+  # "1" to sandbox processes. Keep it as the first candidate so a caller-provided
+  # valid sandbox name takes precedence over the generated fallback.
   #
   # _NEMOCLAW_SANDBOX_LABEL is the fallback that makes the hints work in the
   # connect shell: the host-injected NEMOCLAW_SANDBOX_NAME, captured by the
   # entrypoint when it generated this file. It is re-emitted (or explicitly
   # unset) on every regeneration, so it cannot go stale, and it is allowlisted
   # again here because the sandbox can reassign it after this file is sourced.
-  # Ref: #7795.
+  # Remove this fallback after the supported OpenShell contract supplies a
+  # validated sandbox name to every connect-shell process. Ref: #7795.
   #
   # Both call sites invoke this inside $(…) command substitution (a subshell),
   # so the assignment below cannot leak into the interactive shell.
