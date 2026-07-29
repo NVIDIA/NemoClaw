@@ -11,7 +11,7 @@ export default class SandboxCuaTaskLogsCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Retrieve private CUA log evidence references";
   static description =
-    "Retrieve and validate content-addressed references to private log evidence for the active task.";
+    "Retrieve and validate content-addressed references to private log evidence for the active or retained completed task.";
   static examples = [
     "<%= config.bin %> sandbox cua task logs alpha --adapter /opt/cua-task-adapter --task-id task-123 --json",
   ];

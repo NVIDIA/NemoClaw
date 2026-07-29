@@ -1686,7 +1686,7 @@ Validation failures exit `2`, an active-task conflict exits `3`, unavailable lif
 
 Start one task with an explicit ID, execution surface, and private input file.
 A target with an active task returns `task_conflict` without invoking the adapter.
-A completed task ID must not be reused.
+A task ID that remains in the retained result history must not be reused.
 
 ```bash
 $$nemoclaw my-cua cua task start \
