@@ -770,8 +770,8 @@ GitHub supplies the triggering actor; the controller requires that account to
 have current `maintain` or `admin` permission.
 
 The shared resolver revalidates the open PR, head repository, PR SHA and base
-SHA, deterministic plan, matching fork approval state, and that the controller
-commit is either still `main` or has only a compatible safe descendant as
+SHA, deterministic plan, matching pending coordination state, and that the
+controller commit is either still `main` or has only a compatible safe descendant as
 described above. Immediately before dispatch, it reads the live PR again and
 requires the same head repository, PR SHA, and base SHA. The trusted workflow
 definition stays on `main`, while each PR-code checkout is pinned to the
