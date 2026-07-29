@@ -240,6 +240,7 @@ managed._VALIDATION_GIT_EXECUTABLE = Path(git_executable)
 managed._VALIDATION_GIT_OWNER_UID = Path(git_executable).stat().st_uid
 managed._VALIDATION_INVOCATION_BUDGET_ROOT = root / "invocation-budget"
 managed._VALIDATION_INVOCATION_BUDGET_OWNER_UID = os.getuid()
+managed._VALIDATION_INVOCATION_BUDGET_GROUP_GID = os.getgid()
 managed.initialize_managed_validation_invocation_budget()
 managed.finalize_managed_validation_invocation_budget()
 

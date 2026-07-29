@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import grp
 import hashlib
 import ipaddress
 import json
@@ -65,6 +66,7 @@ _VALIDATION_INVOCATION_BUDGET_ROOT = Path(
     "/usr/local/share/nemoclaw/dcode-validation-invocations"
 )
 _VALIDATION_INVOCATION_BUDGET_OWNER_UID = 0
+_VALIDATION_INVOCATION_BUDGET_GROUP_GID: int | None = None
 _VALIDATION_INVOCATION_ANCHOR = "anchor"
 _VALIDATION_INVOCATION_CLAIMS = "claims"
 _VALIDATION_INVOCATION_ROOT_PROBE = ".root-write-protection-probe"
@@ -1604,6 +1606,11 @@ def _validation_invocation_command_path(
     return _VALIDATION_INVOCATION_BUDGET_ROOT / digest / str(command["id"])
 
 
+def _validation_invocation_budget_group_gid() -> int:
+    configured = _VALIDATION_INVOCATION_BUDGET_GROUP_GID
+    return grp.getgrnam("sandbox").gr_gid if configured is None else configured
+
+
 def initialize_managed_validation_invocation_budget() -> None:
     """Create the root-owned, write-once invocation slots during image build."""
     if os.geteuid() != _VALIDATION_INVOCATION_BUDGET_OWNER_UID:
@@ -1629,13 +1636,24 @@ def initialize_managed_validation_invocation_budget() -> None:
             | os.O_EXCL
             | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_NOFOLLOW", 0),
-            0o666,
+            0o600,
         )
+        os.fchown(
+            descriptor,
+            _VALIDATION_INVOCATION_BUDGET_OWNER_UID,
+            _validation_invocation_budget_group_gid(),
+        )
+        os.fchmod(descriptor, 0o660)
         os.close(descriptor)
-        anchor.chmod(0o666)
         claims = command_directory / _VALIDATION_INVOCATION_CLAIMS
-        claims.mkdir(mode=0o1733)
-        claims.chmod(0o1733)
+        claims.mkdir(mode=0o1730)
+        os.chown(
+            claims,
+            _VALIDATION_INVOCATION_BUDGET_OWNER_UID,
+            _validation_invocation_budget_group_gid(),
+            follow_symlinks=False,
+        )
+        claims.chmod(0o1730)
         os.link(anchor, claims / _VALIDATION_INVOCATION_ROOT_PROBE)
 
 
@@ -1909,7 +1927,8 @@ def _reserve_validation_invocation(
         claims.is_symlink()
         or not stat.S_ISDIR(claims_stat.st_mode)
         or claims_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
-        or stat.S_IMODE(claims_stat.st_mode) != 0o1733
+        or claims_stat.st_gid != _validation_invocation_budget_group_gid()
+        or stat.S_IMODE(claims_stat.st_mode) != 0o1730
     ):
         raise RuntimeError("validation invocation claim directory is unsafe")
     command_descriptor = os.open(
@@ -1941,7 +1960,8 @@ def _reserve_validation_invocation(
         if (
             not stat.S_ISREG(anchor_stat.st_mode)
             or anchor_stat.st_uid != _VALIDATION_INVOCATION_BUDGET_OWNER_UID
-            or stat.S_IMODE(anchor_stat.st_mode) != 0o666
+            or anchor_stat.st_gid != _validation_invocation_budget_group_gid()
+            or stat.S_IMODE(anchor_stat.st_mode) != 0o660
             or anchor_stat.st_dev != os.fstat(claims_descriptor).st_dev
         ):
             raise RuntimeError("validation invocation anchor is unsafe")

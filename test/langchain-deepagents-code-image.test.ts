@@ -203,7 +203,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(runtime).toContain(
       '_VALIDATION_INVOCATION_BUDGET_ROOT = Path(\n    "/usr/local/share/nemoclaw/dcode-validation-invocations"',
     );
-    expect(runtime).toContain("claims.chmod(0o1733)");
+    expect(runtime).toContain("claims.chmod(0o1730)");
     expect(runtime).toContain("os.link(anchor, sandbox_probe, follow_symlinks=False)");
     expect(runtime).toContain('raise RuntimeError("sandbox user rolled back an invocation claim")');
     expect(runtime).not.toContain("dcode-validation-invocations.json");
