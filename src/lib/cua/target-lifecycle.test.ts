@@ -314,7 +314,7 @@ describe("CUA target lifecycle (#7751)", () => {
 
   it("reports the target lifecycle unavailable before canonical runtime registration", () => {
     const { registry, deps } = harness();
-    if (registry.sandboxes.alpha) delete registry.sandboxes.alpha.cuaRuntimeReadiness;
+    delete registry.sandboxes.alpha!.cuaRuntimeReadiness;
 
     const outcome = executeCuaTargetLifecycle(
       { operation: "target.status", sandboxName: "alpha" },
