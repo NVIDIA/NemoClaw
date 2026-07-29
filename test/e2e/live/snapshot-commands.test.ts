@@ -732,28 +732,14 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(stoppedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
   expect(stoppedBackupManifest.backedUpDirs).toEqual(expect.arrayContaining(["workspace"]));
 
-  const restart = await host.command("docker", ["start", containerId], {
-    artifactName: "phase-10-restart-for-stopped-snapshot-restore",
+  // Use the canonical lifecycle action so the container, managed gateway, and host forwards recover together.
+  const restart = await host.command("nemoclaw", [SANDBOX_NAME, "start"], {
+    artifactName: "phase-10-start-for-stopped-snapshot-restore",
     env: commandEnv(),
-    timeoutMs: 60_000,
+    timeoutMs: 180_000,
   });
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  const waitForExec = await host.command(
-    "bash",
-    [
-      "-lc",
-      'name="$1"; for _i in $(seq 1 30); do openshell sandbox exec --name "$name" -- true >/dev/null 2>&1 && exit 0; sleep 2; done; openshell sandbox exec --name "$name" -- true',
-      "wait-for-sandbox-exec",
-      SANDBOX_NAME,
-    ],
-    {
-      artifactName: "phase-10-wait-for-restarted-sandbox-exec",
-      env: commandEnv(),
-      timeoutMs: 90_000,
-    },
-  );
-  expect(waitForExec.exitCode, resultText(waitForExec)).toBe(0);
-  // Direct Docker start proves only container exec; status restores and verifies the delivery chain (#7824).
+  // Verify the full delivery chain before the test mutates and restores the stopped-sandbox backup.
   const recoveryStatus = await host.command("nemoclaw", [SANDBOX_NAME, "status", "--json"], {
     artifactName: "phase-10-recover-restarted-sandbox-delivery",
     env: commandEnv(),
