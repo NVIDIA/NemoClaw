@@ -19,12 +19,12 @@ import { HOST_ADVISORY_CHECKS } from "../advisories/checks/host";
 import { runAdvisories } from "../advisories/runner";
 import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   MIN_RECOMMENDED_DOCKER_CPUS,
   MIN_RECOMMENDED_DOCKER_MEM_GIB,
 } from "./container-runtime-resources";
 import { assessNvidiaCdiHost } from "./docker-cdi";
-import { isSupportedGatewayDockerHost } from "./docker-driver-gateway-env";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";

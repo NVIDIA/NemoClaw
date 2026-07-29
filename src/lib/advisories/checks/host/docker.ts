@@ -72,15 +72,15 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
   severity: "blocking",
   resumeSafe: false,
   check(host) {
-    if (!host.dockerHostInvalid || !host.dockerInstalled || host.dockerReachable || host.isWsl) {
+    if (!host.dockerHostInvalid || !host.dockerInstalled || host.isWsl) {
       return null;
     }
     return hostAdvisory(invalidDockerHost, {
       title: "Fix the DOCKER_HOST endpoint",
       kind: "manual",
       reason:
-        "DOCKER_HOST is set to an endpoint onboarding cannot use, so NemoClaw could not reach the Docker daemon. " +
-        "Onboarding supports only an absolute unix:// Docker socket with no quotes or line breaks; TCP endpoints and relative paths are not supported. " +
+        "DOCKER_HOST is set to an endpoint onboarding cannot use. " +
+        "Onboarding supports only an absolute unix:// Docker socket with no quotes or line breaks; TCP and SSH endpoints and relative paths are not supported, even when reachable. " +
         "This is a DOCKER_HOST configuration problem, not a docker-group permission or stopped-daemon issue.",
       commands: [
         "unset DOCKER_HOST   # use Docker's default socket",
