@@ -174,11 +174,68 @@ jobs:
           provenance: false
           sbom: false
 
-      - name: Exercise real managed-image entrypoint
+      - name: Validate exact PR managed image contract
+        id: contract
         shell: bash
         env:
           AGENT: ${{ matrix.agent }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.sha }}
+          PLATFORM: linux/amd64
+          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          image_id="$(
+            jq -er '
+              if length == 1 and (.[0].Id | type) == "string"
+              then .[0].Id
+              else error("expected one local image identity")
+              end
+            ' <<< "$image_json"
+          )"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: PR managed image did not resolve to an immutable local image ID: $image_id" >&2
+            exit 1
+          fi
+          if [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: PR managed image ID did not resolve to itself." >&2
+            exit 1
+          fi
+
+          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+             ! jq -e \
+               --arg agent "$AGENT" \
+               --arg cohort "$PUBLICATION_COHORT" \
+               --arg image_id "$image_id" \
+               --arg platform "$PLATFORM" \
+               --arg revision "$GITHUB_SHA" '
+                 length == 1 and
+                 .[0].Id == $image_id and
+                 .[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"] and
+                 .[0].Config.Cmd == ["/bin/bash"] and
+                 ((.[0].Config.User // "") as $user |
+                   $user == "" or $user == "root" or $user == "0") and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.capabilities"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.cohort"] == $cohort and
+                 .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
+               ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+
+          printf 'reference=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+          printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exercise real managed-image entrypoint
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
         run: |
           set -euo pipefail
           profile="$(
