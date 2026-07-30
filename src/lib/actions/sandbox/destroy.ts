@@ -164,11 +164,17 @@ export function cleanupSandboxServices(
   }
 
   let googlechatServicesPidDir = `${servicesPidDir}-googlechat`;
+  let googlechatTunnelStopped = true;
   try {
     googlechatServicesPidDir = stopGooglechatWebhookTunnel(validatedSandboxName);
   } catch (error) {
+    googlechatTunnelStopped = false;
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`  ${YW}⚠${R} Failed to stop Google Chat webhook tunnel: ${message}`);
+    console.warn(
+      `  ${YW}⚠${R} Keeping ${googlechatServicesPidDir} so a repeated destroy can stop the` +
+        " orphaned cloudflared and webhook-proxy processes recorded there.",
+    );
   }
 
   try {
@@ -179,13 +185,19 @@ export function cleanupSandboxServices(
   } catch {
     // PID directory may not exist — ignore.
   }
-  try {
-    rmSync(googlechatServicesPidDir, {
-      recursive: true,
-      force: true,
-    });
-  } catch {
-    // Dedicated Google Chat service directory may not exist — ignore.
+  // Only discard the Google Chat PID state once the tunnel actually stopped.
+  // Removing it after a failed stop would orphan the public cloudflared
+  // endpoint and the webhook proxy with no PID handle for a later destroy to
+  // find and stop them.
+  if (googlechatTunnelStopped) {
+    try {
+      rmSync(googlechatServicesPidDir, {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // Dedicated Google Chat service directory may not exist — ignore.
+    }
   }
 
   // Delete every per-sandbox messaging and search provider created during
