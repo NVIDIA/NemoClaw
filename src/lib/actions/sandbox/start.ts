@@ -33,6 +33,16 @@ function loadDockerUnpause(): DockerUnpauseFn {
 
 const DOCKER_UNPAUSE_TIMEOUT_MS = 30_000;
 
+function isRunningContainerStillStarting(
+  recovery: ReturnType<typeof recoverDockerDriverSandbox>,
+): boolean {
+  if (recovery.recovered || !recovery.containerName) return false;
+  return (
+    recovery.detail ===
+    `docker container ${recovery.containerName} did not become ready after recovery (runtime=running, health=starting)`
+  );
+}
+
 // Paused containers report `Up N minutes (Paused)` from `docker ps`, so the
 // recovery classifier counts them as running and would no-op — while
 // `docker start` on them fails outright. `docker unpause` is the only verb
@@ -97,7 +107,7 @@ export async function startSandbox(
     log(`  Container '${paused.name}' unpaused.`);
   } else {
     const recovery = (deps.recoverDockerDriverSandbox ?? recoverDockerDriverSandbox)(sandboxName);
-    if (!recovery.recovered) {
+    if (!recovery.recovered && !isRunningContainerStillStarting(recovery)) {
       return {
         exitCode: 1,
         message:
@@ -106,7 +116,11 @@ export async function startSandbox(
       };
     }
 
-    if (recovery.via === "started-running-original") {
+    if (!recovery.recovered) {
+      log(
+        `  Container '${recovery.containerName}' is running but still starting; continuing with gateway recovery.`,
+      );
+    } else if (recovery.via === "started-running-original") {
       log(`  Sandbox '${sandboxName}' is already running.`);
     } else {
       log(`  Container '${recovery.containerName ?? sandboxName}' started.`);
