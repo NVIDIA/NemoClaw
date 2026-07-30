@@ -27,7 +27,6 @@ import {
   detectInvalidMessagingChannelConfigEnvValues,
   resolveMessagingChannelConfigEnvValue,
 } from "../messaging-channel-config";
-import { allowGooglechatPresetAudienceForLiveE2e } from "./e2e-failure-injection";
 import {
   type MessagingSelectorInput,
   type MessagingSelectorOutput,
@@ -261,9 +260,6 @@ export async function setupSelectedMessagingChannels(
   const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
   const googlechatHooks = {
-    tunnelAudienceGate: {
-      allowNonInteractivePresetAudience: allowGooglechatPresetAudienceForLiveE2e(sandboxName),
-    },
     tunnelRuntime: { ...options.googlechatTunnelRuntime, sandboxName },
   };
   const hooks = options.configurationCompleted

@@ -19,11 +19,23 @@ const DEFAULT_WEBHOOK_PATH = "/googlechat";
 /** Coarse cloudflared running-state used to decide whether we must start one. */
 export type GooglechatTunnelState = { readonly running: boolean };
 
+/**
+ * Process-local authority for the one live E2E composition that must exercise
+ * Google Chat lifecycle non-interactively.
+ *
+ * Production composition never supplies this object. Keeping the audience on
+ * the capability itself means an environment variable, CLI input, or
+ * predictable sandbox name cannot manufacture the bypass.
+ */
+export interface GooglechatNonInteractiveAudienceCapability {
+  readonly audience: string;
+}
+
 // Every side effect is injected so this hook file stays free of fs/process/
 // credential imports (mirrors the WeChat ilink-login pattern). The real
 // implementations live in ./tunnel-runtime and are wired by ./index.
 export interface GooglechatTunnelAudienceGateHookOptions {
-  readonly allowNonInteractivePresetAudience?: boolean;
+  readonly nonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
   readonly env?: NodeJS.ProcessEnv;
   readonly log?: (message: string) => void;
   readonly hasCloudflared?: () => boolean;
@@ -105,13 +117,12 @@ export function createGooglechatTunnelAudienceGateHook(
     // inbound webhooks. A pre-supplied GOOGLECHAT_AUDIENCE does NOT bypass this —
     // the Console/appPrincipal steps still require a human.
     //
-    // The live channels-stop-start harness can inject a narrowly scoped
-    // exception after proving its exact target and sandbox identity. Ordinary
-    // runtime environment variables cannot enable this path.
+    // The live channels-stop-start composition can inject a process-local
+    // capability after proving its target. Ordinary runtime environment
+    // variables, configured inputs, and sandbox names cannot enable this path.
     if (context.isInteractive === false) {
-      const presetAudience =
-        readString(context.inputs?.audience) || readString(env.GOOGLECHAT_AUDIENCE);
-      if (options.allowNonInteractivePresetAudience === true && presetAudience) {
+      const presetAudience = readString(options.nonInteractiveAudienceCapability?.audience);
+      if (presetAudience) {
         const audience =
           audienceType === "app-url" ? requireAppUrlAudience(presetAudience) : presetAudience;
         log(`  ✓ Google Chat webhook audience (non-interactive, pre-supplied): ${audience}`);

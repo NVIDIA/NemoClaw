@@ -202,34 +202,16 @@ describe("googlechat tunnel/audience gate hook", () => {
     expect(stopTunnel).not.toHaveBeenCalled();
   });
 
-  it("enrolls non-interactively only when the test harness injects an audience exception", async () => {
+  it("enrolls non-interactively only when the live composition injects an audience capability", async () => {
     const startTunnel = vi.fn(async () => {});
     const stopTunnel = vi.fn();
     const hook = createGooglechatTunnelAudienceGateHook(
-      baseOptions({ allowNonInteractivePresetAudience: true, startTunnel, stopTunnel }),
-    );
-
-    const result = await hook(
-      gateContext({ audience: "https://e2e-fake.trycloudflare.com/googlechat" }, false),
-    );
-
-    expect(result).toEqual({
-      outputs: {
-        audience: { kind: "config", value: "https://e2e-fake.trycloudflare.com/googlechat" },
-      },
-    });
-    // The opt-in stands in for the live tunnel + Console confirmation, so neither runs.
-    expect(startTunnel).not.toHaveBeenCalled();
-    expect(stopTunnel).not.toHaveBeenCalled();
-  });
-
-  it("reads the pre-supplied audience from the injected test environment", async () => {
-    const hook = createGooglechatTunnelAudienceGateHook(
       baseOptions({
-        allowNonInteractivePresetAudience: true,
-        env: {
-          GOOGLECHAT_AUDIENCE: "https://e2e-fake.trycloudflare.com/googlechat",
+        nonInteractiveAudienceCapability: {
+          audience: "https://e2e-fake.trycloudflare.com/googlechat",
         },
+        startTunnel,
+        stopTunnel,
       }),
     );
 
@@ -240,21 +222,43 @@ describe("googlechat tunnel/audience gate hook", () => {
         audience: { kind: "config", value: "https://e2e-fake.trycloudflare.com/googlechat" },
       },
     });
+    // The capability stands in for the live tunnel + Console confirmation, so neither runs.
+    expect(startTunnel).not.toHaveBeenCalled();
+    expect(stopTunnel).not.toHaveBeenCalled();
   });
 
-  it("still validates the pre-supplied audience shape under the test exception", async () => {
+  it("ignores environment and configured audiences without an explicit capability", async () => {
     const hook = createGooglechatTunnelAudienceGateHook(
-      baseOptions({ allowNonInteractivePresetAudience: true }),
+      baseOptions({
+        env: {
+          E2E_TARGET_ID: "channels-stop-start",
+          GOOGLECHAT_AUDIENCE: "https://e2e-fake.trycloudflare.com/googlechat",
+          NEMOCLAW_E2E_ALLOW_GOOGLECHAT_PRESET_AUDIENCE: "1",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+        },
+      }),
     );
 
     await expect(
-      hook(gateContext({ audience: "https://e2e-fake.trycloudflare.com/other" }, false)),
-    ).rejects.toThrow(/path is exactly \/googlechat/);
+      hook(gateContext({ audience: "https://configured.example.com/googlechat" }, false)),
+    ).rejects.toThrow(/interactive enrollment required/);
   });
 
-  it("still skips non-interactively when the test exception has no audience", async () => {
+  it("still validates the audience shape carried by the live capability", async () => {
     const hook = createGooglechatTunnelAudienceGateHook(
-      baseOptions({ allowNonInteractivePresetAudience: true }),
+      baseOptions({
+        nonInteractiveAudienceCapability: {
+          audience: "https://e2e-fake.trycloudflare.com/other",
+        },
+      }),
+    );
+
+    await expect(hook(gateContext({}, false))).rejects.toThrow(/path is exactly \/googlechat/);
+  });
+
+  it("still skips non-interactively when the live capability has no audience", async () => {
+    const hook = createGooglechatTunnelAudienceGateHook(
+      baseOptions({ nonInteractiveAudienceCapability: { audience: " " } }),
     );
 
     await expect(hook(gateContext({}, false))).rejects.toThrow(/interactive enrollment required/);

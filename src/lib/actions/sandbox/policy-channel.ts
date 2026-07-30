@@ -39,6 +39,7 @@ import {
   tryGetMessagingAgentId,
 } from "../../messaging";
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
+import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import {
@@ -133,6 +134,18 @@ type ChannelMutationOptions = {
   dryRun?: boolean;
   force?: boolean;
 };
+
+/**
+ * Internal composition dependencies for channel mutation.
+ *
+ * The Google Chat capability is intentionally absent from the public CLI
+ * composition. The live E2E entrypoint supplies it directly so environment
+ * variables and predictable sandbox names cannot enable non-interactive
+ * audience enrollment in ordinary production execution.
+ */
+export interface AddSandboxChannelDependencies {
+  readonly googlechatNonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
+}
 
 const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
 
@@ -973,11 +986,15 @@ async function planSandboxChannelAdd(
   sandboxName: string,
   channelId: string,
   agent: AgentDefinition,
+  dependencies: AddSandboxChannelDependencies,
 ): Promise<SandboxMessagingPlan> {
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     createBuiltInMessagingHookRegistry({
       googlechat: {
+        tunnelAudienceGate: {
+          nonInteractiveAudienceCapability: dependencies.googlechatNonInteractiveAudienceCapability,
+        },
         tunnelRuntime: policyChannelDependencies.googlechatTunnelRuntime(sandboxName),
       },
     }),
@@ -1185,15 +1202,17 @@ function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession>
 export async function addSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
+  dependencies: AddSandboxChannelDependencies = {},
 ): Promise<void> {
   return withSandboxMutationLock(sandboxName, () =>
-    addSandboxChannelUnlocked(sandboxName, options),
+    addSandboxChannelUnlocked(sandboxName, options, dependencies),
   );
 }
 
 async function addSandboxChannelUnlocked(
   sandboxName: string,
   options: ChannelMutationOptions,
+  dependencies: AddSandboxChannelDependencies,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const force = Boolean(options.force);
@@ -1235,7 +1254,7 @@ async function addSandboxChannelUnlocked(
     return;
   }
 
-  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent);
+  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened

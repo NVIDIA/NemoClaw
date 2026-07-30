@@ -18,6 +18,7 @@ import {
   installSandboxOrSkipOnRateLimit,
   phase6Env,
   precleanSandbox,
+  REPO_ROOT,
   resultText,
   sandboxSh,
   shellQuote,
@@ -114,21 +115,32 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
   ) {
     env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   }
-  // Google Chat only runs on the OpenClaw arm (its sole supported agent). Supply the
-  // bridge service-account JSON plus the pre-derived audience/appPrincipal/allowlist.
-  // The two E2E flags below are accepted only by the exact channels-stop-start
-  // target and exact test-owned OpenClaw sandbox; the production hook has no
-  // environment-controlled bypass.
+  // Google Chat only runs on the OpenClaw arm (its sole supported agent). The
+  // initial production onboarding receives an environment with these values
+  // stripped. A test-only composition entrypoint later grants the explicit
+  // process-local audience capability and adds the channel.
   if (GOOGLECHAT_ENABLED) {
     env.GOOGLECHAT_SERVICE_ACCOUNT = tokens.googlechat;
     env.GOOGLECHAT_AUDIENCE =
       process.env.GOOGLECHAT_AUDIENCE ?? "https://e2e-fake.trycloudflare.com/googlechat";
     env.GOOGLECHAT_APP_PRINCIPAL = process.env.GOOGLECHAT_APP_PRINCIPAL ?? "123456789012345678901";
     env.GOOGLECHAT_ALLOWED_USERS = process.env.GOOGLECHAT_ALLOWED_USERS ?? "users/1234567890";
-    env.NEMOCLAW_RUN_LIVE_E2E = "1";
-    env.NEMOCLAW_E2E_ALLOW_GOOGLECHAT_PRESET_AUDIENCE = "1";
   }
   return env;
+}
+
+const GOOGLECHAT_ONBOARD_ENV_KEYS = [
+  "GOOGLECHAT_SERVICE_ACCOUNT",
+  "GOOGLECHAT_AUDIENCE_TYPE",
+  "GOOGLECHAT_AUDIENCE",
+  "GOOGLECHAT_APP_PRINCIPAL",
+  "GOOGLECHAT_ALLOWED_USERS",
+] as const;
+
+function withoutGooglechatOnboardInputs(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const onboardingEnv = { ...env };
+  for (const key of GOOGLECHAT_ONBOARD_ENV_KEYS) delete onboardingEnv[key];
+  return onboardingEnv;
 }
 
 function redactionValues(apiKey: string | undefined, tokens: Phase6Tokens): string[] {
@@ -405,6 +417,38 @@ async function rebuildSandbox(
   });
 }
 
+async function addGooglechatForLiveE2e(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+): Promise<void> {
+  const entrypoint = path.join(REPO_ROOT, "test/e2e/live/channels-stop-start-googlechat-entry.ts");
+  const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
+  const add = await host.command("node", [tsx, entrypoint, SANDBOX_NAME], {
+    artifactName: "channels-stop-start-add-googlechat-live-e2e",
+    env,
+    redactionValues: redactions,
+    timeoutMs: 10 * 60_000,
+  });
+  expectExitZero(add, "add Google Chat through live-E2E capability composition");
+
+  const rebuild = await rebuildSandbox(
+    host,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "rebuild-add-googlechat-live-e2e",
+  );
+  expectExitZero(rebuild, "rebuild after adding Google Chat through live-E2E composition");
+  await expectSandboxReady(
+    host,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "sandbox-list-after-googlechat-live-e2e-add",
+  );
+}
+
 async function policyPresetState(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -518,9 +562,10 @@ export async function runChannelsStopStartTarget({
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
   progress.phase("onboard sandbox with all messaging channels");
+  const onboardingEnv = GOOGLECHAT_ENABLED ? withoutGooglechatOnboardInputs(env) : env;
   const install = await installSandboxOrSkipOnRateLimit(
     host,
-    env,
+    onboardingEnv,
     redactions,
     `install-channels-stop-start-${AGENT}`,
     skip,
@@ -534,6 +579,9 @@ export async function runChannelsStopStartTarget({
     redactions,
     `sandbox-list-channels-stop-start-${AGENT}`,
   );
+  if (GOOGLECHAT_ENABLED) {
+    await addGooglechatForLiveE2e(host, env, redactions);
+  }
 
   progress.phase("validate active channel integrations");
   expectChannelInputs(env);
