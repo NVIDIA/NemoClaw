@@ -385,7 +385,7 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
   The deterministic test verifies identical restoration steps, fixed proxy environment content, read-only file modes, and one restoration warning.
   `messaging-providers` imports the installed Telegram `runtime-api.js`, sends through `sendMessageTelegram`, and verifies token rewrite plus fake Bot API capture.
   This does not reproduce `nemotron-3-super:120b` on Local Ollama or originate a Telegram inbound update after the crash.
-  Agent-specific inbound restart behavior therefore remains a residual, not proven equivalence.
+  The tests therefore do not prove agent-runtime and messaging-channel inbound restart behavior.
   Do not claim the literal deployment scenario from these split tests.
   Remove this acceptance when a stable CI fixture drives a Telegram inbound update through the recovered Local Ollama sandbox.
   Otherwise, re-evaluate the residual on the next OpenClaw bump.

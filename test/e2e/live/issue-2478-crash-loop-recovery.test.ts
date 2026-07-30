@@ -270,7 +270,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("gateway recovery preserves the guard chain and PID for 15 seconds (#2478)", {
+test("connect-driven gateway recovery restores the guard chain and keeps the recovered PID for 15 seconds (#2478)", {
   meta: {
     e2ePhases: [
       "start the compatible endpoint and confirm host readiness",
