@@ -53,12 +53,7 @@
       "src/lib/shields/index.ts": 23
     }
   },
-  "allowedCycles": [
-    [
-      "src/lib/onboard/policy-resume-selection.ts",
-      "src/lib/onboard/policy-selection.ts"
-    ]
-  ],
+  "allowedCycles": [],
   "maxRootFiles": {
     "src/lib/onboard": 307,
     "src/lib/actions": 19,

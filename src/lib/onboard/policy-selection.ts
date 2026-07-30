@@ -115,13 +115,6 @@ export type SetupPolicySelectionDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
-export type PreparedPolicyResumeSelection = {
-  policyPresets: string[];
-  recordedPolicyPresetsNeedReconcile: boolean;
-  disabledMessagingPolicyPresetApplied: boolean;
-  suppressedAgentRequiredPresetsLive: boolean;
-};
-
 export function computeSetupPresetSuggestions(
   deps: {
     policies: PoliciesApi;
@@ -217,7 +210,10 @@ export function computeSetupPresetSuggestions(
   return suggestions;
 }
 
-export { preparePolicyPresetResumeSelection } from "./policy-resume-selection";
+export {
+  preparePolicyPresetResumeSelection,
+  type PreparedPolicyResumeSelection,
+} from "./policy-resume-selection";
 
 export async function setupPoliciesWithSelection(
   deps: SetupPolicySelectionDeps,
