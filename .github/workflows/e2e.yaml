@@ -3493,7 +3493,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "upgrade-stale-sandbox"

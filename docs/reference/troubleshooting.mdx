@@ -2689,6 +2689,51 @@ nemohermes <name> start
 Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model.
 If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
+### Shields Reports Drift for the Hermes Configuration Root
+
+The Hermes configuration root holds the agent's top-level runtime state, not only its configuration: `auth.json`, the drain request, and the temporary files that back every atomic `gateway_state.json` and `gateway.pid` replace are created directly in `/sandbox/.hermes`.
+Lockdown therefore moves that directory to `root:sandbox` mode `3770`, keeping the set-id and sticky bits, so the gateway can still manage its own runtime files while the sticky bit stops the sandbox identity from unlinking or renaming the sealed root-owned configuration.
+Run the following command to inspect a locked root:
+
+```bash
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+```
+
+Expected output:
+
+```text
+3770 root:sandbox
+```
+
+A sandbox locked by an older release carries a `755 root:root` root instead.
+The gateway cannot write its runtime state there.
+`$$nemoclaw <name> shields status` reports the stale posture as drift.
+Before restarting the gateway, repair the posture:
+
+```bash
+$$nemoclaw <name> shields up
+```
+
+If the command refuses the repair, follow its recovery guidance and do not restart the gateway.
+Otherwise, verify the repaired posture:
+
+```bash
+$$nemoclaw <name> shields status
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+```
+
+Continue only when status no longer reports drift and `stat` prints the expected output above.
+Then restart the gateway:
+
+```bash
+$$nemoclaw <name> gateway restart
+```
+
+The restart must exit zero and report that the health check passed.
+If restart or recovery already reports `relaunch quarantined`, repairing the directory cannot clear the supervisor quarantine.
+Follow [Restart or recovery reports `relaunch quarantined`](#restart-or-recovery-reports-relaunch-quarantined) to rebuild the sandbox.
+The sealed files are unchanged by the repair and stay `444 root:root`.
+
 ### Hermes restart reports `config hash mismatch`
 
 A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it.
