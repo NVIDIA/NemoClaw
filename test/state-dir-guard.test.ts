@@ -348,17 +348,22 @@ describe("state-dir-guard", () => {
     expect(mode(path.join(versionDir, "plugin.js"))).toBe(0o644);
   });
 
-  it("keeps the runtime ledger writable while sealing cron job definitions", () => {
+  it("keeps the runtime ledger writable while sealing cron jobs and scripts", () => {
     const { configDir } = fixture(".hermes");
     const cronDir = path.join(configDir, "cron");
     const cronLedger = path.join(cronDir, "executions.db");
+    const scriptsDir = path.join(configDir, "scripts");
+    const cronScript = path.join(scriptsDir, "digest.sh");
     const runtimeDir = path.join(configDir, "runtime");
     const runtimeLedger = path.join(runtimeDir, "cron-executions.db");
     fs.mkdirSync(cronDir);
+    fs.mkdirSync(scriptsDir);
     fs.mkdirSync(runtimeDir);
     fs.chmodSync(cronDir, 0o2770);
+    fs.chmodSync(scriptsDir, 0o2770);
     fs.chmodSync(runtimeDir, 0o2770);
     fs.writeFileSync(cronLedger, "legacy ledger\n", { mode: 0o660 });
+    fs.writeFileSync(cronScript, "#!/bin/sh\nexit 0\n", { mode: 0o770 });
     fs.writeFileSync(runtimeLedger, "active ledger\n", { mode: 0o660 });
     fs.chmodSync(runtimeLedger, 0o660);
 
@@ -367,6 +372,8 @@ describe("state-dir-guard", () => {
     expect(locked.status, locked.stderr).toBe(0);
     expect(mode(cronDir)).toBe(0o755);
     expect(mode(cronLedger)).toBe(0o640);
+    expect(mode(scriptsDir)).toBe(0o755);
+    expect(mode(cronScript)).toBe(0o750);
     expect(mode(runtimeDir)).toBe(0o2770);
     expect(mode(runtimeLedger)).toBe(0o660);
     fs.appendFileSync(runtimeLedger, "still writable\n");

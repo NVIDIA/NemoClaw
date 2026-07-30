@@ -29,6 +29,7 @@ export const HIGH_RISK_STATE_DIRS = [
   "agent",
   "hooks",
   "cron",
+  "scripts",
   "agents",
   "extensions",
   "plugins",

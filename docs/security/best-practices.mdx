@@ -290,7 +290,7 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config or high-risk state entry points.
-The immutability workflow locks high-risk state directories (`skills`, `agent`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` and removes group and world write access.
+The immutability workflow locks high-risk state directories (`skills`, `agent`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `scripts`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` and removes group and world write access.
 The root-only helper traverses from opened directory descriptors with no-follow semantics instead of using recursive pathname `chown` or `chmod`.
 Read-only preflight and unlock operations reject unsafe external symlinks, hardlinks, special files, cross-device entries, and entries that race the traversal without modifying them.
 After the top-level config binding is frozen, lockdown makes containment monotonic.

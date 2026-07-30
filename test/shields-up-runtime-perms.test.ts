@@ -201,7 +201,15 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
 
   it("keeps the complete protected inventory and writable sessions carve-out", () => {
     expect(HIGH_RISK_STATE_DIRS).toEqual(
-      expect.arrayContaining(["skills", "agent", "hooks", "agents", "extensions", "workspace"]),
+      expect.arrayContaining([
+        "skills",
+        "agent",
+        "hooks",
+        "scripts",
+        "agents",
+        "extensions",
+        "workspace",
+      ]),
     );
     expect(CONFIDENTIALITY_STATE_DIRS).toEqual(["credentials", "identity", "pairing"]);
     expect(WRITABLE_RUNTIME_SUBPATHS).toEqual(["agents/*/sessions"]);
