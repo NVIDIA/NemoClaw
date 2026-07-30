@@ -46,10 +46,12 @@ export type SandboxDestroyExecutionResult =
       gatewayUnreachable: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
+      shieldsRelockRequiresGateway: boolean;
     };
 
 type HardenedDeleteState = {
   hardenedForDelete: boolean;
+  hardeningFailed: boolean;
   timerProcessToken?: string;
 };
 
@@ -87,23 +89,52 @@ function wipeAndHardenLiveSandbox(
   sandboxName: string,
   sandboxConfirmedAbsent: boolean,
 ): HardenedDeleteState {
-  if (sandboxConfirmedAbsent) return { hardenedForDelete: false };
+  if (sandboxConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
 
   // Wipe before delete while the retained volume is still mounted. The caller
   // holds the timer-bound lock across this phase and all following teardown.
   wipeSandboxState(sandboxName);
   const timerMarker = readTimerMarker(sandboxName);
-  if (!timerMarker) return { hardenedForDelete: false };
+  if (!timerMarker) return { hardenedForDelete: false, hardeningFailed: false };
 
   const timerProcessToken = /^[0-9a-f]{32}$/.test(timerMarker.processToken ?? "")
     ? timerMarker.processToken
     : undefined;
   const { shieldsUp } = require("../../shields") as typeof import("../../shields");
-  shieldsUp(sandboxName, {
-    throwOnError: true,
-    allowLegacyHermesProtocol: true,
-  });
-  return { hardenedForDelete: true, timerProcessToken };
+  try {
+    shieldsUp(sandboxName, {
+      throwOnError: true,
+      allowLegacyHermesProtocol: true,
+    });
+  } catch (error) {
+    // #7727: hardening before delete is a best-effort narrowing of the open
+    // shields-down window, not a precondition for removal. When the lock
+    // cannot be re-established — a deleted `.config-hash` in the locked
+    // posture makes the guard fail closed, and neither `shields up` nor
+    // `shields down` can repair it by design — refusing to delete stranded
+    // the sandbox the user explicitly asked to remove, with no supported
+    // recovery path. Deleting removes the unguarded config along with the
+    // sandbox, so report the failure and continue. `hardenedForDelete: false`
+    // keeps the delete-abort path honest: it will not open a bounded
+    // shields-down rollback window it never closed.
+    //
+    // The auto-restore timer stays authoritative until deletion succeeds, for
+    // the same reason `shieldsUp` keeps it through its own commit: revoking it
+    // here would turn a delete that then fails into an unbounded mutable
+    // window. It cannot preempt this process — a live transition-lock owner is
+    // never reclaimed, and the timer only stops a shields-down owner that
+    // published a `preparing` transition record, which destroy never does.
+    const detail = redact(error instanceof Error ? error.message : String(error));
+    console.warn(
+      `  ${YW}⚠${R} Could not re-lock shields for '${sandboxName}' before delete: ${detail}`,
+    );
+    console.warn(
+      `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
+        "If the delete fails, the config stays unlocked until the sandbox is deleted or rebuilt.",
+    );
+    return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
+  }
+  return { hardenedForDelete: true, hardeningFailed: false, timerProcessToken };
 }
 
 async function restoreMcpAfterDeleteAbort(
@@ -204,8 +235,18 @@ export async function executeSandboxDestroy({
       alreadyGone,
       gatewayUnreachable,
     } = getSandboxDeleteOutcome(deleteResult);
+    // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
+    // only authority that can lock the config again. Discarding the local
+    // record here would revoke it for a sandbox the gateway never confirmed
+    // deleting, so --force must not take the local-cleanup shortcut until the
+    // gateway is back and deletion is confirmed.
     const forcedLocalCleanup =
-      deleteResult.status !== 0 && !alreadyGone && gatewayUnreachable && force && !hasMcpOwnership;
+      deleteResult.status !== 0 &&
+      !alreadyGone &&
+      gatewayUnreachable &&
+      force &&
+      !hasMcpOwnership &&
+      !hardened.hardeningFailed;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
@@ -218,6 +259,7 @@ export async function executeSandboxDestroy({
         gatewayUnreachable,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
+        shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
       };
     }
 

@@ -37,6 +37,7 @@ export type DestroyHarness = {
   stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
+  warnSpy: MockInstance;
 };
 
 type DestroyHarnessOptions = {
@@ -106,7 +107,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const runtime = requireDist("../../adapters/openshell/runtime.js");
@@ -334,5 +335,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     stopAllSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
+    warnSpy,
   };
 }

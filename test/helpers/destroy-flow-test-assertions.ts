@@ -112,11 +112,49 @@ export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
   expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
 }
 
-export function expectFailedHardeningStopsDelete(harness: DestroyHarness): void {
-  expect(harness.events).toContain("wipe");
-  expect(harness.events).toContain("harden");
-  expect(harness.events).not.toContain("delete");
+export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void {
+  expect(harness.events).toEqual(
+    expect.arrayContaining(["wipe", "harden", "delete", "timer-cleanup"]),
+  );
+  expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
+  expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
+  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  expect(harness.killTimerSpy).toHaveBeenCalledTimes(1);
+  const warnOutput = harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+  expect(warnOutput).toContain("Could not re-lock shields for 'alpha' before delete");
+  expect(warnOutput).toContain("injected hardening failure");
+  expect(warnOutput).toContain("Continuing with delete");
+}
+
+export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarness): void {
+  expect(harness.events).toEqual(expect.arrayContaining(["harden", "delete"]));
+  // The auto-restore timer is the only remaining authority that can lock the
+  // config again, so an unconfirmed delete must keep it and the local record.
   expect(harness.killTimerSpy).not.toHaveBeenCalled();
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  expect(harness.stopAllSpy).not.toHaveBeenCalled();
+  expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+  expect(errorOutput).toContain("shields could not be re-locked before delete");
+  expect(errorOutput).toContain("--force cannot safely discard a record whose config lock");
+  expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
+}
+
+export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
+  expect(harness.events).toEqual(expect.arrayContaining(["harden", "delete", "mcp-restore"]));
+  expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
+  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("mcp-restore"));
+  // No lock was re-established, so destroy must not open a bounded
+  // shields-down rollback window it cannot close again.
+  expect(harness.events).not.toContain("unlock");
+  expect(harness.shieldsDownSpy).not.toHaveBeenCalled();
+  expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
+    "alpha",
+    expect.objectContaining({ entries: [{ server: "github" }] }),
+  );
+  expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
 }
 
 export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
