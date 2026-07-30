@@ -33,6 +33,7 @@ COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
+COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -372,6 +373,41 @@ assert all(path.parent == runtime for path in (
     _get_runtime_status_path(),
 ))
 assert isinstance(home, Path)
+PY
+
+# Hermes v0.19.0 creates its writable cron execution-history database below
+# the high-risk directory that contains cron job definitions. When Shields up
+# is active, NemoClaw seals that directory, so a managed gateway restart cannot
+# reopen the ledger. Relocate
+# only this audit database to the existing cross-UID runtime boundary, and keep
+# Hermes' quick snapshot inventory aligned. Full source hashes plus exact-shape
+# patching force a fresh review when either pinned upstream module changes.
+ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=2f0d3eacc02ee72608cd96d521a457ef57425bdddc00291ed90ae553f7a36039
+ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b37215a27a453191420622f78dc8962fa44feac2521a6f51d71b18831e7cacb7
+ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=1bcef6f736f1d52055837789f24becdba4a670f0a1abb5ac9973b1a1a7306f35
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        "$NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256" /opt/hermes/cron/executions.py \
+        "$NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256" /opt/hermes/hermes_cli/backup.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes cron execution runtime source identity mismatch" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        --executions /opt/hermes/cron/executions.py \
+        --backup /opt/hermes/hermes_cli/backup.py
+RUN set -eu; \
+    probe_home="$(mktemp -d)"; \
+    trap 'rm -rf "$probe_home"' EXIT; \
+    HERMES_HOME="$probe_home" /opt/hermes/.venv/bin/python -I - <<'PY'
+from cron.executions import EXECUTIONS_FILE
+from hermes_cli.backup import _QUICK_STATE_FILES
+from hermes_constants import get_hermes_home
+
+expected = get_hermes_home().resolve() / "runtime" / "cron-executions.db"
+assert EXECUTIONS_FILE == expected
+assert "runtime/cron-executions.db" in _QUICK_STATE_FILES
+assert "cron/executions.db" not in _QUICK_STATE_FILES
 PY
 
 # Hermes v0.19.0 computes `sessions list` preview from the first user message,
@@ -949,11 +985,13 @@ RUN set -eu; \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
-# Prove the cron ledger contract across the real image identities. Hermes'
-# gateway-side scheduler creates the live WAL-backed database, sandbox reads
-# and online-copies it before atomically restoring a sandbox-owned replacement,
-# and gateway then reopens that replacement through the upstream ledger API.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron)" = "gateway:sandbox 2770" \
+# Prove the cron execution ledger contract across the real image identities.
+# Hermes' gateway-side scheduler creates the live WAL-backed database in the
+# writable runtime boundary, sandbox reads and online-copies it before
+# atomically restoring a sandbox-owned replacement, and gateway then reopens
+# that replacement through the upstream ledger API.
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
+    && test ! -e /sandbox/.hermes/cron/executions.db \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
 from cron.executions import create_execution
@@ -966,14 +1004,14 @@ assert created["job_id"] == "nemoclaw-cross-uid-create-probe"
 assert created["status"] == "claimed"
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "gateway:sandbox 640" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "gateway:sandbox 640" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I - <<'PY'
 import os
 import sqlite3
 from pathlib import Path
 
-path = Path("/sandbox/.hermes/cron/executions.db")
+path = Path("/sandbox/.hermes/runtime/cron-executions.db")
 staged = path.with_name(".nemoclaw-cron-executions-staged")
 staged.unlink(missing_ok=True)
 source = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
@@ -993,7 +1031,7 @@ for suffix in ("-wal", "-shm"):
     path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
 from cron.executions import create_execution, list_executions
@@ -1011,10 +1049,10 @@ assert {
 }
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \
-    && rm -f /sandbox/.hermes/cron/executions.db \
-        /sandbox/.hermes/cron/executions.db-wal \
-        /sandbox/.hermes/cron/executions.db-shm
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
+    && rm -f /sandbox/.hermes/runtime/cron-executions.db \
+        /sandbox/.hermes/runtime/cron-executions.db-wal \
+        /sandbox/.hermes/runtime/cron-executions.db-shm
 
 # Prove the Discord ledger contract across the real image identities. The
 # gateway creates the live WAL-backed database, sandbox reads and online-copies

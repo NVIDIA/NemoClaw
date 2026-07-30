@@ -38,7 +38,9 @@ function sandboxCommand(args: string[]): string[] {
 }
 
 function successfulSeed(configPath = DASHBOARD_CONFIG): CaptureResult {
-  return result({ stderr: `[dashboard] seeded model routing into ${configPath}\n` });
+  return result({
+    stderr: `[dashboard] seeded model routing and reviewed policy into ${configPath}\n`,
+  });
 }
 
 function mockReseedFlow(options: { inspection?: CaptureResult; seed?: CaptureResult } = {}): void {
@@ -179,6 +181,17 @@ describe("seedHermesDashboardConfig", () => {
 
   it("requires the success marker for the requested dashboard config path (#6893)", () => {
     mockReseedFlow({ seed: successfulSeed("/sandbox/.hermes/other/config.yaml") });
+
+    expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
+    expect(reportFailure).toHaveBeenCalledWith("seed", expect.stringMatching(/^status=0 detail=/u));
+  });
+
+  it("rejects the pre-v0.19 marker after the seeder adds reviewed policy (#7771)", () => {
+    mockReseedFlow({
+      seed: result({
+        stderr: `[dashboard] seeded model routing into ${DASHBOARD_CONFIG}\n`,
+      }),
+    });
 
     expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
     expect(reportFailure).toHaveBeenCalledWith("seed", expect.stringMatching(/^status=0 detail=/u));
