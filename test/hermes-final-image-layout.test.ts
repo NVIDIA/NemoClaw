@@ -46,6 +46,11 @@ const HERMES_INTEGRITY_FILES = [
     source: "agents/hermes/patch-gateway-runtime-metadata.py",
     target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
   },
+  {
+    arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+    source: "agents/hermes/patch-cron-execution-runtime.py",
+    target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
+  },
 ] as const;
 
 type LegacyDataFixture =
@@ -203,6 +208,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts",
           "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
           "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+          "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
