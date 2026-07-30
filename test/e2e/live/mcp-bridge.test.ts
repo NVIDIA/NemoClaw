@@ -49,6 +49,7 @@ import {
 } from "./mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscovery,
+  assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
 } from "./mcp-bridge-tool-discovery.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
@@ -179,7 +180,6 @@ async function assertSecretAbsentFromSandbox(
   });
   expectExitZero(result, "host MCP secret must not appear in sandbox files");
 }
-
 async function assertAdapterDnsRebindingDenied(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -191,9 +191,7 @@ async function assertAdapterDnsRebindingDenied(
     secretPaths: string[];
   },
 ): Promise<void> {
-  const rebindMcp = await startFakeMcpHttpsServer({
-    secret: REBIND_HOST_SECRET,
-  });
+  const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
   cleanup.add(`stop ${options.artifactPrefix} DNS rebinding fake MCP HTTPS server`, () =>
     rebindMcp.close(),
   );
@@ -209,7 +207,6 @@ async function assertAdapterDnsRebindingDenied(
   cleanup.add(`restore ${options.artifactPrefix} DNS rebinding hosts fixture`, () =>
     restoreDnsRebindingHostsFixture(host, options.sandboxName, hostsFixture),
   );
-
   await remapDnsRebindingHostname(
     host,
     options.sandboxName,
@@ -242,7 +239,6 @@ async function assertAdapterDnsRebindingDenied(
     add,
     `${options.artifactPrefix} registers MCP route while its dedicated hostname resolves publicly`,
   );
-
   const status = await host.nemoclaw(
     [options.sandboxName, "mcp", "status", REBIND_SERVER_NAME, "--json"],
     {
@@ -265,7 +261,6 @@ async function assertAdapterDnsRebindingDenied(
     policy: { gatewayPresent: true },
     adapter: { registered: true },
   });
-
   const policy = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
     artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-policy-pinned-public-ip`,
     env: buildAvailabilityProbeEnv(),
@@ -289,11 +284,7 @@ async function assertAdapterDnsRebindingDenied(
     [REBIND_HOST_SECRET],
     `${options.artifactPrefix}-dns-rebinding-secret-absent-from-sandbox`,
   );
-
-  // If OpenShell resolved a second time after validating allowed_ips, this
-  // reachable runner address would receive the request. The pinned v0.0.72
-  // implementation instead returns the one resolved-and-validated SocketAddr
-  // list directly to connect; see the exact proxy.rs citation in the helper.
+  // OpenShell connects to the address list resolved and validated against allowed_ips.
   const reboundAddress = await hostPrivateAddressForSandbox(host);
   expect(reboundAddress).not.toBe(REBIND_PUBLIC_IP);
   await remapDnsRebindingHostname(
@@ -323,10 +314,7 @@ async function assertAdapterDnsRebindingDenied(
     rebindMcp.requests,
     `${options.artifactPrefix} rebound request must not reach the upstream MCP server`,
   ).toHaveLength(0);
-
-  // Restore while the current sandbox container is stable. Removing the MCP
-  // route reloads policy and can restart the container first; the registered
-  // cleanup remains an idempotent fallback.
+  // Restore before removal can reload policy and restart the sandbox.
   await restoreDnsRebindingHostsFixture(host, options.sandboxName, hostsFixture);
   const remove = await host.nemoclaw([options.sandboxName, "mcp", "remove", REBIND_SERVER_NAME], {
     artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-remove`,
@@ -335,7 +323,6 @@ async function assertAdapterDnsRebindingDenied(
   });
   expectExitZero(remove, `${options.artifactPrefix} removes DNS rebinding route after proof`);
 }
-
 async function addBridgeAndReadStatus(
   host: HostCliClient,
   options: {
@@ -1252,25 +1239,26 @@ mcpBridgeShardTest("hermes")(
       "hermes-assert-secret-absent-after-add-gateway-restart",
     );
     progress.phase("exercise lifecycle and confirm Hermes bridge removal");
+    const survivingMcp = {
+      server: fakeMcp,
+      expectedSecret: HOST_SECRET,
+      label: "Hermes MCP rediscovery after explicit restart",
+    };
     await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
       artifactPrefix: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
     });
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "hermes",
-      sandboxName: HERMES_SANDBOX_NAME,
-      resultToken: hermesResult,
-      artifactName: "hermes-real-mcp-tool-call-initial",
-    });
+    const survivingDiscoveryOffset = fakeMcp.requests.length;
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       resultToken: hermesResult,
-      artifactName: "hermes-real-mcp-tool-call-after-restart",
+      artifactName: "hermes-real-mcp-tool-call-after-rediscovery-restart",
     });
+    await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
     fakeMcp.setSecret(ROTATED_HOST_SECRET);
     await rotateBridgeCredential(host, HERMES_SANDBOX_NAME, "hermes");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {

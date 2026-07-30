@@ -5,7 +5,7 @@ title: "Configure Experimental Runtime Identity"
 sidebar-title: "Configure Runtime Identity"
 description: "Configure the experimental provider-neutral runtime identity component for a direct OpenClaw blueprint."
 description-agent: "Configures the direct OpenClaw blueprint runner's experimental runtime identity component, including its Okta profile, trust boundary, lifecycle, inspection, and rollback. Use when operating components.identity outside normal onboarding."
-keywords: ["nemoclaw runtime identity", "openclaw runtime identity", "okta runtime identity"]
+keywords: ["nemoclaw runtime identity", "openclaw runtime identity", "okta runtime identity", "microsoft entra runtime identity"]
 agent-variants: ["openclaw"]
 content:
   type: "how_to"
@@ -14,7 +14,7 @@ content:
 The direct OpenClaw blueprint runner can attach a provider-neutral runtime identity to a sandbox.
 The shipped blueprint and normal `nemoclaw onboard` do not enable or configure this experimental capability.
 
-The bundled Okta profile is the first data-only implementation.
+The bundled Okta and Microsoft Entra profiles are data-only implementations of the component.
 The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.
 
 ## Review the Trust Boundary
@@ -36,19 +36,21 @@ NemoClaw resolves every destination before import and rejects private or interna
 OpenShell performs connect-time server-side request forgery (SSRF) and L7 enforcement before it injects the provider credential.
 
 OpenShell 0.0.85 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved.
-Only identity-platform-controlled DNS suffixes such as `okta.com` belong in this trust table.
+Only identity-platform-controlled DNS namespaces such as `okta.com`, `login.microsoftonline.com`, and `graph.microsoft.com` belong in this trust table.
 An attacker-controlled or customer-controlled suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
 
 ### Review the Conformance Evidence
 
-The deterministic `TC-INF-12` protected end-to-end (E2E) scenario is the conformance gate for this boundary.
-It runs the real blueprint runner against a real OpenShell gateway and sandbox.
+The deterministic `TC-INF-12` and `TC-INF-13` protected end-to-end (E2E) scenarios are the conformance gates for this boundary.
+Both run the real blueprint runner against a real OpenShell gateway and sandbox.
 
-The scenario enables provider-derived policy and restores its prior setting.
-It exchanges a refresh token through a public HTTPS OAuth endpoint and proves that the sandbox sees only opaque placeholders.
-It proves that a child launched after rotation receives a different revision-scoped placeholder and that the protected resource receives both bearers.
-It also checks secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
+The scenarios enable provider-derived policy and restore its prior setting.
+They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
+They prove that a child launched after rotation receives a different revision-scoped placeholder and that the protected resource receives both bearers.
+They also check secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
+`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the exact Microsoft Graph `GET /v1.0/me` credential-delivery rule. It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
+The deterministic fixture proves the complete Entra-shaped runtime path without storing a third-party tenant credential in pull-request CI; tenant acceptance remains a maintainer-run check against Microsoft Entra and Graph.
 
 Focused tests cover malformed profiles, endpoint and DNS rejection, subprocess scoping, same-name resources, partial-apply compensation, and retryable rollback receipts.
 The gateway refresh client's DNS-pinning limitation is the accepted residual boundary.
@@ -130,6 +132,61 @@ Export the named environment variables in the host process that runs the direct 
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server.
 `openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.
 
+## Configure the Microsoft Entra Reference Profile
+
+Copy `nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-entra-runtime.yaml`.
+Replace `organizations` in `token_url` with the Directory (tenant) ID for the application registration.
+The built-in policy accepts only the exact `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host. It does not admit national-cloud endpoints or tenant-controlled custom domains.
+Bearer delivery is restricted to exactly `GET /v1.0/me`.
+
+Configure the same provider-neutral component with the Entra implementation.
+
+```yaml
+identity:
+  profile_path: provider-profiles/acme-entra-runtime.yaml
+  provider_type: entra-runtime-v1
+  provider_name: acme-entra-runtime
+  credential_key: ENTRA_ACCESS_TOKEN
+  client_id_env: ENTRA_CLIENT_ID
+  refresh_token_env: ENTRA_REFRESH_TOKEN
+  client_secret_env: ENTRA_CLIENT_SECRET
+```
+
+Register a separate Entra application for the delegated runtime flow.
+Grant only the Microsoft Graph delegated `User.Read` permission needed by [`GET /me`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0), and request [`offline_access`](https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope) during the external authorization-code bootstrap so the v2 endpoint returns a refresh token.
+Microsoft documents `offline_access` as an explicit requirement for v2 refresh-token issuance and [documents replacement of the stored refresh token](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#refresh-the-access-token) when a refresh response carries a new one.
+Use a confidential web application and `ENTRA_CLIENT_SECRET` when the bootstrap client can keep a secret. Omit `client_secret_env` for a public client rather than placing a public-client secret on the host.
+NemoClaw does not package the authorization redirect, consent UI, PKCE exchange, or MSAL cache.
+
+<Warning>
+The host process can read `ENTRA_REFRESH_TOKEN` and `ENTRA_CLIENT_SECRET`, and the runner forwards them only to the scoped refresh-configuration subprocess.
+These environment variables remain available until you unset them or the host process exits.
+After apply succeeds, run `unset ENTRA_REFRESH_TOKEN ENTRA_CLIENT_SECRET` in the host shell.
+OpenShell retains the refresh material in the gateway credential store until rollback or provider deletion removes the owned provider.
+</Warning>
+
+Acquire the initial refresh token outside NemoClaw using Microsoft-supported identity tooling, then export the application client ID, refresh token, and optional client secret into the host process that runs the direct blueprint runner.
+
+The repository does not publish a user-facing command for this experimental direct runner.
+A maintainer-run tenant acceptance must establish all of the following criteria:
+
+- Apply imports the copied Entra profile, creates the owned provider, attaches it to the intended sandbox, and reports successful refresh status.
+- A newly launched sandbox child sees an `openshell:resolve:env:...` placeholder instead of the access token.
+- The protected-resource request below returns the signed-in delegated user.
+- OpenShell rejects a request to another Graph path before bearer delivery.
+- Credential rotation gives a new child a new revision-scoped placeholder, and `GET /v1.0/me` succeeds with the rotated credential.
+- Rollback removes the owned attachment and provider while preserving any reused sandbox.
+
+Do not save the Graph response, refresh token, access token, or client secret in a terminal transcript or CI artifact.
+Run the protected-resource acceptance request from a newly launched sandbox child, where `ENTRA_ACCESS_TOKEN` is the child-scoped OpenShell placeholder.
+Do not run this request from the host shell; the child request must traverse the OpenShell proxy so its bearer delivery and Graph path restrictions are exercised:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer ${ENTRA_ACCESS_TOKEN}" \
+  https://graph.microsoft.com/v1.0/me
+```
+
 ## Apply the Runtime Identity
 
 During plan, the runner reports only the provider type, provider name, and credential key.
@@ -174,7 +231,7 @@ It passes them to `openshell provider refresh configure` through a scoped subpro
 OpenShell stores the credential material in the gateway credential store.
 Other runner subprocesses receive the allowlisted environment without identity material.
 
-Each sandbox child launch receives an opaque `OKTA_ACCESS_TOKEN` placeholder.
+Each sandbox child launch receives an opaque provider-specific placeholder such as `OKTA_ACCESS_TOKEN` or `ENTRA_ACCESS_TOKEN`.
 The OpenShell L7 proxy substitutes the corresponding access token only for admitted HTTPS requests.
 After rotation, launch a new child process to receive the new revision-scoped placeholder.
 An earlier child process does not adopt the rotation.
