@@ -52,8 +52,11 @@ import {
 } from "./sandbox-gateway-routing";
 import {
   assertSandboxCreateArgvWithinTransportLimit,
+  buildDockerGpuMode,
   captureOpenshell,
   createDockerGpuSandboxCreatePatch,
+  createDockerManagedBootstrapAdapter,
+  createManagedBootstrapIdentity,
   createManagedStartupRootApplyRequest,
   type DockerGpuSandboxCreatePatch,
   dockerCapture,
@@ -68,16 +71,19 @@ import {
   HERMES_DASHBOARD_TUI_ENV,
   type HermesToolGatewayCloneBroker,
   isValidForwardPort,
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   MANAGED_STARTUP_CA_ENV,
-  MANAGED_STARTUP_HOLD_EXECUTABLE,
   MANAGED_STARTUP_PROFILE_ENV,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
   type ManagedStartupRootApplyRequest,
   type PreparedManagedCloneProvider,
   printHermesGatewayRestoreHint,
+  renderManagedBootstrapHeldCommand,
   resolveHermesDashboardOnboardState,
+  resolveOpenShellSandboxId,
   resolveSandboxGatewayName,
+  runManagedBootstrapSequence,
   runOpenshell,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
@@ -507,6 +513,8 @@ interface PreparedSnapshotCloneLaunch {
   readonly managedClone: PreparedManagedSnapshotClone | null;
   readonly destinationDashboardPort: number | null;
   readonly startupCommand: readonly string[];
+  readonly intendedStartupCommand: readonly string[];
+  readonly managedBootstrapIdentity: string | null;
 }
 
 function prepareSnapshotCloneLaunch(
@@ -521,21 +529,22 @@ function prepareSnapshotCloneLaunch(
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
-  const startupCommand = [
+  const intendedStartupCommand = [
     "env",
     ...(managedClone
       ? managedClone.envArgs
       : [`NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`, ...dashboardEnvArgs]),
-    ...(managedClone
-      ? [
-          MANAGED_STARTUP_HOLD_EXECUTABLE,
-          "--agent",
-          managedClone.rootApplyRequest.agent,
-          "--profile-fingerprint",
-          managedClone.rootApplyRequest.profileFingerprint,
-        ]
-      : ["nemoclaw-start"]),
+    "nemoclaw-start",
   ];
+  const managedBootstrapIdentity = managedClone ? createManagedBootstrapIdentity() : null;
+  const startupCommand =
+    managedClone && managedBootstrapIdentity
+      ? renderManagedBootstrapHeldCommand(
+          managedClone.rootApplyRequest,
+          managedBootstrapIdentity,
+          intendedStartupCommand,
+        )
+      : intendedStartupCommand;
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
   delete createEnv[MANAGED_STARTUP_PROFILE_ENV];
@@ -574,6 +583,8 @@ function prepareSnapshotCloneLaunch(
     managedClone,
     destinationDashboardPort: dstDashboardPort,
     startupCommand,
+    intendedStartupCommand,
+    managedBootstrapIdentity,
   };
 }
 
@@ -596,7 +607,7 @@ function createManagedSnapshotStartupPatch(
   }
   return createDockerGpuSandboxCreatePatch({
     route: "native",
-    managedStartupRootApplyRequest: managedClone.rootApplyRequest,
+    externalRecreation: true,
     sandboxName: dstName,
     openshellSandboxCommand: launch.startupCommand,
     timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
@@ -632,45 +643,149 @@ async function autoCreateSandboxFromSource(
   } = launch;
   const managedStartupPatch = createManagedSnapshotStartupPatch(dstName, launch);
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
-
-  const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
-    // Use a pre-built image, so skip build+push and jump to pod creation.
-    initialPhase: "create",
-    // Wait until the sandbox actually reaches Ready state, not just appears in the list.
-    readyCheck: () => {
-      const list = captureOpenshell(["sandbox", "list"], {
-        ignoreError: true,
-      });
-      if (list.status !== 0) return false;
-      return isSandboxReady(list.output || "", dstName);
-    },
-    ...(managedStartupPatch
-      ? {
-          onPoll: managedStartupPatch.maybeApplyDuringCreate,
-          failureCheck: managedStartupPatch.createFailureMessage,
-        }
-      : {}),
-  });
-  managedStartupPatch?.exitOnPatchError();
+  const streamCloneCreate = () =>
+    streamSandboxCreate(command, commandArgs, createEnv, {
+      // Use a pre-built image, so skip build+push and jump to pod creation.
+      initialPhase: "create",
+      // Wait until the sandbox actually reaches Ready state, not just appears in the list.
+      readyCheck: () => {
+        const list = captureOpenshell(["sandbox", "list"], {
+          ignoreError: true,
+        });
+        if (list.status !== 0) return false;
+        return isSandboxReady(list.output || "", dstName);
+      },
+    });
+  let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+  if (managedClone && managedStartupPatch && launch.managedBootstrapIdentity) {
+    const separator = fromImage.lastIndexOf("@");
+    const repository = separator > 0 ? fromImage.slice(0, separator) : "";
+    const manifestDigest = separator > 0 ? fromImage.slice(separator + 1) : "";
+    if (!repository || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)) {
+      throw new Error("managed snapshot clone image is not one immutable digest reference");
+    }
+    const captureText = (args: string[], options?: Record<string, unknown>) =>
+      captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
+    const adapter = createDockerManagedBootstrapAdapter({
+      runOpenshell,
+      runCaptureOpenshell: captureText,
+    });
+    let streamed: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
+    const sequence = await runManagedBootstrapSequence(adapter, {
+      create: {
+        bootstrapIdentity: launch.managedBootstrapIdentity,
+        plan: {
+          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+          sandboxName: dstName,
+          driverId: "docker",
+          image: {
+            repository,
+            manifestDigest: manifestDigest as `sha256:${string}`,
+          },
+          profile: {
+            agent: managedClone.rootApplyRequest.agent,
+            fingerprint: managedClone.rootApplyRequest.profileFingerprint,
+          },
+          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+          intendedWorkloadArgv: launch.intendedStartupCommand,
+          expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+          metadata: {},
+        },
+        request: managedClone.rootApplyRequest,
+        launch: async ({ heldWorkloadArgv, bootstrapIdentity }) => {
+          if (
+            bootstrapIdentity !== launch.managedBootstrapIdentity ||
+            heldWorkloadArgv.length !== launch.startupCommand.length ||
+            heldWorkloadArgv.some((value, index) => value !== launch.startupCommand[index])
+          ) {
+            throw new Error("managed snapshot clone hold identity changed before create");
+          }
+          streamed = await streamCloneCreate();
+          if (streamed.status !== 0 && !streamed.forcedReady) {
+            throw new Error(
+              `managed snapshot clone create exited with status ${String(streamed.status)}`,
+            );
+          }
+          const list = captureText(["sandbox", "list"], { ignoreError: true });
+          if (!isSandboxReady(list, dstName)) {
+            throw new Error("managed snapshot clone did not reach authoritative Ready");
+          }
+          return {
+            sandbox: {
+              sandboxName: dstName,
+              sandboxId: resolveOpenShellSandboxId(dstName, captureText),
+              driverId: "docker",
+            },
+            ready: true,
+            readyAt: new Date().toISOString(),
+          };
+        },
+      },
+      request: managedClone.rootApplyRequest,
+      replacementOptions: {
+        values: {
+          gpuModeArgs: [],
+          gpuModeDevice: "",
+          gpuModeKind: "startup-command",
+          gpuModeLabel: buildDockerGpuMode("startup-command").label,
+          requiredUlimits: [],
+          extraGroupGids: [],
+        },
+      },
+      timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
+    });
+    if (!streamed) {
+      throw new Error("managed snapshot clone create receipt is missing");
+    }
+    createResult = streamed;
+    const mode = buildDockerGpuMode("startup-command");
+    let finalized = false;
+    managedStartupPatch.attachManagedBootstrapCutover({
+      selectedMode: mode,
+      failureContext: {
+        sandboxName: dstName,
+        oldContainerId: sequence.snapshot.runtimeId,
+        newContainerId: sequence.replacement.replacementRuntimeId,
+        backupContainerName: null,
+        selectedMode: mode,
+      },
+      async rollback() {
+        if (finalized) return;
+        await adapter.finalizeBootstrap({
+          outcome: "rollback",
+          ...sequence,
+        });
+        finalized = true;
+      },
+      async commit() {
+        if (finalized) return;
+        await adapter.finalizeBootstrap({
+          outcome: "commit",
+          ...sequence,
+        });
+        finalized = true;
+      },
+    });
+  } else {
+    createResult = await streamCloneCreate();
+  }
+  await managedStartupPatch?.exitOnPatchError();
 
   if (createResult.status !== 0 && !createResult.forcedReady) {
-    managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
+    await managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
     snapshotExit(1);
   }
-  managedStartupPatch?.ensureApplied();
-  managedStartupPatch?.waitForSupervisorReconnectIfNeeded();
-
   // Double-check Ready after stream exit.
   const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
-    managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
+    await managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
     console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
     snapshotExit(1);
   }
-  managedStartupPatch?.commitAfterReady();
+  await managedStartupPatch?.commitAfterReady();
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");

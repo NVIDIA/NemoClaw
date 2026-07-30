@@ -14,6 +14,7 @@ export {
   getOpenshellBinary,
   runOpenshell,
 } from "../../../adapters/openshell/runtime";
+export { resolveOpenShellSandboxId } from "../../../adapters/openshell/sandbox-identity";
 export {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -30,13 +31,20 @@ export {
   withDashboardPortReservationLock,
 } from "../../../onboard/dashboard-port";
 export { isValidForwardPort } from "../../../onboard/dashboard-runtime";
+export { buildDockerGpuMode } from "../../../onboard/docker-gpu-patch-mode";
 export {
   createDockerGpuSandboxCreatePatch,
   type DockerGpuSandboxCreatePatch,
 } from "../../../onboard/docker-gpu-sandbox-create";
 export { resolveSandboxGatewayName } from "../../../onboard/gateway-binding";
 export { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
-export { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../../onboard/managed-startup/hold";
+export {
+  createManagedBootstrapIdentity,
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  renderManagedBootstrapHeldCommand,
+  runManagedBootstrapSequence,
+} from "../../../onboard/managed-bootstrap/adapter";
+export { createDockerManagedBootstrapAdapter } from "../../../onboard/managed-bootstrap/docker";
 export type {
   ManagedStartupAgent,
   ManagedStartupProfile,

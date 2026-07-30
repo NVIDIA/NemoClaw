@@ -76,7 +76,6 @@ export async function runSandboxCreateStep(
     createCommand,
     createArgv,
     effectiveDashboardPort,
-    managedStartupRootApplyRequest,
     prebuild,
     sandboxEnv,
     sandboxStartupCommand,
@@ -102,7 +101,6 @@ export async function runSandboxCreateStep(
   const dockerGpuCreatePatch = deps.createDockerGpuPatch({
     route: context.useDockerGpuPatch ? "compatibility" : "native",
     persistStartupCommand: startupCommandPatch.persistStartupCommand,
-    managedStartupRootApplyRequest,
     requiredUlimits: startupCommandPatch.requiredUlimits,
     sandboxName: context.sandboxName,
     gpuDevice: context.gpuDevice,

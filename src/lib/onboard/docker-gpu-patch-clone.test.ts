@@ -249,4 +249,136 @@ describe("Docker GPU clone envelope", () => {
       "preserve",
     );
   });
+
+  it("preserves the explicit OCI launch fields required by bootstrap recreation", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Domainname = "sandbox.internal";
+    inspect.Config!.ExposedPorts = { "8080/tcp": {} };
+    inspect.Config!.Healthcheck = {
+      Test: ["CMD-SHELL", "test -f /run/ready"],
+      Interval: 1_000_000_000,
+      Timeout: 2_000_000_000,
+      StartPeriod: 3_000_000_000,
+      StartInterval: 500_000_000,
+      Retries: 4,
+    };
+    inspect.Config!.StopSignal = "SIGTERM";
+    inspect.Config!.StopTimeout = 30;
+    Object.assign(inspect.HostConfig!, {
+      PortBindings: {
+        "8080/tcp": [{ HostIp: "::1", HostPort: "18080" }],
+      },
+      Devices: [
+        {
+          PathOnHost: "/dev/fuse",
+          PathInContainer: "/dev/fuse",
+          CgroupPermissions: "rwm",
+        },
+      ],
+      DeviceCgroupRules: ["c 10:229 rwm"],
+      Tmpfs: { "/run/private": "rw,noexec,nosuid,size=65536k" },
+      ReadonlyRootfs: true,
+      Sysctls: { "net.ipv4.ip_unprivileged_port_start": "0" },
+      CgroupParent: "openshell.slice",
+      CgroupnsMode: "private",
+      UsernsMode: "host",
+      UTSMode: "private",
+      LogConfig: { Type: "local", Config: { "max-size": "10m" } },
+      DnsOptions: ["ndots:1"],
+    });
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"));
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--domainname",
+        "sandbox.internal",
+        "--expose",
+        "8080/tcp",
+        "--publish",
+        "[::1]:18080:8080/tcp",
+        "--health-cmd",
+        "test -f /run/ready",
+        "--health-interval",
+        "1000000000ns",
+        "--health-timeout",
+        "2000000000ns",
+        "--health-start-period",
+        "3000000000ns",
+        "--health-start-interval",
+        "500000000ns",
+        "--health-retries",
+        "4",
+        "--stop-signal",
+        "SIGTERM",
+        "--stop-timeout",
+        "30",
+        "--device",
+        "/dev/fuse:/dev/fuse:rwm",
+        "--device-cgroup-rule",
+        "c 10:229 rwm",
+        "--tmpfs",
+        "/run/private:rw,noexec,nosuid,size=65536k",
+        "--read-only",
+        "--sysctl",
+        "net.ipv4.ip_unprivileged_port_start=0",
+        "--cgroup-parent",
+        "openshell.slice",
+        "--cgroupns",
+        "private",
+        "--userns",
+        "host",
+        "--uts",
+        "private",
+        "--log-driver",
+        "local",
+        "--log-opt",
+        "max-size=10m",
+        "--dns-option",
+        "ndots:1",
+      ]),
+    );
+  });
+
+  it.each([
+    {
+      name: "an ephemeral published port",
+      mutate: (inspect: ReturnType<typeof inspectFixture>) => {
+        inspect.HostConfig!.PortBindings = {
+          "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }],
+        };
+      },
+      error: /exact assigned host port/u,
+    },
+    {
+      name: "an ambiguous IPv6 scope",
+      mutate: (inspect: ReturnType<typeof inspectFixture>) => {
+        inspect.HostConfig!.PortBindings = {
+          "8080/tcp": [{ HostIp: "fe80::1%lo0", HostPort: "18080" }],
+        };
+      },
+      error: /invalid or ambiguous/u,
+    },
+    {
+      name: "a non-CDI device request",
+      mutate: (inspect: ReturnType<typeof inspectFixture>) => {
+        inspect.HostConfig!.DeviceRequests = [
+          {
+            Driver: "nvidia",
+            Count: -1,
+            DeviceIDs: null,
+            Capabilities: [["gpu"]],
+            Options: null,
+          },
+        ];
+      },
+      error: /cannot be reproduced exactly/u,
+    },
+  ])("fails closed rather than dropping $name", ({ mutate, error }) => {
+    const inspect = inspectFixture();
+    mutate(inspect);
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command")),
+    ).toThrow(error);
+  });
 });

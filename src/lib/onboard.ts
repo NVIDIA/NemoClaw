@@ -2639,7 +2639,7 @@ async function createSandboxWithBaseImageResolution(
 
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
+  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, intendedSandboxStartupCommand, managedBootstrapIdentity, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
     runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
     legacy: {
       preparedBuildContext, agent, fromDockerfile,
@@ -2666,6 +2666,31 @@ async function createSandboxWithBaseImageResolution(
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   recreateRuntime.advance("creating");
+  if (
+    preparedSandboxWorkload.source.kind === "managed-image" &&
+    (!managedStartupRootApplyRequest || !managedBootstrapIdentity || !intendedSandboxStartupCommand)
+  ) {
+    throw new Error(
+      "Managed image onboarding is missing its identity-bound bootstrap launch contract.",
+    );
+  }
+  const managedBootstrap =
+    preparedSandboxWorkload.source.kind === "managed-image" &&
+    managedStartupRootApplyRequest &&
+    managedBootstrapIdentity &&
+    intendedSandboxStartupCommand
+      ? {
+          bootstrapIdentity: managedBootstrapIdentity,
+          request: managedStartupRootApplyRequest,
+          image: {
+            repository: preparedSandboxWorkload.source.contract.image,
+            manifestDigest: preparedSandboxWorkload.source.contract.digest,
+          },
+          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+          intendedWorkloadArgv: intendedSandboxStartupCommand,
+          expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+        }
+      : null;
   const {
     createResult,
     dockerGpuCreatePatch,
@@ -2689,7 +2714,7 @@ async function createSandboxWithBaseImageResolution(
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
-      managedStartupRootApplyRequest,
+      managedBootstrap,
       ...sandboxGpuCreateFlow.resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     },
     {
@@ -2714,6 +2739,36 @@ async function createSandboxWithBaseImageResolution(
     process.removeListener("exit", legacyBuildContext.cleanupBuildCtx);
   }
 
+  if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
+    try {
+      dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
+        effectiveSandboxGpuConfig,
+        provider,
+        {
+          sandboxName,
+          dockerDriverGateway,
+          selectedRoute: selectedGpuRoute,
+          verifyDirectSandboxGpu,
+          verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
+          selectedMode: dockerGpuCreatePatch.selectedMode,
+          runCaptureOpenshell,
+          log: console.log,
+        },
+      );
+      await dockerGpuCreatePatch.commitAfterReady();
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      try {
+        await dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
+      } catch (rollbackError) {
+        (
+          failure as Error & { managedBootstrapRollbackError?: unknown }
+        ).managedBootstrapRollbackError = rollbackError;
+      }
+      throw failure;
+    }
+  }
+
   if (manageDashboard) {
     console.log("  Waiting for NemoClaw dashboard to become ready...");
     sandboxReadinessTracing.waitForDashboardReadyWithTrace({
@@ -2722,23 +2777,6 @@ async function createSandboxWithBaseImageResolution(
       runCaptureOpenshell,
       sleep: sleepSeconds,
     });
-  }
-
-  if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
-      effectiveSandboxGpuConfig,
-      provider,
-      {
-        sandboxName,
-        dockerDriverGateway,
-        selectedRoute: selectedGpuRoute,
-        verifyDirectSandboxGpu,
-        verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
-        selectedMode: dockerGpuCreatePatch.selectedMode,
-        runCaptureOpenshell,
-        log: console.log,
-      },
-    );
   }
 
   let actualDashboardPort = 0;

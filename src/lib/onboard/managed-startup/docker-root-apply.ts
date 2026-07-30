@@ -36,6 +36,8 @@ export interface DockerManagedStartupTransaction {
   readonly agent: ManagedStartupRootApplyRequest["agent"];
   readonly containerId: string;
   readonly image: string;
+  readonly bootstrapIdentity?: string | null;
+  readonly profileFingerprint?: string | null;
 }
 
 export interface DockerManagedStartupRootApplyDeps {
@@ -122,6 +124,7 @@ export function applyDockerManagedStartupRootRequest(
     agent: input.request.agent,
     containerId: pinned.containerId,
     image: pinned.image,
+    profileFingerprint: input.request.profileFingerprint,
   } satisfies DockerManagedStartupTransaction;
   const payload = serializeManagedStartupRootApplyRequest(input.request);
   const argv = [

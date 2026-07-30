@@ -208,7 +208,7 @@ describe("runSandboxCreateStep", () => {
     "openclaw",
     "hermes",
     "langchain-deepagents-code",
-  ] as const)("threads the root-apply request for managed %s Docker launch", async (agent) => {
+  ] as const)("does not tunnel managed %s root apply through the legacy Docker patch", async (agent) => {
     const managedStartupRootApplyRequest = {
       schemaVersion: 1,
       agent,
@@ -240,9 +240,11 @@ describe("runSandboxCreateStep", () => {
     expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
       expect.objectContaining({
         persistStartupCommand: agent !== "openclaw",
-        managedStartupRootApplyRequest,
         openshellSandboxCommand: launch.sandboxStartupCommand,
       }),
+    );
+    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+      expect.not.objectContaining({ managedStartupRootApplyRequest }),
     );
   });
 

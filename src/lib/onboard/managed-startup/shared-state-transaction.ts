@@ -66,6 +66,7 @@ interface TransactionManifest {
   readonly schemaVersion: typeof TRANSACTION_SCHEMA_VERSION;
   readonly agent: ManagedStartupAgent;
   readonly profileFingerprint: string;
+  readonly bootstrapIdentity: string | null;
   readonly files: readonly FileReceipt[];
   readonly directories: readonly DirectoryReceipt[];
 }
@@ -82,6 +83,8 @@ export interface ManagedStartupSharedTransactionOptions {
    * so ownership may reflect the Docker CLI user instead of container root.
    */
   readonly readOnlyReceipt?: boolean;
+  /** One-attempt identity for managed bootstrap; null for legacy root application. */
+  readonly bootstrapIdentity?: string | null;
 }
 
 interface ResolvedOptions {
@@ -93,6 +96,7 @@ interface ResolvedOptions {
   readonly trustedUid: number;
   readonly trustedGid: number;
   readonly readOnlyReceipt: boolean;
+  readonly bootstrapIdentity: string | null;
 }
 
 interface StableFile {
@@ -115,6 +119,10 @@ function resolveOptions(options: ManagedStartupSharedTransactionOptions = {}): R
   ) {
     fail("transaction receipts must not be stored in sandbox-shared state");
   }
+  const bootstrapIdentity = options.bootstrapIdentity ?? null;
+  if (bootstrapIdentity !== null && !/^[a-f0-9]{64}$/u.test(bootstrapIdentity)) {
+    fail("bootstrap identity must encode 32 lowercase-hex bytes");
+  }
   return {
     sandboxRoot,
     transactionParentDirectory: path.dirname(transactionDirectory),
@@ -124,6 +132,7 @@ function resolveOptions(options: ManagedStartupSharedTransactionOptions = {}): R
     trustedUid: options.trustedUid ?? 0,
     trustedGid: options.trustedGid ?? 0,
     readOnlyReceipt: options.readOnlyReceipt ?? false,
+    bootstrapIdentity,
   };
 }
 
@@ -509,6 +518,7 @@ function parseManifest(text: string): TransactionManifest {
   const record = parsed as Record<string, unknown>;
   requireExactKeys(record, [
     "agent",
+    "bootstrapIdentity",
     "directories",
     "files",
     "profileFingerprint",
@@ -519,6 +529,11 @@ function parseManifest(text: string): TransactionManifest {
     !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
+    !(
+      record.bootstrapIdentity === null ||
+      (typeof record.bootstrapIdentity === "string" &&
+        /^[a-f0-9]{64}$/u.test(record.bootstrapIdentity))
+    ) ||
     !Array.isArray(record.files) ||
     !Array.isArray(record.directories) ||
     record.files.length > MAX_TRANSACTION_FILES ||
@@ -613,6 +628,7 @@ function parseManifest(text: string): TransactionManifest {
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: record.agent as ManagedStartupAgent,
     profileFingerprint: record.profileFingerprint,
+    bootstrapIdentity: record.bootstrapIdentity as string | null,
     files,
     directories,
   };
@@ -760,7 +776,11 @@ export function beginManagedStartupSharedStateTransaction(
   const profileFingerprint = fingerprintManagedStartupProfile(profile);
   const pending = loadManifest(options);
   if (pending) {
-    if (pending.agent !== profile.agent || pending.profileFingerprint !== profileFingerprint) {
+    if (
+      pending.agent !== profile.agent ||
+      pending.profileFingerprint !== profileFingerprint ||
+      pending.bootstrapIdentity !== options.bootstrapIdentity
+    ) {
       fail("a pending managed startup transaction belongs to a different profile");
     }
     verifyAllBackups(pending.files, options);
@@ -780,6 +800,7 @@ export function beginManagedStartupSharedStateTransaction(
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: profile.agent,
     profileFingerprint,
+    bootstrapIdentity: options.bootstrapIdentity,
     files: snapshots.map(({ receipt }) => receipt),
     directories,
   };
@@ -995,6 +1016,9 @@ export function rollbackManagedStartupSharedStateTransaction(
   if (manifest.agent !== expectedAgent) {
     fail(`pending transaction targets ${manifest.agent}, expected ${expectedAgent}`);
   }
+  if (manifest.bootstrapIdentity !== options.bootstrapIdentity) {
+    fail("pending transaction belongs to a different bootstrap attempt");
+  }
   const backups = verifyAllBackups(manifest.files, options);
   ensureOriginalDirectories(manifest.directories, options);
   restoreFiles(manifest.files, backups, options);
@@ -1020,6 +1044,35 @@ export function commitManagedStartupSharedStateTransaction(
   if (manifest.agent !== expectedAgent) {
     fail(`pending transaction targets ${manifest.agent}, expected ${expectedAgent}`);
   }
+  if (manifest.bootstrapIdentity !== options.bootstrapIdentity) {
+    fail("pending transaction belongs to a different bootstrap attempt");
+  }
   removeTransactionDirectory(options);
   return true;
+}
+
+export function getManagedStartupSharedStateTransactionStatus(
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly profileFingerprint: string;
+    readonly bootstrapIdentity: string;
+  },
+  inputOptions: ManagedStartupSharedTransactionOptions = {},
+): "none" | "pending" {
+  const options = resolveOptions({
+    ...inputOptions,
+    bootstrapIdentity: expected.bootstrapIdentity,
+  });
+  requireTransactionIdentity(options);
+  const manifest = loadManifest(options);
+  if (!manifest) return "none";
+  if (
+    manifest.agent !== expected.agent ||
+    manifest.profileFingerprint !== expected.profileFingerprint ||
+    manifest.bootstrapIdentity !== expected.bootstrapIdentity
+  ) {
+    fail("pending transaction does not match the expected bootstrap identity");
+  }
+  verifyAllBackups(manifest.files, options);
+  return "pending";
 }
