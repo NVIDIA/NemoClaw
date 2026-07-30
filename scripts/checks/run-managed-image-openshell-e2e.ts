@@ -22,6 +22,7 @@ import {
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
+import type { SandboxGpuConfig } from "../../src/lib/onboard/sandbox-gpu-mode.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import type { SandboxGpuProofResult } from "../../src/lib/state/registry.ts";
 import {
@@ -142,6 +143,11 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
   }
   if (failureInjection && gpu) {
     throw new Error("bootstrap failure injection cannot be combined with the GPU qualification");
+  }
+  if (localProviderValue === "nim") {
+    throw new Error(
+      "protected NIM qualification requires a trusted NGC-backed engine evidence input; a bare vllm-local route cannot qualify NIM",
+    );
   }
   return {
     agent: agentValue as ManagedStartupAgent,
@@ -440,6 +446,278 @@ function localInferenceProbe(input: Inputs): string {
   ].join("\n");
 }
 
+type ProtectedAgentTurnResult = {
+  readonly status: number | null;
+  readonly stdout?: string | Buffer | null;
+  readonly stderr?: string | Buffer | null;
+  readonly error?: Error | null;
+};
+
+function parseJsonObjectAt(output: string, start: number): unknown {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < output.length; index += 1) {
+    const char = output[index] ?? "";
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") depth -= 1;
+    if (depth === 0 && char === "}") {
+      try {
+        return JSON.parse(output.slice(start, index + 1));
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+function jsonObjects(output: string): unknown[] {
+  const documents: unknown[] = [];
+  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
+    const document = parseJsonObjectAt(output, start);
+    if (document !== undefined) documents.push(document);
+  }
+  return documents;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function openClawPayloadText(value: unknown): string[] {
+  const root = record(value);
+  const result = record(root?.result);
+  const payloads = Array.isArray(root?.payloads)
+    ? root.payloads
+    : Array.isArray(result?.payloads)
+      ? result.payloads
+      : [];
+  return payloads.flatMap((payload) => {
+    const text = record(payload)?.text;
+    return typeof text === "string" && text.trim() ? [text.trim()] : [];
+  });
+}
+
+function hermesChatText(value: unknown): string {
+  const choices = record(value)?.choices;
+  const choice = Array.isArray(choices) ? choices[0] : null;
+  const choiceRecord = record(choice);
+  const message = record(choiceRecord?.message);
+  return (
+    [message?.content, message?.reasoning_content, message?.reasoning, choiceRecord?.text]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+      ?.trim() ?? ""
+  );
+}
+
+export function protectedManagedImageAgentTurnArgv(
+  agent: ManagedStartupAgent,
+  model: string,
+  sessionId: string,
+): string[] {
+  const prompt = "Reply with exactly one word: PONG";
+  switch (agent) {
+    case "openclaw":
+      return [
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        sessionId,
+        "-m",
+        prompt,
+      ];
+    case "hermes": {
+      const payload = JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 32,
+      });
+      return [
+        "/bin/sh",
+        "-eu",
+        "-c",
+        [
+          "set -a",
+          "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
+          "set +a",
+          `curl -fsS --max-time 180 http://127.0.0.1:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" --data ${JSON.stringify(payload)}`,
+        ].join("; "),
+      ];
+    }
+    case "langchain-deepagents-code":
+      return ["dcode", "-n", prompt, "--json"];
+  }
+}
+
+export function assertProtectedManagedImageAgentTurn(
+  agent: ManagedStartupAgent,
+  result: ProtectedAgentTurnResult,
+  expectedModel: string,
+): void {
+  const stdout = String(result.stdout ?? "");
+  const combined = `${stdout}\n${String(result.stderr ?? "")}`;
+  if (result.status !== 0) {
+    throw new Error(
+      `protected ${agent} agent turn failed with status ${String(result.status)}: ${combined.slice(-2_000)}`,
+    );
+  }
+  let response = "";
+  switch (agent) {
+    case "openclaw": {
+      if (
+        /EMBEDDED FALLBACK|gateway connect failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/iu.test(
+          combined,
+        )
+      ) {
+        throw new Error("protected OpenClaw turn used a fallback or unpaired transport");
+      }
+      const envelope = jsonObjects(stdout)
+        .map(record)
+        .find((value) => openClawPayloadText(value).length > 0);
+      const resultEnvelope = record(envelope?.result);
+      const meta = record(resultEnvelope?.meta);
+      const agentMeta = record(meta?.agentMeta);
+      const trace = record(meta?.executionTrace);
+      const attempts = Array.isArray(trace?.attempts)
+        ? trace.attempts.flatMap((attempt) => {
+            const value = record(attempt);
+            return value ? [value] : [];
+          })
+        : [];
+      if (
+        envelope?.status !== "ok" ||
+        envelope.summary !== "completed" ||
+        meta?.aborted !== false ||
+        agentMeta?.provider !== "inference" ||
+        agentMeta.model !== expectedModel ||
+        trace?.winnerProvider !== "inference" ||
+        trace.winnerModel !== expectedModel ||
+        !attempts.some(
+          (attempt) =>
+            attempt.provider === "inference" &&
+            attempt.model === expectedModel &&
+            attempt.stage === "assistant" &&
+            attempt.result === "success",
+        )
+      ) {
+        throw new Error(
+          "protected OpenClaw turn did not prove the expected inference.local provider and model",
+        );
+      }
+      response = openClawPayloadText(envelope).join("\n");
+      break;
+    }
+    case "hermes": {
+      const envelope = jsonObjects(stdout)
+        .map(record)
+        .find((value) => hermesChatText(value).length > 0);
+      if (envelope?.model !== expectedModel) {
+        throw new Error("protected Hermes turn did not report the expected local model");
+      }
+      response = hermesChatText(envelope);
+      break;
+    }
+    case "langchain-deepagents-code": {
+      const envelope = jsonObjects(stdout)
+        .map(record)
+        .find((value) => value?.command === "non-interactive");
+      const data = record(envelope?.data);
+      const completion = record(data?.completion);
+      if (
+        envelope?.schema_version !== 1 ||
+        data?.status !== "success" ||
+        data?.exit_code !== 0 ||
+        typeof completion?.thread_id !== "string" ||
+        completion.thread_id.length === 0 ||
+        !Number.isInteger(completion.duration_ms) ||
+        Number(completion.duration_ms) < 0 ||
+        typeof data.response !== "string" ||
+        completion.response_bytes !== Buffer.byteLength(data.response)
+      ) {
+        throw new Error("protected DCode turn did not return its successful v1 headless envelope");
+      }
+      response = data.response;
+      break;
+    }
+  }
+  if (!/^PONG[.!]?$/iu.test(response.trim())) {
+    throw new Error(`protected ${agent} agent turn did not return a bounded PONG response`);
+  }
+}
+
+function assertProtectedAgentTurn(
+  onboard: OnboardModule,
+  input: Inputs,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (!input.model) throw new Error("protected agent turn requires its exact local model");
+  if (input.agent === "langchain-deepagents-code") {
+    if (!input.localProvider) {
+      throw new Error("protected DCode identity requires its exact local provider");
+    }
+    const expectedProvider = resolveManagedImageLocalInferenceRoute(
+      input.localProvider,
+    ).providerName;
+    const identity = commandResult(
+      onboard.openshellArgv([
+        "sandbox",
+        "exec",
+        "--name",
+        input.sandbox,
+        "--",
+        "dcode",
+        "identity",
+      ]),
+      env,
+      30_000,
+    );
+    const identityLines = String(identity.stdout ?? "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim());
+    const reportedModel = identityLines
+      .find((line) => line.startsWith("Model:"))
+      ?.slice("Model:".length)
+      .trim();
+    if (
+      identity.status !== 0 ||
+      !identityLines.includes(`Provider: ${expectedProvider}`) ||
+      !identityLines.includes("Endpoint: https://inference.local/v1") ||
+      (reportedModel !== input.model && reportedModel !== `openai:${input.model}`)
+    ) {
+      throw new Error(
+        `protected DCode identity did not prove its exact inference.local route: ${commandDetail(identity)}`,
+      );
+    }
+  }
+  const sessionId = `managed-image-${input.agent}-${input.localProvider ?? "local"}-${Date.now()}-${process.pid}`;
+  const result = commandResult(
+    onboard.openshellArgv([
+      "sandbox",
+      "exec",
+      "--name",
+      input.sandbox,
+      "--",
+      ...protectedManagedImageAgentTurnArgv(input.agent, input.model, sessionId),
+    ]),
+    env,
+    210_000,
+  );
+  assertProtectedManagedImageAgentTurn(input.agent, result, input.model);
+}
+
 function assertProtectedLocalInference(
   onboard: OnboardModule,
   input: Inputs,
@@ -710,12 +988,13 @@ async function run(input: Inputs): Promise<void> {
     }
 
     const gpuEnabled = input.gpu === true;
-    const gpuConfig = {
+    const gpuConfig: SandboxGpuConfig = {
       mode: gpuEnabled ? ("1" as const) : ("0" as const),
       hostGpuDetected: gpuEnabled,
       hostGpuPlatform: gpuEnabled ? ("linux" as const) : null,
       sandboxGpuEnabled: gpuEnabled,
       sandboxGpuDevice: null,
+      sandboxGpuProof: null,
       errors: [],
     };
     const verifyDirectSandboxGpu = gpuEnabled
@@ -807,11 +1086,12 @@ async function run(input: Inputs): Promise<void> {
     if (gpuEnabled) {
       assertVerifiedProtectedGpuProof(gpuConfig.sandboxGpuProof ?? null);
       assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
+      assertProtectedAgentTurn(onboard, input, launch.sandboxEnv);
       await flow.dockerGpuCreatePatch.commitAfterReady();
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
     }
     process.stdout.write(
-      `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${gpuEnabled ? ` with real NVIDIA GPU access and ${input.localProvider} inference.local completion` : ""}.\n`,
+      `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${gpuEnabled ? ` with real NVIDIA GPU access, ${input.localProvider} inference.local completion, and a real ${input.agent} agent turn` : ""}.\n`,
     );
   } finally {
     const cleanupErrors: string[] = [];
@@ -906,10 +1186,10 @@ async function run(input: Inputs): Promise<void> {
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
-    fs.rmSync(stateDir, { recursive: true, force: true });
     if (cleanupErrors.length > 0) {
       throw new Error(`managed-image OpenShell cleanup failed: ${cleanupErrors.join("; ")}`);
     }
+    fs.rmSync(stateDir, { recursive: true, force: true });
     if (failureInjectionQualified) {
       process.stdout.write(
         `Managed-bootstrap failure injection left no sandbox, container, network, or harness state orphan for ${input.agent}.\n`,

@@ -75,6 +75,23 @@ describe("deterministic PR risk plan", () => {
     );
   });
 
+  it.each([
+    ".github/workflows/e2e.yaml",
+    "scripts/checks/cleanup-protected-managed-image-e2e.sh",
+  ])("keeps protected managed-image evidence selected when %s changes", (file) => {
+    const result = plan(file);
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "managed-image-runtime",
+        requiredJobs: ["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"]),
+    );
+  });
+
   it("hashes trusted focused E2E selections into their canonical jobs", () => {
     const changedFiles = ["test/e2e/live/token-rotation.test.ts"];
     const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);

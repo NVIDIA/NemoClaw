@@ -1600,7 +1600,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',managed-image-gpu-e2e,') || contains(format(',{0},', inputs.targets), ',managed-image-gpu-e2e,') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 210
+    timeout-minutes: 330
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-gpu-e2e"
@@ -1610,6 +1610,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ runner.temp }}/protected-managed-images.json
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME: ${{ runner.temp }}/nemoclaw-managed-image-home
       NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-protected-gpu-${{ github.run_id }}-${{ github.run_attempt }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -1620,6 +1621,10 @@ jobs:
           persist-credentials: false
 
       - *dockerhub-auth
+
+      - name: Clean stale protected managed-image GPU resources
+        shell: bash
+        run: bash scripts/checks/cleanup-protected-managed-image-e2e.sh
 
       - name: Set up protected managed-image Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -1675,25 +1680,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          real_home="$HOME"
+          install -d -m 700 "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME"
+          export HOME="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME"
+          export PATH="$real_home/.local/bin:$real_home/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-gpu-e2e.test.ts
 
-      - name: Remove isolated protected managed-image registry
+      - name: Clean protected managed-image GPU resources
         if: always()
         shell: bash
-        run: |
-          set -euo pipefail
-          docker rm -f "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >/dev/null 2>&1 || true
-          if docker container inspect "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >/dev/null 2>&1; then
-            echo "::error::Protected managed-image registry container remained after cleanup" >&2
-            exit 1
-          fi
-          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
-            echo "::error::Protected managed-image registry listener remained after cleanup" >&2
-            exit 1
-          fi
+        run: bash scripts/checks/cleanup-protected-managed-image-e2e.sh
 
       - name: Upload protected managed-image GPU artifacts
         if: always()

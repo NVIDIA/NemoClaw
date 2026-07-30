@@ -17,11 +17,13 @@ import {
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
 import {
+  assertProtectedManagedImageAgentTurn,
   assertVerifiedProtectedGpuProof,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  protectedManagedImageAgentTurnArgv,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 import {
@@ -153,6 +155,142 @@ describe("protected managed-image GPU evidence", () => {
         /requires verified CUDA usability/u,
       );
     }
+  });
+
+  it("runs and validates one real turn through every shipped agent entrypoint", () => {
+    const model = "Qwen/Qwen2.5-0.5B-Instruct";
+    const session = "managed-image-openclaw-vllm-1";
+    expect(protectedManagedImageAgentTurnArgv("openclaw", model, session)).toEqual([
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--thinking",
+      "off",
+      "--session-id",
+      session,
+      "-m",
+      "Reply with exactly one word: PONG",
+    ]);
+    expect(protectedManagedImageAgentTurnArgv("hermes", model, session).join(" ")).toContain(
+      "http://127.0.0.1:8642/v1/chat/completions",
+    );
+    expect(protectedManagedImageAgentTurnArgv("langchain-deepagents-code", model, session)).toEqual(
+      ["dcode", "-n", "Reply with exactly one word: PONG", "--json"],
+    );
+
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "openclaw",
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            status: "ok",
+            summary: "completed",
+            result: {
+              payloads: [{ text: "PONG" }],
+              meta: {
+                aborted: false,
+                agentMeta: { provider: "inference", model },
+                executionTrace: {
+                  winnerProvider: "inference",
+                  winnerModel: model,
+                  attempts: [
+                    { provider: "inference", model, stage: "assistant", result: "success" },
+                  ],
+                },
+              },
+            },
+          }),
+        },
+        model,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "hermes",
+        {
+          status: 0,
+          stdout: JSON.stringify({ model, choices: [{ message: { content: "PONG" } }] }),
+        },
+        model,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "langchain-deepagents-code",
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            schema_version: 1,
+            command: "non-interactive",
+            data: {
+              status: "success",
+              exit_code: 0,
+              response: "PONG",
+              completion: { thread_id: "thread-1", duration_ms: 1, response_bytes: 4 },
+            },
+          }),
+        },
+        model,
+      ),
+    ).not.toThrow();
+  });
+
+  it("does not credit echoed prompts, fallbacks, malformed envelopes, or nonzero turns", () => {
+    const model = "Qwen/Qwen2.5-0.5B-Instruct";
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "openclaw",
+        {
+          status: 0,
+          stdout: JSON.stringify({ request: "Reply with exactly one word: PONG" }),
+        },
+        model,
+      ),
+    ).toThrow(/expected inference\.local provider and model/u);
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "openclaw",
+        {
+          status: 0,
+          stdout: JSON.stringify({ result: { payloads: [{ text: "PONG" }] } }),
+          stderr: "EMBEDDED FALLBACK",
+        },
+        model,
+      ),
+    ).toThrow(/fallback/u);
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "hermes",
+        {
+          status: 0,
+          stdout: JSON.stringify({ messages: [{ content: "PONG" }] }),
+        },
+        model,
+      ),
+    ).toThrow(/expected local model/u);
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "langchain-deepagents-code",
+        {
+          status: 0,
+          stdout: JSON.stringify({ data: { response: "PONG" } }),
+        },
+        model,
+      ),
+    ).toThrow(/successful v1 headless envelope/u);
+    expect(() =>
+      assertProtectedManagedImageAgentTurn(
+        "hermes",
+        {
+          status: 1,
+          stdout: "PONG",
+        },
+        model,
+      ),
+    ).toThrow(/failed with status 1/u);
   });
 });
 
@@ -394,6 +532,21 @@ describe("complete managed-image publication workflow", () => {
         "--inject-bootstrap-completion-failure",
       ]),
     ).toThrow("cannot be combined");
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-managed-openclaw-nim",
+        "--gpu",
+        "--local-provider",
+        "nim",
+        "--model",
+        "model",
+      ]),
+    ).toThrow("trusted NGC-backed engine evidence");
   });
 
   it("keeps Ollama, NIM, and vLLM source contracts explicit without claiming NIM equivalence", () => {
@@ -449,6 +602,9 @@ describe("complete managed-image publication workflow", () => {
     expect(gpu["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
     expect(rollback["runs-on"]).toBe("ubuntu-latest");
     expect(gpu.env?.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT).toContain("runner.temp");
+    expect(gpu.env?.NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME).toBe(
+      "${{ runner.temp }}/nemoclaw-managed-image-home",
+    );
     expect(rollback.env?.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT).toContain("runner.temp");
     for (const job of [gpu, rollback]) {
       expect(step(job, "Set up protected managed-image Buildx").with).toMatchObject({
@@ -461,14 +617,24 @@ describe("complete managed-image publication workflow", () => {
       expect(step(job, "Build exact all-agent protected managed images").run).toContain(
         "build-protected-managed-images.sh",
       );
-      expect(step(job, "Remove isolated protected managed-image registry").if).toBe("always()");
-      expect(step(job, "Remove isolated protected managed-image registry").run).toContain(
-        "registry listener remained after cleanup",
-      );
     }
+    expect(step(rollback, "Remove isolated protected managed-image registry").if).toBe("always()");
+    expect(step(rollback, "Remove isolated protected managed-image registry").run).toContain(
+      "registry listener remained after cleanup",
+    );
+    expect(step(gpu, "Clean stale protected managed-image GPU resources").run).toBe(
+      "bash scripts/checks/cleanup-protected-managed-image-e2e.sh",
+    );
+    expect(step(gpu, "Clean protected managed-image GPU resources")).toMatchObject({
+      if: "always()",
+      run: "bash scripts/checks/cleanup-protected-managed-image-e2e.sh",
+    });
     expect(
       step(gpu, "Run exact all-agent GPU and host-local inference qualification").run,
     ).toContain("managed-image-gpu-e2e.test.ts");
+    expect(
+      step(gpu, "Run exact all-agent GPU and host-local inference qualification").run,
+    ).toContain('export HOME="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME"');
     expect(
       step(rollback, "Run exact all-agent managed-bootstrap rollback qualification").run,
     ).toContain("managed-image-bootstrap-rollback.test.ts");
@@ -485,6 +651,13 @@ describe("complete managed-image publication workflow", () => {
       path.join(repoRoot, "test", "e2e", "live", "managed-image-gpu-e2e.test.ts"),
       "utf8",
     );
+    const cleanupPath = path.join(
+      repoRoot,
+      "scripts",
+      "checks",
+      "cleanup-protected-managed-image-e2e.sh",
+    );
+    const cleanupSource = fs.readFileSync(cleanupPath, "utf8");
     for (const agent of PROTECTED_MANAGED_IMAGE_AGENTS) {
       expect(buildSource).toContain(`  ${agent} \\`);
     }
@@ -495,7 +668,53 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(gpuSource).toContain("torch.cuda.is_available()");
     expect(gpuSource).toContain("size_vram");
+    expect(gpuSource).toContain("successfulOllamaCompletions");
+    expect(gpuSource.match(/contracts\.length \* 2/gu)).toHaveLength(2);
     expect(gpuSource).toContain("Actual NIM engine qualification remains outside this target");
+    const protectedWorkflow = readWorkflow("e2e.yaml");
+    const gpuJob = required(
+      protectedWorkflow.jobs?.["managed-image-gpu-e2e"],
+      "protected E2E workflow is missing managed-image GPU qualification",
+    );
+    const timeoutMinutes = Number(
+      required(
+        /const TIMEOUT_MS = ([1-9][0-9]*) \* 60_000;/u.exec(gpuSource)?.[1],
+        "managed-image GPU test timeout is not statically bounded",
+      ),
+    );
+    expect(gpuJob["timeout-minutes"]).toBeGreaterThanOrEqual(timeoutMinutes + 90);
+    expect(fs.statSync(cleanupPath).mode & 0o111).not.toBe(0);
+    for (const marker of [
+      "nemoclaw-managed-openclaw-ollama",
+      "nemoclaw-managed-hermes-vllm",
+      "nemoclaw-managed-dcode-rollback",
+      "nemoclaw-managed-image-vllm-e2e",
+      "nemoclaw-openshell-gateway",
+      "nemoclaw-managed-pr-",
+      "nemoclaw-managed-openshell-",
+      "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+      "NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME",
+      "protected-managed-image-ollama.pid",
+      "docker info",
+      "docker rm -f -v",
+      "protected-managed-image-cleanup-docker-error-",
+      "lsof -tiTCP:8080",
+      'lsof -tiTCP:"${port}"',
+      "HOME=${protected_home}",
+      "OLLAMA_HOST=127.0.0.1:11434",
+      "OLLAMA_PROXY_PORT=11435",
+      "localContentId",
+      "localhost:5000/nemoclaw-managed-protected/",
+    ]) {
+      expect(cleanupSource).toContain(marker);
+    }
+    expect(cleanupSource.indexOf('if [[ "${cleanup_failed}" -ne 0 ]]')).toBeLessThan(
+      cleanupSource.indexOf('rm -f -- "${contract_path}"'),
+    );
+    expect(cleanupSource).not.toContain("systemctl");
+    expect(cleanupSource).not.toContain("pkill");
+    expect(gpuSource).toContain("cleanupProtectedLocalInference");
+    expect(gpuSource).not.toContain("cleanupOllama");
   });
 
   it("starts after exact base contracts with complete main triggers and release-safe concurrency (#7744)", () => {

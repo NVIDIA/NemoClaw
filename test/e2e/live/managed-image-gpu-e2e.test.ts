@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   type ManagedImageLocalInferenceKind,
@@ -12,7 +13,6 @@ import {
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
   getOllamaProxyToken,
-  killStaleProxy,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
 } from "../../../src/lib/inference/ollama/proxy.ts";
@@ -22,18 +22,115 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   assertNvidiaAvailable,
-  cleanupOllama,
   ensureOllama,
   env as gpuEnv,
   REPO_ROOT,
 } from "./gpu-e2e-helpers.ts";
 
-const TIMEOUT_MS = 100 * 60_000;
+const TIMEOUT_MS = 240 * 60_000;
 const OLLAMA_MODEL = "qwen3.5:9b";
 const VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct";
 const VLLM_IMAGE =
   "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416";
 const VLLM_CONTAINER = "nemoclaw-managed-image-vllm-e2e";
+const OLLAMA_LOG = path.join(process.env.RUNNER_TEMP ?? "/tmp", "managed-image-ollama.log");
+const OLLAMA_PID = path.join(
+  process.env.RUNNER_TEMP ?? "/tmp",
+  "protected-managed-image-ollama.pid",
+);
+
+function protectedManagedImageHome(): string {
+  const runnerTemp = process.env.RUNNER_TEMP;
+  const configured = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME;
+  if (!runnerTemp || !path.isAbsolute(runnerTemp)) {
+    throw new Error("RUNNER_TEMP must be an absolute path");
+  }
+  const expected = path.join(runnerTemp, "nemoclaw-managed-image-home");
+  if (
+    configured !== expected ||
+    os.homedir() !== expected ||
+    fs.lstatSync(expected).isSymbolicLink()
+  ) {
+    throw new Error("protected managed-image E2E must use its exact isolated HOME");
+  }
+  return expected;
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function stopOwnedProcess(
+  pidPath: string,
+  commandPattern: RegExp,
+  expectedEnvironment: string,
+): Promise<void> {
+  if (!fs.existsSync(pidPath)) return;
+  const stat = fs.lstatSync(pidPath);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`refusing invalid protected PID path ${pidPath}`);
+  }
+  const raw = fs.readFileSync(pidPath, "utf8").trim();
+  if (!/^[1-9][0-9]*$/u.test(raw)) {
+    throw new Error(`invalid protected PID in ${pidPath}`);
+  }
+  const pid = Number(raw);
+  if (!processAlive(pid)) return;
+  const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+  const environment = fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
+  if (
+    !commandPattern.test(command) ||
+    !environment.includes(`HOME=${protectedManagedImageHome()}`) ||
+    !environment.includes(expectedEnvironment)
+  ) {
+    throw new Error(`refusing to signal unverified protected PID ${pid}`);
+  }
+  process.kill(pid, "SIGTERM");
+  for (let attempt = 0; attempt < 30 && processAlive(pid); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (processAlive(pid)) {
+    process.kill(pid, "SIGKILL");
+    for (let attempt = 0; attempt < 30 && processAlive(pid); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  if (processAlive(pid)) throw new Error(`protected PID ${pid} remained after cleanup`);
+}
+
+async function cleanupProtectedLocalInference(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<void> {
+  const home = protectedManagedImageHome();
+  const adapterState = path.join(home, ".nemoclaw");
+  const proxyPid = path.join(adapterState, "ollama-auth-proxy.pid");
+  await stopOwnedProcess(proxyPid, /ollama-auth-proxy\.(?:js|mts)/u, "OLLAMA_PROXY_PORT=11435");
+  await stopOwnedProcess(OLLAMA_PID, /ollama\s+serve/u, "OLLAMA_HOST=127.0.0.1:11434");
+  const ports = await host.command(
+    "bash",
+    [
+      "-lc",
+      "if lsof -tiTCP:11434 -sTCP:LISTEN 2>/dev/null || lsof -tiTCP:11435 -sTCP:LISTEN 2>/dev/null; then exit 1; fi",
+    ],
+    { artifactName, env: gpuEnv(), timeoutMs: 30_000 },
+  );
+  expect(ports.exitCode, resultText(ports)).toBe(0);
+  for (const ownedPath of [
+    proxyPid,
+    path.join(adapterState, "ollama-backend"),
+    path.join(adapterState, "ollama-proxy-token"),
+    OLLAMA_PID,
+  ]) {
+    fs.rmSync(ownedPath, { force: true });
+  }
+}
+
 function imageContracts(): ProtectedManagedImageContract[] {
   const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
   if (!contractPath || !path.isAbsolute(contractPath)) {
@@ -76,13 +173,14 @@ async function runExactImageQualification(
         NEMOCLAW_NON_INTERACTIVE: "1",
         ...extraEnv,
       },
-      timeoutMs: 15 * 60_000,
+      timeoutMs: 20 * 60_000,
     },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   expect(result.stdout).toContain(`exact ${contract.agent} PR image ${contract.reference}`);
   expect(result.stdout).toContain("real NVIDIA GPU access");
   expect(result.stdout).toContain(`${kind} inference.local completion`);
+  expect(result.stdout).toContain(`real ${contract.agent} agent turn`);
 }
 
 test("exact all-agent managed images retain NVIDIA GPU and real Ollama/vLLM inference.local", {
@@ -118,8 +216,7 @@ test("exact all-agent managed images retain NVIDIA GPU and real Ollama/vLLM infe
     });
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
-    killStaleProxy();
-    await cleanupOllama(host, "cleanup-managed-image-ollama");
+    await cleanupProtectedLocalInference(host, "cleanup-managed-image-local-inference");
   });
 
   const docker = await host.command("docker", ["info"], {
@@ -136,14 +233,16 @@ test("exact all-agent managed images retain NVIDIA GPU and real Ollama/vLLM infe
   assertNvidiaAvailable(nvidia, skip);
 
   progress.phase("qualify all agents through GPU-backed Ollama");
+  protectedManagedImageHome();
   await ensureOllama(host);
-  await cleanupOllama(host, "pre-cleanup-managed-image-ollama");
+  await cleanupProtectedLocalInference(host, "pre-cleanup-managed-image-local-inference");
   const startOllama = await host.command(
     "bash",
     [
       "-lc",
       `set -euo pipefail
-OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >"${process.env.RUNNER_TEMP ?? "/tmp"}/managed-image-ollama.log" 2>&1 &
+OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >"${OLLAMA_LOG}" 2>&1 &
+printf '%s\n' "$!" >"${OLLAMA_PID}"
 for _ in $(seq 1 120); do
   curl -fsS --connect-timeout 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && exit 0
   sleep 1
@@ -190,10 +289,29 @@ exit 1`,
   );
   expect(ollamaGpu.exitCode, resultText(ollamaGpu)).toBe(0);
   await artifacts.writeText("ollama-gpu-placement.txt", resultText(ollamaGpu));
+  const ollamaLogs = await host.command(
+    "bash",
+    [
+      "-lc",
+      `set -euo pipefail
+test -s ${JSON.stringify(OLLAMA_LOG)}
+grep -E '\\|[[:space:]]*200[[:space:]]*\\|.*POST[[:space:]]+"?/(api/chat|v1/chat/completions)' ${JSON.stringify(
+        OLLAMA_LOG,
+      )}`,
+    ],
+    {
+      artifactName: "ollama-logs-after-completions",
+      env: gpuEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(ollamaLogs.exitCode, resultText(ollamaLogs)).toBe(0);
+  const successfulOllamaCompletions = resultText(ollamaLogs).split(/\r?\n/u).filter(Boolean);
+  expect(successfulOllamaCompletions.length).toBeGreaterThanOrEqual(contracts.length * 2);
+  await artifacts.writeText("ollama-after-completions.log", resultText(ollamaLogs));
 
   progress.phase("qualify all agents through GPU-backed vLLM");
-  killStaleProxy();
-  await cleanupOllama(host, "stop-ollama-before-vllm");
+  await cleanupProtectedLocalInference(host, "stop-local-inference-before-vllm");
   await host.command("docker", ["rm", "-f", VLLM_CONTAINER], {
     artifactName: "pre-cleanup-vllm",
     env: buildAvailabilityProbeEnv(),
@@ -283,7 +401,7 @@ docker logs "${VLLM_CONTAINER}" 2>&1 | grep -Eai 'cuda|GPU KV cache|GPU blocks'`
   const successfulCompletions =
     resultText(vllmLogs).match(/(?:POST \/v1\/chat\/completions.*200|200.*chat\/completions)/giu) ??
     [];
-  expect(successfulCompletions.length).toBeGreaterThanOrEqual(contracts.length);
+  expect(successfulCompletions.length).toBeGreaterThanOrEqual(contracts.length * 2);
   await artifacts.writeText("vllm-after-completions.log", resultText(vllmLogs));
 
   progress.phase("verify owned runtime inventory is clean");

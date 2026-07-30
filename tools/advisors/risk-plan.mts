@@ -114,8 +114,10 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/risk-signal-reporter.ts",
 ]);
 const MANAGED_IMAGE_RUNTIME_FILES = new Set([
+  ".github/workflows/e2e.yaml",
   ".github/workflows/managed-images.yaml",
   "scripts/checks/build-protected-managed-images.sh",
+  "scripts/checks/cleanup-protected-managed-image-e2e.sh",
   "scripts/checks/managed-image-protected-runtime-contract.ts",
   "scripts/checks/run-managed-image-openshell-e2e.ts",
   "src/lib/onboard/sandbox-gpu-create-flow.ts",
