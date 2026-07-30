@@ -18,6 +18,7 @@ import {
 } from "../scripts/checks/upstream-runtime-drift.mts";
 
 const NOW = new Date("2026-07-30T18:00:00.000Z");
+const NEMOCLAW_SHA = "a".repeat(40);
 const PINS: RuntimePins = {
   openshell: { minimum: "0.0.85", maximum: "0.0.85" },
   openclaw: "2026.7.1",
@@ -42,6 +43,23 @@ function pypiFile(publishedAt: string) {
   return [{ upload_time_iso_8601: publishedAt }];
 }
 
+function githubIssue(
+  number: number,
+  title: string,
+  labels: readonly string[],
+  body = "",
+  state: "closed" | "open" = "open",
+) {
+  return {
+    body,
+    html_url: `https://github.com/NVIDIA/NemoClaw/issues/${number}`,
+    labels: labels.map((name) => ({ name })),
+    number,
+    state,
+    title,
+  };
+}
+
 function currentResponses(): UpstreamResponses {
   return {
     openshell: source([githubRelease("v0.0.85", "2026-07-16T15:12:41Z")]),
@@ -55,6 +73,14 @@ function currentResponses(): UpstreamResponses {
       info: { version: "0.1.34" },
       releases: { "0.1.34": pypiFile("2026-07-16T16:00:00Z") },
     }),
+    nemoclawCompatibilityIssue: source(
+      githubIssue(6691, "Run speculative compatibility tests against candidate runtime versions", [
+        "area: ci",
+        "area: e2e",
+      ]),
+    ),
+    nemoclawRecommendedBlockers: source({ items: [] }),
+    nemoclawUnblockers: source({ items: [] }),
   };
 }
 
@@ -64,7 +90,7 @@ function writeFixture(root: string, relativePath: string, contents: string): voi
   fs.writeFileSync(file, contents);
 }
 
-describe("weekly upstream runtime drift report", () => {
+describe("nightly upstream runtime drift report", () => {
   it("reads the four authoritative runtime pins", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-drift-pins-"));
     try {
@@ -94,11 +120,19 @@ describe("weekly upstream runtime drift report", () => {
   it("reports matching stable releases as current", () => {
     const report = createRuntimeDriftReport({
       generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
       pins: PINS,
       responses: currentResponses(),
     });
 
     expect(report.totals).toEqual({ current: 4, overdue: 0, review: 0, unknown: 0 });
+    expect(report.priorityTotals).toEqual({
+      investigate: 0,
+      monitor: 4,
+      stability: 0,
+      updateness: 0,
+      validation: 0,
+    });
     expect(report.components.map(({ component, status }) => ({ component, status }))).toEqual([
       { component: "OpenShell", status: "current" },
       { component: "OpenClaw", status: "current" },
@@ -136,7 +170,12 @@ describe("weekly upstream runtime drift report", () => {
       }),
     };
 
-    const report = createRuntimeDriftReport({ generatedAt: NOW, pins: PINS, responses });
+    const report = createRuntimeDriftReport({
+      generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
+      pins: PINS,
+      responses,
+    });
     const byComponent = Object.fromEntries(
       report.components.map((component) => [component.component, component]),
     );
@@ -155,6 +194,7 @@ describe("weekly upstream runtime drift report", () => {
     });
     expect(byComponent["LangChain Deep Agents Code"]).toMatchObject({
       latestUpstream: "0.1.40",
+      priority: "updateness",
       releasesBehind: 6,
       status: "overdue",
     });
@@ -167,13 +207,48 @@ describe("weekly upstream runtime drift report", () => {
       openshell: source([githubRelease("<!channel>", "2026-07-30T17:00:00Z")]),
     };
 
-    const report = createRuntimeDriftReport({ generatedAt: NOW, pins: PINS, responses });
+    const report = createRuntimeDriftReport({
+      generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
+      pins: PINS,
+      responses,
+    });
     const openshell = report.components[0];
     const slack = JSON.stringify(createSlackPayload(report));
 
     expect(openshell).toMatchObject({ latestUpstream: "unknown", status: "unknown" });
     expect(openshell?.caveat).toContain("release 0 has invalid tag");
     expect(slack).not.toContain("<!channel>");
+  });
+
+  it("treats missing blocker results as incomplete evidence instead of no blockers", () => {
+    const responses: UpstreamResponses = {
+      ...currentResponses(),
+      openclaw: source({
+        "dist-tags": { latest: "2026.7.1-1" },
+        time: {
+          "2026.7.1": "2026-07-16T15:30:00Z",
+          "2026.7.1-1": "2026-07-29T15:30:00Z",
+        },
+      }),
+      nemoclawRecommendedBlockers: { error: "HTTP 503" },
+    };
+    const report = createRuntimeDriftReport({
+      generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
+      pins: PINS,
+      responses,
+    });
+    const markdown = renderMarkdownReport(report);
+    const openclaw = report.components.find((component) => component.component === "OpenClaw");
+
+    expect(report.blockerEvidenceComplete).toBe(false);
+    expect(openclaw?.priority).toBe("investigate");
+    expect(markdown).toContain(
+      "Pin Diesel could not collect complete public GitHub blocker evidence",
+    );
+    expect(markdown).toContain("Evidence collection warnings:");
+    expect(markdown).not.toContain("No open public GitHub issues");
   });
 
   it("renders the requested inventory columns and a brief Slack summary", () => {
@@ -184,8 +259,22 @@ describe("weekly upstream runtime drift report", () => {
         githubRelease("v0.0.91", "2026-07-24T15:06:36Z"),
         githubRelease("v0.0.85", "2026-07-16T15:12:41Z"),
       ]),
+      nemoclawUnblockers: source({
+        items: [
+          githubIssue(
+            6256,
+            "security: verify runtime OpenShell version against credential boundary manifest",
+            ["area: security", "needs: unblock"],
+          ),
+        ],
+      }),
     };
-    const report = createRuntimeDriftReport({ generatedAt: NOW, pins: PINS, responses });
+    const report = createRuntimeDriftReport({
+      generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
+      pins: PINS,
+      responses,
+    });
     const markdown = renderMarkdownReport(report);
     const payload = createSlackPayload(
       report,
@@ -195,15 +284,59 @@ describe("weekly upstream runtime drift report", () => {
       text: string;
     };
 
+    expect(markdown.split("\n")[0]).toContain("Vibe check:");
+    expect(markdown).toContain("# NemoClaw Pin Diesel — nightly dependency report");
+    expect(markdown).toContain("| 🛡️ Validation gate | OpenShell |");
     expect(markdown).toContain("| Component | Latest upstream | NemoClaw pin | Caveats |");
     expect(markdown).toContain(
       "| OpenShell | 0.0.92 | 0.0.85 | 🔴 The compatibility range deliberately sets min=max=0.0.85.",
     );
-    expect(payload.text).toBe("NemoClaw weekly upstream drift: 1 threshold breach.");
-    expect(payload.attachments[0]?.color).toBe("#E01E5A");
-    expect(payload.attachments[0]?.blocks[0]?.text?.text).toContain(
-      "*OpenShell* 🔴 `0.0.85` → `0.0.92`",
+    expect(markdown).toContain(
+      "[#6256 — security: verify runtime OpenShell version against credential boundary manifest]",
     );
-    expect(JSON.stringify(payload)).toContain("View report");
+    expect(markdown).toContain("Pin Diesel is a deterministic reporter");
+    expect(payload.text).toContain("NemoClaw Pin Diesel: 0 stability · 1 validation");
+    expect(payload.attachments[0]?.color).toBe("#ECB22E");
+    expect(payload.attachments[0]?.blocks[0]?.text?.text).toContain(
+      "🛡️ *OpenShell* · Validation gate · `0.0.85` → `0.0.92`",
+    );
+    expect(JSON.stringify(payload)).toContain("Open deep report");
+    expect(JSON.stringify(payload)).not.toContain("security: verify runtime");
+  });
+
+  it("requires explicit blocker text before classifying an update as stability work", () => {
+    const responses: UpstreamResponses = {
+      ...currentResponses(),
+      openclaw: source({
+        "dist-tags": { latest: "2026.7.1-1" },
+        time: {
+          "2026.7.1": "2026-07-16T15:30:00Z",
+          "2026.7.1-1": "2026-07-29T15:30:00Z",
+        },
+      }),
+      nemoclawRecommendedBlockers: source({
+        items: [
+          githubIssue(
+            8001,
+            "[OpenClaw] renderer regression blocks release",
+            ["Recommended Blocker", "integration: openclaw"],
+            "The regression is resolved by upgrading OpenClaw to 2026.7.1-1.",
+          ),
+        ],
+      }),
+    };
+    const report = createRuntimeDriftReport({
+      generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
+      pins: PINS,
+      responses,
+    });
+    const openclaw = report.components.find((component) => component.component === "OpenClaw");
+
+    expect(openclaw).toMatchObject({
+      priority: "stability",
+      blockers: [{ issue: 8001, relationship: "update-fix" }],
+    });
+    expect(report.verdict).toContain("upstream brought receipts");
   });
 });

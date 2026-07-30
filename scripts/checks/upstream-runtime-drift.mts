@@ -8,13 +8,24 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
+const MAX_ISSUE_BODY_LENGTH = 65_536;
+const MAX_ISSUE_TITLE_LENGTH = 256;
 const NUMERIC_VERSION_RE = /^[0-9]+(?:\.[0-9]+){2}(?:-[0-9]+)?$/u;
 const CALVER_TAG_RE = /^v[0-9]+(?:\.[0-9]+){2,3}$/u;
+const NEMOCLAW_ISSUE_URL_RE = /^https:\/\/github\.com\/NVIDIA\/NemoClaw\/issues\/([1-9][0-9]*)$/u;
+const UPGRADE_FIX_EVIDENCE_RE =
+  /\b(?:fix(?:ed|es)?|resolv(?:ed|es)?|address(?:ed|es)?)\b.{0,100}\b(?:by|in|after|with)\b.{0,80}\b(?:upgrad(?:e|ing)|updat(?:e|ing)|v?[0-9]+\.[0-9]+\.[0-9]+)\b|\b(?:upgrad(?:e|ing)|updat(?:e|ing))\b.{0,100}\b(?:fix(?:ed|es)?|resolv(?:ed|es)?|address(?:ed|es)?)\b/isu;
+const UPDATE_GATE_TITLE_RE = /\b(?:compatib\w*|pin|updat\w*|upgrad\w*|version)\b/iu;
 
 const UPSTREAM_URLS = {
   deepAgentsCode: "https://pypi.org/pypi/deepagents-code/json",
   hermesPackage: "https://registry.npmjs.org/hermes-agent/latest",
   hermesReleases: "https://api.github.com/repos/NousResearch/hermes-agent/releases?per_page=100",
+  nemoclawCompatibilityIssue: "https://api.github.com/repos/NVIDIA/NemoClaw/issues/6691",
+  nemoclawRecommendedBlockers:
+    "https://api.github.com/search/issues?q=repo%3ANVIDIA%2FNemoClaw+is%3Aissue+is%3Aopen+label%3A%22Recommended+Blocker%22&per_page=100",
+  nemoclawUnblockers:
+    "https://api.github.com/search/issues?q=repo%3ANVIDIA%2FNemoClaw+is%3Aissue+is%3Aopen+label%3A%22needs%3A+unblock%22&per_page=100",
   openclaw: "https://registry.npmjs.org/openclaw",
   openshell: "https://api.github.com/repos/NVIDIA/OpenShell/releases?per_page=100",
 } as const;
@@ -39,13 +50,27 @@ export type UpstreamResponses = Readonly<{
   deepAgentsCode: SourceResult;
   hermesPackage: SourceResult;
   hermesReleases: SourceResult;
+  nemoclawCompatibilityIssue: SourceResult;
+  nemoclawRecommendedBlockers: SourceResult;
+  nemoclawUnblockers: SourceResult;
   openclaw: SourceResult;
   openshell: SourceResult;
 }>;
 
 export type DriftStatus = "current" | "overdue" | "review" | "unknown";
 
-export type ComponentDrift = Readonly<{
+export type PriorityReason = "investigate" | "monitor" | "stability" | "updateness" | "validation";
+
+export type BlockerRelationship = "related" | "update-fix" | "update-gate";
+
+export type BlockerEvidence = Readonly<{
+  issue: number;
+  relationship: BlockerRelationship;
+  title: string;
+  url: string;
+}>;
+
+type ComponentSnapshot = Readonly<{
   caveat: string;
   component: string;
   daysBehind?: number;
@@ -55,16 +80,43 @@ export type ComponentDrift = Readonly<{
   status: DriftStatus;
 }>;
 
+export type ComponentDrift = ComponentSnapshot &
+  Readonly<{
+    blockers: readonly BlockerEvidence[];
+    priority: PriorityReason;
+    recommendation: string;
+  }>;
+
+type CompatibilityEvidence = Readonly<{
+  issue: number;
+  state: "closed" | "open" | "unknown";
+  title: string;
+  url: string;
+}>;
+
 export type RuntimeDriftReport = Readonly<{
+  blockerEvidenceComplete: boolean;
+  compatibilityEvidence: CompatibilityEvidence;
   components: readonly ComponentDrift[];
+  evidenceNotes: readonly string[];
   generatedAt: string;
-  schemaVersion: 1;
+  nemoclawSha: string;
+  priorityTotals: Readonly<Record<PriorityReason, number>>;
+  schemaVersion: 2;
   totals: Readonly<Record<DriftStatus, number>>;
+  verdict: string;
 }>;
 
 type ReleasePoint = Readonly<{ publishedAt: Date; version: string }>;
 type ReleaseHistory = Readonly<{ latest: string; releases: readonly ReleasePoint[] }>;
 type DriftBudget = Readonly<{ maxDays: number; maxReleases: number }>;
+type NemoClawIssue = Readonly<{
+  body: string;
+  labels: readonly string[];
+  number: number;
+  title: string;
+  url: string;
+}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -285,7 +337,7 @@ function assessDrift(
   history: ReleaseHistory,
   budget: DriftBudget,
   now: Date,
-): Pick<ComponentDrift, "daysBehind" | "releasesBehind" | "status"> {
+): Pick<ComponentSnapshot, "daysBehind" | "releasesBehind" | "status"> {
   if (pin === history.latest) return { status: "current" };
   if (compareNumericVersions(history.latest, pin) <= 0) return { status: "unknown" };
   const pinRelease = history.releases.find((release) => release.version === pin);
@@ -305,7 +357,7 @@ function assessDrift(
 }
 
 function statusText(
-  assessment: Pick<ComponentDrift, "daysBehind" | "releasesBehind" | "status">,
+  assessment: Pick<ComponentSnapshot, "daysBehind" | "releasesBehind" | "status">,
   budget: DriftBudget,
 ): string {
   if (assessment.status === "current") return "NemoClaw matches the latest stable release.";
@@ -325,7 +377,7 @@ function unknownComponent(
   nemoclawPin: string,
   baseCaveat: string,
   error: unknown,
-): ComponentDrift {
+): ComponentSnapshot {
   return {
     component,
     latestUpstream: "unknown",
@@ -342,7 +394,7 @@ function componentFromHistory(options: {
   history: ReleaseHistory;
   now: Date;
   pin: string;
-}): ComponentDrift {
+}): ComponentSnapshot {
   const assessment = assessDrift(options.pin, options.history, options.budget, options.now);
   return {
     component: options.component,
@@ -357,7 +409,7 @@ function buildOpenShell(
   pins: RuntimePins,
   responses: UpstreamResponses,
   now: Date,
-): ComponentDrift {
+): ComponentSnapshot {
   const pin = pins.openshell.maximum;
   const rangeCaveat =
     pins.openshell.minimum === pins.openshell.maximum
@@ -381,7 +433,11 @@ function buildOpenShell(
   }
 }
 
-function buildOpenClaw(pins: RuntimePins, responses: UpstreamResponses, now: Date): ComponentDrift {
+function buildOpenClaw(
+  pins: RuntimePins,
+  responses: UpstreamResponses,
+  now: Date,
+): ComponentSnapshot {
   const caveat =
     "The exact npm package and integrity are reviewed; the latest release is only an upgrade signal.";
   try {
@@ -398,7 +454,11 @@ function buildOpenClaw(pins: RuntimePins, responses: UpstreamResponses, now: Dat
   }
 }
 
-function buildHermes(pins: RuntimePins, responses: UpstreamResponses, now: Date): ComponentDrift {
+function buildHermes(
+  pins: RuntimePins,
+  responses: UpstreamResponses,
+  now: Date,
+): ComponentSnapshot {
   const caveat = "The CalVer release tag and package version are reviewed as one mapping.";
   const nemoclawPin = `${pins.hermes.version} (${pins.hermes.tag})`;
   try {
@@ -433,7 +493,7 @@ function buildDeepAgentsCode(
   pins: RuntimePins,
   responses: UpstreamResponses,
   now: Date,
-): ComponentDrift {
+): ComponentSnapshot {
   const caveat =
     "The exact package is hash-locked; an upgrade requires dependency and compatibility review.";
   try {
@@ -452,34 +512,308 @@ function buildDeepAgentsCode(
   }
 }
 
+function parseNemoClawIssue(value: unknown, label: string): NemoClawIssue {
+  if (!isRecord(value)) throw new Error(`${label}: expected issue mapping`);
+  const number = value.number;
+  const title = value.title;
+  const url = value.html_url;
+  const body = value.body;
+  const labels = value.labels;
+  if (!Number.isSafeInteger(number) || (number as number) <= 0) {
+    throw new Error(`${label}: expected positive issue number`);
+  }
+  if (
+    typeof title !== "string" ||
+    title.length === 0 ||
+    title.length > MAX_ISSUE_TITLE_LENGTH ||
+    /[\u0000-\u001f\u007f]/u.test(title)
+  ) {
+    throw new Error(`${label}: invalid issue title`);
+  }
+  if (typeof url !== "string") throw new Error(`${label}: invalid issue URL`);
+  const urlMatch = NEMOCLAW_ISSUE_URL_RE.exec(url);
+  if (!urlMatch || Number.parseInt(urlMatch[1] ?? "", 10) !== number) {
+    throw new Error(`${label}: invalid issue URL`);
+  }
+  if (body !== null && (typeof body !== "string" || body.length > MAX_ISSUE_BODY_LENGTH)) {
+    throw new Error(`${label}: invalid issue body`);
+  }
+  if (!Array.isArray(labels)) throw new Error(`${label}: expected labels array`);
+  const labelNames = labels.map((entry, index) => {
+    if (!isRecord(entry)) throw new Error(`${label}: label ${index} must be a mapping`);
+    const name = entry.name;
+    if (
+      typeof name !== "string" ||
+      name.length === 0 ||
+      name.length > 100 ||
+      /[\u0000-\u001f\u007f]/u.test(name)
+    ) {
+      throw new Error(`${label}: invalid label ${index}`);
+    }
+    return name;
+  });
+  return {
+    body: typeof body === "string" ? body : "",
+    labels: labelNames,
+    number: number as number,
+    title,
+    url,
+  };
+}
+
+function parseIssueSearch(source: SourceResult, label: string): NemoClawIssue[] {
+  const data = sourceData(source, label);
+  if (!isRecord(data) || !Array.isArray(data.items)) {
+    throw new Error(`${label}: expected search result items`);
+  }
+  return data.items.map((issue, index) => parseNemoClawIssue(issue, `${label} item ${index}`));
+}
+
+function issueMatchesComponent(issue: NemoClawIssue, component: string): boolean {
+  const labels = new Set(issue.labels.map((label) => label.toLowerCase()));
+  if (component === "OpenShell") return /\bopenshell\b/iu.test(issue.title);
+  if (component === "OpenClaw") {
+    return labels.has("integration: openclaw") || /\bopenclaw\b/iu.test(issue.title);
+  }
+  if (component === "Hermes") {
+    return labels.has("integration: hermes") || /\bhermes\b/iu.test(issue.title);
+  }
+  return (
+    labels.has("integration: dcode") ||
+    /\b(?:dcode|deep agents(?: code)?|deepagents-code)\b/iu.test(issue.title)
+  );
+}
+
+function blockerRelationship(issue: NemoClawIssue): BlockerRelationship {
+  const searchable = `${issue.title}\n${issue.body}`;
+  if (UPGRADE_FIX_EVIDENCE_RE.test(searchable)) return "update-fix";
+  if (UPDATE_GATE_TITLE_RE.test(issue.title)) return "update-gate";
+  return "related";
+}
+
+function relationshipRank(relationship: BlockerRelationship): number {
+  if (relationship === "update-fix") return 0;
+  if (relationship === "update-gate") return 1;
+  return 2;
+}
+
+function collectBlockerIssues(responses: UpstreamResponses): {
+  complete: boolean;
+  issues: readonly NemoClawIssue[];
+  notes: readonly string[];
+} {
+  const notes: string[] = [];
+  const issues = new Map<number, NemoClawIssue>();
+  for (const [label, source] of [
+    ["Recommended Blocker issues", responses.nemoclawRecommendedBlockers],
+    ["needs: unblock issues", responses.nemoclawUnblockers],
+  ] as const) {
+    try {
+      for (const issue of parseIssueSearch(source, label)) issues.set(issue.number, issue);
+    } catch (error) {
+      notes.push(`${label} were unavailable: ${safeError(error)}`);
+    }
+  }
+  return {
+    complete: notes.length === 0,
+    issues: [...issues.values()],
+    notes,
+  };
+}
+
+function compatibilityEvidence(source: SourceResult): {
+  evidence: CompatibilityEvidence;
+  note?: string;
+} {
+  const fallback: CompatibilityEvidence = {
+    issue: 6691,
+    state: "unknown",
+    title: "Candidate compatibility evidence path",
+    url: "https://github.com/NVIDIA/NemoClaw/issues/6691",
+  };
+  try {
+    const data = sourceData(source, "Candidate compatibility issue");
+    const issue = parseNemoClawIssue(data, "Candidate compatibility issue");
+    if (issue.number !== 6691) throw new Error("Candidate compatibility issue: wrong issue number");
+    if (!isRecord(data) || (data.state !== "open" && data.state !== "closed")) {
+      throw new Error("Candidate compatibility issue: invalid state");
+    }
+    return {
+      evidence: {
+        issue: issue.number,
+        state: data.state,
+        title: issue.title,
+        url: issue.url,
+      },
+    };
+  } catch (error) {
+    return {
+      evidence: fallback,
+      note: `Candidate compatibility status was unavailable: ${safeError(error)}`,
+    };
+  }
+}
+
+function priorityRecommendation(
+  snapshot: ComponentSnapshot,
+  blockers: readonly BlockerEvidence[],
+  priority: PriorityReason,
+): string {
+  const issueNumbers = blockers.map((blocker) => `#${blocker.issue}`).join(", ");
+  if (priority === "stability") {
+    return (
+      `${issueNumbers} reports that an upstream update fixes a blocker. ` +
+      "Confirm the exact target release, then run the semantic dependency review and candidate tests."
+    );
+  }
+  if (priority === "validation") {
+    return (
+      `${issueNumbers} is an update-specific compatibility or version gate. ` +
+      "Resolve it or record an explicit maintainer disposition before changing the pin."
+    );
+  }
+  if (priority === "updateness") {
+    const blockerContext =
+      blockers.length > 0
+        ? `${issueNumbers} are component blockers, but none says a dependency update fixes them. `
+        : "No open labeled blocker says a dependency update fixes a NemoClaw blocker. ";
+    return (
+      blockerContext +
+      "Treat this as updateness: review release notes and validate the candidate after stability work."
+    );
+  }
+  if (priority === "monitor") {
+    return "The tracked pin is current; monitor upstream and open blocker evidence.";
+  }
+  return snapshot.status === "unknown"
+    ? "Fetch upstream metadata again before making a version decision."
+    : "Collect complete blocker evidence before deciding whether this is stability or updateness.";
+}
+
+function prioritizeComponent(
+  snapshot: ComponentSnapshot,
+  issues: readonly NemoClawIssue[],
+  evidenceComplete: boolean,
+): ComponentDrift {
+  const blockers = issues
+    .filter((issue) => issueMatchesComponent(issue, snapshot.component))
+    .map(
+      (issue): BlockerEvidence => ({
+        issue: issue.number,
+        relationship: blockerRelationship(issue),
+        title: issue.title,
+        url: issue.url,
+      }),
+    )
+    .sort(
+      (left, right) =>
+        relationshipRank(left.relationship) - relationshipRank(right.relationship) ||
+        right.issue - left.issue,
+    )
+    .slice(0, 3);
+
+  let priority: PriorityReason;
+  if (snapshot.status === "current") priority = "monitor";
+  else if (snapshot.status === "unknown") priority = "investigate";
+  else if (blockers.some((blocker) => blocker.relationship === "update-fix")) {
+    priority = "stability";
+  } else if (blockers.some((blocker) => blocker.relationship === "update-gate")) {
+    priority = "validation";
+  } else if (!evidenceComplete) priority = "investigate";
+  else priority = "updateness";
+
+  return {
+    ...snapshot,
+    blockers,
+    priority,
+    recommendation: priorityRecommendation(snapshot, blockers, priority),
+  };
+}
+
+function reportVerdict(
+  totals: Readonly<Record<DriftStatus, number>>,
+  priorityTotals: Readonly<Record<PriorityReason, number>>,
+): string {
+  if (priorityTotals.stability > 0) {
+    return "🚨 Vibe check: upstream brought receipts—stability upgrades cut the line tonight.";
+  }
+  if (priorityTotals.validation > 0) {
+    return "🛡️ Vibe check: the pins are giving vintage, but a safety gate says “not so fast.”";
+  }
+  if (totals.overdue > 0) {
+    return "🧯 Vibe check: the pins are giving vintage; no blocker has upgrade receipts, so this is maintenance—not a fire drill.";
+  }
+  if (priorityTotals.investigate > 0) {
+    return "🕵️ Vibe check: the signal is being mysterious; verify the receipts before touching pins.";
+  }
+  if (totals.review > 0) {
+    return "👀 Vibe check: tiny drift, big main-character energy—review it before it snowballs.";
+  }
+  return "✨ Vibe check: immaculate pin energy—everything tracked is current.";
+}
+
 export function createRuntimeDriftReport(options: {
   generatedAt: Date;
+  nemoclawSha: string;
   pins: RuntimePins;
   responses: UpstreamResponses;
 }): RuntimeDriftReport {
-  const components = [
+  if (!/^[0-9a-f]{40}$/u.test(options.nemoclawSha)) {
+    throw new Error("NemoClaw SHA must be a full lowercase commit SHA");
+  }
+  const snapshots = [
     buildOpenShell(options.pins, options.responses, options.generatedAt),
     buildOpenClaw(options.pins, options.responses, options.generatedAt),
     buildHermes(options.pins, options.responses, options.generatedAt),
     buildDeepAgentsCode(options.pins, options.responses, options.generatedAt),
   ];
+  const blockerCollection = collectBlockerIssues(options.responses);
+  const compatibility = compatibilityEvidence(options.responses.nemoclawCompatibilityIssue);
+  const evidenceNotes = [...blockerCollection.notes];
+  if (compatibility.note) evidenceNotes.push(compatibility.note);
+  const components = snapshots.map((snapshot) =>
+    prioritizeComponent(snapshot, blockerCollection.issues, blockerCollection.complete),
+  );
   const totals: Record<DriftStatus, number> = {
     current: 0,
     overdue: 0,
     review: 0,
     unknown: 0,
   };
-  for (const component of components) totals[component.status] += 1;
+  const priorityTotals: Record<PriorityReason, number> = {
+    investigate: 0,
+    monitor: 0,
+    stability: 0,
+    updateness: 0,
+    validation: 0,
+  };
+  for (const component of components) {
+    totals[component.status] += 1;
+    priorityTotals[component.priority] += 1;
+  }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: options.generatedAt.toISOString(),
+    blockerEvidenceComplete: blockerCollection.complete,
+    compatibilityEvidence: compatibility.evidence,
     components,
+    evidenceNotes,
+    nemoclawSha: options.nemoclawSha,
+    priorityTotals,
     totals,
+    verdict: reportVerdict(totals, priorityTotals),
   };
 }
 
 function escapeMarkdownCell(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll(/\s+/gu, " ").trim();
+}
+
+function escapeMarkdownText(value: string): string {
+  return value
+    .replaceAll(/([\\[\]*_`])/gu, "\\$1")
+    .replaceAll(/\s+/gu, " ")
+    .trim();
 }
 
 function statusIcon(status: DriftStatus): string {
@@ -489,22 +823,136 @@ function statusIcon(status: DriftStatus): string {
   return "⚠️";
 }
 
+function priorityIcon(priority: PriorityReason): string {
+  if (priority === "stability") return "🚨";
+  if (priority === "validation") return "🛡️";
+  if (priority === "updateness") return "🆕";
+  if (priority === "monitor") return "✅";
+  return "🕵️";
+}
+
+function priorityLabel(priority: PriorityReason): string {
+  if (priority === "stability") return "Stability required";
+  if (priority === "validation") return "Validation gate";
+  if (priority === "updateness") return "Updateness";
+  if (priority === "monitor") return "Monitor";
+  return "Investigate";
+}
+
+function priorityRank(priority: PriorityReason): number {
+  if (priority === "stability") return 0;
+  if (priority === "validation") return 1;
+  if (priority === "investigate") return 2;
+  if (priority === "updateness") return 3;
+  return 4;
+}
+
+function priorityWhy(component: ComponentDrift): string {
+  if (component.priority === "stability") {
+    return "An open blocker explicitly reports an upstream update as its fix.";
+  }
+  if (component.priority === "validation") {
+    return "An open blocker describes a version or compatibility gate for this update.";
+  }
+  if (component.priority === "updateness") {
+    return "The pin has drifted, but no labeled blocker says this update fixes it.";
+  }
+  if (component.priority === "monitor") return "The tracked pin is current.";
+  return component.status === "unknown"
+    ? "Upstream version metadata is incomplete."
+    : "GitHub blocker evidence is incomplete.";
+}
+
+function relationshipText(relationship: BlockerRelationship): string {
+  if (relationship === "update-fix") return "issue-reported update fix";
+  if (relationship === "update-gate") return "update validation gate";
+  return "component blocker; no update-fix evidence";
+}
+
 export function renderMarkdownReport(report: RuntimeDriftReport): string {
-  const rows = report.components.map(
+  const inventoryRows = report.components.map(
     (component) =>
       `| ${component.component} | ${component.latestUpstream} | ${component.nemoclawPin} | ` +
       `${statusIcon(component.status)} ${escapeMarkdownCell(component.caveat)} |`,
   );
+  const priorityRows = [...report.components]
+    .sort(
+      (left, right) =>
+        priorityRank(left.priority) - priorityRank(right.priority) ||
+        left.component.localeCompare(right.component),
+    )
+    .map(
+      (component) =>
+        `| ${priorityIcon(component.priority)} ${priorityLabel(component.priority)} | ` +
+        `${component.component} | ${escapeMarkdownCell(priorityWhy(component))} | ` +
+        `${escapeMarkdownCell(component.recommendation)} |`,
+    );
+  const blockerLines = report.components.flatMap((component) =>
+    component.blockers.map(
+      (blocker) =>
+        `- **${component.component}:** ` +
+        `[#${blocker.issue} — ${escapeMarkdownText(blocker.title)}](${blocker.url}) — ` +
+        `${relationshipText(blocker.relationship)}.`,
+    ),
+  );
+  const compatibility = report.compatibilityEvidence;
+  const compatibilityText =
+    compatibility.state === "open"
+      ? `The candidate compatibility path [#${compatibility.issue} — ${escapeMarkdownText(
+          compatibility.title,
+        )}](${compatibility.url}) is still open. While issue #${compatibility.issue} remains open, use the component dependency-update ` +
+        "review and existing focused/live test lanes; drift alone is not compatibility evidence."
+      : compatibility.state === "closed"
+        ? `Use the delivered candidate compatibility path from [#${compatibility.issue} — ` +
+          `${escapeMarkdownText(compatibility.title)}](${compatibility.url}) before changing pins.`
+        : `The status of candidate compatibility issue [#${compatibility.issue}](${compatibility.url}) ` +
+          "could not be verified. Do not treat drift as compatibility evidence.";
+  const emptyBlockerLines = report.blockerEvidenceComplete
+    ? [
+        "No open public GitHub issues with `Recommended Blocker` or `needs: unblock` labels match these components.",
+      ]
+    : [
+        "Pin Diesel could not collect complete public GitHub blocker evidence. Use the evidence collection warnings below before assigning a priority.",
+      ];
+  const evidenceNotes =
+    report.evidenceNotes.length === 0
+      ? []
+      : [
+          "",
+          "Evidence collection warnings:",
+          ...report.evidenceNotes.map((note) => `- ${escapeMarkdownText(note)}`),
+        ];
   return [
-    "# Weekly upstream runtime drift",
+    `> **${report.verdict}**`,
     "",
-    `Generated: ${report.generatedAt}`,
+    "# NemoClaw Pin Diesel — nightly dependency report",
+    "",
+    `Generated: ${report.generatedAt} from NemoClaw \`${report.nemoclawSha}\``,
+    "",
+    "## Tonight's priority order",
+    "",
+    "| Priority | Component | Why | Team action |",
+    "|---|---|---|---|",
+    ...priorityRows,
+    "",
+    "## Pin inventory",
     "",
     "| Component | Latest upstream | NemoClaw pin | Caveats |",
     "|---|---:|---:|---|",
-    ...rows,
+    ...inventoryRows,
     "",
-    "This report is advisory. It does not change dependency pins or establish compatibility.",
+    "## Open blocker evidence",
+    "",
+    ...(blockerLines.length > 0 ? blockerLines : emptyBlockerLines),
+    "",
+    "## Compatibility evidence",
+    "",
+    compatibilityText,
+    ...evidenceNotes,
+    "",
+    "## Decision limits",
+    "",
+    "Pin Diesel is a deterministic reporter, not an autonomous release decision-maker. Blocker matching uses open public GitHub issue labels and explicit issue text. It does not read internal NVBug state, infer that correlation is causation, change pins, or establish release readiness.",
     "",
   ].join("\n");
 }
@@ -521,34 +969,42 @@ function slackStatusLine(component: ComponentDrift): string {
       ? ` · min=max=${component.nemoclawPin}`
       : "";
   return (
-    `*${component.component}* ${statusIcon(component.status)} ` +
-    `\`${component.nemoclawPin}\` → \`${component.latestUpstream}\`${lag}${exactRange}`
+    `${priorityIcon(component.priority)} *${component.component}* · ` +
+    `${priorityLabel(component.priority)} · \`${component.nemoclawPin}\` → ` +
+    `\`${component.latestUpstream}\`${lag}${exactRange}`
   );
 }
 
 export function createSlackPayload(report: RuntimeDriftReport, runUrl?: string): object {
   const headline =
-    report.totals.overdue > 0
-      ? `${report.totals.overdue} threshold ${report.totals.overdue === 1 ? "breach" : "breaches"}`
-      : report.totals.review > 0 || report.totals.unknown > 0
-        ? `${report.totals.review} review ${
-            report.totals.review === 1 ? "item" : "items"
-          }, ${report.totals.unknown} unknown`
-        : "all tracked runtimes are current";
+    `${report.priorityTotals.stability} stability · ` +
+    `${report.priorityTotals.validation} validation · ` +
+    `${report.priorityTotals.updateness} updateness`;
   const color =
-    report.totals.overdue > 0
+    report.priorityTotals.stability > 0
       ? "#E01E5A"
-      : report.totals.review > 0 || report.totals.unknown > 0
+      : report.priorityTotals.validation > 0 ||
+          report.priorityTotals.investigate > 0 ||
+          report.totals.overdue > 0
         ? "#ECB22E"
         : "#2EB67D";
+  const reportDate = new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(report.generatedAt));
   const blocks: object[] = [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*NemoClaw weekly upstream drift* — ${headline}\n${report.components
-          .map(slackStatusLine)
-          .join("\n")}`,
+        text:
+          `${report.verdict}\n` +
+          `:pushpin: *NemoClaw Pin Diesel — Nightly Dependency Vibe Check · ${reportDate} · ` +
+          `\`${report.nemoclawSha.slice(0, 8)}\`*\n` +
+          `:traffic_light: *Priority:* ${headline}\n${report.components
+            .map(slackStatusLine)
+            .join("\n")}`,
       },
     },
     {
@@ -556,7 +1012,9 @@ export function createSlackPayload(report: RuntimeDriftReport, runUrl?: string):
       elements: [
         {
           type: "mrkdwn",
-          text: "Advisory only: review upstream changes before updating exact pins.",
+          text:
+            "Advisory only. Open the run and download `pin-diesel-nightly-report`; " +
+            "blocker links are evidence, not causal proof.",
         },
       ],
     },
@@ -565,12 +1023,12 @@ export function createSlackPayload(report: RuntimeDriftReport, runUrl?: string):
     blocks.push({
       type: "actions",
       elements: [
-        { type: "button", text: { type: "plain_text", text: "View report" }, url: runUrl },
+        { type: "button", text: { type: "plain_text", text: "Open deep report" }, url: runUrl },
       ],
     });
   }
   return {
-    text: `NemoClaw weekly upstream drift: ${headline}.`,
+    text: `${report.verdict} NemoClaw Pin Diesel: ${headline}.`,
     attachments: [{ color, blocks }],
   };
 }
@@ -629,18 +1087,41 @@ export async function fetchUpstreamResponses(
     "X-GitHub-Api-Version": "2022-11-28",
   };
   const jsonHeaders = { ...baseHeaders, Accept: "application/json" };
-  const [openshell, openclaw, hermesReleases, hermesPackage, deepAgentsCode] = await Promise.all([
+  const [
+    openshell,
+    openclaw,
+    hermesReleases,
+    hermesPackage,
+    deepAgentsCode,
+    nemoclawCompatibilityIssue,
+    nemoclawRecommendedBlockers,
+    nemoclawUnblockers,
+  ] = await Promise.all([
     fetchSource(UPSTREAM_URLS.openshell, githubHeaders),
     fetchSource(UPSTREAM_URLS.openclaw, jsonHeaders),
     fetchSource(UPSTREAM_URLS.hermesReleases, githubHeaders),
     fetchSource(UPSTREAM_URLS.hermesPackage, jsonHeaders),
     fetchSource(UPSTREAM_URLS.deepAgentsCode, jsonHeaders),
+    fetchSource(UPSTREAM_URLS.nemoclawCompatibilityIssue, githubHeaders),
+    fetchSource(UPSTREAM_URLS.nemoclawRecommendedBlockers, githubHeaders),
+    fetchSource(UPSTREAM_URLS.nemoclawUnblockers, githubHeaders),
   ]);
-  return { openshell, openclaw, hermesReleases, hermesPackage, deepAgentsCode };
+  return {
+    openshell,
+    openclaw,
+    hermesReleases,
+    hermesPackage,
+    deepAgentsCode,
+    nemoclawCompatibilityIssue,
+    nemoclawRecommendedBlockers,
+    nemoclawUnblockers,
+  };
 }
 
 function outputArguments(argv: readonly string[]): {
   jsonOutput: string;
+  nemoclawSha: string;
+  reportOutput: string;
   runUrl?: string;
   slackOutput: string;
   summaryOutput: string;
@@ -654,16 +1135,23 @@ function outputArguments(argv: readonly string[]): {
     values.set(name, value);
   }
   const jsonOutput = values.get("--json-output");
+  const nemoclawSha = values.get("--nemoclaw-sha");
+  const reportOutput = values.get("--report-output");
   const slackOutput = values.get("--slack-output");
   const summaryOutput = values.get("--summary-output");
-  if (!jsonOutput || !slackOutput || !summaryOutput) {
-    throw new Error("--json-output, --slack-output, and --summary-output are required");
+  if (!jsonOutput || !nemoclawSha || !reportOutput || !slackOutput || !summaryOutput) {
+    throw new Error(
+      "--json-output, --nemoclaw-sha, --report-output, --slack-output, and --summary-output are required",
+    );
+  }
+  if (!/^[0-9a-f]{40}$/u.test(nemoclawSha)) {
+    throw new Error("--nemoclaw-sha must be a full lowercase commit SHA");
   }
   const runUrl = values.get("--run-url");
   if (runUrl && !/^https:\/\/github\.com\/NVIDIA\/NemoClaw\/actions\/runs\/[0-9]+$/u.test(runUrl)) {
     throw new Error("--run-url must identify a NemoClaw GitHub Actions run");
   }
-  return { jsonOutput, runUrl, slackOutput, summaryOutput };
+  return { jsonOutput, nemoclawSha, reportOutput, runUrl, slackOutput, summaryOutput };
 }
 
 function writeOutput(file: string, contents: string): void {
@@ -676,6 +1164,7 @@ async function main(): Promise<void> {
   const generatedAt = new Date();
   const report = createRuntimeDriftReport({
     generatedAt,
+    nemoclawSha: outputs.nemoclawSha,
     pins: readRuntimePins(),
     responses: await fetchUpstreamResponses(),
   });
@@ -685,6 +1174,7 @@ async function main(): Promise<void> {
     outputs.slackOutput,
     `${JSON.stringify(createSlackPayload(report, outputs.runUrl), null, 2)}\n`,
   );
+  writeOutput(outputs.reportOutput, markdown);
   writeOutput(outputs.summaryOutput, markdown);
   process.stdout.write(markdown);
 }

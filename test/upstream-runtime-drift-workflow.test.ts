@@ -24,28 +24,32 @@ type RuntimeDriftWorkflow = {
   >;
 };
 
-describe("weekly upstream runtime drift workflow", () => {
+describe("nightly upstream runtime drift workflow", () => {
   const workflow = readYaml<RuntimeDriftWorkflow>(".github/workflows/upstream-runtime-drift.yaml");
   const job = workflow.jobs?.report;
 
   // source-shape-contract: security -- The scheduled report must keep its GitHub token and Slack webhook on separate trusted steps
-  it("runs Fridays with read-only access and sends Slack only from main", () => {
-    expect(workflow.on?.schedule).toEqual([{ cron: "0 16 * * 5" }]);
+  it("runs nightly with read-only access and sends Slack only from main", () => {
+    expect(workflow.on?.schedule).toEqual([{ cron: "0 5 * * *" }]);
     expect(Object.hasOwn(workflow.on ?? {}, "workflow_dispatch")).toBe(true);
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(job?.if).toBe("github.repository == 'NVIDIA/NemoClaw'");
 
     const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"));
     const report = job?.steps?.find((step) => step.id === "drift");
-    const upload = job?.steps?.find((step) => step.name === "Upload drift report");
-    const slack = job?.steps?.find((step) => step.name === "Send the advisory Slack summary");
+    const upload = job?.steps?.find((step) => step.name === "Upload Pin Diesel report");
+    const slack = job?.steps?.find((step) => step.name === "Send the Pin Diesel Slack brief");
     expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
     expect(report?.env).toHaveProperty("GITHUB_TOKEN");
     expect(report?.env).not.toHaveProperty("SLACK_WEBHOOK_URL");
     expect(report?.run).toContain("scripts/checks/upstream-runtime-drift.mts");
+    expect(report?.run).toContain('--nemoclaw-sha "${GITHUB_SHA}"');
+    expect(report?.run).toContain('--report-output "${REPORT_DIR}/report.md"');
     expect(report?.run).not.toContain("e2e");
     expect(upload?.uses).toMatch(FULL_SHA_ACTION);
+    expect(upload?.with?.name).toBe("pin-diesel-nightly-report");
+    expect(upload?.with?.["retention-days"]).toBe(30);
     expect(slack?.uses).toBeUndefined();
     expect(slack?.if).toContain("github.ref == 'refs/heads/main'");
     expect(slack?.env).toHaveProperty("SLACK_WEBHOOK_URL");

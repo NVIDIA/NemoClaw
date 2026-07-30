@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Dependencies / Weekly Runtime Drift
+name: Dependencies / Pin Diesel Nightly
 
 on:
   schedule:
-    - cron: "0 16 * * 5"
+    # 21:00 PST / 22:00 PDT
+    - cron: "0 5 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   report:
-    name: Report upstream runtime drift
+    name: Pin Diesel dependency report
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -44,21 +45,23 @@ jobs:
           node --experimental-strip-types --no-warnings \
             scripts/checks/upstream-runtime-drift.mts \
             --json-output "${REPORT_DIR}/report.json" \
+            --nemoclaw-sha "${GITHUB_SHA}" \
+            --report-output "${REPORT_DIR}/report.md" \
             --slack-output "${REPORT_DIR}/slack.json" \
             --summary-output "${GITHUB_STEP_SUMMARY}" \
             --run-url "${RUN_URL}"
           echo "ready=true" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload drift report
+      - name: Upload Pin Diesel report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: upstream-runtime-drift
+          name: pin-diesel-nightly-report
           path: ${{ runner.temp }}/upstream-runtime-drift/
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Send the advisory Slack summary
+      - name: Send the Pin Diesel Slack brief
         if: >-
           always() &&
           steps.drift.outputs.ready == 'true' &&

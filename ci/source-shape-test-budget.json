@@ -38,7 +38,7 @@
     },
     {
       "file": "test/upstream-runtime-drift-workflow.test.ts",
-      "test": "runs Fridays with read-only access and sends Slack only from main",
+      "test": "runs nightly with read-only access and sends Slack only from main",
       "category": "security"
     },
     {
