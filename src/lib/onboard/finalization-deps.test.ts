@@ -1,10 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../verify-deployment";
-import { finalizationHandlerDeps } from "./finalization-deps";
+import {
+  createWaitForSandboxControlPlaneReady,
+  finalizationHandlerDeps,
+} from "./finalization-deps";
+
+describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("delegates timeout selection to the recovery readiness helper", () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "120");
+    vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "180");
+    const waitForRecreatedSandboxOpenShellReady = vi.fn(() => true);
+    const waitForSandboxControlPlaneReady = createWaitForSandboxControlPlaneReady(() => ({
+      waitForRecreatedSandboxOpenShellReady,
+    }));
+
+    expect(waitForSandboxControlPlaneReady("policy-box")).toBe(true);
+    expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box");
+  });
+});
 
 describe("finalizationHandlerDeps.reportDeploymentReadiness", () => {
   const originalExitCode = process.exitCode;

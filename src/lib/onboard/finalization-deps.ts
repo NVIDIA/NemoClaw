@@ -6,12 +6,21 @@
 // entrypoint stays lean (codebase-growth-guardrails). The lazy `require` calls
 // avoid an import cycle: connect.ts and process-recovery.ts both pull in
 // onboard helpers, so they must not be statically imported here.
+type ProcessRecoveryReadinessDeps = Pick<
+  typeof import("../actions/sandbox/process-recovery"),
+  "waitForRecreatedSandboxOpenShellReady"
+>;
+
+export function createWaitForSandboxControlPlaneReady(
+  loadProcessRecovery: () => ProcessRecoveryReadinessDeps = () =>
+    require("../actions/sandbox/process-recovery") as ProcessRecoveryReadinessDeps,
+) {
+  return (name: string): boolean =>
+    loadProcessRecovery().waitForRecreatedSandboxOpenShellReady(name);
+}
+
 export const finalizationHandlerDeps = {
-  waitForSandboxControlPlaneReady(name: string): boolean {
-    const processRecovery: typeof import("../actions/sandbox/process-recovery") =
-      require("../actions/sandbox/process-recovery");
-    return processRecovery.waitForRecreatedSandboxOpenShellReady(name);
-  },
+  waitForSandboxControlPlaneReady: createWaitForSandboxControlPlaneReady(),
   checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
     const processRecovery: typeof import("../actions/sandbox/process-recovery") =
       require("../actions/sandbox/process-recovery");
