@@ -464,7 +464,6 @@ describe("complete managed-image publication workflow", () => {
     const steps = promoter.steps ?? [];
     const barrier = step(promoter, "Validate complete managed image candidate set");
     const promotion = step(promoter, "Promote validated multi-platform managed image cohort");
-    const promotionRun = promotion.run ?? "";
 
     expect(promoter.needs).toBe("build-and-validate");
     expect(step(promoter, "Download all validated managed image candidates").with).toEqual({
@@ -485,11 +484,6 @@ describe("complete managed-image publication workflow", () => {
       'docker buildx imagetools create --tag "$cohort_alias" "${sources[@]}"',
     );
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotionRun).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
-    expect(promotionRun).toContain('docker image rm "$cohort_reference"');
-    expect(promotionRun.indexOf('docker image rm "$cohort_reference"')).toBeGreaterThan(
-      promotionRun.indexOf('DOCKER_CONFIG="$anonymous_config" docker pull'),
-    );
     expect(promotion.run).toContain(
       'consumer_aliases=("$(jq -r \'.image\' <<<"$openclaw_manifest"):${GITHUB_SHA}")',
     );
@@ -598,6 +592,14 @@ describe("complete managed-image publication workflow", () => {
 
     const accepted = runManagedImagePromotion(promotion);
     const acceptedCalls = accepted.calls.join("\n");
+    const cohortDigest = `sha256:${"f".repeat(64)}`;
+    const pullCleanupCalls = accepted.calls.filter(
+      (call) => call.startsWith("pull ") || call.startsWith("image rm "),
+    );
+    const expectedPullCalls = publicationAgents.flatMap((agent) => {
+      const reference = `ghcr.io/nvidia/nemoclaw/${agent}-sandbox@${cohortDigest}`;
+      return publicationPlatforms.map((platform) => `pull --platform ${platform} ${reference}`);
+    });
     const lastCohortStage = Math.max(
       acceptedCalls.indexOf(`hermes-sandbox:cohort-${cohort}`),
       acceptedCalls.indexOf(`langchain-deepagents-code-sandbox:cohort-${cohort}`),
@@ -606,6 +608,17 @@ describe("complete managed-image publication workflow", () => {
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
 
     expect(accepted.status, accepted.stderr).toBe(0);
+    expect(pullCleanupCalls).toHaveLength(expectedPullCalls.length * 2);
+    expect(pullCleanupCalls.filter((call) => call.startsWith("pull ")).toSorted()).toEqual(
+      expectedPullCalls.toSorted(),
+    );
+    for (let index = 0; index < pullCleanupCalls.length; index += 2) {
+      const pull = pullCleanupCalls[index];
+      const cleanup = pullCleanupCalls[index + 1];
+      const reference = pull?.match(/^pull --platform linux\/(?:amd64|arm64) (.+)$/u)?.[1];
+      expect(reference).toBeDefined();
+      expect(cleanup).toBe(`image rm ${reference}`);
+    }
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
     expect(acceptedCalls).not.toContain(`hermes-sandbox:${revision}`);
