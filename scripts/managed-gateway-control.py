@@ -1671,13 +1671,14 @@ def _spawn_supervisor_as_orphan(environment: dict[str, str]) -> tuple[int, int]:
             os.close(status_write_fd)
             os.close(adoption_read_fd)
             os._exit(0)
-        except BaseException:
+        except Exception:
             try:
                 os.write(status_write_fd, b"SUPERVISOR_LAUNCH_FAILED\n")
                 os.close(status_write_fd)
                 os.close(adoption_read_fd)
             except OSError:
-                pass
+                # The parent rejects a failed handshake from the intermediate process.
+                os._exit(1)
             os._exit(1)
 
     os.close(status_write_fd)
@@ -1755,7 +1756,9 @@ def _wait_for_launched_supervisor(
             ProcessLookupError,
             PermissionError,
         ):
-            pass
+            # Process evidence can change until the bounded adoption proof expires.
+            time.sleep(POLL_SECONDS)
+            continue
         time.sleep(POLL_SECONDS)
     raise ControlError("SUPERVISOR_UNAVAILABLE")
 
