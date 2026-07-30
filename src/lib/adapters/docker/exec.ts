@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  type ExecFileSyncOptionsWithStringEncoding,
   execFileSync,
   spawn,
   spawnSync,
-  type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
+import { hostContainerEngineArgv } from "../container-engine";
 
 export type DockerExecFileSyncOptions = Omit<ExecFileSyncOptionsWithStringEncoding, "encoding">;
 export type DockerSpawnSyncOptions = Parameters<typeof spawnSync>[2];
@@ -16,19 +17,22 @@ export function dockerExecFileSync(
   args: readonly string[],
   opts: DockerExecFileSyncOptions = {},
 ): string {
-  return String(execFileSync("docker", [...args], { encoding: "utf-8", ...opts }));
+  const [command, ...commandArgs] = hostContainerEngineArgv(args);
+  return String(execFileSync(command, commandArgs, { encoding: "utf-8", ...opts }));
 }
 
 export function dockerSpawnSync(
   args: readonly string[],
   opts: DockerSpawnSyncOptions = {},
 ): DockerSpawnSyncResult {
-  return spawnSync("docker", [...args], opts);
+  const [command, ...commandArgs] = hostContainerEngineArgv(args);
+  return spawnSync(command, commandArgs, opts);
 }
 
 export function dockerSpawn(
   args: readonly string[],
   opts: Parameters<typeof spawn>[2] = {},
 ): ReturnType<typeof spawn> {
-  return spawn("docker", [...args], opts);
+  const [command, ...commandArgs] = hostContainerEngineArgv(args);
+  return spawn(command, commandArgs, opts);
 }

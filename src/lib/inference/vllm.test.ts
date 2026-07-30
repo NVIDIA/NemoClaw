@@ -53,6 +53,10 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   };
 });
 
+import {
+  configureHostContainerEngine,
+  resetHostContainerEngineForTests,
+} from "../adapters/container-engine";
 import { currentPhaseActivityLabel } from "../core/phase-activity";
 import {
   assertVllmRegistryDigestRef,
@@ -93,6 +97,10 @@ beforeEach(() => {
       source: "Hugging Face cache",
     },
   });
+});
+
+afterEach(() => {
+  resetHostContainerEngineForTests();
 });
 
 function currentHostIdentity(): string | null {
@@ -620,6 +628,75 @@ describe("managed vLLM ownership", () => {
     mocks.dockerCapture.mockImplementation(() => {
       throw new Error("docker unavailable");
     });
+    expect(isNemoClawManagedVllmRunning()).toBe(false);
+  });
+
+  it("uses Podman JSON ownership inspection without Docker-only templates", () => {
+    const assertAuthority = vi.fn();
+    configureHostContainerEngine({
+      assertAuthority,
+      driverName: "podman",
+      executable: "podman",
+      prefixArgs: ["--url", "unix:///run/user/1000/podman/podman.sock"],
+    });
+    mocks.dockerCapture.mockReturnValue(
+      JSON.stringify([
+        {
+          Id: MANAGED_CONTAINER_ID,
+          Labels: {
+            [NEMOCLAW_VLLM_MANAGED_LABEL]: "true",
+          },
+          Names: [NEMOCLAW_VLLM_CONTAINER_NAME],
+          State: "running",
+        },
+      ]),
+    );
+
+    expect(isNemoClawManagedVllmRunning()).toBe(true);
+    expect(mocks.dockerCapture).toHaveBeenCalledWith(
+      [
+        "container",
+        "ls",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^${NEMOCLAW_VLLM_CONTAINER_NAME}$`,
+        "--format",
+        "json",
+      ],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+    expect(assertAuthority).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "",
+    "malformed",
+    "{}",
+    JSON.stringify([
+      {
+        Id: MANAGED_CONTAINER_ID,
+        Labels: {},
+        Names: [NEMOCLAW_VLLM_CONTAINER_NAME],
+        State: "running",
+      },
+    ]),
+    JSON.stringify([
+      {
+        Id: MANAGED_CONTAINER_ID,
+        Labels: { [NEMOCLAW_VLLM_MANAGED_LABEL]: "true" },
+        Names: ["lookalike"],
+        State: "running",
+      },
+    ]),
+  ])("fails closed for Podman ownership output %j", (output) => {
+    configureHostContainerEngine({
+      driverName: "podman",
+      executable: "podman",
+      prefixArgs: ["--url", "unix:///run/user/1000/podman/podman.sock"],
+    });
+    mocks.dockerCapture.mockReturnValue(output);
+
     expect(isNemoClawManagedVllmRunning()).toBe(false);
   });
 });

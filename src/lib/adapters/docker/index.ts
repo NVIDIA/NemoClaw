@@ -1,13 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export * from "./run";
-export * from "./exec";
-export * from "./pull";
-export * from "./info";
-export * from "./runtime";
-export * from "./inspect";
-export * from "./image";
+export {
+  configureHostContainerEngine,
+  currentHostContainerEngineCommand,
+  type HostContainerEngineCommand,
+  hostContainerEngineDisplayName,
+  hostContainerEngineExecutable,
+  resetHostContainerEngineForTests,
+} from "../container-engine";
 export * from "./container";
-export * from "./volume";
+export * from "./exec";
+export * from "./image";
+export * from "./info";
+export * from "./inspect";
 export * from "./login";
+export * from "./pull";
+export * from "./run";
+export * from "./runtime";
+export * from "./volume";

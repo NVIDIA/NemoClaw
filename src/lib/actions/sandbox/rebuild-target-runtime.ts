@@ -173,15 +173,6 @@ export async function preflightRebuildTargetRuntime(
     );
     return { ok: false };
   }
-  if (recreateOptions.computeDriver === "podman" && sandboxGpuConfig.sandboxGpuEnabled) {
-    printRebuildPreflightFailure(
-      "the recorded Podman sandbox requests GPU passthrough.",
-      "Native Podman support currently covers CPU sandboxes with hosted inference; recreate with sandbox GPU disabled.",
-      "Recorded Podman GPU state is unsupported",
-      bail,
-    );
-    return { ok: false };
-  }
   try {
     // Rebuild is bound to the persisted compute driver before this preflight.
     // Only the Docker profile may inherit Docker GPU routing semantics.
@@ -192,12 +183,14 @@ export async function preflightRebuildTargetRuntime(
         dockerDesktopWsl: isDockerDesktopWslRuntime(),
       }),
     );
-    await enforceDockerGpuPatchPreserveNetwork(target.resumeConfig.provider, sandboxGpuConfig, {
-      dockerDriverGateway,
-      selectedRoute,
-      gatewayPort: recreateOptions.targetGatewayPort,
-      log,
-    });
+    if (dockerDriverGateway) {
+      await enforceDockerGpuPatchPreserveNetwork(target.resumeConfig.provider, sandboxGpuConfig, {
+        dockerDriverGateway,
+        selectedRoute,
+        gatewayPort: recreateOptions.targetGatewayPort,
+        log,
+      });
+    }
   } catch (err) {
     printRebuildPreflightFailure(
       "the recorded GPU network path is not reachable.",

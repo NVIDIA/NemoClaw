@@ -138,7 +138,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     expect(bail).not.toHaveBeenCalled();
   });
 
-  it("rejects persisted Podman GPU state without entering Docker network preflight", async () => {
+  it("accepts persisted Podman GPU state without entering Docker network preflight", async () => {
     const bail = vi.fn();
 
     await expect(
@@ -150,9 +150,13 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
         bail as never,
         { skipImagePreflight: true },
       ),
-    ).resolves.toEqual({ ok: false });
+    ).resolves.toEqual({
+      ok: true,
+      preparedImage: null,
+      requiresGatewayProviderReconfigure: false,
+    });
 
-    expect(bail).toHaveBeenCalledWith("Recorded Podman GPU state is unsupported");
+    expect(bail).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
 
@@ -175,11 +179,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
       requiresGatewayProviderReconfigure: false,
     });
 
-    expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
-      "ollama-local",
-      expect.objectContaining({ sandboxGpuEnabled: false }),
-      expect.objectContaining({ dockerDriverGateway: false, log }),
-    );
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
   });
 

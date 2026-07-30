@@ -3441,8 +3441,9 @@ async function handleNimLocalSelection(
   let ngcApiKey: string | null = null;
   if (!nim.isNgcLoggedIn()) {
     if (isNonInteractive()) {
+      const engine = docker.hostContainerEngineDisplayName();
       console.error(
-        "  Docker is not logged in to nvcr.io. In non-interactive mode, run `docker login nvcr.io` first and retry.",
+        `  ${engine} is not logged in to nvcr.io. In non-interactive mode, run \`${docker.hostContainerEngineExecutable()} login nvcr.io\` first and retry.`,
       );
       process.exit(1);
     }
@@ -3473,7 +3474,9 @@ async function handleNimLocalSelection(
     if (!ngcApiKey && !isNonInteractive()) {
       console.log("");
       console.log("  NGC API Key required to download NIM model weights at runtime.");
-      console.log("  (Docker is logged in to nvcr.io, but the key was not saved.)");
+      console.log(
+        `  (${docker.hostContainerEngineDisplayName()} is logged in to nvcr.io, but the key was not saved.)`,
+      );
       const ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
       if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
       ngcApiKey = ngcKey || null;
@@ -4454,6 +4457,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     span: null,
   };
   let traceCompleted = false;
+  let restoreHostLocalInferenceRuntime: () => void = () => undefined;
   ACTIVE_OPEN_SHELL_COMPUTE_PLAN = onboardingComputePlan;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
@@ -4708,6 +4712,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (!initialContext.sandboxGpuConfig) {
       throw new Error("Preflight did not produce a sandbox GPU configuration.");
     }
+    restoreHostLocalInferenceRuntime =
+      computeRuntime.activateHostLocalInferenceRuntime(onboardingComputePlan, {
+        environment: process.env,
+      });
     session = initialFlowResult.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
     const { gpuPassthrough } = initialContext;
@@ -5057,6 +5065,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     completed = true;
     traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
+    restoreHostLocalInferenceRuntime();
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
     onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);

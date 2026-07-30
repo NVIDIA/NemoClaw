@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { normalizeNvidiaCdiDevice } from "./podman/gpu-attachment";
 import {
   assertPodmanSocketAuthority,
   capturePodmanSocketAuthority,
@@ -21,8 +22,9 @@ export interface NativePodmanPreflightReceipt {
   readonly rootless: true;
   readonly cgroupVersion: "v2";
   readonly os: "linux";
-  readonly architecture: "amd64";
+  readonly architecture: "amd64" | "arm64";
   readonly networkBackend: string;
+  readonly cdiDevices: readonly string[];
 }
 
 interface CommandResult {
@@ -106,8 +108,49 @@ function booleanField(value: unknown, ...names: string[]): boolean | null {
   return typeof candidate === "boolean" ? candidate : null;
 }
 
-function normalizePodmanArchitecture(value: string): "amd64" | null {
-  return value === "amd64" || value === "x86_64" ? "amd64" : null;
+function normalizePodmanArchitecture(value: string): "amd64" | "arm64" | null {
+  if (value === "amd64" || value === "x86_64") return "amd64";
+  if (value === "arm64" || value === "aarch64") return "arm64";
+  return null;
+}
+
+function collectCdiDevices(value: unknown, devices: Set<string>): void {
+  if (typeof value === "string") {
+    if (value.startsWith("nvidia.com/gpu=")) devices.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectCdiDevices(entry, devices);
+    return;
+  }
+  const object = record(value);
+  if (!object) return;
+  for (const [key, entry] of Object.entries(object)) {
+    if (key.startsWith("nvidia.com/gpu=")) devices.add(key);
+    collectCdiDevices(entry, devices);
+  }
+}
+
+function parseNvidiaCdiDeviceList(output: string): string[] {
+  const devices = new Set<string>();
+  for (const line of output.split(/\r?\n/u)) {
+    const candidate = line.trim();
+    if (!candidate.startsWith("nvidia.com/gpu=")) continue;
+    try {
+      devices.add(normalizeNvidiaCdiDevice(candidate));
+    } catch {
+      // Ignore diagnostics and malformed provider output. Requested devices
+      // are still checked exactly against the resulting qualified inventory.
+    }
+  }
+  return [...devices].sort();
+}
+
+function listNvidiaCdiDevices(
+  run: NonNullable<NativePodmanPreflightDeps["run"]>,
+): readonly string[] {
+  const result = run("nvidia-ctk", ["cdi", "list"]);
+  return result.status === 0 ? parseNvidiaCdiDeviceList(result.stdout) : [];
 }
 
 function unique(values: readonly string[]): string[] {
@@ -170,6 +213,8 @@ function parsePodmanInfo(
   const hostOs = stringField(host, "os", "OS").toLowerCase();
   const architecture = normalizePodmanArchitecture(stringField(host, "arch", "Arch").toLowerCase());
   const networkBackend = stringField(host, "networkBackend", "NetworkBackend") || "unknown";
+  const cdiDevices = new Set<string>();
+  collectCdiDevices(host, cdiDevices);
 
   if (rootless !== true) {
     throw new NativePodmanPreflightError(
@@ -186,9 +231,9 @@ function parsePodmanInfo(
       `Native Podman support currently requires Linux; the Podman service reports '${hostOs || "unknown"}'.`,
     );
   }
-  if (architecture !== "amd64") {
+  if (architecture === null) {
     throw new NativePodmanPreflightError(
-      `Native Podman support currently requires amd64; the Podman service reports '${stringField(host, "arch", "Arch") || "unknown"}'.`,
+      `Native Podman support requires amd64 or arm64; the Podman service reports '${stringField(host, "arch", "Arch") || "unknown"}'.`,
     );
   }
 
@@ -202,6 +247,7 @@ function parsePodmanInfo(
     os: "linux",
     architecture,
     networkBackend,
+    cdiDevices: [...cdiDevices].sort(),
   };
 }
 
@@ -242,9 +288,9 @@ export function assessNativePodman(
         uid: deps.uid,
       }));
 
-  if (platform !== "linux" || architecture !== "x64") {
+  if (platform !== "linux" || !["x64", "arm64"].includes(architecture)) {
     throw new NativePodmanPreflightError(
-      `Native Podman support currently requires Linux x86_64; detected ${platform} ${architecture}.`,
+      `Native Podman support requires Linux amd64 or arm64; detected ${platform} ${architecture}.`,
     );
   }
 
@@ -291,7 +337,11 @@ export function assessNativePodman(
     }
     const receipt = parsePodmanInfo(info.stdout, socketAuthority);
     assertSubordinateIds(run);
-    return { ...receipt, version };
+    return {
+      ...receipt,
+      version,
+      cdiDevices: unique([...receipt.cdiDevices, ...listNvidiaCdiDevices(run)]).sort(),
+    };
   }
 
   throw new NativePodmanPreflightError(

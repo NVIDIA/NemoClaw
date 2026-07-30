@@ -17,7 +17,13 @@
  * onboard successful.
  */
 
+import {
+  currentHostContainerEngineCommand,
+  hostContainerEngineArgv,
+  hostContainerEngineDisplayName,
+} from "../adapters/container-engine";
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
+import { shellQuote } from "../core/shell-quote";
 
 export const DEFAULT_PROBE_NETWORK = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -70,11 +76,22 @@ function parseNetworkIpamConfig(raw: string): { subnet?: string; gatewayIp?: str
     return undefined;
   }
   if (!Array.isArray(parsed)) return undefined;
-  for (const entry of parsed) {
+  const candidates = parsed.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    return Array.isArray(record.subnets) ? record.subnets : [entry];
+  });
+  for (const entry of candidates) {
     if (!entry || typeof entry !== "object") continue;
     const r = entry as Record<string, unknown>;
-    const subnet = typeof r.Subnet === "string" ? r.Subnet : undefined;
-    const gatewayIp = typeof r.Gateway === "string" ? r.Gateway : undefined;
+    const subnet =
+      typeof r.Subnet === "string" ? r.Subnet : typeof r.subnet === "string" ? r.subnet : undefined;
+    const gatewayIp =
+      typeof r.Gateway === "string"
+        ? r.Gateway
+        : typeof r.gateway === "string"
+          ? r.gateway
+          : undefined;
     // Skip IPv6-only entries (contain colons)
     if (gatewayIp && !gatewayIp.includes(":")) return { subnet, gatewayIp };
   }
@@ -84,10 +101,12 @@ function parseNetworkIpamConfig(raw: string): { subnet?: string; gatewayIp?: str
 function defaultInspectNetwork(
   networkName: string,
 ): { subnet?: string; gatewayIp?: string } | undefined {
-  const raw = dockerCapture(
-    ["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName],
-    { ignoreError: true },
-  );
+  const command = currentHostContainerEngineCommand();
+  const args =
+    command.driverName === "podman"
+      ? ["network", "inspect", networkName]
+      : ["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName];
+  const raw = dockerCapture(args, { ignoreError: true });
   return parseNetworkIpamConfig(raw);
 }
 
@@ -95,6 +114,7 @@ function defaultInspectNetwork(
 // than a specific bridge IP. UFW is not relevant on those platforms, so we
 // classify probes from those environments as probe_unavailable.
 function defaultUsesHostGatewayRoute(): boolean {
+  if (currentHostContainerEngineCommand().hostGatewayTarget) return true;
   if (process.platform !== "linux") return true;
   const info = dockerCapture(
     ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
@@ -130,11 +150,21 @@ function isNameResolutionFailure(detail: string): boolean {
   );
 }
 
+function shellCommand(argv: readonly string[]): string {
+  return argv
+    .map((value) => (/^[A-Za-z0-9_./:@=+-]+$/u.test(value) ? value : shellQuote(value)))
+    .join(" ");
+}
+
 export async function probeHostServiceSandboxReachability(
   opts: HostServiceReachabilityOptions,
 ): Promise<HostServiceReachabilityResult> {
+  const engine = currentHostContainerEngineCommand();
   const networkName =
-    opts.networkName ?? process.env.OPENSHELL_DOCKER_NETWORK_NAME ?? DEFAULT_PROBE_NETWORK;
+    opts.networkName ??
+    (engine.driverName === "podman"
+      ? (process.env.OPENSHELL_PODMAN_NETWORK_NAME ?? engine.sandboxNetworkName ?? "openshell")
+      : (process.env.OPENSHELL_DOCKER_NETWORK_NAME ?? DEFAULT_PROBE_NETWORK));
   const port = opts.port;
   const timeoutSec = opts.timeoutSec ?? PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? PROBE_IMAGE;
@@ -149,7 +179,7 @@ export async function probeHostServiceSandboxReachability(
       reason: "probe_unavailable",
       port,
       networkName,
-      detail: `Docker network "${networkName}" not found`,
+      detail: `${hostContainerEngineDisplayName()} network "${networkName}" not found`,
     };
   }
 
@@ -166,7 +196,9 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
-  const hostInternalTarget = isHostGateway ? "host-gateway" : (network.gatewayIp as string);
+  const hostInternalTarget = isHostGateway
+    ? (engine.hostGatewayTarget ?? "host-gateway")
+    : (network.gatewayIp as string);
 
   const probeArgs = [
     "run",
@@ -237,19 +269,34 @@ export function formatHostServiceUnreachableMessage(
   if (result.ok || result.reason !== "tcp_failed") return "";
 
   const port = options.port ?? result.port;
+  const engine = currentHostContainerEngineCommand();
+  const engineName = hostContainerEngineDisplayName();
+  const inspectFormat =
+    engine.driverName === "podman"
+      ? "{{(index .Subnets 0).Subnet}}"
+      : "{{(index .IPAM.Config 0).Subnet}}";
+  const inspectCommand = shellCommand(
+    hostContainerEngineArgv([
+      "network",
+      "inspect",
+      result.networkName ?? DEFAULT_PROBE_NETWORK,
+      "--format",
+      inspectFormat,
+    ]),
+  );
   const allowCmd =
     result.subnet && result.gatewayIp
       ? `      sudo ufw allow from ${result.subnet} to ${result.gatewayIp} port ${port} proto tcp`
       : result.subnet
         ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
         : [
-            `      SUBNET=$(docker network inspect ${result.networkName ?? DEFAULT_PROBE_NETWORK} --format '{{(index .IPAM.Config 0).Subnet}}')`,
+            `      SUBNET=$(${inspectCommand})`,
             `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
           ].join("\n");
 
   return [
     `  ✗ Sandbox containers cannot reach the ${options.serviceLabel} at ${HOST_INTERNAL_NAME}:${port}.`,
-    "    A host firewall may be blocking traffic from the OpenShell Docker bridge.",
+    `    A host firewall may be blocking traffic from the OpenShell ${engineName} network.`,
     "    To allow it:",
     allowCmd,
     "    Then re-run `nemoclaw onboard`.",

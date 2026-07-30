@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hostContainerEngineArgv } from "../container-engine";
 import {
   type DockerCaptureOptions,
   type DockerRunOptions,
@@ -74,5 +75,5 @@ export function dockerPort(
 }
 
 export function dockerExecArgv(containerName: string, cmd: readonly string[]): string[] {
-  return ["docker", "exec", containerName, ...cmd];
+  return hostContainerEngineArgv(["exec", containerName, ...cmd]);
 }

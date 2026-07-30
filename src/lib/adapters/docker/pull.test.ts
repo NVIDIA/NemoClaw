@@ -60,6 +60,12 @@ describe("docker pull progress watchdog", () => {
     expect(dockerPullProgressSignature("b39b21d4717d: Download complete ")).toBe(
       "layer:b39b21d4717d:Download complete",
     );
+    expect(dockerPullProgressSignature("Copying blob sha256:abc123def 48.1 MiB / 1.2 GiB")).toBe(
+      "podman:copying blob:sha256:abc123def:48.1 mib / 1.2 gib",
+    );
+    expect(dockerPullProgressSignature("Writing manifest to image destination")).toBe(
+      "podman:writing manifest to image destination",
+    );
     expect(dockerPullProgressSignature("#12 sha256:abc123 25.4MB/100MB 4.0s 10.1MB/s")).toBeNull();
   });
 

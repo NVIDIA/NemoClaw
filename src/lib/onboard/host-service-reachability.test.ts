@@ -6,7 +6,7 @@
 // See: https://github.com/NVIDIA/NemoClaw/issues/3340 (Ollama auth proxy) and
 //      https://github.com/NVIDIA/NemoClaw/issues/4564 (Model Router port 4000).
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Mock the docker adapter so the test never loads runner.ts (which requires
 // the compiled ./platform artifact unavailable in the test environment).
@@ -16,6 +16,11 @@ vi.mock("../adapters/docker/run", () => ({
 }));
 
 import {
+  configureHostContainerEngine,
+  resetHostContainerEngineForTests,
+} from "../adapters/container-engine";
+import {
+  __test,
   DEFAULT_PROBE_NETWORK,
   formatHostServiceUnreachableMessage,
   probeHostServiceSandboxReachability,
@@ -29,6 +34,10 @@ function makeNetwork(partial: { subnet?: string; gatewayIp?: string } = {}): {
 }
 
 describe("probeHostServiceSandboxReachability", () => {
+  afterEach(() => {
+    resetHostContainerEngineForTests();
+  });
+
   it("returns ok and echoes the probed port when nc connects", async () => {
     const result = await probeHostServiceSandboxReachability({
       port: 4000,
@@ -84,6 +93,53 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(capturedArgs).toContain("nc");
     expect(capturedArgs).toContain("host.openshell.internal");
     expect(capturedArgs).toContain("4000");
+  });
+
+  it("keeps the Ollama route on Podman's exact network and canonical sandbox alias", async () => {
+    const restore = configureHostContainerEngine({
+      driverName: "podman",
+      executable: "podman",
+      prefixArgs: ["--url", "unix:///run/user/1000/podman/podman.sock"],
+      sandboxNetworkName: "openshell",
+      hostGatewayTarget: "host-gateway",
+    });
+    let inspectedNetwork = "";
+    let capturedArgs: readonly string[] = [];
+    try {
+      const result = await probeHostServiceSandboxReachability({
+        port: 11435,
+        inspectNetworkImpl: (networkName) => {
+          inspectedNetwork = networkName;
+          return makeNetwork();
+        },
+        runImpl: (args) => {
+          capturedArgs = args;
+          return { status: 0 };
+        },
+      });
+      expect(result.ok).toBe(true);
+    } finally {
+      restore();
+    }
+
+    expect(inspectedNetwork).toBe("openshell");
+    expect(capturedArgs).toContain("openshell");
+    expect(capturedArgs).toContain("host.openshell.internal:host-gateway");
+    expect(capturedArgs).toContain("host.openshell.internal");
+    expect(capturedArgs).not.toContain("openshell-docker");
+  });
+
+  it("parses Podman network inspect subnets without Docker's IPAM template", () => {
+    expect(
+      __test.parseNetworkIpamConfig(
+        JSON.stringify([
+          {
+            name: "openshell",
+            subnets: [{ subnet: "10.89.0.0/24", gateway: "10.89.0.1" }],
+          },
+        ]),
+      ),
+    ).toEqual({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" });
   });
 });
 

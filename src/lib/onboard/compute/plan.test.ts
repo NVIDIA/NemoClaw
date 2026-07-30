@@ -190,7 +190,7 @@ describe("current OpenShell compute plan", () => {
       hostLocalInference: true,
     });
     expect(resolveOpenShellComputeCapabilities(CURRENT_OPEN_SHELL_COMPUTE_PLANS.podman)).toEqual({
-      hostLocalInference: false,
+      hostLocalInference: true,
     });
     expect(
       resolveOpenShellComputeCapabilities(CURRENT_OPEN_SHELL_COMPUTE_PLANS.kubernetes),
