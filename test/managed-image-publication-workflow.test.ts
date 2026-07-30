@@ -17,6 +17,7 @@ import {
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
 import {
+  assertVerifiedProtectedGpuProof,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
@@ -118,6 +119,42 @@ const managedArtifactInputPaths = [
   "tsconfig.runtime-preloads.json",
 ] as const;
 const managedPrRuntimeInputPaths = [...managedArtifactInputPaths, "src/lib/**"] as const;
+
+describe("protected managed-image GPU evidence", () => {
+  it("requires a verified CUDA-usability receipt before claiming GPU qualification", () => {
+    expect(() =>
+      assertVerifiedProtectedGpuProof({
+        status: "verified",
+        cudaVerified: true,
+        label: null,
+        detail: null,
+        at: "2026-07-29T00:00:00.000Z",
+      }),
+    ).not.toThrow();
+
+    for (const proof of [
+      null,
+      {
+        status: "unverified" as const,
+        cudaVerified: false,
+        label: null,
+        detail: null,
+        at: "2026-07-29T00:00:00.000Z",
+      },
+      {
+        status: "failed" as const,
+        cudaVerified: false,
+        label: "cuda-init",
+        detail: "cuInit(0)=100",
+        at: "2026-07-29T00:00:00.000Z",
+      },
+    ]) {
+      expect(() => assertVerifiedProtectedGpuProof(proof)).toThrow(
+        /requires verified CUDA usability/u,
+      );
+    }
+  });
+});
 
 function readWorkflow(file: string): Workflow {
   return YAML.parse(

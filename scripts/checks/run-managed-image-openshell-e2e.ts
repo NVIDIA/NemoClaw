@@ -23,6 +23,7 @@ import {
   runSandboxGpuCreateFlow,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
+import type { SandboxGpuProofResult } from "../../src/lib/state/registry.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -56,6 +57,15 @@ function redactProtectedGpuProof(value: string): string {
   return String(value)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer <REDACTED>")
     .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))=([^\s]*)/giu, "$1=<REDACTED>");
+}
+
+export function assertVerifiedProtectedGpuProof(proof: SandboxGpuProofResult | null): void {
+  if (proof?.status === "verified" && proof.cudaVerified === true) return;
+  const status = proof?.status ?? "missing";
+  const label = proof?.label ? ` (${proof.label})` : "";
+  throw new Error(
+    `protected managed-image GPU qualification requires verified CUDA usability; received ${status}${label}`,
+  );
 }
 
 type Inputs = {
@@ -795,6 +805,7 @@ async function run(input: Inputs): Promise<void> {
     await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
     ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
     if (gpuEnabled) {
+      assertVerifiedProtectedGpuProof(gpuConfig.sandboxGpuProof ?? null);
       assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       await flow.dockerGpuCreatePatch.commitAfterReady();
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
