@@ -80,12 +80,15 @@ Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-
 
 <AgentOnly variant="openclaw,hermes">
 Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
-For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
+For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can launch the managed supervisor in the registered container with credential-free host runtime overrides.
 
-NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
-The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
-After a transactional recreation, NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
-A definitive managed-health failure still stops immediately; if re-registration does not complete within the budget, the forward stays stopped.
+The controller repeats the stable supervisor-absence proof under its root-only lifecycle lock and starts the fixed entrypoint under the `sandbox` UID.
+It opens a pidfd before the short-lived parent exits and proves that OpenShell PID 1 adopted exactly one supervisor.
+The launch keeps the registered container in place and does not change its persisted legacy startup command.
+A later full container restart can therefore require `recover` again.
+After the launch, NemoClaw requires the managed gateway health and settle checks.
+It then uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) to prove OpenShell readiness before starting the primary dashboard or API host forward.
+A definitive managed-health failure still stops immediately; if readiness cannot be proved within the budget, the forward stays stopped.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
 If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.

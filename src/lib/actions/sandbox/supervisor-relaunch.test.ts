@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
-import { finalizeDockerGpuPatchBackup } from "../../onboard/docker-gpu-patch-finalize";
-import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import {
   type ManagedSupervisorRelaunchDeps,
   relaunchManagedSupervisorSession,
@@ -15,74 +12,14 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function patchResult(): DockerGpuPatchResult {
+function dockerResult(status: number) {
   return {
-    applied: true,
-    oldContainerId: "old-container-id",
-    newContainerId: "new-container-id",
-    originalName: "openshell-alpha",
-    backupContainerName: "openshell-alpha-nemoclaw-backup",
-    mode: {
-      kind: "startup-command",
-      label: "persistent sandbox startup command",
-      device: "",
-      args: [],
-    },
-    backupRemoved: false,
-  };
-}
-
-function composedHandoffDeps() {
-  const inspect = {
-    Id: "old-container-id",
-    Image: `sha256:${"c".repeat(64)}`,
-    Name: "/openshell-alpha",
-    Config: {
-      Image: "openshell/sandbox:abc",
-      Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": "alpha",
-      },
-      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Cmd: [],
-      User: "0",
-      WorkingDir: "/workspace",
-    },
-    HostConfig: {
-      NetworkMode: "openshell-docker",
-      RestartPolicy: { Name: "unless-stopped" },
-      CapAdd: [],
-      SecurityOpt: [],
-    },
-  };
-  const dockerCapture = vi.fn((args: readonly string[]) =>
-    args[0] === "ps" ? "old-container-id\n" : JSON.stringify([inspect]),
-  );
-  const dockerForceRm = vi.fn(() => ({ status: 0 }));
-  const dockerRm = vi.fn(() => ({ status: 0 }));
-  const dockerStart = vi.fn(() => ({ status: 0 }));
-  const dockerStop = vi.fn(() => ({ status: 0 }));
-  const dockerRename = vi.fn(() => ({ status: 0 }));
-  const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
-  const dockerDeps: DockerGpuPatchDeps = {
-    detectSandboxFallbackDns: () => null,
-    dockerCapture,
-    dockerForceRm,
-    dockerRename,
-    dockerRm,
-    dockerRunDetached,
-    dockerStart,
-    dockerStop,
-    now: () => new Date("2026-07-10T00:00:00Z"),
-  };
-  return {
-    dockerDeps,
-    dockerForceRm,
-    dockerRename,
-    dockerRm,
-    dockerStart,
-    dockerStop,
+    pid: 1,
+    output: [],
+    stdout: "",
+    stderr: "",
+    status,
+    signal: null,
   };
 }
 
@@ -103,17 +40,22 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
         }) as never,
     ),
     resolveDashboardPort: vi.fn(() => 18789),
-    resolveContainer: vi.fn(() => "old-container-id"),
+    resolveContainer: vi.fn(() => "registered-container-id"),
     inspectContainer: vi.fn(() => ({
       Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
     })),
     confirmMissingSupervisor: vi.fn(() => true),
-    recreate: vi.fn(() => patchResult()),
-    finalize: vi.fn(({ supervisorReady }) =>
-      supervisorReady
-        ? { backupRemoved: true, rolledBack: false }
-        : { backupRemoved: false, rolledBack: true },
-    ),
+    createNonce: vi.fn(() => "a".repeat(64)),
+    privilegedExecArgv: vi.fn(() => [
+      "exec",
+      "--user",
+      "root",
+      "registered-container-id",
+      "/usr/local/bin/nemoclaw-gateway-control",
+      "launch-supervisor",
+      "a".repeat(64),
+    ]),
+    runDocker: vi.fn(() => dockerResult(0)),
     ...overrides,
   } satisfies ManagedSupervisorRelaunchDeps;
 }
@@ -124,7 +66,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunchManagedSupervisorSession("missing-box", { quiet: true, deps })).toBeNull();
     expect(deps.resolveContainer).not.toHaveBeenCalled();
-    expect(deps.recreate).not.toHaveBeenCalled();
+    expect(deps.runDocker).not.toHaveBeenCalled();
   });
 
   it("honors the troubleshooting kill switch without mutating Docker", () => {
@@ -133,7 +75,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
     expect(deps.resolveContainer).not.toHaveBeenCalled();
-    expect(deps.recreate).not.toHaveBeenCalled();
+    expect(deps.runDocker).not.toHaveBeenCalled();
   });
 
   it("refuses a container that no longer has the legacy keepalive startup", () => {
@@ -144,18 +86,18 @@ describe("relaunchManagedSupervisorSession", () => {
     });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
-    expect(deps.recreate).not.toHaveBeenCalled();
+    expect(deps.runDocker).not.toHaveBeenCalled();
   });
 
-  it("refuses recreation when the pinned container no longer proves supervisor absence", () => {
+  it("refuses launch when the pinned container no longer proves supervisor absence", () => {
     const deps = baseDeps({ confirmMissingSupervisor: vi.fn(() => false) });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
-    expect(deps.confirmMissingSupervisor).toHaveBeenCalledWith("old-container-id");
-    expect(deps.recreate).not.toHaveBeenCalled();
+    expect(deps.confirmMissingSupervisor).toHaveBeenCalledWith("registered-container-id");
+    expect(deps.runDocker).not.toHaveBeenCalled();
   });
 
-  it("pins the selected container and persists only a credential-free startup command", () => {
+  it("requests a credential-free managed launch in the registered keepalive", () => {
     vi.stubEnv("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS", "CUSTOM_PROVIDER_CREDENTIAL");
     vi.stubEnv("CUSTOM_PROVIDER_CREDENTIAL", "s3cr3t-token");
     vi.stubEnv("HTTPS_PROXY", "http://proxyuser:proxypass@proxy.example:8080");
@@ -163,105 +105,92 @@ describe("relaunchManagedSupervisorSession", () => {
 
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch).not.toBeNull();
-    expect(relaunch?.containerId).toBe("new-container-id");
-    expect(deps.recreate).toHaveBeenCalledOnce();
-    const options = vi.mocked(deps.recreate).mock.calls[0]?.[0];
-    expect(options).toMatchObject({
+    expect(relaunch).toEqual({ containerId: "registered-container-id" });
+    expect(deps.privilegedExecArgv).toHaveBeenCalledOnce();
+    const [sandboxName, launchCommand, stdin, sanitizeEnvironment, expectedContainerId] =
+      vi.mocked(deps.privilegedExecArgv).mock.calls[0] ?? [];
+    expect({
+      expectedContainerId,
+      sandboxName,
+      sanitizeEnvironment,
+      stdin,
+    }).toEqual({
+      expectedContainerId: "registered-container-id",
       sandboxName: "alpha",
-      expectedOldContainerId: "old-container-id",
-      keepOriginalRunningUntilFinalize: true,
-      waitForSupervisor: false,
+      sanitizeEnvironment: true,
+      stdin: false,
     });
-    const serialized = options?.openshellSandboxCommand.join(" ") ?? "";
+    expect(launchCommand?.slice(0, 3)).toEqual([
+      "/usr/local/bin/nemoclaw-gateway-control",
+      "launch-supervisor",
+      "a".repeat(64),
+    ]);
+    const serialized = launchCommand?.join(" ") ?? "";
     expect(serialized).toContain("NEMOCLAW_DASHBOARD_PORT=18789");
-    expect(serialized).toMatch(/nemoclaw-start$/);
     expect(serialized).not.toContain("s3cr3t-token");
     expect(serialized).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
     expect(serialized).not.toContain("proxypass");
-
-    expect(relaunch?.finalize(true)).toEqual({ backupRemoved: true, rolledBack: false });
-    expect(deps.finalize).toHaveBeenCalledWith({
-      result: expect.objectContaining({ newContainerId: "new-container-id" }),
-      supervisorReady: true,
-    });
-  });
-
-  it("rolls the container transaction back when managed readiness is not proven", () => {
-    const deps = baseDeps();
-    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
-
-    expect(relaunch?.finalize(false)).toEqual({ backupRemoved: false, rolledBack: true });
-    expect(deps.finalize).toHaveBeenCalledWith({
-      result: expect.objectContaining({ backupContainerName: expect.any(String) }),
-      supervisorReady: false,
-    });
-  });
-
-  it("removes the running original container only after supervisor readiness is confirmed", () => {
-    const handoff = composedHandoffDeps();
-    const deps = baseDeps({
-      recreate: (options) =>
-        recreateOpenShellDockerSandboxWithStartupCommand(options, handoff.dockerDeps),
-      finalize: (options) => finalizeDockerGpuPatchBackup(options, handoff.dockerDeps),
-    });
-
-    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
-
-    expect(relaunch?.containerId).toBe("new-container-id");
-    expect(handoff.dockerStop).not.toHaveBeenCalled();
-    expect(handoff.dockerForceRm).not.toHaveBeenCalled();
-
-    expect(relaunch?.finalize(true)).toEqual({ backupRemoved: true, rolledBack: false });
-    expect(handoff.dockerForceRm).toHaveBeenCalledWith(
-      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(handoff.dockerStart).not.toHaveBeenCalled();
-  });
-
-  it("rolls back to the running original container without restarting it when supervisor readiness is not confirmed", () => {
-    const handoff = composedHandoffDeps();
-    const deps = baseDeps({
-      recreate: (options) =>
-        recreateOpenShellDockerSandboxWithStartupCommand(options, handoff.dockerDeps),
-      finalize: (options) => finalizeDockerGpuPatchBackup(options, handoff.dockerDeps),
-    });
-    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
-
-    expect(relaunch?.finalize(false)).toEqual({ backupRemoved: false, rolledBack: true });
-    expect(handoff.dockerStop).toHaveBeenCalledWith(
-      "new-container-id",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(handoff.dockerRm).toHaveBeenCalledWith(
-      "new-container-id",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(handoff.dockerRename).toHaveBeenLastCalledWith(
-      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
-      "openshell-alpha",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(handoff.dockerStart).not.toHaveBeenCalled();
-    expect(handoff.dockerForceRm).not.toHaveBeenCalled();
-  });
-
-  it("returns null when the pinned recreation fails", () => {
-    const deps = baseDeps({
-      recreate: vi.fn(() => {
-        throw new Error("container identity changed");
+    expect(deps.runDocker).toHaveBeenCalledWith(
+      expect.arrayContaining(["exec", "registered-container-id"]),
+      expect.objectContaining({
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30000,
       }),
+    );
+  });
+
+  it("reconstructs the persisted Hermes dashboard environment", () => {
+    const deps = baseDeps({
+      getSandbox: vi.fn(() => ({
+        name: "alpha",
+        agent: "hermes",
+        dashboardPort: 18790,
+        hermesDashboardEnabled: true,
+        hermesDashboardInternalPort: 19119,
+        hermesDashboardPort: 18790,
+        hermesDashboardTui: true,
+        openshellDriver: "docker",
+      })),
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 18790,
+          }) as never,
+      ),
+      resolveDashboardPort: vi.fn(() => 18790),
     });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toEqual({
+      containerId: "registered-container-id",
+    });
+    const launchCommand = vi.mocked(deps.privilegedExecArgv).mock.calls[0]?.[1] ?? [];
+    expect(launchCommand).toEqual(
+      expect.arrayContaining([
+        "CHAT_UI_URL=http://127.0.0.1:18790",
+        "NEMOCLAW_DASHBOARD_PORT=18790",
+        "NEMOCLAW_HERMES_DASHBOARD=1",
+        "NEMOCLAW_HERMES_DASHBOARD_PORT=18790",
+        "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT=19119",
+        "NEMOCLAW_HERMES_DASHBOARD_TUI=1",
+      ]),
+    );
+    expect(launchCommand.some((value) => value.startsWith("OPENCLAW_"))).toBe(false);
+  });
+
+  it("returns null when the registered container refuses managed launch", () => {
+    const deps = baseDeps({ runDocker: vi.fn(() => dockerResult(1)) });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
   });
 
-  it("redacts diagnostics when trusted recreation fails", () => {
+  it("redacts diagnostics when trusted in-place launch fails", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const deps = baseDeps({
-      recreate: vi.fn(() => {
+      runDocker: vi.fn(() => {
         throw new Error(
           "OPENAI_API_KEY=sk-recovery-secret HTTPS_PROXY=http://proxyuser:proxypass@proxy.example:8080",
         );

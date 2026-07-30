@@ -37,42 +37,6 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
-  it("force-removes the running original container when supervisor readiness is confirmed", () => {
-    const dockerForceRm = vi.fn((_name: string) => ({ status: 0 }));
-    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result: { ...deferredCreateResult(), backupWasRunning: true },
-        supervisorReady: true,
-      },
-      { dockerForceRm, dockerRm },
-    );
-
-    expect(outcome).toEqual({ backupRemoved: true, rolledBack: false });
-    expect(dockerForceRm).toHaveBeenCalledWith(
-      "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerRm).not.toHaveBeenCalled();
-  });
-
-  it("reports backupRemoved false when force-removal of the running original container fails", () => {
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result: { ...deferredCreateResult(), backupWasRunning: true },
-        supervisorReady: true,
-      },
-      {
-        dockerForceRm: vi.fn(() => ({
-          status: 1,
-          stderr: "container removal failed",
-        })),
-      },
-    );
-
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
-  });
-
   it("rolls back to the backup container when supervisor reconnect failed", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
@@ -99,32 +63,6 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(
       dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
     ).toBe(false);
-  });
-
-  it("rolls back to the still-running original container without restarting it", () => {
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
-    const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
-    const dockerStart = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result: { ...deferredCreateResult(), backupWasRunning: true },
-        supervisorReady: false,
-      },
-      { dockerStop, dockerRm, dockerRename, dockerStart },
-    );
-
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: true });
-    expect(dockerStop).toHaveBeenCalledWith(
-      "new-container-id",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerRename).toHaveBeenCalledWith(
-      "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
-      "openshell-alpha",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("reports rolledBack=false when restoring the backup fails", () => {

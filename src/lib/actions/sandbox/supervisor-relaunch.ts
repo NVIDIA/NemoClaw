@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture } from "../../adapters/docker";
+import { randomBytes } from "node:crypto";
+import { dockerCapture, dockerRun } from "../../adapters/docker";
 import * as agentRuntime from "../../agent/runtime";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DockerContainerInspect,
   parseDockerInspectJson,
 } from "../../onboard/docker-gpu-patch";
-import {
-  type DockerGpuPatchFinalizeOutcome,
-  finalizeDockerGpuPatchBackup,
-} from "../../onboard/docker-gpu-patch-finalize";
-import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
+import { hasZeroDockerExitStatus } from "../../onboard/docker-command-result";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
-import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
+import {
+  privilegedSandboxExecArgv,
+  resolveDirectSandboxContainer,
+} from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
@@ -23,17 +23,22 @@ import { resolveSandboxDashboardPort } from "./forward-recovery";
  * Compatibility boundary for OpenShell 0.0.71's Docker driver: legacy
  * sandboxes persist `OPENSHELL_SANDBOX_COMMAND=sleep infinity` while
  * `scripts/nemoclaw-start.sh` owns the managed workload as a sibling process.
- * Only that inspected value authorizes this migration. Regression coverage is
- * named in `supervisor-relaunch.test.ts` and `gateway-guard-recovery.test.ts`.
+ * Relaunch requires that inspected legacy value, the registered exact container
+ * identity, and the managed controller's exact pinned proof that no supervisor
+ * is running. The root-owned controller then rechecks absence before launching
+ * one sandbox-UID supervisor that is adopted by OpenShell PID 1. Replacing the
+ * container while its OpenShell supervisor is registered either publishes
+ * terminal phase Error or blocks duplicate supervisor registration. Regression
+ * coverage is named in `supervisor-relaunch.test.ts`,
+ * `process-recovery-supervisor-relaunch.test.ts`, and `sandbox-survival.test.ts`.
  * Remove this path after supported upgrades rebuild every legacy keepalive
  * container with `nemoclaw-start` as its persisted startup command.
  */
 const LEGACY_OPENSHELL_KEEPALIVE = "sleep infinity";
-const DOCKER_INSPECT_TIMEOUT_MS = 15000;
+const DOCKER_CONTROL_TIMEOUT_MS = 30000;
 
 export type ManagedSupervisorRelaunch = {
   containerId: string;
-  finalize(supervisorReady: boolean): DockerGpuPatchFinalizeOutcome;
 };
 
 export type ManagedSupervisorRelaunchDeps = {
@@ -43,15 +48,16 @@ export type ManagedSupervisorRelaunchDeps = {
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
-  recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
-  finalize?: typeof finalizeDockerGpuPatchBackup;
+  createNonce?: () => string;
+  privilegedExecArgv?: typeof privilegedSandboxExecArgv;
+  runDocker?: typeof dockerRun;
 };
 
 function inspectContainer(containerId: string): DockerContainerInspect {
   return parseDockerInspectJson(
     dockerCapture(["inspect", "--type", "container", containerId], {
       ignoreError: true,
-      timeout: DOCKER_INSPECT_TIMEOUT_MS,
+      timeout: DOCKER_CONTROL_TIMEOUT_MS,
     }),
   );
 }
@@ -64,7 +70,7 @@ function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
   return values.length === 1 && values[0] === LEGACY_OPENSHELL_KEEPALIVE;
 }
 
-function reconstructSupervisorLaunchCommand(
+function reconstructSupervisorRuntimeEnvironment(
   sandboxName: string,
   entry: NonNullable<ReturnType<typeof registry.getSandbox>>,
   deps: ManagedSupervisorRelaunchDeps,
@@ -103,7 +109,7 @@ function reconstructSupervisorLaunchCommand(
     env: process.env,
     omitCredentialEnv: true,
   });
-  return ["env", ...envArgs, "nemoclaw-start"];
+  return envArgs;
 }
 
 export function relaunchManagedSupervisorSession(
@@ -122,46 +128,40 @@ export function relaunchManagedSupervisorSession(
   if (!entry) return null;
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
   if (driver !== null && driver !== "docker" && driver !== "vm") return null;
-  const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, deps);
-  if (startupCommand === null) return null;
+  const runtimeEnvironment = reconstructSupervisorRuntimeEnvironment(sandboxName, entry, deps);
+  if (runtimeEnvironment === null) return null;
 
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
-  const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
-  const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
+  const privilegedExecArgv = deps.privilegedExecArgv ?? privilegedSandboxExecArgv;
+  const runDocker = deps.runDocker ?? dockerRun;
   try {
     const containerId = resolveContainer(sandboxName, driver);
     if (!hasLegacyKeepaliveStartup(inspect(containerId))) return null;
     if (!confirmMissingSupervisor?.(containerId)) return null;
     if (!quiet) {
-      console.log("  Recreating the sandbox container with its managed startup command...");
+      console.log("  Launching the managed supervisor in the registered sandbox container...");
     }
-    const result = recreate({
-      sandboxName,
-      openshellSandboxCommand: startupCommand,
-      expectedOldContainerId: containerId,
-      keepOriginalRunningUntilFinalize: true,
-      waitForSupervisor: false,
-    });
-    let completed: { supervisorReady: boolean; outcome: DockerGpuPatchFinalizeOutcome } | null =
-      null;
-    return {
-      containerId: result.newContainerId,
-      finalize(supervisorReady) {
-        if (completed) {
-          if (completed.supervisorReady !== supervisorReady) {
-            throw new Error(
-              "Supervisor relaunch transaction was finalized with conflicting state.",
-            );
-          }
-          return completed.outcome;
-        }
-        const outcome = finalize({ result, supervisorReady });
-        completed = { supervisorReady, outcome };
-        return outcome;
+    const nonce = (deps.createNonce ?? (() => randomBytes(32).toString("hex")))();
+    const launchCommand = [
+      "/usr/local/bin/nemoclaw-gateway-control",
+      "launch-supervisor",
+      nonce,
+      ...runtimeEnvironment,
+    ];
+    const launchResult = runDocker(
+      privilegedExecArgv(sandboxName, launchCommand, false, true, containerId),
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_CONTROL_TIMEOUT_MS,
       },
-    };
+    );
+    if (!hasZeroDockerExitStatus(launchResult)) {
+      throw new Error("The registered container refused the managed supervisor launch.");
+    }
+    return { containerId };
   } catch (error) {
     if (!quiet) {
       const detail = error instanceof Error ? error.message : String(error);

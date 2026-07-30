@@ -27,7 +27,6 @@ export type DockerGpuPatchDeps = {
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;
   dockerRename?: DockerRenameFn;
-  dockerForceRm?: DockerContainerFn;
   dockerRm?: DockerContainerFn;
   dockerStart?: DockerContainerFn;
   dockerStop?: DockerContainerFn;
@@ -92,11 +91,6 @@ export type DockerGpuPatchResult = {
   originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
-  // True when a deferred startup-command recreation kept the original
-  // OpenShell supervisor running while the replacement established managed
-  // health. Finalization attempts to force-remove that original container on
-  // success and does not try to restart it during rollback.
-  backupWasRunning?: boolean;
   // True when the patch path also confirmed supervisor reconnect AND removed
   // the backup container. False when the caller deferred the reconnect wait
   // (via `waitForSupervisor: false`); the backup is still in place and the

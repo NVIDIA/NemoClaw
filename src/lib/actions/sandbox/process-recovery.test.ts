@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   confirmRecoveredSandboxGatewayManaged,
   waitForRecoveredSandboxGateway,
-  waitForRecreatedSandboxOpenShellReady,
+  waitForRecoveredSandboxOpenShellReady,
 } from "./process-recovery";
 
 const OPENSHELL_SANDBOX_NOT_READY_STDERR = `Error:   × code: 'The system is not in a state required for the operation's
@@ -38,9 +38,9 @@ const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is
   │ refused (os error 111)"
 `;
 const OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR =
-  "Error: sandbox 'recreated-box' is not ready (phase: Error); wait for it to reach Ready state.\n";
+  "Error: sandbox 'recovered-box' is not ready (phase: Error); wait for it to reach Ready state.\n";
 
-describe("recreated sandbox OpenShell readiness", () => {
+describe("recovered sandbox OpenShell readiness", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -61,7 +61,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -71,7 +71,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     ).toBe(true);
     expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
     expect(captureOpenshellImpl).toHaveBeenCalledWith(
-      ["sandbox", "exec", "--name", "recreated-box", "--", "true"],
+      ["sandbox", "exec", "--name", "recovered-box", "--", "true"],
       expect.objectContaining({
         ignoreError: true,
         includeStderr: true,
@@ -96,7 +96,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -123,7 +123,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe: () => true,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -152,7 +152,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     let nowMs = 0;
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -198,7 +198,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe: () => true,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -241,7 +241,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe: () => true,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -263,7 +263,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe: () => true,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -300,7 +300,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     });
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe: () => true,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -312,7 +312,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(captureOpenshellImpl).toHaveBeenCalledTimes(12);
   });
 
-  it("retries the exact supervisor reconnect states exposed during direct recreation", () => {
+  it("retries the exact supervisor reconnect states exposed during direct recovery", () => {
     const reconnecting = [
       OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR,
       OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR,
@@ -331,7 +331,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -361,7 +361,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -374,7 +374,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
-  it("retries when OpenShell drops the replacement supervisor's reverse relay", () => {
+  it("retries when OpenShell drops the recovered supervisor's reverse relay", () => {
     const captureOpenshellImpl = vi
       .fn()
       .mockReturnValueOnce({
@@ -388,7 +388,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -404,7 +404,7 @@ describe("recreated sandbox OpenShell readiness", () => {
   it.each([
     OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR,
     OPENSHELL_RELAY_TARGET_REFUSED_STDERR,
-  ])("retries while the replacement supervisor's local relay target starts (#7273)", (stderr) => {
+  ])("retries while the recovered supervisor's local relay target starts (#7273)", (stderr) => {
     const captureOpenshellImpl = vi
       .fn()
       .mockReturnValueOnce({
@@ -418,7 +418,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -438,7 +438,7 @@ describe("recreated sandbox OpenShell readiness", () => {
   │ out\\", details: [], metadata: MetadataMap { headers: {} }"`,
     `Error:   × code: 'The service is currently unavailable', message: "permission denied"`,
     "Error: sandbox 'other-box' is not ready (phase: Error); wait for it to reach Ready state.",
-    "Error: sandbox 'recreated-box' is not ready (phase: Failed); wait for it to reach Ready state.",
+    "Error: sandbox 'recovered-box' is not ready (phase: Failed); wait for it to reach Ready state.",
   ])("does not retry an unrelated OpenShell error", (stderr) => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,
@@ -449,7 +449,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         captureOpenshellImpl,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
@@ -470,7 +470,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         captureOpenshellImpl,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
@@ -497,7 +497,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -521,7 +521,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -545,7 +545,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -569,7 +569,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -593,7 +593,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
@@ -618,7 +618,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      waitForRecoveredSandboxOpenShellReady("recovered-box", {
         captureOpenshellImpl,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),

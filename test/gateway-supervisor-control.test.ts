@@ -278,6 +278,7 @@ describe("root-only gateway control helper", () => {
   it.each([
     "restart",
     "probe",
+    "launch-supervisor",
   ])("enters managed %s control with isolated Python before user-site startup hooks", (action) => {
     const root = temporaryDirectory("nemoclaw-managed-python-isolation-");
     const userBase = join(root, "attacker-userbase");
@@ -339,6 +340,11 @@ describe("root-only gateway control helper", () => {
     ["bad action", ["replace", VALID_NONCE], "SUPERVISOR_INVALID_ACTION"],
     ["short nonce", ["restart", "abcd"], "SUPERVISOR_INVALID_NONCE"],
     ["uppercase nonce", ["recover", "B".repeat(64)], "SUPERVISOR_INVALID_NONCE"],
+    [
+      "extra restart argument",
+      ["restart", VALID_NONCE, "CHAT_UI_URL=http://127.0.0.1:18789"],
+      "SUPERVISOR_INVALID_REQUEST",
+    ],
   ])("rejects %s before touching the control directory", (_label, args, marker) => {
     const result = spawnSync(CONTROL_HELPER, args, {
       encoding: "utf-8",
