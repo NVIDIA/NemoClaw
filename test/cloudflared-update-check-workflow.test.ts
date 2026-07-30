@@ -203,7 +203,7 @@ describe("cloudflared update-check workflow contract", () => {
       );
       expect(fixture.result.stderr).toContain("CLOUDFLARED_VERSION lines:");
       expect(fixture.result.stderr).toContain("CLOUDFLARED_DEB_SHA256 lines:");
-      expect(fixture.result.stderr).toContain("Set all four version/SHA256 pairs");
+      expect(fixture.result.stderr).toContain("Set all five version/SHA256 pairs");
     } finally {
       fs.rmSync(fixture.tempDir, { recursive: true, force: true });
     }

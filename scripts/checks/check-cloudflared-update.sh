@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# invalidState: the four reviewed E2E consumers drift to different cloudflared
+# invalidState: the five reviewed E2E consumers drift to different cloudflared
 # versions/digests, or their shared pin no longer matches the upstream asset.
-# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all four
+# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all five
 # workflow pins and independently verifies the downloaded bytes.
 # whyNotSourceFix: upstream cannot enforce which release NemoClaw workflows use.
-# regressionTest: cloudflared-update-check-workflow.test.ts covers four-pin
+# regressionTest: cloudflared-update-check-workflow.test.ts covers five-pin
 # parity, asset URL identity, digest mismatch, and update instructions.
-# removalCondition: remove this checker when the four consumers share one
+# removalCondition: remove this checker when the five consumers share one
 # machine-readable dependency manifest with equivalent live asset verification.
 
 set -euo pipefail
@@ -127,7 +127,7 @@ print_update_instructions() {
     'Update locations:' \
     "  ${workflow_display} CLOUDFLARED_VERSION lines: ${version_lines}" \
     "  ${workflow_display} CLOUDFLARED_DEB_SHA256 lines: ${sha_lines}" \
-    'Set all four version/SHA256 pairs to the latest reviewed values, then rerun this check.' >&2
+    'Set all five version/SHA256 pairs to the latest reviewed values, then rerun this check.' >&2
 }
 
 if [[ "${latest_version}" != "${pinned_version}" ]]; then
