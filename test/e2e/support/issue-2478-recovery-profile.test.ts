@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { resolveIssue2478RecoverySettings } from "../live/issue-2478-recovery-profile.ts";
 
 describe("gateway crash-loop recovery profiles", () => {
-  it("keeps the nightly functional proof to one crash cycle and one stability sample (#7919)", () => {
+  it("keeps the functional profile to one crash cycle and one stability sample (#7919)", () => {
     expect(
       resolveIssue2478RecoverySettings({
         NEMOCLAW_E2E_RECOVERY_PROFILE: "functional",
@@ -26,7 +26,7 @@ describe("gateway crash-loop recovery profiles", () => {
     });
   });
 
-  it("keeps the Sunday soak as a strict superset of the nightly functional proof (#7919)", () => {
+  it("keeps the Sunday soak as a strict superset of the functional profile (#7919)", () => {
     const functional = resolveIssue2478RecoverySettings({
       NEMOCLAW_E2E_RECOVERY_PROFILE: "functional",
     });

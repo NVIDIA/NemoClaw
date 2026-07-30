@@ -996,7 +996,9 @@ function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
     }
   }
   if (cronEntries.includes("0 0 * * *")) {
-    errors.push("workflow schedule must split nightly and weekly recovery runs");
+    errors.push(
+      "workflow schedule must separate Monday through Saturday functional runs from the Sunday soak",
+    );
   }
 }
 

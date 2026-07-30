@@ -22,7 +22,7 @@ describe("recovery workflow scheduling (#7919)", () => {
       expect.arrayContaining([
         "workflow schedule must include 0 0 * * 1-6",
         "workflow schedule must include 0 0 * * 0",
-        "workflow schedule must split nightly and weekly recovery runs",
+        "workflow schedule must separate Monday through Saturday functional runs from the Sunday soak",
         "issue-2478-crash-loop-recovery job env NEMOCLAW_E2E_CRASH_CYCLES must be 1",
         'issue-2478-crash-loop-recovery-soak job E2E_CHANGE_FOCUSED must be "0" when set',
         "issue-2478-crash-loop-recovery-soak job must keep its soak schedule and selector",
