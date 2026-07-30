@@ -169,10 +169,14 @@ lanes:
 - `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
-The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard, and
-`mcp-bridge-dev` remain on `ubuntu-latest`; unrelated jobs retain their
-existing runner assignments. Before setting the variable, an organization
-owner must:
+The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
+`mcp-bridge-dev`, and `openshell-credential-generation-window` remain on
+`ubuntu-latest`; unrelated jobs retain their existing runner assignments.
+The credential-generation window runs as an independent fresh-runner job in
+parallel with the stable MCP agent matrix. Default full-suite dispatches and
+explicit `mcp-bridge` selections run both jobs, while the credential-window job
+keeps its own exact-release provenance, secret scan, and artifact.
+Before setting the variable, an organization owner must:
 
 1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and
    300 GB SSD in a dedicated runner group.
