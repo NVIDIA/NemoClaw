@@ -222,10 +222,16 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         expect(fs.statSync(target).mode & 0o777).toBe(0o444);
         expect(harness.result.stdout.split(target)).toHaveLength(2);
       }
-      expect(fs.statSync(harness.targets.runtimeEnv).mode & 0o777).toBe(0o444);
-      expect(fs.readFileSync(harness.targets.runtimeEnv, "utf8")).toBe(
-        "# recovered runtime environment\n",
+      const runtimeEnvFd = fs.openSync(
+        harness.targets.runtimeEnv,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
       );
+      try {
+        expect(fs.fstatSync(runtimeEnvFd).mode & 0o777).toBe(0o444);
+        expect(fs.readFileSync(runtimeEnvFd, "utf8")).toBe("# recovered runtime environment\n");
+      } finally {
+        fs.closeSync(runtimeEnvFd);
+      }
     } finally {
       fs.rmSync(harness.tmpDir, { recursive: true, force: true });
     }
