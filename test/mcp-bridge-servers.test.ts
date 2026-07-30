@@ -36,7 +36,7 @@ type CompatibleToolCallResponse = {
   choices: Array<{
     message: {
       content?: unknown;
-      tool_calls: Array<{ function: { name: string; arguments: string } }>;
+      tool_calls: Array<{ id: string; function: { name: string; arguments: string } }>;
     };
   }>;
 };
@@ -564,6 +564,8 @@ describe("authenticated MCP live fixtures", () => {
       toolChallenge: "deferred-fixture",
       toolResultToken: resultToken,
       deferredToolName,
+      deferredToolSearchAttempts: 2,
+      deferredToolSearchRetryDelayMs: 0,
     });
     servers.push(server);
     const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
@@ -596,30 +598,34 @@ describe("authenticated MCP live fixtures", () => {
     const missedSearch = await call([
       {
         role: "tool",
-        tool_call_id: "call_hermes_tool_search",
+        tool_call_id: "call_hermes_tool_search_1",
         content: '{"matches":[{"name":"some_other_tool"}]}',
       },
     ]);
-    expect(missedSearch).toMatchObject({
-      choices: [
-        { message: { content: expect.stringContaining("did not return the deferred target") } },
-      ],
+    expect(missedSearch.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_hermes_tool_search_2",
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ query: deferredToolName }),
+      },
     });
     const echoedSearchQueryWithoutMatch = await call([
       {
         role: "tool",
-        tool_call_id: "call_hermes_tool_search",
+        tool_call_id: "call_hermes_tool_search_1",
         content: JSON.stringify({ query: deferredToolName, matches: [] }),
       },
     ]);
-    expect(echoedSearchQueryWithoutMatch).toMatchObject({
-      choices: [
-        { message: { content: expect.stringContaining("did not return the deferred target") } },
-      ],
+    expect(echoedSearchQueryWithoutMatch.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_hermes_tool_search_2",
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ query: deferredToolName }),
+      },
     });
     const searchResult = {
       role: "tool",
-      tool_call_id: "call_hermes_tool_search",
+      tool_call_id: "call_hermes_tool_search_1",
       content: JSON.stringify({ matches: [{ name: deferredToolName }] }),
     };
     const describeBody = await call([searchResult]);

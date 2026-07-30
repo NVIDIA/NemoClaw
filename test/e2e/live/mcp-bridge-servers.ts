@@ -543,16 +543,20 @@ export async function startCompatibleMock(options: {
           }
         } else if (
           toolResultCount === completedSearches + 1 &&
-          hasExpectedHermesDescription(completedSearches, options.deferredToolName)
+          toolResults.at(-1)?.tool_call_id === "call_hermes_tool_describe"
         ) {
-          plannedToolCall = {
-            id: "call_hermes_tool_call",
-            name: "tool_call",
-            arguments: {
-              name: options.deferredToolName,
-              arguments: { challenge: options.toolChallenge },
-            },
-          };
+          if (hasExpectedHermesDescription(completedSearches, options.deferredToolName)) {
+            plannedToolCall = {
+              id: "call_hermes_tool_call",
+              name: "tool_call",
+              arguments: {
+                name: options.deferredToolName,
+                arguments: { challenge: options.toolChallenge },
+              },
+            };
+          } else {
+            protocolError = "Hermes tool_describe did not return the deferred schema";
+          }
         } else {
           protocolError = "Hermes returned an unexpected deferred tool result sequence";
         }
