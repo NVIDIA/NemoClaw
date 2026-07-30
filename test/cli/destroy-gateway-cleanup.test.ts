@@ -319,6 +319,84 @@ describe("CLI dispatch", () => {
     },
   );
 
+  it.runIf(process.platform === "linux")(
+    "stops the packaged gateway service so the port is free after the final destroy (#7904)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-service-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const unitDir = path.join(home, ".config", "systemd", "user");
+      const openshellLog = path.join(home, "openshell.log");
+      const systemctlLog = path.join(home, "systemctl.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.mkdirSync(unitDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(unitDir, "nemoclaw-openshell-gateway.service"),
+        ["[Unit]", "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1", "[Service]"].join("\n"),
+      );
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "systemctl"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(systemctlLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y --cleanup-gateway",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30_000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      const systemctlOutput = fs.readFileSync(systemctlLog, "utf8");
+      expect(systemctlOutput).toMatch(/^--user stop \S+$/m);
+      expect(systemctlOutput).not.toContain("disable");
+      expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway remove nemoclaw");
+    },
+  );
+
   it("keeps the gateway runtime when other sandboxes still exist", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-shared-"));
     const localBin = path.join(home, "bin");
