@@ -1283,14 +1283,14 @@ describe("PR E2E controller lifecycle", () => {
     ).toHaveLength(1);
   });
 
-  it("closes the superseded head check before the current revision requests approval", async () => {
+  it("closes a superseded fork approval check before the current revision continues", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
     const supersededCheck = exactPrGateCheck({
       head_sha: SUPERSEDED_HEAD_SHA,
       external_id: prGateExternalId(42, SUPERSEDED_HEAD_SHA, BASE_SHA),
-      output: { title: "Maintainer approval required to run E2E" },
+      output: { title: "Maintainer approval required to run fork E2E" },
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
