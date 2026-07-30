@@ -307,6 +307,8 @@ def _seed_owner_ids() -> tuple[int, int] | None:
 
 
 def _read_regular_text_no_follow(path: str, label: str, *, dir_fd: int | None = None) -> str:
+    """Read a regular text file without following its final path component."""
+
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     fd = -1
     try:
@@ -334,6 +336,8 @@ def _read_regular_text_no_follow(path: str, label: str, *, dir_fd: int | None = 
 
 
 def _load_yaml(path: str, label: str, *, dir_fd: int | None = None) -> dict:
+    """Load a YAML mapping through the no-follow reader."""
+
     import yaml
 
     try:
@@ -352,6 +356,8 @@ def _atomic_write_no_follow(
     *,
     parent_fd: int | None = None,
 ) -> bool:
+    """Atomically replace a file relative to an optional validated parent."""
+
     parent, basename = os.path.split(dst)
     parent = parent or "."
     tmp_basename = f"{basename}.nemoclaw.tmp"
@@ -713,6 +719,8 @@ def _merge_policy(dashboard: dict, policy: dict) -> None:
 
 
 def _mirror_env(src: str, dst: str, *, dst_parent_fd: int | None = None) -> bool:
+    """Mirror allowlisted environment values into the dashboard profile."""
+
     try:
         env_text = _read_regular_text_no_follow(src, "gateway env")
     except MissingDashboardSeedPathError:
