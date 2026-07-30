@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure Corporate Certificate Authority Trust"
 sidebar-title: "Configure Corporate CA Trust"
-description: "Import a bounded corporate proxy CA chain into NemoClaw sandbox runtime trust and supported build-time flows."
-description-agent: "Configures corporate proxy CA trust for runtime TLS and supported build-time operations. Use when a corporate MITM proxy re-signs external TLS or certificate verification fails behind an enterprise proxy."
+description: "Import a bounded corporate proxy CA chain for managed image resolution, sandbox runtime trust, and supported local builds."
+description-agent: "Configures corporate proxy CA trust for managed image resolution, runtime TLS, and supported local builds. Use when a corporate MITM proxy re-signs external TLS or certificate verification fails behind an enterprise proxy."
 keywords: ["nemoclaw corporate ca", "corporate proxy tls", "certificate verification"]
 content:
   type: "how_to"
-agent-variants: ["openclaw", "hermes"]
+agent-variants: ["openclaw", "hermes", "deepagents"]
 ---
 
 Configure a corporate Certificate Authority (CA) before onboarding when an enterprise proxy re-signs external TLS with a root that OpenShell does not provide.
@@ -28,18 +28,28 @@ Use `$$nemoclaw <name> rebuild` after adding or changing the CA for an existing 
 
 ## Understand Image and Runtime Trust
 
-NemoClaw validates the selected bundle and bakes it into the sandbox image as `NEMOCLAW_CORPORATE_CA_B64`.
-The managed Dockerfile decodes it to the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`.
+NemoClaw validates the selected bundle before it prepares the sandbox workload.
+Managed release-image catalog requests use the validated corporate CA with the public root set and configured HTTP(S) proxy environment.
+The request-scoped registry transport does not replace the process-wide network dispatcher.
+
+For a managed release image, NemoClaw passes the bounded CA bundle separately when the sandbox starts.
+The secret-free startup profile contains only the bundle's SHA-256 digest.
+The root-owned startup applicator verifies that digest and installs `/usr/local/share/nemoclaw/corporate-ca.pem` as a read-only file.
+
+For an explicitly selected custom Dockerfile, NemoClaw encodes the bundle as `NEMOCLAW_CORPORATE_CA_B64`.
+The Dockerfile must decode it to the same root-owned, read-only file.
 
 <AgentOnly variant="openclaw">
 
-It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification, including `npm audit signatures` requests that cross a TLS-inspecting proxy.
+The OpenClaw Dockerfile sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification.
+This includes `npm audit signatures` requests that cross a TLS-inspecting proxy.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
-The Hermes Dockerfile decodes the bundle after its managed build-time dependency steps, so the corporate CA does not apply to those earlier operations.
+The Hermes Dockerfile decodes the bundle after its local build-time dependency steps.
+The corporate CA does not apply to those earlier operations.
 
 </AgentOnly>
 
@@ -65,20 +75,18 @@ A corporate root that exists only as a hand-edited entry in a merged trust store
 
 ## Verify the Selected Source
 
-Check onboarding build output for the source and path that NemoClaw selected.
-A successful selection logs `baking corporate proxy CA from ...` without printing certificate contents.
+For a managed release image, sandbox startup verifies the CA digest before the agent launches.
+For an explicit custom Dockerfile that implements the contract, build output can log the selected corporate CA source without printing certificate contents.
 
 If a conventional variable points at a missing or invalid file, onboarding logs that the source was skipped for corporate CA import.
 An administrator anchor directory that contains candidates but no valid CA logs a similar warning.
-If no selection message appears, no source passed validation.
 
 ## Use a Custom Dockerfile
 
-Managed NemoClaw Dockerfiles implement the corporate CA build contract automatically.
 A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64` and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem` for runtime trust.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
-Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits that argument.
+Automatically discovered host-store sources are a no-op when a custom Dockerfile omits that argument.
 The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when the argument is absent so the requested trust change cannot silently disappear.
 
 ## Review the Trust Boundary

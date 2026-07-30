@@ -91,8 +91,19 @@ _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
 _FETCH_URL_TRUSTED_PROXY_ENV = (
     "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"
 )
-_MANAGED_FETCH_CA_BUNDLE_FILE = Path(
+_MANAGED_STARTUP_CA_BUNDLE_FILE = Path(
+    "/run/nemoclaw/managed-startup-ca-bundle.pem"
+)
+_OPENSHELL_FETCH_CA_BUNDLE_FILE = Path(
     "/etc/openshell-tls/ca-bundle.pem"
+)
+# Startup-profile application runs before this module is imported. Prefer its
+# root-owned merged bundle whenever the pathname exists at all; lexists keeps
+# an unsafe symlink on the fail-closed path instead of silently falling back.
+_MANAGED_FETCH_CA_BUNDLE_FILE = (
+    _MANAGED_STARTUP_CA_BUNDLE_FILE
+    if os.path.lexists(_MANAGED_STARTUP_CA_BUNDLE_FILE)
+    else _OPENSHELL_FETCH_CA_BUNDLE_FILE
 )
 # Keep this managed adapter allow-list in sync with generate-config.ts and the
 # patch-managed-deepagents-code.py provider guards injected into Deep Agents Code.
@@ -1080,7 +1091,7 @@ def _managed_fetch_proxy_url_from_files() -> str:
 
 
 def _managed_fetch_ca_bundle() -> tuple[int, str]:
-    """Open and validate fixed OpenShell TLS trust without a pathname race."""
+    """Open and validate fixed managed TLS trust without a pathname race."""
     path = _MANAGED_FETCH_CA_BUNDLE_FILE
     no_follow = getattr(os, "O_NOFOLLOW", None)
     if no_follow is None:

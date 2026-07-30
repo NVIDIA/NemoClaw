@@ -4,23 +4,22 @@
 // Verify that sandbox lifecycle operations clean up host-side Docker images.
 // See: https://github.com/NVIDIA/NemoClaw/issues/2086
 
-import { describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { describe, expect, it, vi } from "vitest";
+import { help as renderRootHelp } from "../src/lib/actions/root-help";
 import {
   cleanupShieldsDestroyArtifacts,
   removeSandboxImage,
   removeSandboxRegistryEntry,
   removeShieldsState,
 } from "../src/lib/actions/sandbox/destroy";
-import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
-import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
-import { resolveNemoclawStateDir } from "../src/lib/state/paths";
-import { help as renderRootHelp } from "../src/lib/actions/root-help";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
+import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
+import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
+import { resolveNemoclawStateDir } from "../src/lib/state/paths";
 
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   it("removes sandbox images before deleting the registry entry", () => {
@@ -64,6 +63,36 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     });
 
     expect(removedTags).toEqual([]);
+  });
+
+  it("retains shared immutable managed images during per-sandbox destroy", () => {
+    const dockerRmi = vi.fn(() => ({ status: 0 }) as any);
+
+    removeSandboxImage("alpha", {
+      getSandbox: () =>
+        ({
+          name: "alpha",
+          imageTag: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+            release: "v0.0.97",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: "e30",
+            startupProfileSha256:
+              "beab987bef9c00dfc301b490ddb45321517e7d6a6bb3d31d259898b7d46393d8",
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        }) as any,
+      dockerRmi,
+    });
+
+    expect(dockerRmi).not.toHaveBeenCalled();
   });
 
   it("treats missing sandbox delete results as already gone", () => {

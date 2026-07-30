@@ -121,6 +121,15 @@ $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
 
+For a managed release-image source, NemoClaw validates the durable workload receipt and retains the exact source image digest.
+It reconciles the source's current route and configuration before it creates a destination-specific secret-free startup profile and workload receipt.
+Export the credential variables for every enabled messaging or web-search provider before you clone.
+If the source receipt records an authenticated proxy, export the matching proxy environment variables again.
+For a managed Hermes source with enabled Nous tool gateways, NemoClaw acquires a fresh destination OAuth credential during an interactive clone.
+For a non-interactive clone, export `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN` with the destination refresh credential before running restore.
+The destination receives its own OpenShell provider and in-memory host-broker binding; the source credential and broker identity remain active.
+NemoClaw completes these validations before it deletes an existing `--force` destination.
+
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
 

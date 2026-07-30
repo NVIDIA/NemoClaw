@@ -83,7 +83,7 @@ flowchart TB
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
 | Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
-| Gateway Authentication | Unauthorized devices or clients reaching the OpenShell gateway or dashboard surfaces when present. | OpenShell gateway | No. Set at image build / onboarding time. |
+| Gateway Authentication | Unauthorized devices or clients reaching the OpenShell gateway or dashboard surfaces when present. | OpenShell gateway | No. Set in managed startup configuration or during an explicit custom image build. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
 
 ## Network Controls
@@ -595,24 +595,26 @@ The entrypoint locks the `PATH` environment variable to system directories, prev
 
 ### Build Toolchain Removal
 
-The Dockerfile removes compilers and network probes from the runtime image.
+The managed image build removes compilers and network probes from the runtime image.
 
 | Aspect | Detail |
 |---|---|
-| Default | The Dockerfile purges `gcc`, `gcc-12`, `g++`, `g++-12`, `cpp`, `cpp-12`, `make`, `netcat-openbsd`, `netcat-traditional`, and `ncat` from the sandbox image. |
-| What you can change | Modify the Dockerfile to keep these tools, or install them at runtime if package manager access is allowed. |
+| Default | The managed image Dockerfile purges `gcc`, `gcc-12`, `g++`, `g++-12`, `cpp`, `cpp-12`, `make`, `netcat-openbsd`, `netcat-traditional`, and `ncat` from the sandbox image. |
+| What you can change | Use an explicit custom `--from <Dockerfile>` workflow to keep these tools, or install them at runtime if package manager access is allowed. Stock onboarding does not rebuild the managed image. |
 | Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
 | Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
 
 ### Image Digest Pinning
 
-The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+Stock onboarding resolves the selected OpenClaw, Hermes, or Deep Agents Code managed release image to an immutable digest instead of starting a mutable tag such as `:latest`.
+NemoClaw accepts a release catalog only when the same publication cohort contains all three supported agent images.
+The checked-in blueprint also references its default sandbox image by `@sha256:`.
 A registry compromise or accidental force-push cannot silently swap the sandbox image.
 
 | Aspect | Detail |
 |---|---|
-| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
-| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Default | Managed-image catalog entries and `nemoclaw-blueprint/blueprint.yaml` pin images by digest. CI and release validation block mutable managed-image launch references. |
+| What you can change | Contributors publishing managed images must update the complete release catalog cohort; contributors changing the blueprint default must update its digest. Release tooling performs these rewrites. |
 | Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
 | Recommendation | Always reference the sandbox image by digest. If you build a custom image with the onboarding `--from` path, the digest constraint does not apply to your local build. |
 
@@ -637,7 +639,7 @@ This prevents other users on the host from reading stored credentials.
 <AgentOnly variant="openclaw">
 
 The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
-NemoClaw hardens these defaults at image build time.
+The immutable managed image provides the hardened runtime defaults, and the managed startup profile applies the sandbox-specific authentication setting.
 
 ### Device Authentication
 
@@ -646,7 +648,7 @@ Device authentication requires each connecting device to go through a pairing fl
 | Aspect | Detail |
 |---|---|
 | Default | The base Dockerfile enables device authentication for loopback dashboards. Standard onboarding currently applies a managed compatibility opt-out for immediate dashboard access. NemoClaw also disables device authentication for non-loopback `CHAT_UI_URL` values. |
-| What you can change | Outside managed onboarding, set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` only as a deliberate build-time opt-out. The setting and its managed-vs-operator provenance are baked into `openclaw.json` audit metadata and the config is verified by hash at startup. |
+| What you can change | Managed onboarding records `NEMOCLAW_DISABLE_DEVICE_AUTH=1` in the secret-free startup profile when the compatibility opt-out applies. An explicit custom Dockerfile must apply it deliberately during its local build. The setting and its managed-vs-operator provenance are materialized in `openclaw.json` audit metadata, and the config is verified by hash at startup. |
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
 | Recommendation | Prefer loopback access or SSH port forwarding so device authentication stays enabled. If a browser-only remote dashboard requires the compatibility setting, use HTTPS and restrict who can reach the dashboard. |
 
@@ -680,7 +682,7 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 
 | Aspect | Detail |
 |---|---|
-| Default | Derived from the `CHAT_UI_URL` scheme at build time. When the URL uses `http://` (local development), insecure auth is allowed. When it uses `https://` (remote or production), insecure auth is blocked. |
+| Default | Derived from the `CHAT_UI_URL` scheme when NemoClaw applies the sandbox configuration. When the URL uses `http://` (local development), insecure auth is allowed. When it uses `https://` (remote or production), insecure auth is blocked. |
 | What you can change | This is derived automatically from `CHAT_UI_URL`. Set `CHAT_UI_URL` to an `https://` URL to enforce secure auth. |
 | Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
 | Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
@@ -691,7 +693,7 @@ For audit reporting, NemoClaw treats a non-loopback `CHAT_UI_URL`, an onboard-ti
 For an explicit `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` bind, use the same setting on later `connect` calls.
 If the sandbox was created without that explicit setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.
 On WSL, the ready summary still uses a loopback URL, but the generated audit configuration leaves the device-auth and insecure-auth findings active.
-For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables device auth and enables OpenClaw's Host-header origin fallback because the browser's remote origin is not known at image-build time. Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
+For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables device auth and enables OpenClaw's Host-header origin fallback because the browser's remote origin is not known when the sandbox configuration is applied. Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
 In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.
 The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
 The audit also reports that suppressions are active so you can review the accepted risk.

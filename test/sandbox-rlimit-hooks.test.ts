@@ -573,9 +573,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
+    const entrypointEnvWrapper = path.join(localLib, "entrypoint-env-wrapper.sh");
     const stateDirGuard = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
+    const managedStartupHold = path.join(tmp, "nemoclaw-managed-startup-hold");
+    const managedBootstrap = path.join(tmp, "nemoclaw-managed-bootstrap");
     const gatewayControl = path.join(tmp, "nemoclaw-gateway-control");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
@@ -603,9 +606,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.chmodSync(safetyNet, 0o666);
       fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
+      fs.writeFileSync(entrypointEnvWrapper, "# entrypoint env wrapper fixture\n");
       fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedStartupHold, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedBootstrap, "#!/usr/bin/env bash\n");
       fs.writeFileSync(gatewayControl, "#!/usr/bin/env sh\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const fixtureOwner = fs.statSync(startBin);
@@ -615,9 +621,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         "# Wrap the hermes CLI",
       )
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-startup-hold", managedStartupHold)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-bootstrap", managedBootstrap)
         .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
+        .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
@@ -675,6 +684,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(entrypointEnvWrapper).mode & 0o777).toBe(0o444);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);

@@ -26,6 +26,7 @@ import type {
   RebuildRouteHandoff,
 } from "../../onboard/rebuild-route-handoff";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import type { ManagedWorkloadRebuildHandoff } from "../../onboard/workload/rebuild";
 import { getTier } from "../../policy/tiers";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
@@ -115,6 +116,7 @@ export type RebuildRecreateOnboardOpts = {
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
+  managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;

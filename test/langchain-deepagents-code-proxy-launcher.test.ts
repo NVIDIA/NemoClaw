@@ -62,10 +62,18 @@ function replaceManagedProxyFileConstants(source: string, tempDir: string): stri
   );
   return source
     .replace(
+      "/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
+      path.join(process.cwd(), "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    )
+    .replace(
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
       'exec "$MANAGED_DCODE_WRAPPER" "$@"',
     )
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+    .replaceAll(
+      "/run/nemoclaw/managed-startup-ca-bundle.pem",
+      path.join(tempDir, "trusted-ca-bundle.pem"),
+    )
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
       `readonly MANAGED_PROXY_HOST_FILE="${path.join(tempDir, "trusted-proxy-host")}"`,

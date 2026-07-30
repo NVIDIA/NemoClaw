@@ -1,0 +1,995 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../managed-startup/profile";
+import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import {
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  ManagedBootstrapCommitStateIndeterminateError,
+  ManagedBootstrapDurableCommitCleanupPendingError,
+  type ManagedBootstrapFinalizationReceipt,
+  ManagedBootstrapOwnerCleanupRequiredError,
+  runManagedBootstrapSequence,
+} from "./adapter";
+import {
+  createDockerManagedBootstrapAdapter,
+  MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
+} from "./docker";
+import { MANAGED_BOOTSTRAP_REQUEST_FILE } from "./envelope";
+import {
+  createFakeDockerFixture,
+  createOpenShellSandboxLookup,
+  type DockerManagedBootstrapFixtureConfig,
+  type FakeDockerOptions,
+} from "./__test-helpers__/docker-fixture";
+
+const IDENTITY = "1".repeat(64);
+const OLD_ID = "2".repeat(64);
+const NEW_ID = "3".repeat(64);
+const CONFIG_ID = `sha256:${"4".repeat(64)}`;
+const MANIFEST_DIGEST = `sha256:${"5".repeat(64)}` as const;
+const IMAGE_REPOSITORY = "registry.example/nemoclaw/hermes";
+const IMAGE_REFERENCE = `${IMAGE_REPOSITORY}@${MANIFEST_DIGEST}`;
+const SUPERVISOR_ARGV = [
+  "/opt/openshell/bin/openshell-sandbox",
+  "supervise",
+  "--foreground",
+] as const;
+
+const request = createManagedStartupRootApplyRequest({
+  agent: "hermes",
+  encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("hermes", false, false)),
+});
+
+function plan() {
+  return {
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandboxName: "alpha",
+    driverId: "docker",
+    image: {
+      repository: IMAGE_REPOSITORY,
+      manifestDigest: MANIFEST_DIGEST,
+    },
+    profile: { agent: "hermes" as const, fingerprint: request.profileFingerprint },
+    agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    intendedWorkloadArgv: ["env", "A=1", "nemoclaw-start"],
+    expectedSupervisorArgv: SUPERVISOR_ARGV,
+    metadata: {
+      "nemoclaw.ai/managed-profile": request.profileFingerprint,
+    },
+  };
+}
+
+function heldArgv(): string[] {
+  return [
+    "env",
+    "A=1",
+    "/usr/local/bin/nemoclaw-managed-startup-hold",
+    "--agent",
+    "hermes",
+    "--profile-fingerprint",
+    request.profileFingerprint,
+    "--bootstrap-identity",
+    IDENTITY,
+  ];
+}
+
+function runDefaultSequence(adapter: ReturnType<typeof createDockerManagedBootstrapAdapter>) {
+  return runManagedBootstrapSequence(adapter, {
+    create: {
+      plan: plan(),
+      request,
+      bootstrapIdentity: IDENTITY,
+      launch: async () => ({
+        sandbox: {
+          sandboxName: "alpha",
+          sandboxId: "sandbox-alpha",
+          driverId: "docker",
+        },
+        ready: true,
+        readyAt: "2026-07-29T11:59:00.000Z",
+      }),
+    },
+    request,
+    replacementOptions: { values: {} },
+    timeoutSecs: 30,
+  });
+}
+
+async function captureSequenceFailure(promise: ReturnType<typeof runDefaultSequence>): Promise<
+  Error & {
+    managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
+    managedBootstrapRollbackError?: unknown;
+  }
+> {
+  try {
+    await promise;
+  } catch (error) {
+    return error as Error & {
+      managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
+      managedBootstrapRollbackError?: unknown;
+    };
+  }
+  throw new Error("Expected managed bootstrap sequence to fail.");
+}
+
+const FAKE_DOCKER_CONFIG = {
+  identity: IDENTITY,
+  oldId: OLD_ID,
+  newId: NEW_ID,
+  configId: CONFIG_ID,
+  imageReference: IMAGE_REFERENCE,
+  profileFingerprint: request.profileFingerprint,
+  supervisorArgv: SUPERVISOR_ARGV,
+} satisfies DockerManagedBootstrapFixtureConfig;
+
+function fakeDocker(heldWorkloadArgv: readonly string[], options: FakeDockerOptions = {}) {
+  return createFakeDockerFixture(FAKE_DOCKER_CONFIG, heldWorkloadArgv, options);
+}
+
+function ok(stdout = "") {
+  return { status: 0, stdout, stderr: "" };
+}
+
+describe("Docker managed bootstrap adapter", () => {
+  it("keeps manifest and local config identities distinct and stages one 0400 envelope", async () => {
+    const heldArgv = [
+      "env",
+      "A=1",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "hermes",
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+    ];
+    const fake = fakeDocker(heldArgv);
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const launch = vi.fn(
+      async (input: {
+        readonly heldWorkloadArgv: readonly string[];
+        readonly bootstrapIdentity: string;
+      }) => {
+        expect(input).toEqual({
+          heldWorkloadArgv: heldArgv,
+          bootstrapIdentity: IDENTITY,
+        });
+        return {
+          sandbox: {
+            sandboxName: "alpha",
+            sandboxId: "sandbox-alpha",
+            driverId: "docker",
+          },
+          ready: true as const,
+          readyAt: "2026-07-29T11:59:00.000Z",
+        };
+      },
+    );
+
+    const result = await runManagedBootstrapSequence(adapter, {
+      create: {
+        plan: plan(),
+        request,
+        bootstrapIdentity: IDENTITY,
+        launch,
+      },
+      request,
+      replacementOptions: { values: {} },
+      timeoutSecs: 30,
+    });
+    await adapter.finalizeBootstrap({
+      outcome: "commit",
+      ...result,
+    });
+
+    expect(result.snapshot).toMatchObject({
+      image: {
+        repository: IMAGE_REPOSITORY,
+        manifestDigest: MANIFEST_DIGEST,
+      },
+      runtimeImageContentId: CONFIG_ID,
+    });
+    expect(result.completion).toMatchObject({
+      bootstrapIdentity: IDENTITY,
+      runtimeImageContentId: CONFIG_ID,
+      transactionPending: false,
+    });
+    expect(fake.state.copiedMode).toBe(0o400);
+    expect(fake.state.copyDestination).toBe(`${NEW_ID}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`);
+    expect(fake.state.copiedEnvelope).toEqual({
+      schemaVersion: 1,
+      bootstrapIdentity: IDENTITY,
+      rootApplyRequest: request,
+    });
+    const create = fake.state.createArgs[0] ?? [];
+    expect(create).toEqual(
+      expect.arrayContaining([
+        "create",
+        "--entrypoint",
+        MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
+        IMAGE_REFERENCE,
+        "--bootstrap-identity",
+        IDENTITY,
+        "--request-file",
+        MANAGED_BOOTSTRAP_REQUEST_FILE,
+        "--",
+        ...SUPERVISOR_ARGV,
+      ]),
+    );
+    expect(create.join(" ")).not.toContain(request.encodedProfile);
+  });
+
+  it("preserves ordinary supervisor environment exactly across replacement", async () => {
+    const heldArgv = [
+      "env",
+      "A=1",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "hermes",
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+    ];
+    const ordinary = "SAFE_SUPERVISOR_VALUE=kept exactly";
+    const fake = fakeDocker(heldArgv, { extraEnvironment: [ordinary] });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await runManagedBootstrapSequence(adapter, {
+      create: {
+        plan: plan(),
+        request,
+        bootstrapIdentity: IDENTITY,
+        launch: async () => ({
+          sandbox: {
+            sandboxName: "alpha",
+            sandboxId: "sandbox-alpha",
+            driverId: "docker",
+          },
+          ready: true,
+          readyAt: "2026-07-29T11:59:00.000Z",
+        }),
+      },
+      request,
+      replacementOptions: { values: {} },
+      timeoutSecs: 30,
+    });
+
+    expect(fake.state.replacementEnvironment).toContain(ordinary);
+  });
+
+  it.each([
+    "BASH_ENV=/sandbox/attacker",
+    "ENV=/sandbox/attacker",
+    "LD_PRELOAD=/sandbox/attacker.so",
+    "LD_AUDIT=/sandbox/attacker.so",
+    "LD_LIBRARY_PATH=/sandbox/lib",
+    "SHELLOPTS=xtrace",
+    "PS4=$(touch /sandbox/root-owned)",
+    "BASH_FUNC_attacker%%=() { touch /sandbox/root-owned; }",
+  ])("refuses root-process injection environment before replacement: %s", async (entry) => {
+    const heldArgv = [
+      "env",
+      "A=1",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "hermes",
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+    ];
+    const fake = fakeDocker(heldArgv, { extraEnvironment: [entry] });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    const failure = await captureSequenceFailure(
+      runManagedBootstrapSequence(adapter, {
+        create: {
+          plan: plan(),
+          request,
+          bootstrapIdentity: IDENTITY,
+          launch: async () => ({
+            sandbox: {
+              sandboxName: "alpha",
+              sandboxId: "sandbox-alpha",
+              driverId: "docker",
+            },
+            ready: true,
+            readyAt: "2026-07-29T11:59:00.000Z",
+          }),
+        },
+        request,
+        replacementOptions: { values: {} },
+        timeoutSecs: 30,
+      }),
+    );
+    expect(failure.message).toContain("root-process injection environment");
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(failure.message).toContain(`ID sandbox-alpha, runtime ${OLD_ID}`);
+    expect(fake.deps.dockerStop).toHaveBeenCalledWith(
+      OLD_ID,
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+    expect(fake.deps.dockerStart).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(fake.deps.runOpenshell!)
+        .mock.calls.some(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
+        ),
+    ).toBe(false);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it.each([
+    { count: 0, output: "" },
+    { count: 2, output: `${OLD_ID}\n${"9".repeat(64)}\n` },
+  ])("fails closed when post-Ready discovery finds $count workloads", async ({ count, output }) => {
+    const heldArgv = [
+      "env",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "hermes",
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+    ];
+    const fake = fakeDocker(heldArgv);
+    vi.mocked(fake.deps.dockerRun!).mockImplementationOnce(() => ok(output));
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const created = await adapter.createHeldWorkload({
+      plan: { ...plan(), intendedWorkloadArgv: ["env", "nemoclaw-start"] },
+      request,
+      bootstrapIdentity: IDENTITY,
+      launch: async () => ({
+        sandbox: {
+          sandboxName: "alpha",
+          sandboxId: "sandbox-alpha",
+          driverId: "docker",
+        },
+        ready: true,
+        readyAt: "2026-07-29T11:59:00.000Z",
+      }),
+    });
+
+    await expect(
+      adapter.discoverHeldWorkload({
+        sandbox: created.sandbox,
+        bootstrapIdentity: IDENTITY,
+        expectedImage: created.plan.image,
+        metadata: created.plan.metadata,
+      }),
+    ).rejects.toThrow(`found ${String(count)}`);
+  });
+
+  it("retains an identity-bound incomplete create when deletion cannot require its durable ID", async () => {
+    const fake = fakeDocker(heldArgv());
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toMatchObject({
+      name: "ManagedBootstrapOwnerCleanupRequiredError",
+      sandboxId: "sandbox-alpha",
+      runtimeId: OLD_ID,
+    });
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+    expect(fake.state.events).toEqual([]);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("surfaces exact identity when retained owner quiescence fails", async () => {
+    const fake = fakeDocker(heldArgv(), { failOwnerRetentionStop: true });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(`sandbox sandbox-alpha exact runtime ${OLD_ID}`);
+    expect(fake.state.originalRunning).toBe(true);
+  });
+
+  it.each([
+    "throw",
+    "nonzero",
+  ] as const)("surfaces expected identity when retained owner enumeration returns %s", async (failOwnerRetentionList) => {
+    const fake = fakeDocker(heldArgv(), { failOwnerRetentionList });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(`sandbox sandbox-alpha expected runtime ${OLD_ID}`);
+    expect(fake.state.originalRunning).toBe(true);
+  });
+
+  it.each([
+    ["no", []],
+    ["multiple", [OLD_ID, NEW_ID]],
+    ["an invalid", ["short"]],
+    ["a mismatched", ["f".repeat(64)]],
+  ] as const)("surfaces expected identity when owner enumeration resolves %s runtime", async (_, ids) => {
+    const fake = fakeDocker(heldArgv(), { ownerRetentionRuntimeIds: ids });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(`sandbox sandbox-alpha expected runtime ${OLD_ID}`);
+    expect(fake.state.originalRunning).toBe(true);
+  });
+
+  it("fails closed when the retained runtime does not prove its stopped state", async () => {
+    const fake = fakeDocker(heldArgv(), { omitRetainedState: true });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(
+      `retained sandbox sandbox-alpha exact runtime ${OLD_ID} did not prove an explicitly quiescent state`,
+    );
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("surfaces exact retained identity when OpenShell owner lookup fails", async () => {
+    const fake = fakeDocker(heldArgv());
+    const adapter = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      runCaptureOpenshell: vi.fn(() => {
+        throw new Error("injected owner lookup failure");
+      }),
+    });
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(
+      `ID sandbox-alpha, runtime ${OLD_ID}) because OpenShell deletion is name-only`,
+    );
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("quiesces an unsafe exact runtime before refusing a recreated same-name owner", async () => {
+    const intendedArgv = ["env", "nemoclaw-start"] as const;
+    const heldArgv = [
+      "env",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "hermes",
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+    ];
+    const fake = fakeDocker(heldArgv, {
+      extraEnvironment: ["BASH_ENV=/sandbox/attacker"],
+    });
+    const runOpenshell = vi.fn();
+    const runCaptureOpenshell = createOpenShellSandboxLookup(
+      "Name: alpha\nID: sandbox-alpha-replacement\n",
+      "alpha Ready\n",
+    );
+    const adapter = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      runCaptureOpenshell,
+      runOpenshell,
+    });
+    const handle = await adapter.createHeldWorkload({
+      plan: { ...plan(), intendedWorkloadArgv: intendedArgv },
+      request,
+      bootstrapIdentity: IDENTITY,
+      launch: async () => ({
+        sandbox: {
+          sandboxName: "alpha",
+          sandboxId: "sandbox-alpha",
+          driverId: "docker",
+        },
+        ready: true,
+        readyAt: "2026-07-29T11:59:00.000Z",
+      }),
+    });
+
+    let failure: unknown;
+    try {
+      await adapter.finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot: null,
+        replacement: null,
+        completion: null,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(failure).toMatchObject({
+      sandboxId: "sandbox-alpha",
+      runtimeId: OLD_ID,
+    });
+    expect((failure as Error).message).toContain(
+      "same mutable name now resolves to durable sandbox ID sandbox-alpha-replacement",
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(fake.deps.dockerStop).toHaveBeenCalledWith(
+      OLD_ID,
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("retains the held workload after a partial replacement catch restores the original", async () => {
+    const fake = fakeDocker(heldArgv(), { failReplacementStart: true });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const failure = await captureSequenceFailure(runDefaultSequence(adapter));
+
+    expect(failure.message).toContain("could not start the Docker replacement");
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+    expect(fake.state.events).toEqual([]);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("rolls back shared state before retaining a post-snapshot failed workload", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionBootstrapIdentity: "9".repeat(64),
+      completionTransactionPending: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const failure = await captureSequenceFailure(runDefaultSequence(adapter));
+
+    expect(failure.message).toContain("completion identities do not match");
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(
+      vi
+        .mocked(fake.deps.runOpenshell!)
+        .mock.calls.some(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
+        ),
+    ).toBe(false);
+    expect(fake.state.events).toEqual(["shared-state-rollback"]);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("restores and quiesces the original after a proven non-durable shared-state commit failure", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      sharedCommitWithoutDurableState: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    let failure: unknown;
+    try {
+      await adapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const commitFailure = failure as Error & { managedBootstrapRollbackError?: unknown };
+    expect(commitFailure.message).toContain("logical commit validation failed");
+    expect(commitFailure.message).toContain("injected non-durable shared-state commit failure");
+    expect(commitFailure.message).toContain(`ID sandbox-alpha, runtime ${OLD_ID}`);
+    expect(commitFailure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(fake.state.sharedStateStatus).toBe("none");
+    expect(fake.state.events).toEqual(["shared-state-commit", "shared-state-rollback"]);
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalName).toBe("openshell-alpha");
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("retries retained rollback without probing the already-removed replacement", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+
+    expect(fake.state.events.filter((event) => event === "shared-state-rollback")).toHaveLength(1);
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalName).toBe("openshell-alpha");
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("does not issue name-only deletion when a same-name sandbox is recreated after lookup", async () => {
+    const fake = fakeDocker(heldArgv());
+    const runOpenshell = vi.fn();
+    const runCaptureOpenshell = createOpenShellSandboxLookup(
+      "Name: alpha\nID: sandbox-alpha\n",
+      "alpha Ready\n",
+      () => fake.state.replaceSandboxIdentity("sandbox-future"),
+    );
+    const adapter = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      runCaptureOpenshell,
+      runOpenshell,
+    });
+    const handle = await adapter.createHeldWorkload({
+      plan: plan(),
+      request,
+      bootstrapIdentity: IDENTITY,
+      launch: async () => ({
+        sandbox: {
+          sandboxName: "alpha",
+          sandboxId: "sandbox-alpha",
+          driverId: "docker",
+        },
+        ready: true,
+        readyAt: "2026-07-29T11:59:00.000Z",
+      }),
+    });
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot: null,
+        replacement: null,
+        completion: null,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(fake.state.sandboxId).toBe("sandbox-future");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("fails closed with the original stopped when a pending replacement disappears", async () => {
+    const heldArgv = [
+      "env",
+      "A=1",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      "hermes",
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+    ];
+    const fake = fakeDocker(heldArgv, {
+      completionTransactionPending: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runManagedBootstrapSequence(adapter, {
+      create: {
+        plan: plan(),
+        request,
+        bootstrapIdentity: IDENTITY,
+        launch: async () => ({
+          sandbox: {
+            sandboxName: "alpha",
+            sandboxId: "sandbox-alpha",
+            driverId: "docker",
+          },
+          ready: true,
+          readyAt: "2026-07-29T11:59:00.000Z",
+        }),
+      },
+      request,
+      replacementOptions: { values: {} },
+      timeoutSecs: 30,
+    });
+    fake.state.dropReplacement();
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapCommitStateIndeterminateError);
+    expect(fake.state.originalRunning).toBe(false);
+    expect(fake.state.originalName).not.toBe("openshell-alpha");
+  });
+
+  it("survives an adapter restart after durable commit, forbids rollback, and retries exact backup cleanup", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      failBackupRemovalAttempts: 1,
+      sharedStateStatus: "pending",
+    });
+    const firstAdapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(firstAdapter);
+
+    let firstFailure: unknown;
+    try {
+      await firstAdapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      });
+    } catch (error) {
+      firstFailure = error;
+    }
+    expect(firstFailure).toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+    expect(fake.state.sharedStateStatus).toBe("committed");
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+    await expect(
+      firstAdapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+
+    // A new adapter has no process-local transaction map or durable-commit set.
+    const freshAdapter = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(
+      freshAdapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+    await expect(
+      freshAdapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "committed",
+      bootstrapIdentity: IDENTITY,
+    });
+
+    expect(fake.state.sharedStateStatus).toBe("none");
+    expect(fake.state.containerIds).toEqual([NEW_ID]);
+    expect(
+      vi.mocked(fake.deps.dockerRm!).mock.calls.filter(([runtimeId]) => runtimeId === OLD_ID),
+    ).toHaveLength(2);
+    expect(fake.state.events).toEqual(
+      expect.arrayContaining([
+        "shared-state-commit",
+        "rollback-backup-remove",
+        "shared-state-commit-clear",
+      ]),
+    );
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+    await expect(
+      freshAdapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+
+    // A second restart after both irreversible cleanup steps accepts `none`
+    // only together with exact proof that the old runtime ID is absent.
+    const afterCleanupRestart = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(
+      afterCleanupRestart.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+    await expect(
+      afterCleanupRestart.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).resolves.toMatchObject({ outcome: "committed" });
+    expect(
+      vi.mocked(fake.deps.dockerRm!).mock.calls.filter(([runtimeId]) => runtimeId === OLD_ID),
+    ).toHaveLength(2);
+  });
+
+  it("refuses rollback before mutation when exact backup presence is indeterminate", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      failOriginalAbsenceProbeAttempts: 1,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapCommitStateIndeterminateError);
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("rollback-backup-remove");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+  });
+
+  it("refuses rollback before mutation when the exact backup launch spec changed", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+    fake.state.mutateOriginalEnvironment("UNEXPECTED=drift");
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toThrow("exact original backup launch spec changed");
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("rollback-backup-remove");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+  });
+
+  it("forbids rollback when image commit succeeds but its immutable status probe is unavailable", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      failCommittedProbeAttempts: 1,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapCommitStateIndeterminateError);
+    expect(fake.state.sharedStateStatus).toBe("committed");
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+    expect(fake.state.events).toContain("shared-state-commit");
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+    expect(
+      vi.mocked(fake.deps.dockerRm!).mock.calls.some(([runtimeId]) => runtimeId === OLD_ID),
+    ).toBe(false);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+  });
+
+  it("retries image-owned receipt retirement after exact backup removal without resurrecting rollback", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      failCommitReceiptClearAttempts: 1,
+      sharedStateStatus: "pending",
+    });
+    const firstAdapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(firstAdapter);
+
+    await expect(
+      firstAdapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+    expect(fake.state.containerIds).toEqual([NEW_ID]);
+    expect(fake.state.sharedStateStatus).toBe("committed");
+    await expect(
+      firstAdapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+
+    const freshAdapter = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(
+      freshAdapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).resolves.toMatchObject({ outcome: "committed" });
+    expect(fake.state.containerIds).toEqual([NEW_ID]);
+    expect(fake.state.sharedStateStatus).toBe("none");
+    expect(
+      vi.mocked(fake.deps.dockerRm!).mock.calls.filter(([runtimeId]) => runtimeId === OLD_ID),
+    ).toHaveLength(2);
+    expect(fake.state.events.filter((event) => event === "shared-state-commit-clear")).toHaveLength(
+      2,
+    );
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+  });
+
+  it("does not equate a missing durable receipt with commit while the exact backup still exists", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      sharedStateStatus: "none",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).rejects.toThrow(
+      "lost its shared-state commit receipt before exact rollback-backup removal was proven",
+    );
+    expect(
+      vi.mocked(fake.deps.dockerRm!).mock.calls.some(([runtimeId]) => runtimeId === OLD_ID),
+    ).toBe(false);
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+  });
+
+  it.each([
+    "daemon-container",
+    "error-container",
+    "error-object",
+  ] as const)("accepts Docker's exact %s missing-container evidence after a lost rm acknowledgement", async (missingContainerMessage) => {
+    const fake = fakeDocker(heldArgv(), {
+      missingContainerMessage,
+      sharedStateStatus: "none",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+    fake.state.dropOriginal();
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      }),
+    ).resolves.toMatchObject({ outcome: "committed" });
+    expect(fake.state.containerIds).toEqual([NEW_ID]);
+  });
+});

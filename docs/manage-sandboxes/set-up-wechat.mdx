@@ -23,7 +23,9 @@ NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink
 NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and substitutes the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder inside the sandbox.
 The token does not land in the image or on disk inside the running container.
 
-NemoClaw bakes the non-secret `WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, and `WECHAT_USER_ID` metadata into the image so the bridge can pre-seed per-account context tokens without another QR handshake.
+For stock onboarding, NemoClaw records the non-secret `WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, and `WECHAT_USER_ID` metadata in the managed startup profile and materializes it when the sandbox starts.
+An explicit custom Dockerfile must apply equivalent metadata during its local build.
+The bridge can then pre-seed per-account context tokens without another QR handshake.
 
 ## Configure Access
 

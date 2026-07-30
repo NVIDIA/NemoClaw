@@ -16,6 +16,7 @@ import type {
   SandboxMessagingState,
 } from "../state/registry";
 import * as registry from "../state/registry";
+import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
@@ -43,6 +44,7 @@ export interface CreatedSandboxRegistryEntryInput {
   agent: AgentDefinition | null | undefined;
   agentVersionKnown: boolean;
   imageTag: string | null;
+  workload?: SandboxEntry["workload"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
@@ -61,6 +63,7 @@ export interface CreatedSandboxRegistryEntryInput {
    */
   preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
+  hermesInferenceProvider?: string | null;
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
@@ -166,6 +169,13 @@ export function buildCreatedSandboxRegistryEntry(
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
+  const expectedHermesInferenceProvider = `${input.sandboxName}-hermes-inference`;
+  if (
+    input.hermesInferenceProvider &&
+    input.hermesInferenceProvider !== expectedHermesInferenceProvider
+  ) {
+    throw new Error("Hermes inference provider does not match the sandbox identity.");
+  }
 
   return {
     name: input.sandboxName,
@@ -173,6 +183,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
+    workload: cloneSandboxWorkloadReceipt(input.workload),
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
@@ -198,6 +209,9 @@ export function buildCreatedSandboxRegistryEntry(
     mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
+    ...(input.hermesInferenceProvider
+      ? { hermesInferenceProvider: input.hermesInferenceProvider }
+      : {}),
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,

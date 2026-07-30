@@ -25,6 +25,8 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
+    - /run/nemoclaw                 # Mirrors the managed-startup handoff grant
+                                    # in the baseline create policy.
   read_write:
     - /tmp
     - /dev/null

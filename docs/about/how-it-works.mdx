@@ -122,6 +122,8 @@ OpenShell-backed lifecycle
 
 Reproducible setup
 : Running setup again recreates the sandbox from the same blueprint and policy definitions.
+  Managed rebuilds resolve the current CLI release to an exact image digest.
+  Managed clones retain the source image digest and rebind target-specific configuration through the versioned startup-profile contract.
 
 ## CLI, Plugin, and Blueprint
 
@@ -148,6 +150,15 @@ NemoClaw separates host orchestration from sandbox image contents.
 - The _blueprint_ is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.
   The runner resolves and verifies the blueprint before applying it through OpenShell.
 
+On supported `amd64` and `arm64` Docker hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
+NemoClaw accepts the release catalog only when one publication cohort contains OpenClaw, Hermes, and Deep Agents images.
+It resolves the selected image to an exact digest and builds a secret-free startup profile for the current sandbox configuration.
+The image startup applicator materializes that configuration when the sandbox starts.
+Stock onboarding requires the complete immutable managed-image cohort and stops before sandbox creation or replacement if it cannot be resolved.
+Gateway startup and provider preparation can already have completed by that point.
+An explicit user-supplied `--from <Dockerfile>` remains a separate opt-in path.
+Explicit custom Dockerfile and custom-image workflows continue to build locally.
+
 This separation keeps agent-specific sandbox assets focused and lets host orchestration and blueprint contents evolve on separate release cadences.
 
 ## Sandbox Creation
@@ -156,16 +167,22 @@ When you run `$$nemoclaw onboard`, NemoClaw creates an OpenShell sandbox that ru
 The host CLI and blueprint runner orchestrate this process through the OpenShell CLI:
 
 1. NemoClaw resolves the blueprint, checks version compatibility, and verifies the digest.
-2. The onboarding flow determines which OpenShell resources to create or update, such as the gateway, inference providers, sandbox, and network policy.
-3. The runner calls OpenShell CLI commands to create the sandbox and configure each resource.
+2. NemoClaw selects an exact managed release image or the permitted Dockerfile build path.
+3. The onboarding flow determines which OpenShell resources to create or update, such as the gateway, inference providers, sandbox, and network policy.
+4. The runner starts the exact image with its startup profile or builds the selected Dockerfile locally.
+5. The runner calls OpenShell CLI commands to configure the remaining resources.
 
 After the sandbox starts, the agent runs inside it with all network, filesystem, and inference controls in place.
+Managed rebuilds resolve the complete image cohort for the current CLI release before they replace a sandbox.
+Managed clones retain the source image digest and prepare a target-specific startup profile under the same contract.
 
 ## Inference Routing
 
 Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts every inference call and routes it to the configured provider.
-During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell route, and bakes the matching model reference into the sandbox image.
+During onboarding, NemoClaw validates the selected provider and model and configures the OpenShell route.
+For a managed release image, the startup profile supplies the matching model reference to the agent configuration.
+An explicitly selected custom Dockerfile must supply equivalent configuration through its local-build path.
 The sandbox then talks to `inference.local`, while the host owns the actual provider credential and upstream endpoint.
 When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from the configured NVIDIA model pool for each request.
 <AgentOnly variant="hermes">

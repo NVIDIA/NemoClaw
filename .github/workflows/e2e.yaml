@@ -1596,6 +1596,220 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  managed-image-gpu-e2e:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',managed-image-gpu-e2e,') || contains(format(',{0},', inputs.targets), ',managed-image-gpu-e2e,') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 330
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "managed-image-gpu-e2e"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-gpu-e2e
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ runner.temp }}/protected-managed-images.json
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME: ${{ runner.temp }}/nemoclaw-managed-image-home
+      NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-protected-gpu-${{ github.run_id }}-${{ github.run_attempt }}
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Clean stale protected managed-image GPU resources
+        shell: bash
+        run: bash scripts/checks/cleanup-protected-managed-image-e2e.sh
+
+      - name: Set up protected managed-image Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."localhost:5000"]
+              http = true
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Start isolated protected managed-image registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker container inspect "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >/dev/null 2>&1; then
+            echo "::error::Protected registry name already exists" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Refusing to reuse an existing localhost:5000 registry" >&2
+            exit 1
+          fi
+          docker run --detach \
+            --name "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" \
+            --publish 127.0.0.1:5000:5000 \
+            docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >&2
+          exit 1
+
+      - name: Build exact all-agent protected managed images
+        shell: bash
+        env:
+          PROTECTED_REVISION: ${{ inputs.checkout_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          scripts/checks/build-protected-managed-images.sh \
+            --output "${NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT}" \
+            --revision "${PROTECTED_REVISION}" \
+            --cohort "protected-${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: Run exact all-agent GPU and host-local inference qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          real_home="$HOME"
+          install -d -m 700 "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME"
+          export HOME="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME"
+          export PATH="$real_home/.local/bin:$real_home/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-gpu-e2e.test.ts
+
+      - name: Clean protected managed-image GPU resources
+        if: always()
+        shell: bash
+        run: bash scripts/checks/cleanup-protected-managed-image-e2e.sh
+
+      - name: Upload protected managed-image GPU artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  managed-image-bootstrap-rollback:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',managed-image-bootstrap-rollback,') || contains(format(',{0},', inputs.targets), ',managed-image-bootstrap-rollback,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "managed-image-bootstrap-rollback"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-bootstrap-rollback
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ runner.temp }}/protected-managed-images.json
+      NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-protected-rollback-${{ github.run_id }}-${{ github.run_attempt }}
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Set up protected managed-image Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."localhost:5000"]
+              http = true
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Start isolated protected managed-image registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker container inspect "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >/dev/null 2>&1; then
+            echo "::error::Protected registry name already exists" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Refusing to reuse an existing localhost:5000 registry" >&2
+            exit 1
+          fi
+          docker run --detach \
+            --name "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" \
+            --publish 127.0.0.1:5000:5000 \
+            docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >&2
+          exit 1
+
+      - name: Build exact all-agent protected managed images
+        shell: bash
+        env:
+          PROTECTED_REVISION: ${{ inputs.checkout_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          scripts/checks/build-protected-managed-images.sh \
+            --output "${NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT}" \
+            --revision "${PROTECTED_REVISION}" \
+            --cohort "protected-${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: Run exact all-agent managed-bootstrap rollback qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-bootstrap-rollback.test.ts
+
+      - name: Remove isolated protected managed-image registry
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm -f "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >/dev/null 2>&1 || true
+          if docker container inspect "${NEMOCLAW_PROTECTED_REGISTRY_NAME}" >/dev/null 2>&1; then
+            echo "::error::Protected managed-image registry container remained after cleanup" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Protected managed-image registry listener remained after cleanup" >&2
+            exit 1
+          fi
+
+      - name: Upload protected managed-image rollback artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   agent-turn-latency:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',agent-turn-latency,') || contains(format(',{0},', inputs.targets), ',agent-turn-latency,') }}
@@ -5855,6 +6069,8 @@ jobs:
         inference-routing,
         cloud-inference,
         gpu-e2e,
+        managed-image-gpu-e2e,
+        managed-image-bootstrap-rollback,
         agent-turn-latency,
         kimi-inference-compat,
         hermes-inference-switch,

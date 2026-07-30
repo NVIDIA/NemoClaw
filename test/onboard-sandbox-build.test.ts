@@ -144,11 +144,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
   console.log(JSON.stringify({ sandboxName, commands, registerCalls, updateCalls, defaultCalls }));
 })().catch((error) => {
   console.error(error);
@@ -258,7 +258,14 @@ const agentOnboard = require(${agentOnboardPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
-require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"))}).isLinuxDockerDriverGatewayEnabled = () => false;
+const dockerDriverPlatform = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"))});
+dockerDriverPlatform.isLinuxDockerDriverGatewayEnabled = () => false;
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "workload", "runtime.ts"))}).resolveSandboxWorkloadRuntimeCapabilities = () => ({
+  driverName: "kubernetes",
+  managedImageSelectionPolicy: "prefer-managed",
+  legacyDockerfileBuilds: true,
+  managedImages: null,
+});
 const commands = [];
 const logs = [];
 const warnings = [];
@@ -350,7 +357,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -424,7 +431,7 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it("keeps resolving the OpenClaw sandbox base image on the default Dockerfile path", async () => {
+  it("keeps resolving the OpenClaw sandbox base image for an explicit Dockerfile", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-base-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -548,11 +555,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
   console.log(JSON.stringify({ commands, logs, baseResolutionCalls }));
 })().catch((error) => {
   console.error(error);
@@ -582,7 +589,7 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.baseResolutionCalls[0]?.imageName, "ghcr.io/nvidia/nemoclaw/sandbox-base");
     assert.ok(
       payload.logs.some((line) => line.includes("Pinning base image to sha256:bbbbbbbbbbbb")),
-      "default OpenClaw path should still log base-image pinning",
+      "explicit OpenClaw Dockerfile path should still log base-image pinning",
     );
   });
 
@@ -649,12 +656,12 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.com";
-  await createSandbox(null, "gpt-5.4");
+  await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
   console.log(JSON.stringify(commands));
 })().catch((error) => {
   console.error(error);
@@ -752,11 +759,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);

@@ -24,6 +24,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { resolveOpenshell } from "../src/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const ENTRYPOINT_ENV_WRAPPER = join(
+  import.meta.dirname,
+  "../scripts/lib/entrypoint-env-wrapper.sh",
+);
 const RC_CLEAN_SCRIPT = join(import.meta.dirname, "../scripts/lib/clean_runtime_shell_env_shim.py");
 
 function rcShimWrapperHeader(): string {
@@ -45,14 +49,21 @@ function extractRuntimeShellEnvSnippet() {
 
 function extractOpenClawBootstrapEnvSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
-  const start = src.indexOf("# Normalize the sandbox-create bootstrap wrapper");
+  const normalizer = readFileSync(ENTRYPOINT_ENV_WRAPPER, "utf-8");
+  const start = src.indexOf('NEMOCLAW_CMD=("$@")');
   const end = src.indexOf("# Marker file the Docker HEALTHCHECK reads", start);
   const extractionFailure =
     "Failed to extract OpenClaw bootstrap environment normalization from " +
     "scripts/nemoclaw-start.sh";
   expect(start, extractionFailure).not.toBe(-1);
   expect(end, extractionFailure).toBeGreaterThan(start);
-  return src.slice(start, end).trimEnd();
+  return [
+    normalizer,
+    'nemoclaw_normalize_entrypoint_env_wrapper "$@"',
+    'if [ "$NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC" -eq 0 ]; then set --; ' +
+      'else set -- "${NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV[@]}"; fi',
+    src.slice(start, end).trimEnd(),
+  ].join("\n");
 }
 
 function extractRuntimeShellEnvShimSnippet() {

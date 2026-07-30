@@ -105,6 +105,81 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
+  it("preserves a managed clone's isolated Hermes upstream marker", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "clone",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+        hermesInferenceProvider: "clone-hermes-inference",
+      },
+      defaultSandbox: "clone",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "clone" }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "clone",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["--provider", "hermes-provider"]),
+      expect.any(Object),
+    );
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "clone-hermes-inference",
+      model: "openai/gpt-5.4-mini",
+    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "clone",
+      expect.objectContaining({ provider: "hermes-provider" }),
+    );
+  });
+
+  it("rejects a mismatched isolated Hermes identity before route mutation", async () => {
+    const deps = createDeps({
+      config: { model: {} },
+      entry: {
+        name: "clone",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+        hermesInferenceProvider: "other-hermes-inference",
+      },
+      defaultSandbox: "clone",
+      target: HERMES_TARGET,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "clone",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("Recorded Hermes inference identity for 'clone' is invalid");
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("re-seeds the isolated Hermes dashboard config after an in-place switch (#6893)", async () => {
     const config: ConfigObject = {
       model: {

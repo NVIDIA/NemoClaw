@@ -20,7 +20,7 @@ Use the error location to select the correct setting.
 |---|---|---|
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint validation during onboarding | `180` seconds |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation; OpenShell command re-registration after policy application or after OpenClaw or Hermes managed recovery recreates the sandbox | `180` seconds |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Managed-image pull and startup, or an explicit custom Dockerfile build and gateway upload; in-sandbox boot after creation; OpenShell command re-registration after policy application or after OpenClaw or Hermes managed recovery recreates the sandbox | `180` seconds |
 
 The readiness timeout does not govern inference requests or provider validation.
 
@@ -36,7 +36,8 @@ export NEMOCLAW_AGENT_TIMEOUT=1800
 $$nemoclaw onboard
 ```
 
-This setting is baked into the sandbox image.
+Stock onboarding records this setting in the managed startup profile and materializes it in `openclaw.json` when the sandbox starts.
+An explicit custom Dockerfile applies it during its local build.
 Recreate an existing sandbox to apply a new value.
 
 </AgentOnly>
@@ -62,7 +63,7 @@ This variable does not extend the later sandbox-readiness wait.
 
 ## Increase the Sandbox Readiness Timeout
 
-Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` when onboarding creates the sandbox but image build, upload, or boot exceeds 180 seconds.
+Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` when managed-image pull or startup, an explicit custom Dockerfile build and upload, or in-sandbox boot exceeds 180 seconds.
 This can occur during a first run with cold caches or on a remote VM over a slow link.
 Onboarding also uses this budget to confirm that the sandbox can execute commands again after applying policy presets.
 
@@ -91,9 +92,10 @@ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
-## Apply Build-Time Changes
+## Apply Startup Configuration Changes
 
-Recreate an existing sandbox when you change a timeout that NemoClaw bakes into its image.
+Recreate an existing sandbox when you change a timeout that NemoClaw applies through its managed startup profile.
+Custom Dockerfile sandboxes retain their local-build behavior.
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox

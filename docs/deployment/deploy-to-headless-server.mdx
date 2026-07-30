@@ -37,7 +37,7 @@ The primary tested server path is Linux with Docker.
 | RAM | 8 GB | 16 GB |
 | Free disk | 20 GB | 40 GB |
 
-The image build, Docker daemon, and OpenShell gateway can exhaust a smaller host during onboarding.
+Managed-image pull and startup, an explicit custom Dockerfile build when selected, the Docker daemon, and the OpenShell gateway can exhaust a smaller host during onboarding.
 If the host has less than 8 GB of RAM, configure at least 8 GB of swap before onboarding.
 
 Run these checks from the remote host:

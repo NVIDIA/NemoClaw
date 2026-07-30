@@ -24,7 +24,8 @@
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
 //   NEMOCLAW_WEB_SEARCH_PROVIDER,
 //   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
-//   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE.
+//   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
+//   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
 import {
   chmodSync,
@@ -122,6 +123,28 @@ const WEB_SEARCH_PROVIDERS = {
 type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
+// Runtime-facing IDs declared by the built-in messaging manifests. Package
+// selection remains manifest-derived in messaging-build-applier.mts; these IDs
+// describe only the neutral config written after those packages are installed.
+const MANAGED_IMAGE_OPENCLAW_CHANNEL_IDS = [
+  "telegram",
+  "discord",
+  "openclaw-weixin",
+  "slack",
+  "whatsapp",
+  "msteams",
+] as const;
+const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
+  "telegram",
+  "discord",
+  "openclaw-weixin",
+  "slack",
+  "whatsapp",
+  "msteams",
+  "diagnostics-otel",
+  "brave",
+  "tavily",
+] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
@@ -1386,6 +1409,15 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
   };
+  const managedImageCapabilityUnion = readBooleanBuildFlag(
+    env,
+    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+  );
+  if (managedImageCapabilityUnion) {
+    for (const pluginId of MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS) {
+      pluginEntries[pluginId] = { enabled: false };
+    }
+  }
   const openclawOtel = buildOpenClawOtelConfig(env);
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
@@ -1431,13 +1463,20 @@ export function buildConfig(env: Env = process.env): JsonObject {
     agentDefaults.compaction = managedInferenceCompaction;
   }
 
+  const channels: JsonObject = { defaults: {} };
+  if (managedImageCapabilityUnion) {
+    for (const channelId of MANAGED_IMAGE_OPENCLAW_CHANNEL_IDS) {
+      channels[channelId] = { enabled: false };
+    }
+  }
+
   const config: JsonObject = {
     agents: {
       defaults: agentDefaults,
       list: buildAgentsList(extraAgents, extraAgentsPayload.main),
     },
     models: { mode: "merge", providers },
-    channels: { defaults: {} },
+    channels,
     tools: openclawTools,
     update: { checkOnStart: false },
     ...(securityAuditSuppressions.length > 0
@@ -1488,6 +1527,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const tools = config.tools;
   tools.web ??= {};
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
+  if (managedImageCapabilityUnion) {
+    tools.web.search = { enabled: false };
+  }
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
     // OpenClaw 2026.5.x keeps provider-owned credentials under

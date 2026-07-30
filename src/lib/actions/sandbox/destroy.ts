@@ -16,11 +16,10 @@ import {
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { parseHttpsPinRouteId } from "../../inference/https-pin-runtime";
-import { revokeHttpsPinRuntimeAdapterRoute } from "../../inference/https-pin-runtime-adapter";
 import {
+  cleanupHermesSandboxProviders,
   emitProviderDetachResidualHint,
+  HERMES_SANDBOX_PROVIDER_SUFFIXES,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
@@ -33,7 +32,11 @@ import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
+import {
+  resolveDestroyedSandboxHttpsPinRouteId,
+  revokeDestroyedSandboxHttpsPinRoute,
+  shouldCleanupGatewayAfterConfirmedFinalDestroy,
+} from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -56,7 +59,14 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
 
-type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
+type RunOpenshell = (
+  args: string[],
+  opts?: Record<string, unknown>,
+) => {
+  status: number | null;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+};
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -64,6 +74,13 @@ export type CleanupSandboxServicesDeps = {
   unloadOllamaModels?: () => void;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
+  removeHermesToolGatewayProviderState?: (sandboxName: string) => boolean;
+  warn?: (message: string) => void;
+};
+
+export type CleanupSandboxServicesResult = {
+  identityBoundCleanupCompleted: boolean;
+  identityBoundCleanupRequired: boolean;
 };
 
 type ShieldsTimerNeutralizeResult = {
@@ -104,9 +121,12 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
 
 export function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    removeIdentityBoundState = true,
+  }: { stopHostServices?: boolean; removeIdentityBoundState?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
-): void {
+): CleanupSandboxServicesResult {
   // Source boundary: this exported helper can be called independently of CLI
   // dispatch, including from forced local recovery. Validate once before every
   // host and provider cleanup side effect, then derive the PID path from that
@@ -140,6 +160,18 @@ export function cleanupSandboxServices(
       return runtime.runOpenshell(args, opts);
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
+  const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
+  const sandbox = getSandbox(validatedSandboxName);
+  const removeHermesToolGatewayProviderState =
+    deps.removeHermesToolGatewayProviderState ??
+    (() => {
+      const broker = require("../../hermes-tool-gateway-broker") as {
+        removeHermesToolGatewayProviderStateForSandboxEntry: (
+          entry: NonNullable<typeof sandbox>,
+        ) => boolean;
+      };
+      return sandbox ? broker.removeHermesToolGatewayProviderStateForSandboxEntry(sandbox) : false;
+    });
 
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
@@ -149,8 +181,7 @@ export function cleanupSandboxServices(
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
-    const sb = getSandbox(validatedSandboxName);
-    if (sb?.provider?.includes("ollama")) {
+    if (sandbox?.provider?.includes("ollama")) {
       unloadOllamaModels();
     }
   }
@@ -170,12 +201,39 @@ export function cleanupSandboxServices(
   // onboard rebuild path's pre-delete detach via
   // `src/lib/onboard/sandbox-provider-cleanup.ts` so the two paths can't
   // drift on which providers count as per-sandbox state.
+  const hermesSuffixes = new Set<string>(HERMES_SANDBOX_PROVIDER_SUFFIXES);
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
-    runOpenshell(["provider", "delete", `${validatedSandboxName}-${suffix}`], {
+    if (hermesSuffixes.has(suffix)) continue;
+    const providerName = `${validatedSandboxName}-${suffix}`;
+    runOpenshell(["provider", "delete", providerName], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
   }
+  const hasHermesBrokerIdentity =
+    Boolean(sandbox?.hermesInferenceProvider) ||
+    (Array.isArray(sandbox?.hermesToolGateways) && sandbox.hermesToolGateways.length > 0);
+  if (!removeIdentityBoundState) {
+    return {
+      identityBoundCleanupCompleted: !hasHermesBrokerIdentity,
+      identityBoundCleanupRequired: hasHermesBrokerIdentity,
+    };
+  }
+  const hermesCleanup = cleanupHermesSandboxProviders(
+    validatedSandboxName,
+    hasHermesBrokerIdentity,
+    {
+      runOpenshell,
+      removeHermesToolGatewayProviderState,
+      warn,
+    },
+  );
+  return {
+    identityBoundCleanupCompleted:
+      !hasHermesBrokerIdentity ||
+      (hermesCleanup.providerCleanupSucceeded && hermesCleanup.brokerStateRemoved),
+    identityBoundCleanupRequired: hasHermesBrokerIdentity,
+  };
 }
 
 /**
@@ -216,7 +274,8 @@ export function removeShieldsState(
 }
 
 /**
- * Remove the host-side Docker image that was built for a sandbox during onboard.
+ * Remove the host-side Docker image that was built only for this sandbox.
+ * Shared immutable managed-image cohorts remain in the runtime cache.
  * Must be called before registry.removeSandbox() since the imageTag is stored there.
  */
 export function removeSandboxImage(sandboxName: string, deps: RemoveSandboxImageDeps = {}): void {
@@ -224,7 +283,7 @@ export function removeSandboxImage(sandboxName: string, deps: RemoveSandboxImage
   const removeImage =
     deps.dockerRmi ?? (require("../../adapters/docker") as { dockerRmi: DockerRmi }).dockerRmi;
   const sb = getSandbox(sandboxName);
-  if (!sb?.imageTag) return;
+  if (!sb?.imageTag || sb.workload?.shared === true) return;
   const result = removeImage(sb.imageTag, { ignoreError: true });
   if (result.status === 0) {
     console.log(`  Removed Docker image ${sb.imageTag}`);
@@ -260,42 +319,6 @@ function defaultDestroyWarn(message: string): void {
   console.warn(`  ${YW}⚠${R} ${message}`);
 }
 
-export async function revokeDestroyedSandboxHttpsPinRoute(
-  gatewayName: string,
-  routeId: string,
-  deps: {
-    listSandboxes?: typeof registry.listSandboxes;
-    revokeRoute?: typeof revokeHttpsPinRuntimeAdapterRoute;
-    warn?: (message: string) => void;
-    withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
-  } = {},
-): Promise<void> {
-  const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
-  const revokeRoute = deps.revokeRoute ?? revokeHttpsPinRuntimeAdapterRoute;
-  const warn = deps.warn ?? defaultDestroyWarn;
-  const withRouteMutationLock = deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock;
-  try {
-    await withRouteMutationLock(gatewayName, async () => {
-      // The peer scan and DELETE are one critical section with inference-set's
-      // route PUT + registry commit. Otherwise a peer can register the route,
-      // pause before its registry write, and have destroy revoke its live route.
-      const stillReferenced = listSandboxes().sandboxes.some(
-        (entry) => parseHttpsPinRouteId(entry.endpointUrl) === routeId,
-      );
-      if (stillReferenced) return;
-      const revoked = await revokeRoute(routeId);
-      if (!revoked) throw new Error("the adapter did not confirm route revocation");
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    warn(
-      `Sandbox deletion succeeded, but its superseded HTTPS Pin Runtime route '${routeId}' ` +
-        `could not be revoked: ${detail}. Uninstall NemoClaw after all sandboxes are removed ` +
-        `to stop the adapter and purge its in-memory credentials.`,
-    );
-  }
-}
-
 export function cleanupShieldsDestroyArtifacts(
   sandboxName: string,
   deps: CleanupShieldsDestroyArtifactsDeps = {},
@@ -318,7 +341,7 @@ export function cleanupShieldsDestroyArtifacts(
 export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
-export { wipeSandboxState };
+export { revokeDestroyedSandboxHttpsPinRoute, wipeSandboxState };
 
 export async function destroySandbox(
   sandboxName: string,
@@ -336,7 +359,7 @@ async function destroySandboxUnlocked(
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
-  const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
+  const priorHttpsPinRouteId = resolveDestroyedSandboxHttpsPinRouteId(sandbox?.endpointUrl);
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
     force: normalized.force === true,
@@ -365,6 +388,13 @@ async function destroySandboxUnlocked(
         );
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
+        );
+      } else if (destructiveResult.hermesOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains Hermes provider ownership required for exact credential cleanup.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard Hermes provider ownership.`,
         );
       } else {
         console.error(
@@ -420,15 +450,30 @@ async function destroySandboxUnlocked(
     sandboxStillRegistered: !!registry.getSandbox(sandboxName),
   });
 
-  cleanupSandboxServices(sandboxName, {
+  const serviceCleanup = cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
+    removeIdentityBoundState: deleteSucceededOrAlreadyGone,
   });
+  if (
+    serviceCleanup.identityBoundCleanupRequired &&
+    !serviceCleanup.identityBoundCleanupCompleted
+  ) {
+    console.error(
+      `  Sandbox '${sandboxName}' is gone, but its identity-bound Hermes provider cleanup is incomplete.`,
+    );
+    console.error(
+      "  Registry and broker ownership state were preserved. Re-run destroy to finish cleanup.",
+    );
+    process.exit(1);
+  }
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
   const removed = removeSandboxRegistryEntry(sandboxName);
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
-    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
+    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId, {
+      warn: defaultDestroyWarn,
+    });
   }
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

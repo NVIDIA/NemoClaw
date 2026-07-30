@@ -122,8 +122,19 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
+function mockEmptyOpenClawImagePluginDiscovery(repoRoot) {
+  const pluginRestore = require(
+    path.join(repoRoot, "src", "lib", "state", "openclaw-plugin-restore.ts"),
+  );
+  pluginRestore.discoverFreshOpenClawImagePluginInstalls = () => ({
+    ok: true,
+    pluginInstalls: [],
+  });
+}
+
 module.exports = {
   isOpenClawSecurityInventoryProbe,
+  mockEmptyOpenClawImagePluginDiscovery,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
   normalizeCommand,
