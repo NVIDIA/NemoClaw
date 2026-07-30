@@ -40,7 +40,10 @@ Treat snapshot directories as private local data.
 
 <AgentOnly variant="hermes">
 Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
-NemoClaw uses SQLite's online backup API and restores those databases through SQLite instead of copying live raw database files.
+The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
+NemoClaw captures cron job definitions from `.hermes/cron` as directory state.
+NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
+Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use raw directory capture and can be inconsistent if a write overlaps the snapshot.
 
 Kanban backup is limited to the backward-compatible default board in `kanban.db`.
 Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included; back up that state separately.
