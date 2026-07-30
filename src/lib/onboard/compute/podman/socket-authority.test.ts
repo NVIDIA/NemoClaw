@@ -1,0 +1,116 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import { assertPodmanSocketAuthority, capturePodmanSocketAuthority } from "./socket-authority";
+
+const SOCKET_PATH = "/run/user/1000/podman/podman.sock";
+
+function stat(
+  overrides: Partial<{
+    dev: bigint;
+    directory: boolean;
+    ino: bigint;
+    mode: bigint;
+    socket: boolean;
+    uid: bigint;
+  }> = {},
+) {
+  return {
+    dev: overrides.dev ?? 8n,
+    ino: overrides.ino ?? 9001n,
+    mode: overrides.mode ?? 0o700n,
+    uid: overrides.uid ?? 1000n,
+    isDirectory: () => overrides.directory ?? false,
+    isSocket: () => overrides.socket ?? true,
+  };
+}
+
+function secureLstat(
+  socketOverrides: Parameters<typeof stat>[0] = {},
+  directoryOverrides: Readonly<Record<string, Parameters<typeof stat>[0]>> = {},
+) {
+  const directoryInodes = new Map<string, bigint>();
+  return (filePath: string) => {
+    if (filePath === SOCKET_PATH) return stat(socketOverrides);
+    if (!directoryInodes.has(filePath)) {
+      directoryInodes.set(filePath, BigInt(7000 + directoryInodes.size));
+    }
+    return stat({
+      directory: true,
+      ino: directoryInodes.get(filePath),
+      uid: filePath.startsWith("/run/user/1000") ? 1000n : 0n,
+      ...(directoryOverrides[filePath] ?? {}),
+    });
+  };
+}
+
+describe("Podman socket authority", () => {
+  it("captures exact current-user socket and secure path identity", () => {
+    const authority = capturePodmanSocketAuthority(SOCKET_PATH, {
+      lstat: vi.fn(secureLstat()),
+      uid: 1000,
+    });
+
+    expect(authority).toMatchObject({
+      device: "8",
+      inode: "9001",
+      ownerUid: "1000",
+      socketPath: SOCKET_PATH,
+    });
+    expect(authority.directoryChain.map(({ ownerUid, path }) => ({ ownerUid, path }))).toEqual([
+      { ownerUid: "1000", path: "/run/user/1000/podman" },
+      { ownerUid: "1000", path: "/run/user/1000" },
+      { ownerUid: "0", path: "/run/user" },
+      { ownerUid: "0", path: "/run" },
+      { ownerUid: "0", path: "/" },
+    ]);
+  });
+
+  it("rejects a foreign-owner socket before runtime probing", () => {
+    expect(() =>
+      capturePodmanSocketAuthority(SOCKET_PATH, {
+        lstat: secureLstat({ uid: 2000n }),
+        uid: 1000,
+      }),
+    ).toThrow("owned by uid 2000");
+  });
+
+  it("rejects an otherwise current-user socket beneath a foreign-writable directory", () => {
+    expect(() =>
+      capturePodmanSocketAuthority(SOCKET_PATH, {
+        lstat: secureLstat({}, { "/run/user/1000/podman": { mode: 0o770n } }),
+        uid: 1000,
+      }),
+    ).toThrow("writable by another user or group");
+  });
+
+  it("rejects path replacement after qualification", () => {
+    const expected = capturePodmanSocketAuthority(SOCKET_PATH, {
+      lstat: secureLstat(),
+      uid: 1000,
+    });
+
+    expect(() =>
+      assertPodmanSocketAuthority(expected, {
+        lstat: secureLstat({ ino: 9002n }),
+        uid: 1000,
+      }),
+    ).toThrow("changed after it was qualified");
+  });
+
+  it("rejects directory replacement after qualification", () => {
+    const expected = capturePodmanSocketAuthority(SOCKET_PATH, {
+      lstat: secureLstat(),
+      uid: 1000,
+    });
+
+    expect(() =>
+      assertPodmanSocketAuthority(expected, {
+        lstat: secureLstat({}, { "/run/user/1000/podman": { ino: 8000n } }),
+        uid: 1000,
+      }),
+    ).toThrow("changed after it was qualified");
+  });
+});

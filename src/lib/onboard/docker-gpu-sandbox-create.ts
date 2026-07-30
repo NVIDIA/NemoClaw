@@ -36,6 +36,7 @@ import {
 import { finalizeDockerManagedStartupSharedState } from "./managed-startup/docker-shared-state";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
+import type { SandboxCreateRuntimePatch } from "./sandbox-create-runtime/types";
 
 export type {
   DockerGpuRoutePlan,
@@ -67,7 +68,7 @@ type PatchFailureExitFn = (
   deps: Parameters<typeof printDockerGpuPatchFailureAndExit>[2],
 ) => void;
 
-type DockerGpuSandboxCreatePatchOptions = {
+export type DockerGpuSandboxCreatePatchOptions = {
   route: SelectedDockerGpuRoute;
   persistStartupCommand?: boolean;
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
@@ -103,36 +104,15 @@ type DockerGpuSandboxCreatePatchOptions = {
   };
 };
 
-export type DockerGpuSandboxCreatePatch = {
-  maybeApplyDuringCreate: () => void;
-  createFailureMessage: () => string | null;
-  exitOnPatchError: () => void;
-  rollbackManagedStartupAfterCreateFailure: () => void;
-  ensureApplied: () => void;
-  waitForSupervisorReconnectIfNeeded: () => void;
-  /**
-   * Irreversibly commit managed shared state and remove any recreation backup.
-   * Call only after the authoritative Ready gate and required GPU proof pass.
-   */
-  commitAfterReady: () => void;
-  selectedMode: () => DockerGpuPatchMode | null;
-  /**
-   * Print the Docker GPU readiness-failure block (including the Error-phase
-   * classification + patched container State diagnostics) when the
-   * post-create readiness wait times out. No-op when the patch is disabled.
-   */
-  printReadinessFailureIfEnabled: () => void;
-  /**
-   * Run the GPU proof while distinguishing "sandbox in terminal phase" from
-   * "proof failed inside a live sandbox". Calls `process.exit(1)` for the
-   * former and rethrows after printing diagnostics for the latter so the
-   * onboarding flow surfaces the right failure cause (#4316). Returns the
-   * CUDA-usability proof result on success so callers can persist it (#4231).
-   */
-  verifyGpuOrExit: (
+export interface DockerGpuSandboxCreateHooks {
+  selectedMode(): DockerGpuPatchMode | null;
+  printReadinessFailureIfEnabled(): void;
+  verifyGpuOrExit(
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
-  ) => SandboxGpuProofResult;
-};
+  ): SandboxGpuProofResult;
+}
+
+export type DockerGpuSandboxCreatePatch = SandboxCreateRuntimePatch & DockerGpuSandboxCreateHooks;
 
 export function createDockerGpuSandboxCreatePatch(
   options: DockerGpuSandboxCreatePatchOptions,
@@ -268,6 +248,8 @@ export function createDockerGpuSandboxCreatePatch(
   };
 
   return {
+    revalidateBeforeMutation() {},
+
     maybeApplyDuringCreate() {
       if (!patchEnabled || result || managedStartupApplied || patchError) return;
       const containerIds = findContainerIds(options.sandboxName);

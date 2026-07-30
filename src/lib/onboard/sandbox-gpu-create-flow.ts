@@ -10,9 +10,10 @@ import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types"
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import type { DockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import type { DockerGpuSandboxCreateHooks } from "./docker-gpu-sandbox-create";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
+import type { SandboxCreateRuntimePatch } from "./sandbox-create-runtime/types";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
@@ -26,6 +27,7 @@ type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
 
 export interface SandboxGpuCreateFlowInput {
+  computeDriver: string;
   sandboxName: string;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
@@ -44,6 +46,7 @@ export interface SandboxGpuCreateFlowInput {
   persistStartupCommand?: boolean;
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
+  runtimeAuthority?: unknown;
 }
 
 export interface SandboxGpuCreateFlowDeps {
@@ -56,7 +59,8 @@ export interface SandboxGpuCreateFlowDeps {
 
 export interface SandboxGpuCreateFlowResult {
   createResult: StreamSandboxCreateResult;
-  dockerGpuCreatePatch: DockerGpuSandboxCreatePatch;
+  gpuHooks: DockerGpuSandboxCreateHooks;
+  runtimePatch: SandboxCreateRuntimePatch;
   route: SelectedDockerGpuRoute;
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */

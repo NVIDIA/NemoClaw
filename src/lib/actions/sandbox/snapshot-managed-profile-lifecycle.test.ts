@@ -348,6 +348,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             {},
           ),
         ),
+        revalidateBeforeMutation: vi.fn(),
         waitForSupervisorReconnectIfNeeded: vi.fn(),
         commitAfterReady: vi.fn(),
         selectedMode: vi.fn(() => null),

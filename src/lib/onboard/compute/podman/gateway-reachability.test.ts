@@ -7,9 +7,27 @@ import {
   verifyPodmanSandboxGatewayReachableOrExit,
 } from "./gateway-reachability";
 
+const SOCKET_AUTHORITY = {
+  directoryChain: [
+    {
+      device: "8",
+      inode: "7000",
+      mode: "448",
+      ownerUid: "1000",
+      path: "/run/user/1000/podman",
+    },
+  ],
+  device: "8",
+  inode: "9001",
+  ownerUid: "1000",
+  socketPath: "/run/user/1000/podman/podman.sock",
+} as const;
+
 const REQUIRED_OPTIONS = {
+  assertSocketAuthority: () => {},
   port: 8080,
   redact: (value: string) => value,
+  socketAuthority: SOCKET_AUTHORITY,
 } as const;
 
 describe("Podman driver gateway reachability", () => {
@@ -54,6 +72,40 @@ describe("Podman driver gateway reachability", () => {
     expect(spawnSyncImpl.mock.calls[0]?.[1]).toContainEqual(
       expect.stringMatching(/^docker\.io\/library\/busybox@sha256:/),
     );
+  });
+
+  it("does not run or clean up a probe after socket authority replacement", async () => {
+    const spawnSyncImpl = vi.fn();
+    await expect(
+      verifyPodmanSandboxGatewayReachableOrExit(false, {
+        ...REQUIRED_OPTIONS,
+        assertSocketAuthority: () => {
+          throw new Error("Podman socket authority changed after it was qualified.");
+        },
+        probeName: "probe-name",
+        spawnSyncImpl,
+      }),
+    ).rejects.toThrow("socket authority changed");
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not clean up through a replaced socket after a failed probe", async () => {
+    const assertSocketAuthority = vi
+      .fn()
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error("Podman socket authority changed after it was qualified.");
+      });
+    const spawnSyncImpl = vi.fn().mockReturnValueOnce({ status: 1, stderr: "nc: timed out" });
+    await expect(
+      verifyPodmanSandboxGatewayReachableOrExit(false, {
+        ...REQUIRED_OPTIONS,
+        assertSocketAuthority,
+        probeName: "probe-name",
+        spawnSyncImpl,
+      }),
+    ).rejects.toThrow("socket authority changed");
+    expect(spawnSyncImpl).toHaveBeenCalledOnce();
   });
 
   it("removes only its named probe and fails a proved TCP-path error", async () => {

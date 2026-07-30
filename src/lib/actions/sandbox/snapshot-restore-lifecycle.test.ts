@@ -191,6 +191,93 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
+  it("fails Podman runtime authority before forced destination or provider mutation", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const built = managedOpenClawProfile();
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "openclaw",
+          dashboardPort: 18_789,
+          dashboardRemoteBindPrepared: false,
+          imageTag: reference,
+          openshellDriver: "podman",
+          provider: "openai-api",
+          model: "gpt-5.4",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-responses",
+          compatibleEndpointReasoning: null,
+          toolDisclosure: "progressive",
+          webSearchEnabled: false,
+          webSearchProvider: null,
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "openclaw",
+          dashboardPort: 19_789,
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "podman",
+          provider: "openai-api",
+          model: "gpt-5.4",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\nbeta 127.0.0.1 19789 24189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.resolveManagedSnapshotRuntimeAuthorityMock.mockImplementation(() => {
+      throw new Error("socket authority changed");
+    });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("socket authority changed");
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(
+      f.runOpenshellMock.mock.calls.some(
+        ([args]) =>
+          args[0] === "provider" ||
+          (args[0] === "sandbox" && args[1] === "provider") ||
+          (args[0] === "sandbox" && args[1] === "delete"),
+      ),
+    ).toBe(false);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
   it("bounds a managed clone launch before deleting a forced destination", async () => {
     const built = buildManagedStartupProfile({
       agent: "langchain-deepagents-code",

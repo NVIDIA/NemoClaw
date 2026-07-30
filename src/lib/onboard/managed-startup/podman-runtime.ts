@@ -4,6 +4,10 @@
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import {
+  assertPodmanSocketAuthority,
+  type PodmanSocketAuthority,
+} from "../compute/podman/socket-authority";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_IMAGE_ID_RE = /^(?:sha256:)?([a-f0-9]{64})$/u;
@@ -23,11 +27,14 @@ export type RunManagedStartupPodmanCommand = (
 ) => PodmanManagedStartupCommandResult;
 
 export interface PodmanManagedStartupRuntimeDeps {
+  readonly assertSocketAuthority?: (expected: PodmanSocketAuthority) => void;
   readonly run?: RunManagedStartupPodmanCommand;
+  readonly socketAuthority?: PodmanSocketAuthority;
 }
 
 export interface PodmanManagedStartupRuntimeIdentity {
   readonly fingerprint: string;
+  readonly socketAuthority: PodmanSocketAuthority;
   readonly socketPath: string;
 }
 
@@ -117,6 +124,14 @@ export function runManagedStartupPodman(
     ((command: "podman", commandArgs: readonly string[], spawnOptions: SpawnSyncOptions) =>
       spawnSync(command, [...commandArgs], spawnOptions));
   try {
+    if (deps.socketAuthority) {
+      if (deps.socketAuthority.socketPath !== socketPath) {
+        throw new Error(
+          "Managed-startup Podman socket authority does not match the requested socket.",
+        );
+      }
+      (deps.assertSocketAuthority ?? assertPodmanSocketAuthority)(deps.socketAuthority);
+    }
     return run("podman", ["--url", podmanManagedStartupSocketUrl(socketPath), ...args], {
       encoding: "utf8",
       input: options.input,
@@ -144,7 +159,7 @@ function requireZero(
 
 function parseRootlessRuntimeInfo(
   text: string,
-): Omit<PodmanManagedStartupRuntimeIdentity, "socketPath"> {
+): Pick<PodmanManagedStartupRuntimeIdentity, "fingerprint"> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -171,15 +186,21 @@ function parseRootlessRuntimeInfo(
 
 export function pinPodmanManagedStartupRuntime(
   socketPath: string,
+  socketAuthority: PodmanSocketAuthority,
   deps: PodmanManagedStartupRuntimeDeps,
 ): PodmanManagedStartupRuntimeIdentity {
   const normalizedSocketPath = absolutePath(socketPath, "Managed-startup Podman socket path");
+  if (socketAuthority.socketPath !== normalizedSocketPath) {
+    throw new Error("Managed-startup Podman socket authority does not match the pinned socket.");
+  }
+  const qualifiedDeps = { ...deps, socketAuthority };
   const result = requireZero(
-    runManagedStartupPodman(normalizedSocketPath, ["info", "--format", "json"], {}, deps),
+    runManagedStartupPodman(normalizedSocketPath, ["info", "--format", "json"], {}, qualifiedDeps),
     "Managed-startup rootless Podman API identity proof",
   );
   return Object.freeze({
     ...parseRootlessRuntimeInfo(output(result.stdout)),
+    socketAuthority,
     socketPath: normalizedSocketPath,
   });
 }
@@ -188,7 +209,11 @@ export function assertPodmanManagedStartupRuntime(
   expected: PodmanManagedStartupRuntimeIdentity,
   deps: PodmanManagedStartupRuntimeDeps,
 ): void {
-  const actual = pinPodmanManagedStartupRuntime(expected.socketPath, deps);
+  const actual = pinPodmanManagedStartupRuntime(
+    expected.socketPath,
+    expected.socketAuthority,
+    deps,
+  );
   if (actual.fingerprint !== expected.fingerprint) {
     throw new Error("Managed-startup Podman runtime identity changed after it was pinned.");
   }
@@ -237,8 +262,14 @@ export function inspectExactPodmanManagedStartupContainer(
   deps: PodmanManagedStartupRuntimeDeps,
 ): PodmanManagedStartupContainerIdentity {
   const containerId = fullContainerId(expected.containerId, "Managed-startup Podman container ID");
+  const qualifiedDeps = { ...deps, socketAuthority: runtime.socketAuthority };
   const result = requireZero(
-    runManagedStartupPodman(runtime.socketPath, ["container", "inspect", containerId], {}, deps),
+    runManagedStartupPodman(
+      runtime.socketPath,
+      ["container", "inspect", containerId],
+      {},
+      qualifiedDeps,
+    ),
     "Managed-startup Podman container inspect",
   );
   const actual = parseContainerInspect(output(result.stdout));

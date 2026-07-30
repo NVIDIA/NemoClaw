@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ManagedGatewayRuntimeBinding } from "../docker-driver-gateway-config";
 import {
   type ManagedGatewayRecoveryAdapterRegistry,
+  qualifyManagedGatewayRecoveryRuntime,
   resolveManagedGatewayRecoveryRuntime,
+  supportsManagedGatewayRecoveryRuntime,
 } from "./recovery-runtime";
 
 function binding(
@@ -81,21 +83,85 @@ describe("managed gateway recovery runtime", () => {
   });
 
   it("accepts an independently registered future runtime adapter", () => {
+    const qualifyEnvironment = vi.fn(() => ({ endpoint: "qualified" }));
     const adapters: ManagedGatewayRecoveryAdapterRegistry = {
+      mxc: {
+        driverName: "mxc",
+        qualifyEnvironment,
+        resolveEnvironment: () => ({ OPENSHELL_MXC_ENDPOINT: "unix:///run/mxc.sock" }),
+      },
+    };
+    const runtime = resolveManagedGatewayRecoveryRuntime(
+      { driverName: "mxc", environment: {}, stateDir: "/state/mxc" },
+      adapters,
+      () => binding("mxc", {}),
+    );
+    expect(runtime).toEqual({
+      driverName: "mxc",
+      environment: { OPENSHELL_MXC_ENDPOINT: "unix:///run/mxc.sock" },
+    });
+    expect(supportsManagedGatewayRecoveryRuntime("mxc", adapters)).toBe(true);
+    expect(qualifyManagedGatewayRecoveryRuntime(runtime, adapters)).toEqual({
+      endpoint: "qualified",
+    });
+    expect(qualifyEnvironment).toHaveBeenCalledExactlyOnceWith(runtime.environment);
+  });
+
+  it("rejects a recovery registry entry whose identity does not match its key", () => {
+    const adapters: ManagedGatewayRecoveryAdapterRegistry = {
+      mxc: {
+        driverName: "podman",
+        qualifyEnvironment: () => null,
+        resolveEnvironment: () => ({}),
+      },
+    };
+
+    expect(() => supportsManagedGatewayRecoveryRuntime("mxc", adapters)).toThrow(
+      "mismatched identity",
+    );
+  });
+
+  it("fails closed when an injected runtime cannot qualify its recovered environment", () => {
+    const qualificationFailure = new Error("MXC endpoint is not reachable");
+    const qualifyEnvironment = vi.fn(() => {
+      throw qualificationFailure;
+    });
+    const adapters: ManagedGatewayRecoveryAdapterRegistry = {
+      mxc: {
+        driverName: "mxc",
+        qualifyEnvironment,
+        resolveEnvironment: () => ({ OPENSHELL_MXC_ENDPOINT: "unix:///run/mxc.sock" }),
+      },
+    };
+    const runtime = resolveManagedGatewayRecoveryRuntime(
+      { driverName: "mxc", environment: {}, stateDir: "/state/mxc" },
+      adapters,
+      () => binding("mxc", {}),
+    );
+
+    expect(() => qualifyManagedGatewayRecoveryRuntime(runtime, adapters)).toThrow(
+      qualificationFailure,
+    );
+    expect(qualifyEnvironment).toHaveBeenCalledExactlyOnceWith(runtime.environment);
+  });
+
+  it("rejects a malformed runtime adapter without an environment qualifier", () => {
+    const adapters = {
       mxc: {
         driverName: "mxc",
         resolveEnvironment: () => ({ OPENSHELL_MXC_ENDPOINT: "unix:///run/mxc.sock" }),
       },
-    };
-    expect(
-      resolveManagedGatewayRecoveryRuntime(
-        { driverName: "mxc", environment: {}, stateDir: "/state/mxc" },
-        adapters,
-        () => binding("mxc", {}),
-      ),
-    ).toEqual({
+    } as unknown as ManagedGatewayRecoveryAdapterRegistry;
+    const runtime = {
       driverName: "mxc",
       environment: { OPENSHELL_MXC_ENDPOINT: "unix:///run/mxc.sock" },
-    });
+    };
+
+    expect(() => supportsManagedGatewayRecoveryRuntime("mxc", adapters)).toThrow(
+      "does not implement environment qualification",
+    );
+    expect(() => qualifyManagedGatewayRecoveryRuntime(runtime, adapters)).toThrow(
+      "does not implement environment qualification",
+    );
   });
 });

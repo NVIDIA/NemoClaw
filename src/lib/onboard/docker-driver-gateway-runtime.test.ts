@@ -114,6 +114,27 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
+  it("uses an explicit resolved state directory when HOME points elsewhere", () => {
+    const snapshotHome = "/snapshot-home";
+    const resolvedStateDir = path.join(snapshotHome, ".local", "state", "nemoclaw", "gateway");
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue("/os-account-home");
+    withEnv(
+      {
+        HOME: snapshotHome,
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: undefined,
+      },
+      () => {
+        const { helpers } = makeHelpers({ stateDir: resolvedStateDir });
+
+        expect(helpers.getDockerDriverGatewayStateDir()).toBe(resolvedStateDir);
+        expect(helpers.getDockerDriverGatewayPidFile()).toBe(
+          path.join(resolvedStateDir, "openshell-gateway.pid"),
+        );
+      },
+    );
+    expect(homedir).not.toHaveBeenCalled();
+  });
+
   it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
     const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
     expect(

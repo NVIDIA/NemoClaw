@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../../agent/defs";
+import { MANAGED_STARTUP_AGENTS } from "../managed-startup/profile";
 
 const DCODE_AGENT = "langchain-deepagents-code";
-const MANAGED_IMAGE_AGENTS = new Set(["openclaw", "hermes", DCODE_AGENT]);
+const MANAGED_IMAGE_AGENTS = new Set<string>(MANAGED_STARTUP_AGENTS);
 
 export interface SandboxRuntimeUlimit {
   readonly name: string;
@@ -17,9 +18,20 @@ export interface ManagedStartupRuntimeRequirements {
   readonly requiredUlimits: readonly SandboxRuntimeUlimit[] | null;
 }
 
+export interface ManagedStartupRuntimeRequirementsContext {
+  /**
+   * Whether NemoClaw owns the selected gateway lifecycle and may therefore
+   * recreate its runtime container to persist command/resource requirements.
+   */
+  readonly managedGatewayOwned: boolean;
+}
+
 export interface ManagedStartupRuntimeRequirementsAdapter {
   readonly driverName: string;
-  resolve(agentName: string | null): ManagedStartupRuntimeRequirements;
+  resolve(
+    agentName: string | null,
+    context: ManagedStartupRuntimeRequirementsContext,
+  ): ManagedStartupRuntimeRequirements;
 }
 
 export type ManagedStartupRuntimeRequirementsAdapterRegistry = Readonly<
@@ -42,7 +54,11 @@ const NONE: ManagedStartupRuntimeRequirements = {
 export const CURRENT_MANAGED_STARTUP_RUNTIME_REQUIREMENTS_ADAPTERS = {
   docker: {
     driverName: "docker",
-    resolve(agentName) {
+    resolve(agentName, context) {
+      // Preserve the established ownership boundary: OpenShell-managed Docker
+      // gateways are not ours to recreate solely for startup persistence or
+      // DCode resource limits.
+      if (!context.managedGatewayOwned) return NONE;
       return {
         // The existing Docker driver preserves OpenClaw's command, while
         // Hermes and DCode require the established resource-only recreation.
@@ -73,8 +89,9 @@ export const CURRENT_MANAGED_STARTUP_RUNTIME_REQUIREMENTS_ADAPTERS = {
 } as const satisfies ManagedStartupRuntimeRequirementsAdapterRegistry;
 
 export function resolveManagedStartupRuntimeRequirements(
-  agent: AgentDefinition | null | undefined,
+  agent: Pick<AgentDefinition, "name"> | null | undefined,
   driverName: string,
+  context: ManagedStartupRuntimeRequirementsContext,
   adapters: ManagedStartupRuntimeRequirementsAdapterRegistry = CURRENT_MANAGED_STARTUP_RUNTIME_REQUIREMENTS_ADAPTERS,
 ): ManagedStartupRuntimeRequirements {
   const adapter = Object.hasOwn(adapters, driverName) ? adapters[driverName] : undefined;
@@ -83,7 +100,7 @@ export function resolveManagedStartupRuntimeRequirements(
       `OpenShell compute driver '${driverName}' has no managed-startup requirements adapter.`,
     );
   }
-  const resolved = adapter.resolve(agent?.name ?? null);
+  const resolved = adapter.resolve(agent?.name ?? null, context);
   return {
     persistStartupCommand: resolved.persistStartupCommand,
     requiredUlimits: resolved.requiredUlimits

@@ -10,6 +10,7 @@ import {
 } from "./podman-root-apply";
 import type {
   PodmanManagedStartupCommandResult,
+  PodmanManagedStartupRuntimeDeps,
   RunManagedStartupPodmanCommand,
 } from "./podman-runtime";
 import { encodeManagedStartupProfile } from "./profile";
@@ -21,13 +22,74 @@ import { MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY } from "./shared-state-tra
 
 const SOCKET_PATH = "/run/user/1000/podman/podman.sock";
 const SOCKET_URL = `unix://${SOCKET_PATH}`;
+const SOCKET_AUTHORITY = {
+  directoryChain: [
+    {
+      device: "8",
+      inode: "7000",
+      mode: "448",
+      ownerUid: "1000",
+      path: "/run/user/1000/podman",
+    },
+  ],
+  device: "8",
+  inode: "9001",
+  ownerUid: "1000",
+  socketPath: SOCKET_PATH,
+} as const;
 const CONTAINER_ID = "b".repeat(64);
 const IMAGE_ID = `sha256:${"c".repeat(64)}`;
+
+function testDeps(
+  run: RunManagedStartupPodmanCommand,
+  assertSocketAuthority: NonNullable<
+    PodmanManagedStartupRuntimeDeps["assertSocketAuthority"]
+  > = vi.fn(),
+) {
+  return { assertSocketAuthority, run };
+}
 
 function requestFor(agent: "openclaw" | "hermes" | "langchain-deepagents-code") {
   return createManagedStartupRootApplyRequest({
     agent,
     encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent)),
+  });
+
+  it("does not execute root mutation after socket authority changes", () => {
+    const baseline = successfulRunner();
+    applyPodmanManagedStartupRootRequest(
+      {
+        containerId: CONTAINER_ID,
+        request: requestFor("openclaw"),
+        socketAuthority: SOCKET_AUTHORITY,
+        socketPath: SOCKET_PATH,
+      },
+      testDeps(baseline),
+    );
+    const mutationIndex = vi
+      .mocked(baseline)
+      .mock.calls.findIndex((call) => call[1].includes("--apply-root-stdin"));
+    expect(mutationIndex).toBeGreaterThan(0);
+
+    const run = successfulRunner();
+    expect(() =>
+      applyPodmanManagedStartupRootRequest(
+        {
+          containerId: CONTAINER_ID,
+          request: requestFor("openclaw"),
+          socketAuthority: SOCKET_AUTHORITY,
+          socketPath: SOCKET_PATH,
+        },
+        testDeps(run, () => {
+          if (vi.mocked(run).mock.calls.length >= mutationIndex) {
+            throw new Error("socket authority changed");
+          }
+        }),
+      ),
+    ).toThrow("socket authority changed");
+    expect(vi.mocked(run).mock.calls.some((call) => call[1].includes("--apply-root-stdin"))).toBe(
+      false,
+    );
   });
 }
 
@@ -89,16 +151,21 @@ describe("Podman managed-startup root applicator", () => {
       {
         containerId: CONTAINER_ID,
         request,
+        socketAuthority: SOCKET_AUTHORITY,
         socketPath: SOCKET_PATH,
       },
-      { run },
+      testDeps(run),
     );
 
     expect(transaction).toMatchObject({
       agent,
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
-      runtime: { socketPath: SOCKET_PATH, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+      runtime: {
+        fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        socketAuthority: SOCKET_AUTHORITY,
+        socketPath: SOCKET_PATH,
+      },
     });
     expect(run).toHaveBeenCalledTimes(8);
     for (const call of vi.mocked(run).mock.calls) {
@@ -173,9 +240,10 @@ describe("Podman managed-startup root applicator", () => {
       {
         containerId: CONTAINER_ID,
         request: requestFor("openclaw"),
+        socketAuthority: SOCKET_AUTHORITY,
         socketPath: SOCKET_PATH,
       },
-      { run },
+      testDeps(run),
     );
 
     const applyCalls = vi
@@ -194,9 +262,10 @@ describe("Podman managed-startup root applicator", () => {
         {
           containerId: CONTAINER_ID,
           request: requestFor("openclaw"),
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
         },
-        { run },
+        testDeps(run),
       ),
     ).toBeNull();
   });
@@ -211,9 +280,10 @@ describe("Podman managed-startup root applicator", () => {
         {
           containerId: CONTAINER_ID,
           request: requestFor("hermes"),
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
         },
-        { run },
+        testDeps(run),
       );
     } catch (error) {
       failure = error;
@@ -260,9 +330,10 @@ describe("Podman managed-startup root applicator", () => {
         {
           containerId: CONTAINER_ID,
           request: requestFor("openclaw"),
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
         },
-        { run },
+        testDeps(run),
       );
     } catch (error) {
       failure = error;
@@ -290,9 +361,10 @@ describe("Podman managed-startup root applicator", () => {
         {
           containerId: CONTAINER_ID,
           request: requestFor("langchain-deepagents-code"),
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
         },
-        { run },
+        testDeps(run),
       );
     } catch (error) {
       failure = error;
@@ -379,9 +451,10 @@ describe("Podman managed-startup root applicator", () => {
         {
           containerId,
           request: requestFor("openclaw"),
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath,
         },
-        { run },
+        testDeps(run),
       ),
     ).toThrow(error);
     expect(vi.mocked(run).mock.calls.some((call) => call[1].includes("--apply-root-stdin"))).toBe(

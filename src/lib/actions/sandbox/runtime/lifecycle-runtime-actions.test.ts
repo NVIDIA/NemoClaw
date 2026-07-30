@@ -23,6 +23,21 @@ const CONTAINER_NAME = `openshell-sandbox-${SANDBOX_NAME}`;
 const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = "b".repeat(64);
 const SOCKET_PATH = "/run/user/1000/podman/podman.sock";
+const SOCKET_AUTHORITY = {
+  directoryChain: [
+    {
+      device: "8",
+      inode: "7000",
+      mode: "448",
+      ownerUid: "1000",
+      path: "/run/user/1000/podman",
+    },
+  ],
+  device: "8",
+  inode: "9001",
+  ownerUid: "1000",
+  socketPath: SOCKET_PATH,
+} as const;
 
 function podmanSandbox(agent: (typeof AGENTS)[number]): SandboxEntry {
   return {
@@ -93,6 +108,8 @@ function podmanLifecycleHarness(
     return { status: 125, stderr: `unexpected Podman operation: ${String(operation)}`, stdout: "" };
   });
   const getSandbox = vi.fn(() => podmanSandbox(agent));
+  const assertPodmanSocketAuthority = vi.fn();
+  const capturePodmanSocketAuthority = vi.fn(() => SOCKET_AUTHORITY);
   const resolvePodmanRuntimeSocket = vi.fn(() => SOCKET_PATH);
   const resolveSandboxManagedGatewayStateDirectory = vi.fn(() => "/state/podman");
   const stopSandboxChannels = vi.fn();
@@ -100,7 +117,9 @@ function podmanLifecycleHarness(
   const probeSandbox = vi.fn(async () => {});
   const log = vi.fn();
   return {
+    assertPodmanSocketAuthority,
     captureHostCommand,
+    capturePodmanSocketAuthority,
     getSandbox,
     log,
     probeSandbox,
@@ -115,7 +134,9 @@ describe("sandbox lifecycle runtime actions", () => {
   it.each(AGENTS)("stops and restarts the exact native Podman container for %s", async (agent) => {
     const h = podmanLifecycleHarness(agent);
     const sharedDeps = {
+      assertPodmanSocketAuthority: h.assertPodmanSocketAuthority,
       captureHostCommand: h.captureHostCommand,
+      capturePodmanSocketAuthority: h.capturePodmanSocketAuthority,
       environment: { NEMOCLAW_PODMAN_BIN: "podman" },
       getSandbox: h.getSandbox,
       log: h.log,
@@ -166,6 +187,7 @@ describe("sandbox lifecycle runtime actions", () => {
     ]);
     expect(JSON.stringify(calls)).not.toContain("docker");
     expect(h.resolvePodmanRuntimeSocket).toHaveBeenCalledTimes(2);
+    expect(h.assertPodmanSocketAuthority).toHaveBeenCalledTimes(calls.length * 2 + 2);
   });
 
   it("routes a future MXC driver only through its injected lifecycle adapter", async () => {
@@ -221,7 +243,9 @@ describe("sandbox lifecycle runtime actions", () => {
     });
     expect(
       stopSandbox(SANDBOX_NAME, {
+        assertPodmanSocketAuthority: ambiguous.assertPodmanSocketAuthority,
         captureHostCommand: ambiguous.captureHostCommand,
+        capturePodmanSocketAuthority: ambiguous.capturePodmanSocketAuthority,
         getSandbox: ambiguous.getSandbox,
         resolvePodmanRuntimeSocket: ambiguous.resolvePodmanRuntimeSocket,
         resolveSandboxManagedGatewayStateDirectory:
@@ -242,7 +266,9 @@ describe("sandbox lifecycle runtime actions", () => {
     });
     expect(
       stopSandbox(SANDBOX_NAME, {
+        assertPodmanSocketAuthority: unknownState.assertPodmanSocketAuthority,
         captureHostCommand: unknownState.captureHostCommand,
+        capturePodmanSocketAuthority: unknownState.capturePodmanSocketAuthority,
         getSandbox: unknownState.getSandbox,
         resolvePodmanRuntimeSocket: unknownState.resolvePodmanRuntimeSocket,
         resolveSandboxManagedGatewayStateDirectory:
@@ -256,6 +282,34 @@ describe("sandbox lifecycle runtime actions", () => {
     });
     expect(unknownState.stopSandboxChannels).not.toHaveBeenCalled();
     expect(unknownState.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+  });
+
+  it("revalidates after stop preparation and sends no mutation through a replaced socket", () => {
+    const h = podmanLifecycleHarness("openclaw");
+    let validations = 0;
+    h.assertPodmanSocketAuthority.mockImplementation(() => {
+      validations += 1;
+      if (validations === 6) {
+        throw new Error("Podman socket authority changed after it was qualified.");
+      }
+    });
+
+    expect(
+      stopSandbox(SANDBOX_NAME, {
+        assertPodmanSocketAuthority: h.assertPodmanSocketAuthority,
+        captureHostCommand: h.captureHostCommand,
+        capturePodmanSocketAuthority: h.capturePodmanSocketAuthority,
+        getSandbox: h.getSandbox,
+        resolvePodmanRuntimeSocket: h.resolvePodmanRuntimeSocket,
+        resolveSandboxManagedGatewayStateDirectory: h.resolveSandboxManagedGatewayStateDirectory,
+        stopSandboxChannels: h.stopSandboxChannels,
+        teardownSandboxDashboardForward: h.teardownSandboxDashboardForward,
+      }),
+    ).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("socket authority changed"),
+    });
+    expect(h.captureHostCommand.mock.calls.some(([, args]) => args.includes("stop"))).toBe(false);
   });
 
   it("fails closed for an unregistered named runtime", async () => {

@@ -43,6 +43,7 @@ export interface FatalRuntimePreflightContext {
   computePlan?: OpenShellComputePlan;
   env?: NodeJS.ProcessEnv;
   nativePodmanDeps?: NativePodmanPreflightDeps;
+  driverPreflightAdapters?: FatalRuntimePreflightDriverAdapterRegistry;
 }
 
 export interface FatalRuntimePreflightResult {
@@ -53,6 +54,51 @@ export interface FatalRuntimePreflightResult {
 }
 
 const exitProcessByDefault = (code: number): never => process.exit(code);
+const PODMAN_SANDBOX_GPU_UNSUPPORTED_MESSAGE =
+  "Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.";
+
+export interface FatalRuntimePreflightDriverAdapterInput {
+  readonly options: FatalRuntimePreflightOptions;
+  readonly nonInteractive: boolean;
+  readonly exitProcess: (code: number) => never;
+  readonly computePlan: OpenShellComputePlan;
+  readonly env: NodeJS.ProcessEnv;
+  readonly nativePodmanDeps?: NativePodmanPreflightDeps;
+}
+
+export interface FatalRuntimePreflightDriverReadinessInput {
+  readonly host: HostAssessment;
+  readonly computePlan: OpenShellComputePlan;
+  readonly exitProcess: (code: number) => never;
+  readonly env: NodeJS.ProcessEnv;
+  readonly nativePodmanDeps?: NativePodmanPreflightDeps;
+}
+
+/**
+ * Runtime-specific fatal checks are registered by driver identity. A new
+ * driver must supply both entry points so it cannot silently inherit Docker
+ * or Podman host probes.
+ */
+export interface FatalRuntimePreflightDriverAdapter {
+  readonly driverName: string;
+  readonly behavior: FatalRuntimePreflightDriverBehavior;
+  assertReady(
+    input: FatalRuntimePreflightDriverReadinessInput,
+  ): NativePodmanPreflightReceipt | null;
+  run(input: FatalRuntimePreflightDriverAdapterInput): FatalRuntimePreflightResult;
+}
+
+export interface FatalRuntimePreflightDriverBehavior {
+  readonly checkContainerRuntimeResources: boolean;
+  readonly checkDockerBridgeDns: boolean;
+  readonly defaultSandboxGpuFlag: "disable" | null;
+  readonly sandboxGpuUnsupportedMessage: string | null;
+  readonly skipDockerProbe: boolean;
+}
+
+export type FatalRuntimePreflightDriverAdapterRegistry = Readonly<
+  Record<string, FatalRuntimePreflightDriverAdapter>
+>;
 
 /** Reject runtimes that cannot support the OpenShell Docker-driver integration. */
 export function rejectUnsupportedContainerRuntime(
@@ -75,6 +121,139 @@ function failNativePodman(error: unknown, exitProcess: (code: number) => never):
   exitProcess(1);
 }
 
+function assertDockerFamilyRuntimeReady(input: FatalRuntimePreflightDriverReadinessInput): null {
+  rejectUnsupportedContainerRuntime(input.host, input.exitProcess, input.computePlan);
+  return null;
+}
+
+function assertNativePodmanRuntimeReady(
+  input: FatalRuntimePreflightDriverReadinessInput,
+): NativePodmanPreflightReceipt {
+  let receipt: NativePodmanPreflightReceipt;
+  try {
+    receipt = assessNativePodman(input.nativePodmanDeps);
+  } catch (error) {
+    return failNativePodman(error, input.exitProcess);
+  }
+  input.env.OPENSHELL_PODMAN_SOCKET = receipt.socketPath;
+  return receipt;
+}
+
+function runDockerFamilyFatalRuntimePreflight(
+  input: FatalRuntimePreflightDriverAdapterInput,
+): FatalRuntimePreflightResult {
+  const host = assessHost();
+  assertDockerFamilyRuntimeReady({ ...input, host });
+  if (!host.dockerReachable) {
+    printDockerNotReachableError();
+    printRemediationActions(planHostRemediation(host));
+    input.exitProcess(1);
+  }
+  console.log("  ✓ Docker is running");
+  warnIfHostProxyMissesLoopback();
+  const gpu = detectGpu();
+  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+    flag: resolveSandboxGpuFlagFromOptions(input.options),
+    device: input.options.sandboxGpuDevice ?? null,
+  });
+  const explicitlyOptedOutGpuPassthrough =
+    input.options.optedOutGpuPassthrough === true || input.options.noGpu === true;
+  assertCdiNvidiaGpuSpecPresent(
+    host,
+    explicitlyOptedOutGpuPassthrough,
+    sandboxGpuConfig.hostGpuPlatform,
+    input.exitProcess,
+  );
+  assertDockerBridgeAndContainerDnsHealthy(host, input.nonInteractive, input.exitProcess);
+  validateSandboxGpuPreflight(sandboxGpuConfig, {}, input.exitProcess);
+  if (host.runtime !== "unknown") console.log(`  ✓ Container runtime: ${host.runtime}`);
+  if (host.notes.includes("Running under WSL")) console.log("  ⓘ Running under WSL");
+  return { gpu, host, sandboxGpuConfig, nativePodman: null };
+}
+
+function runNativePodmanFatalRuntimePreflight(
+  input: FatalRuntimePreflightDriverAdapterInput,
+): FatalRuntimePreflightResult {
+  const assessedHost = assessHost({ skipDockerProbe: true });
+  const nativePodman = assertNativePodmanRuntimeReady({ ...input, host: assessedHost });
+  const host = { ...assessedHost, runtime: "podman" as const, isUnsupportedRuntime: false };
+  warnIfHostProxyMissesLoopback();
+  const gpu = detectGpu();
+  if (input.options.gpu === true || input.options.sandboxGpu === "enable") {
+    console.error(`  ${PODMAN_SANDBOX_GPU_UNSUPPORTED_MESSAGE}`);
+    input.exitProcess(1);
+  }
+  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+    flag: "disable",
+    device: null,
+  });
+  validateSandboxGpuPreflight(sandboxGpuConfig, {}, input.exitProcess);
+  console.log(
+    `  ✓ Rootless Podman ${nativePodman.version} is reachable at ${nativePodman.socketPath}`,
+  );
+  console.log(`  ✓ Container runtime: podman (${nativePodman.networkBackend})`);
+  return { gpu, host, sandboxGpuConfig, nativePodman };
+}
+
+const dockerFatalRuntimePreflightAdapter: FatalRuntimePreflightDriverAdapter = {
+  driverName: "docker",
+  behavior: {
+    checkContainerRuntimeResources: true,
+    checkDockerBridgeDns: true,
+    defaultSandboxGpuFlag: null,
+    sandboxGpuUnsupportedMessage: null,
+    skipDockerProbe: false,
+  },
+  assertReady: assertDockerFamilyRuntimeReady,
+  run: runDockerFamilyFatalRuntimePreflight,
+};
+
+const kubernetesFatalRuntimePreflightAdapter: FatalRuntimePreflightDriverAdapter = {
+  driverName: "kubernetes",
+  behavior: dockerFatalRuntimePreflightAdapter.behavior,
+  assertReady: assertDockerFamilyRuntimeReady,
+  run: runDockerFamilyFatalRuntimePreflight,
+};
+
+export const CURRENT_FATAL_RUNTIME_PREFLIGHT_DRIVER_ADAPTERS = {
+  docker: dockerFatalRuntimePreflightAdapter,
+  kubernetes: kubernetesFatalRuntimePreflightAdapter,
+  podman: {
+    driverName: "podman",
+    behavior: {
+      checkContainerRuntimeResources: false,
+      checkDockerBridgeDns: false,
+      defaultSandboxGpuFlag: "disable",
+      sandboxGpuUnsupportedMessage: PODMAN_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
+      skipDockerProbe: true,
+    },
+    assertReady: assertNativePodmanRuntimeReady,
+    run: runNativePodmanFatalRuntimePreflight,
+  },
+} as const satisfies FatalRuntimePreflightDriverAdapterRegistry;
+
+function resolveFatalRuntimePreflightDriverAdapter(
+  computePlan: OpenShellComputePlan,
+  adapters: FatalRuntimePreflightDriverAdapterRegistry,
+): FatalRuntimePreflightDriverAdapter {
+  const adapter = Object.hasOwn(adapters, computePlan.driverName)
+    ? adapters[computePlan.driverName]
+    : undefined;
+  if (!adapter || adapter.driverName !== computePlan.driverName) {
+    throw new Error(
+      `OpenShell compute driver '${computePlan.driverName}' has no registered fatal runtime preflight adapter.`,
+    );
+  }
+  return adapter;
+}
+
+export function resolveFatalRuntimePreflightDriverBehavior(
+  computePlan: OpenShellComputePlan,
+  adapters: FatalRuntimePreflightDriverAdapterRegistry = CURRENT_FATAL_RUNTIME_PREFLIGHT_DRIVER_ADAPTERS,
+): FatalRuntimePreflightDriverBehavior {
+  return resolveFatalRuntimePreflightDriverAdapter(computePlan, adapters).behavior;
+}
+
 export function assertSelectedContainerRuntimeReady(
   host: HostAssessment,
   computePlan: OpenShellComputePlan,
@@ -82,23 +261,22 @@ export function assertSelectedContainerRuntimeReady(
     exitProcess?: (code: number) => never;
     env?: NodeJS.ProcessEnv;
     nativePodmanDeps?: NativePodmanPreflightDeps;
+    driverPreflightAdapters?: FatalRuntimePreflightDriverAdapterRegistry;
   } = {},
 ): NativePodmanPreflightReceipt | null {
   const exitProcess = options.exitProcess ?? exitProcessByDefault;
-  if (computePlan.driverName !== "podman") {
-    rejectUnsupportedContainerRuntime(host, exitProcess, computePlan);
-    return null;
-  }
-
-  let receipt: NativePodmanPreflightReceipt;
-  try {
-    receipt = assessNativePodman(options.nativePodmanDeps);
-  } catch (error) {
-    return failNativePodman(error, exitProcess);
-  }
   const env = options.env ?? process.env;
-  env.OPENSHELL_PODMAN_SOCKET = receipt.socketPath;
-  return receipt;
+  const adapter = resolveFatalRuntimePreflightDriverAdapter(
+    computePlan,
+    options.driverPreflightAdapters ?? CURRENT_FATAL_RUNTIME_PREFLIGHT_DRIVER_ADAPTERS,
+  );
+  return adapter.assertReady({
+    host,
+    computePlan,
+    exitProcess,
+    env,
+    nativePodmanDeps: options.nativePodmanDeps,
+  });
 }
 
 /** Run the non-mutating runtime gates shared by fresh, resume, and rebuild onboarding. */
@@ -108,58 +286,16 @@ export function runFatalOnboardRuntimePreflight(
 ): FatalRuntimePreflightResult {
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   const computePlan = context.computePlan ?? resolveCurrentOpenShellComputePlan();
-  const assessedHost = assessHost({ skipDockerProbe: computePlan.driverName === "podman" });
-  const nativePodman = assertSelectedContainerRuntimeReady(assessedHost, computePlan, {
+  const adapter = resolveFatalRuntimePreflightDriverAdapter(
+    computePlan,
+    context.driverPreflightAdapters ?? CURRENT_FATAL_RUNTIME_PREFLIGHT_DRIVER_ADAPTERS,
+  );
+  return adapter.run({
+    options,
+    nonInteractive: context.nonInteractive,
     exitProcess,
-    env: context.env,
+    computePlan,
+    env: context.env ?? process.env,
     nativePodmanDeps: context.nativePodmanDeps,
   });
-  const host = nativePodman
-    ? { ...assessedHost, runtime: "podman" as const, isUnsupportedRuntime: false }
-    : assessedHost;
-  if (nativePodman) {
-    warnIfHostProxyMissesLoopback();
-    const gpu = detectGpu();
-    if (options.gpu === true || options.sandboxGpu === "enable") {
-      console.error(
-        "  Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.",
-      );
-      exitProcess(1);
-    }
-    const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-      flag: "disable",
-      device: null,
-    });
-    validateSandboxGpuPreflight(sandboxGpuConfig, {}, exitProcess);
-    console.log(
-      `  ✓ Rootless Podman ${nativePodman.version} is reachable at ${nativePodman.socketPath}`,
-    );
-    console.log(`  ✓ Container runtime: podman (${nativePodman.networkBackend})`);
-    return { gpu, host, sandboxGpuConfig, nativePodman };
-  }
-  if (!host.dockerReachable) {
-    printDockerNotReachableError();
-    printRemediationActions(planHostRemediation(host));
-    exitProcess(1);
-  }
-  console.log("  ✓ Docker is running");
-  warnIfHostProxyMissesLoopback();
-  const gpu = detectGpu();
-  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: resolveSandboxGpuFlagFromOptions(options),
-    device: options.sandboxGpuDevice ?? null,
-  });
-  const explicitlyOptedOutGpuPassthrough =
-    options.optedOutGpuPassthrough === true || options.noGpu === true;
-  assertCdiNvidiaGpuSpecPresent(
-    host,
-    explicitlyOptedOutGpuPassthrough,
-    sandboxGpuConfig.hostGpuPlatform,
-    exitProcess,
-  );
-  assertDockerBridgeAndContainerDnsHealthy(host, context.nonInteractive, exitProcess);
-  validateSandboxGpuPreflight(sandboxGpuConfig, {}, exitProcess);
-  if (host.runtime !== "unknown") console.log(`  ✓ Container runtime: ${host.runtime}`);
-  if (host.notes.includes("Running under WSL")) console.log("  ⓘ Running under WSL");
-  return { gpu, host, sandboxGpuConfig, nativePodman: null };
 }

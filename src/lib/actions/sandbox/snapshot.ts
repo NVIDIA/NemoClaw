@@ -54,8 +54,8 @@ import {
   assertSandboxCreateArgvWithinTransportLimit,
   captureOpenshell,
   createDockerGpuSandboxCreatePatch,
+  createManagedSnapshotRuntimePatch,
   createManagedStartupRootApplyRequest,
-  type DockerGpuSandboxCreatePatch,
   dockerCapture,
   findAvailableDashboardPort,
   formatSnapshotBaselineExclusionSummary,
@@ -75,10 +75,14 @@ import {
   type PreparedManagedCloneProvider,
   printHermesGatewayRestoreHint,
   resolveHermesDashboardOnboardState,
+  resolveManagedSnapshotRuntimeAuthority,
   resolveSandboxGatewayName,
+  runAuthorizedManagedSnapshotDestinationDelete,
   runOpenshell,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
+  type SandboxCreateRuntimePatch,
+  sleepSeconds,
   streamSandboxCreate,
   withDashboardPortReservationLock,
 } from "./snapshot/dependencies";
@@ -541,39 +545,52 @@ function prepareSnapshotCloneLaunch(
 function createManagedSnapshotStartupPatch(
   dstName: string,
   launch: PreparedSnapshotCloneLaunch,
-): DockerGpuSandboxCreatePatch | null {
+): SandboxCreateRuntimePatch | null {
   const managedClone = launch.managedClone;
   if (!managedClone) return null;
-  const sourceDriver = (launch.sourceEntry as SandboxEntry).openshellDriver;
-  if (
-    sourceDriver !== undefined &&
-    sourceDriver !== null &&
-    sourceDriver !== "docker" &&
-    sourceDriver !== "vm"
-  ) {
-    throw new Error(
-      `managed snapshot clone startup is unsupported for OpenShell driver '${sourceDriver}'`,
-    );
-  }
-  return createDockerGpuSandboxCreatePatch({
-    route: "native",
-    managedStartupRootApplyRequest: managedClone.rootApplyRequest,
-    sandboxName: dstName,
-    openshellSandboxCommand: launch.startupCommand,
-    timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
-    backend: "generic",
-    deps: {
-      dockerCapture,
-      runOpenshell,
-      runCaptureOpenshell: (args, options) =>
-        captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "",
-    },
-    overrides: {
-      onPatchFailureExit: (_sandboxName, error) => {
-        throw error instanceof Error ? error : new Error(String(error));
+  return createManagedSnapshotRuntimePatch(
+    {
+      destinationSandboxName: dstName,
+      sourceEntry: launch.sourceEntry as SandboxEntry,
+      lifecycle: {
+        managedStartupRootApplyRequest: managedClone.rootApplyRequest,
+        openshellSandboxCommand: launch.startupCommand,
+        sandboxName: dstName,
+        timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
+        deps: {
+          runOpenshell,
+          runCaptureOpenshell: (args, options) =>
+            captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "",
+          sleep: sleepSeconds,
+        },
       },
+      createDockerPatch: (lifecycle) =>
+        createDockerGpuSandboxCreatePatch({
+          route: "native",
+          managedStartupRootApplyRequest: lifecycle.managedStartupRootApplyRequest,
+          persistStartupCommand: lifecycle.persistStartupCommand,
+          sandboxName: lifecycle.sandboxName,
+          openshellSandboxCommand: lifecycle.openshellSandboxCommand,
+          requiredUlimits: lifecycle.requiredUlimits,
+          timeoutSecs: lifecycle.timeoutSecs,
+          backend: "generic",
+          deps: {
+            dockerCapture,
+            runOpenshell,
+            runCaptureOpenshell: lifecycle.deps.runCaptureOpenshell,
+            sleep: sleepSeconds,
+          },
+          overrides: {
+            onPatchFailureExit: (_sandboxName, error) => {
+              throw error instanceof Error ? error : new Error(String(error));
+            },
+          },
+        }),
     },
-  });
+    {
+      resolveRuntimeAuthority: resolveManagedSnapshotRuntimeAuthority,
+    },
+  );
 }
 
 async function autoCreateSandboxFromSource(
@@ -581,6 +598,7 @@ async function autoCreateSandboxFromSource(
   dstName: string,
   fromImage: string,
   launch: PreparedSnapshotCloneLaunch,
+  managedStartupPatch: SandboxCreateRuntimePatch | null,
 ): Promise<void> {
   const {
     command,
@@ -591,7 +609,6 @@ async function autoCreateSandboxFromSource(
     managedClone,
     destinationDashboardPort,
   } = launch;
-  const managedStartupPatch = createManagedSnapshotStartupPatch(dstName, launch);
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
   const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
@@ -1417,6 +1434,21 @@ async function runSnapshotRestoreUnlocked(
           dashboardEnvArgs,
           managedClone,
         );
+        let managedStartupPatch: SandboxCreateRuntimePatch | null;
+        try {
+          // Resolve driver authority before provider mutation or a forced
+          // destination delete. Native runtimes fail closed here while the
+          // original destination is still intact.
+          managedStartupPatch = createManagedSnapshotStartupPatch(targetSandbox, cloneLaunch);
+        } catch (error) {
+          console.error(
+            `  Cannot prepare ${lockedSourceEntry.openshellDriver || "legacy"} runtime clone authority: ${
+              error instanceof Error ? error.message : String(error)
+            }.`,
+          );
+          console.error(`  Destination '${targetSandbox}' was not changed.`);
+          snapshotExit(1);
+        }
         // Keep the managed credential-provider graph lazy. Legacy/custom
         // snapshot operations must retain their narrow runtime and test seam.
         const managedProviderLifecycle = managedClone
@@ -1429,7 +1461,9 @@ async function runSnapshotRestoreUnlocked(
             if (targetEntry) {
               verifyRestoreDestinationOnOwnGateway(targetSandbox);
             }
-            deleteSandboxForRestore(targetSandbox);
+            runAuthorizedManagedSnapshotDestinationDelete(managedStartupPatch, () =>
+              deleteSandboxForRestore(targetSandbox),
+            );
             requireLiveSandboxesOnSandboxGateway(
               sandboxName,
               "  Failed to re-select source sandbox gateway after deleting destination.",
@@ -1449,6 +1483,7 @@ async function runSnapshotRestoreUnlocked(
             targetSandbox,
             lockedFromImage,
             cloneLaunch,
+            managedStartupPatch,
           );
           // The mutated providers are now attached to the successfully created
           // destination and owned by its rebound messaging plan.

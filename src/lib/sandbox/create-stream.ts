@@ -102,7 +102,7 @@ export function streamSandboxCreate(
   const options = hasArgs ? maybeOptions : ((envOrOptions ?? {}) as StreamSandboxCreateOptions);
   if (options.onPoll && !options.failureCheck) {
     throw new Error(
-      "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
+      "streamSandboxCreate onPoll requires failureCheck (e.g., runtimePatch.createFailureMessage)",
     );
   }
   const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {

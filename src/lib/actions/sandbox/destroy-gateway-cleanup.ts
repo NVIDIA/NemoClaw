@@ -18,6 +18,11 @@ import {
   type ManagedGatewayDriverProfileRegistry,
 } from "../../onboard/compute/managed-gateway-profile";
 import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  type PodmanSocketAuthority,
+} from "../../onboard/compute/podman/socket-authority";
+import {
   OPENSHELL_MANAGED_BY_LABEL,
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_NAME_LABEL,
@@ -44,8 +49,10 @@ type HostCommandCaptureProbe = (
 ) => CommandCapture;
 
 export interface SandboxRuntimeContainerProbeContext {
+  readonly assertPodmanSocketAuthority: typeof assertPodmanSocketAuthority;
   readonly captureDocker: DockerCaptureProbe;
   readonly captureHostCommand: HostCommandCaptureProbe;
+  readonly capturePodmanSocketAuthority: typeof capturePodmanSocketAuthority;
   readonly environment: NodeJS.ProcessEnv;
   readonly gatewayStateDir?: string | null;
   readonly liveSandboxNames: readonly string[];
@@ -66,8 +73,10 @@ export type SandboxRuntimeContainerProbeAdapterRegistry = Readonly<
 >;
 
 type LiveSandboxProbe = (deps?: {
+  assertPodmanSocketAuthority?: typeof assertPodmanSocketAuthority;
   captureOpenshell?: LiveSandboxListProbe;
   captureHostCommand?: HostCommandCaptureProbe;
+  capturePodmanSocketAuthority?: typeof capturePodmanSocketAuthority;
   dockerCapture?: DockerCaptureProbe;
   environment?: NodeJS.ProcessEnv;
   gatewayStateDir?: string | null;
@@ -187,15 +196,29 @@ export const CURRENT_SANDBOX_RUNTIME_CONTAINER_PROBE_ADAPTERS = {
     driverName: "podman",
     createProbe(context: SandboxRuntimeContainerProbeContext) {
       let socketPath = "";
+      let socketAuthority: PodmanSocketAuthority | null = null;
       let socketError: unknown;
       try {
         socketPath = context.resolvePodmanSocket(context.gatewayStateDir, context.environment);
+        socketAuthority = context.capturePodmanSocketAuthority(socketPath);
+        if (socketAuthority.socketPath !== socketPath) {
+          throw new Error("Podman cleanup probe authority does not match its runtime binding.");
+        }
+        context.assertPodmanSocketAuthority(socketAuthority);
       } catch (error) {
         socketError = error;
       }
       return (sandboxName: string): SandboxRuntimeContainerSnapshot => {
         if (socketError) return failedRuntimeSnapshot(sandboxName, "Podman", socketError);
+        if (!socketAuthority) {
+          return failedRuntimeSnapshot(
+            sandboxName,
+            "Podman",
+            "runtime socket authority was not captured",
+          );
+        }
         try {
+          context.assertPodmanSocketAuthority(socketAuthority);
           const result = context.captureHostCommand(
             "podman",
             [
@@ -212,6 +235,7 @@ export const CURRENT_SANDBOX_RUNTIME_CONTAINER_PROBE_ADAPTERS = {
             ],
             context.timeoutMs,
           );
+          context.assertPodmanSocketAuthority(socketAuthority);
           if (result.status !== 0) {
             return failedRuntimeSnapshot(
               sandboxName,
@@ -240,8 +264,10 @@ export function resolveSandboxRuntimeContainerProbeAdapter(
 
 export function collectLiveSandboxProbeSnapshot(
   deps: {
+    assertPodmanSocketAuthority?: typeof assertPodmanSocketAuthority;
     captureOpenshell?: LiveSandboxListProbe;
     captureHostCommand?: HostCommandCaptureProbe;
+    capturePodmanSocketAuthority?: typeof capturePodmanSocketAuthority;
     dockerCapture?: DockerCaptureProbe;
     environment?: NodeJS.ProcessEnv;
     gatewayStateDir?: string | null;
@@ -272,8 +298,12 @@ export function collectLiveSandboxProbeSnapshot(
   const probe =
     sandboxNames.length > 0
       ? adapter?.createProbe({
+          assertPodmanSocketAuthority:
+            deps.assertPodmanSocketAuthority ?? assertPodmanSocketAuthority,
           captureDocker: dockerCapture,
           captureHostCommand: captureRuntimeCommand,
+          capturePodmanSocketAuthority:
+            deps.capturePodmanSocketAuthority ?? capturePodmanSocketAuthority,
           environment: deps.environment ?? process.env,
           gatewayStateDir: deps.gatewayStateDir,
           liveSandboxNames: sandboxNames,

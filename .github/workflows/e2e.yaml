@@ -5786,7 +5786,7 @@ jobs:
     needs: generate-matrix
     if: ${{ contains(format(',{0},', inputs.jobs), ',podman-all-agents,') || contains(format(',{0},', inputs.targets), ',podman-all-agents,') }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assessNativePodman,
   isPodmanVersionSupported,
@@ -17,8 +17,31 @@ const INFO = JSON.stringify({
     security: { rootless: true },
   },
 });
+const SOCKET_AUTHORITY = {
+  directoryChain: [
+    { device: "8", inode: "7000", mode: "448", ownerUid: "1000", path: "/runtime" },
+    { device: "8", inode: "1", mode: "493", ownerUid: "0", path: "/" },
+  ],
+  device: "8",
+  inode: "9001",
+  ownerUid: "1000",
+  socketPath: "/runtime/podman.sock",
+} as const;
+
+function socketStat(filePath: string) {
+  const socket = filePath === "/runtime/podman.sock";
+  return {
+    dev: 8,
+    ino: socket ? 9001 : filePath === "/runtime" ? 7000 : 1,
+    mode: socket ? 0o600 : filePath === "/runtime" ? 0o700 : 0o755,
+    uid: socket || filePath === "/runtime" ? 1000 : 0,
+    isDirectory: () => !socket,
+    isSocket: () => socket,
+  };
+}
 
 function successfulRun(command: string, args: readonly string[]) {
+  if (command === "lsof") return { status: 0, stdout: "", stderr: "" };
   if (command !== "podman") return { status: 1, stdout: "", stderr: "unexpected command" };
   if (args[0] === "--version") {
     return { status: 0, stdout: "podman version 5.6.2\n", stderr: "" };
@@ -59,7 +82,7 @@ describe("native Podman preflight", () => {
       architecture: "x64",
       env: { OPENSHELL_PODMAN_SOCKET: "/runtime/podman.sock" },
       uid: 1000,
-      lstatSync: (() => ({ isSocket: () => true })) as never,
+      lstatSync: socketStat as never,
       run: successfulRun,
     });
 
@@ -67,12 +90,35 @@ describe("native Podman preflight", () => {
       driverName: "podman",
       version: "5.6.2",
       socketPath: "/runtime/podman.sock",
+      socketAuthority: SOCKET_AUTHORITY,
       rootless: true,
       cgroupVersion: "v2",
       os: "linux",
       architecture: "amd64",
       networkBackend: "netavark",
     });
+  });
+
+  it("rejects a socket replacement during the Podman info probe", () => {
+    const assertSocketAuthority = vi
+      .fn()
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error("Podman socket authority changed after it was qualified.");
+      });
+
+    expect(() =>
+      assessNativePodman({
+        platform: "linux",
+        architecture: "x64",
+        env: { OPENSHELL_PODMAN_SOCKET: "/runtime/podman.sock" },
+        uid: 1000,
+        lstatSync: socketStat as never,
+        assertSocketAuthority,
+        run: successfulRun,
+      }),
+    ).toThrow("socket authority changed");
+    expect(assertSocketAuthority).toHaveBeenCalledTimes(2);
   });
 
   it("rejects nonroot, cgroup-v1, non-amd64, and missing subordinate mappings", () => {
@@ -99,7 +145,8 @@ describe("native Podman preflight", () => {
           platform: "linux",
           architecture: "x64",
           env: { OPENSHELL_PODMAN_SOCKET: "/runtime/podman.sock" },
-          lstatSync: (() => ({ isSocket: () => true })) as never,
+          uid: 1000,
+          lstatSync: socketStat as never,
           run: (command, args) =>
             args[0] === "--version"
               ? successfulRun(command, args)
@@ -115,7 +162,8 @@ describe("native Podman preflight", () => {
         platform: "linux",
         architecture: "x64",
         env: { OPENSHELL_PODMAN_SOCKET: "/runtime/podman.sock" },
-        lstatSync: (() => ({ isSocket: () => true })) as never,
+        uid: 1000,
+        lstatSync: socketStat as never,
         run: (command, args) =>
           args[0] === "unshare"
             ? { status: 0, stdout: "0 1000 1\n", stderr: "" }
@@ -134,5 +182,15 @@ describe("native Podman preflight", () => {
         },
       }),
     ).toThrow("requires Linux x86_64");
+  });
+
+  it("fails with remediation when complete listener inspection is unavailable", () => {
+    expect(() =>
+      assessNativePodman({
+        platform: "linux",
+        architecture: "x64",
+        run: () => ({ status: 1, stdout: "", stderr: "missing" }),
+      }),
+    ).toThrow("requires lsof");
   });
 });

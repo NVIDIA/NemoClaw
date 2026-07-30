@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createPodmanOpenShellWatcherController,
   finalizePodmanManagedSandbox,
+  findPodmanManagedSandboxContainerIds,
   type RunQualifiedPodmanCommand,
   recreatePodmanManagedSandbox,
   rollbackPodmanManagedSandbox,
@@ -15,203 +16,23 @@ import {
   parsePodmanManagedSandboxInspect,
   podmanImageMountSources,
 } from "./sandbox-recreate-spec";
-
-const OLD_ID = "a".repeat(64);
-const NEW_ID = "b".repeat(64);
-const BACKUP_ID = "6".repeat(64);
-const RESTORED_ID = "7".repeat(64);
-const ROOT_IMAGE_ID = "c".repeat(64);
-const SUPERVISOR_IMAGE_ID = "d".repeat(64);
-const SECRET_ID = "e".repeat(64);
-const NETWORK_ID = "f".repeat(64);
-const SOCKET_PATH = "/run/user/1000/podman/podman.sock";
-const SANDBOX_NAME = "alpha";
-const CONTAINER_NAME = "openshell-sandbox-alpha";
-const SUPERVISOR_IMAGE = "ghcr.io/nvidia/openshell/supervisor:0.0.85";
-
-function validInspect(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  const value: Record<string, unknown> = {
-    Id: OLD_ID,
-    Image: ROOT_IMAGE_ID,
-    Name: CONTAINER_NAME,
-    State: { Running: true },
-    Pod: "",
-    Dependencies: [],
-    IsInfra: false,
-    IsService: false,
-    Config: {
-      Hostname: "sandbox-alpha",
-      User: "0:0",
-      Tty: false,
-      OpenStdin: false,
-      Env: [
-        "OPENSHELL_SANDBOX=alpha",
-        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
-        "OPENSHELL_SANDBOX_TOKEN_FILE=/etc/openshell/auth/sandbox.jwt",
-        "OPENSHELL_TLS_CA=/etc/openshell/tls/client/ca.crt",
-        "OPENSHELL_TLS_CERT=/etc/openshell/tls/client/tls.crt",
-        "OPENSHELL_TLS_KEY=/etc/openshell/tls/client/tls.key",
-        "USER_VALUE=preserved",
-      ],
-      Cmd: ["--operator-mode"],
-      Image: "sandbox-image:mutable",
-      WorkingDir: "/sandbox",
-      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Labels: {
-        "custom.label": "preserved",
-        "openshell.managed": "true",
-        "openshell.sandbox-id": "sandbox-id",
-        "openshell.sandbox-name": SANDBOX_NAME,
-        "openshell.sandbox-namespace": "",
-      },
-      StopSignal: "SIGTERM",
-      StartupHealthCheck: null,
-      Healthcheck: {
-        Test: ["CMD", "/opt/openshell/bin/openshell-sandbox", "__healthcheck"],
-        Interval: 5_000_000_000,
-        Timeout: 2_000_000_000,
-        Retries: 10,
-        StartPeriod: 5_000_000_000,
-      },
-      HealthcheckOnFailureAction: "none",
-      HealthLogDestination: "local",
-      HealthcheckMaxLogCount: 5,
-      HealthcheckMaxLogSize: 500,
-      Secrets: [
-        {
-          Name: "openshell-token-sandbox-id",
-          ID: SECRET_ID,
-          UID: 0,
-          GID: 0,
-          Mode: 0o400,
-        },
-      ],
-      StopTimeout: 10,
-      Umask: "0022",
-      ChrootDirs: [],
-    },
-    HostConfig: {
-      Binds: [],
-      NetworkMode: "bridge",
-      PortBindings: {
-        "22/tcp": [{ HostIp: "", HostPort: "0" }],
-      },
-      RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
-      AutoRemove: false,
-      AutoRemoveImage: false,
-      PublishAllPorts: false,
-      VolumesFrom: [],
-      CapAdd: ["CAP_SYS_ADMIN", "CAP_NET_ADMIN"],
-      CapDrop: ["CAP_KILL", "CAP_NET_RAW"],
-      Dns: ["10.0.0.2"],
-      DnsOptions: ["ndots:1"],
-      DnsSearch: ["example.test"],
-      ExtraHosts: ["host.containers.internal:host-gateway", "host.openshell.internal:host-gateway"],
-      GroupAdd: ["44"],
-      IpcMode: "shareable",
-      CgroupMode: "private",
-      Cgroups: "default",
-      OomScoreAdj: 0,
-      PidMode: "private",
-      Privileged: false,
-      ReadonlyRootfs: false,
-      SecurityOpt: ["no-new-privileges", "seccomp=unconfined"],
-      Tmpfs: { "/run/netns": "rw,nosuid,nodev" },
-      UTSMode: "private",
-      UsernsMode: "host",
-      ShmSize: 67_108_864,
-      CpuShares: 0,
-      Memory: 4_294_967_296,
-      NanoCpus: 2_000_000_000,
-      CpuPeriod: 100_000,
-      CpuQuota: 200_000,
-      CpuRealtimePeriod: 0,
-      CpuRealtimeRuntime: 0,
-      CpusetCpus: "",
-      CpusetMems: "",
-      Devices: [],
-      KernelMemory: 0,
-      MemoryReservation: 0,
-      MemorySwap: 0,
-      MemorySwappiness: 0,
-      OomKillDisable: false,
-      Init: false,
-      PidsLimit: 256,
-      Ulimits: [{ Name: "RLIMIT_NOFILE", Soft: 1024, Hard: 4096 }],
-      CgroupConf: {},
-      BlkioWeight: 0,
-      BlkioWeightDevice: [],
-      BlkioDeviceReadBps: [],
-      BlkioDeviceWriteBps: [],
-      BlkioDeviceReadIOps: [],
-      BlkioDeviceWriteIOps: [],
-    },
-    Mounts: [
-      {
-        Type: "volume",
-        Name: "openshell-sandbox-sandbox-id-workspace",
-        Source: "/home/user/.local/share/containers/storage/volumes/workspace/_data",
-        Destination: "/sandbox",
-        Driver: "local",
-        Mode: "",
-        Options: [],
-        RW: true,
-        Propagation: "",
-      },
-      {
-        Type: "image",
-        Source: SUPERVISOR_IMAGE,
-        Destination: "/opt/openshell/bin",
-        Driver: "",
-        Mode: "",
-        Options: [],
-        RW: false,
-        Propagation: "",
-      },
-      ...[
-        ["ca.crt", "/etc/openshell/tls/client/ca.crt"],
-        ["tls.crt", "/etc/openshell/tls/client/tls.crt"],
-        ["tls.key", "/etc/openshell/tls/client/tls.key"],
-      ].map(([file, destination]) => ({
-        Type: "bind",
-        Name: "",
-        Source: `/run/openshell/tls/${file}`,
-        Destination: destination,
-        Driver: "",
-        Mode: "",
-        Options: ["rbind"],
-        RW: false,
-        Propagation: "rprivate",
-      })),
-    ],
-    NetworkSettings: {
-      Ports: {
-        "22/tcp": [{ HostIp: "127.0.0.1", HostPort: "41022" }],
-      },
-      Networks: {
-        openshell: {
-          Aliases: [OLD_ID, OLD_ID.slice(0, 12), CONTAINER_NAME],
-          DriverOpts: {},
-          IPAMConfig: {},
-          Links: [],
-          NetworkID: NETWORK_ID,
-          IPAddress: "10.89.0.5",
-          MacAddress: "02:42:ac:11:00:02",
-        },
-      },
-    },
-  };
-  return { ...value, ...overrides };
-}
-
-function parsedInspect(raw = validInspect()) {
-  return parsePodmanManagedSandboxInspect(JSON.stringify([raw]), {
-    containerId: String(raw.Id),
-    name: String(raw.Name),
-    requireRunning: true,
-    sandboxName: SANDBOX_NAME,
-  });
-}
+import {
+  BACKUP_ID,
+  CONTAINER_NAME,
+  NETWORK_ID,
+  NEW_ID,
+  OLD_ID,
+  parsedInspect,
+  RESTORED_ID,
+  ROOT_IMAGE_ID,
+  SANDBOX_NAME,
+  SECRET_ID,
+  SOCKET_AUTHORITY,
+  SOCKET_PATH,
+  SUPERVISOR_IMAGE,
+  SUPERVISOR_IMAGE_ID,
+  validInspect,
+} from "./sandbox-recreate-test-fixture";
 
 function flagValues(args: readonly string[], flag: string): string[] {
   const values: string[] = [];
@@ -816,20 +637,37 @@ function watcherController(fake: ReturnType<typeof fakePodman>) {
   });
 }
 
-function recreateWith(fake: ReturnType<typeof fakePodman>) {
+function recreateWith(fake: ReturnType<typeof fakePodman>, assertSocketAuthority = vi.fn()) {
   return recreatePodmanManagedSandbox(
     {
       command: ["node", "agent.js"],
       requiredUlimits: [{ name: "nofile", soft: 65_536, hard: 65_536 }],
       sandboxName: SANDBOX_NAME,
+      socketAuthority: SOCKET_AUTHORITY,
       socketPath: SOCKET_PATH,
       watcherController: watcherController(fake),
     },
-    { now: () => new Date(1_700_000_000_000), run: fake.run },
+    {
+      assertSocketAuthority,
+      now: () => new Date(1_700_000_000_000),
+      run: fake.run,
+    },
   );
 }
 
 describe("Podman managed sandbox recreation lifecycle", () => {
+  it("rejects a mismatched socket authority before the first Podman discovery call", () => {
+    const run = vi.fn<RunQualifiedPodmanCommand>();
+    expect(() =>
+      findPodmanManagedSandboxContainerIds("/run/user/1000/podman/replaced.sock", SANDBOX_NAME, {
+        assertSocketAuthority: vi.fn(),
+        run,
+        socketAuthority: SOCKET_AUTHORITY,
+      }),
+    ).toThrow("socket authority does not match");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("requires a watcher controller before any Podman operation", () => {
     const fake = fakePodman();
     expect(() =>
@@ -837,10 +675,11 @@ describe("Podman managed sandbox recreation lifecycle", () => {
         {
           command: ["node", "agent.js"],
           sandboxName: SANDBOX_NAME,
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
           watcherController: undefined as never,
         },
-        { run: fake.run },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
       ),
     ).toThrow("watcher controller");
     expect(fake.calls).toHaveLength(0);
@@ -848,7 +687,8 @@ describe("Podman managed sandbox recreation lifecycle", () => {
 
   it("qualifies every operation to the exact socket and starts a pinned replacement", () => {
     const fake = fakePodman();
-    const transaction = recreateWith(fake);
+    const assertSocketAuthority = vi.fn();
+    const transaction = recreateWith(fake, assertSocketAuthority);
     expect(transaction).toMatchObject({
       applied: true,
       backupContainerId: BACKUP_ID,
@@ -885,6 +725,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     });
     expect(fake.calls.every((call) => call.args[0] === "--url")).toBe(true);
     expect(fake.calls.every((call) => call.args[1] === `unix://${SOCKET_PATH}`)).toBe(true);
+    expect(assertSocketAuthority).toHaveBeenCalledTimes(fake.calls.length + 1);
     expect(fake.calls.map((call) => call.command)).not.toContain("docker");
     expect(fake.calls.map((call) => call.args.slice(2, 4))).toContainEqual(["start", NEW_ID]);
     const createCall = fake.calls.find(
@@ -914,6 +755,38 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     ).toBe(true);
   });
 
+  it("does not send the first destructive command after socket authority changes", () => {
+    const baseline = fakePodman();
+    recreateWith(baseline);
+    const stopIndex = baseline.calls.findIndex(
+      (call) => call.args[2] === "stop" && call.args[3] === OLD_ID,
+    );
+    expect(stopIndex).toBeGreaterThan(0);
+
+    const fake = fakePodman();
+    let validations = 0;
+    expect(() =>
+      recreateWith(
+        fake,
+        vi.fn(() => {
+          validations += 1;
+          if (validations >= stopIndex + 2) {
+            throw new Error("socket path replaced");
+          }
+        }),
+      ),
+    ).toThrow();
+
+    expect(fake.calls.some((call) => call.args[2] === "stop" && call.args[3] === OLD_ID)).toBe(
+      false,
+    );
+    expect(fake.state()).toMatchObject({
+      oldExists: true,
+      oldRunning: true,
+      watcherStopped: false,
+    });
+  });
+
   it("recovers the watcher and leaves the managed original untouched when stop proof fails", () => {
     const fake = fakePodman();
     const controller = createPodmanOpenShellWatcherController({
@@ -933,10 +806,15 @@ describe("Podman managed sandbox recreation lifecycle", () => {
         {
           command: ["node", "agent.js"],
           sandboxName: SANDBOX_NAME,
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
           watcherController: controller,
         },
-        { now: () => new Date(1_700_000_000_000), run: fake.run },
+        {
+          assertSocketAuthority: vi.fn(),
+          now: () => new Date(1_700_000_000_000),
+          run: fake.run,
+        },
       ),
     ).toThrow("stop proof failed");
     expect(fake.calls.some((call) => call.args[2] === "rm" && call.args[3] === OLD_ID)).toBe(false);
@@ -1015,10 +893,15 @@ describe("Podman managed sandbox recreation lifecycle", () => {
         {
           command: ["node", "agent.js"],
           sandboxName: SANDBOX_NAME,
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
           watcherController: controller,
         },
-        { now: () => new Date(1_700_000_000_000), run: fake.run },
+        {
+          assertSocketAuthority: vi.fn(),
+          now: () => new Date(1_700_000_000_000),
+          run: fake.run,
+        },
       );
     } catch (caught) {
       error = caught;
@@ -1057,10 +940,15 @@ describe("Podman managed sandbox recreation lifecycle", () => {
         {
           command: ["node", "agent.js"],
           sandboxName: SANDBOX_NAME,
+          socketAuthority: SOCKET_AUTHORITY,
           socketPath: SOCKET_PATH,
           watcherController: controller,
         },
-        { now: () => new Date(1_700_000_000_000), run: fake.run },
+        {
+          assertSocketAuthority: vi.fn(),
+          now: () => new Date(1_700_000_000_000),
+          run: fake.run,
+        },
       );
     } catch (caught) {
       error = caught;
@@ -1296,7 +1184,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     expect(
       rollbackPodmanManagedSandbox(
         { transaction, watcherController: watcherController(fake) },
-        { run: fake.run },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
       ),
     ).toEqual({
       originalRecreated: false,
@@ -1318,7 +1206,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     expect(
       rollbackPodmanManagedSandbox(
         { transaction, watcherController: watcherController(fake) },
-        { run: fake.run },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
       ),
     ).toEqual({
       originalRecreated: true,
@@ -1343,7 +1231,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     try {
       rollbackPodmanManagedSandbox(
         { transaction, watcherController: watcherController(fake) },
-        { run: fake.run },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
       );
     } catch (caught) {
       error = caught;
@@ -1367,7 +1255,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     expect(() =>
       rollbackPodmanManagedSandbox(
         { transaction, watcherController: undefined as never },
-        { run: fake.run },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
       ),
     ).toThrow("watcher controller");
     expect(fake.calls).toHaveLength(callsBefore);
@@ -1383,7 +1271,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
           transaction,
           watcherController: watcherController(fake),
         },
-        { run: fake.run },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
       ),
     ).toEqual({ backupRemoved: false, rolledBack: true });
     expect(fake.state()).toMatchObject({
@@ -1405,7 +1293,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
           replacementReady: true,
           transaction: greenTransaction,
         },
-        { run: green.run },
+        { assertSocketAuthority: vi.fn(), run: green.run },
       ),
     ).toEqual({ backupRemoved: true, rolledBack: false });
     expect(green.calls.map((call) => call.args.slice(2))).toContainEqual(["rm", BACKUP_ID]);
@@ -1423,7 +1311,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
           replacementReady: true,
           transaction: leakingTransaction,
         },
-        { run: leaking.run },
+        { assertSocketAuthority: vi.fn(), run: leaking.run },
       ),
     ).toEqual({ backupRemoved: false, rolledBack: false });
 
@@ -1437,7 +1325,7 @@ describe("Podman managed sandbox recreation lifecycle", () => {
           replacementReady: true,
           transaction: uncertainTransaction,
         },
-        { run: uncertain.run },
+        { assertSocketAuthority: vi.fn(), run: uncertain.run },
       ),
     ).toEqual({ backupRemoved: true, rolledBack: false });
   });
@@ -1447,7 +1335,10 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     const transaction = recreateWith(fake);
     fake.setReplacementUser("1000:1000");
     expect(() =>
-      finalizePodmanManagedSandbox({ replacementReady: true, transaction }, { run: fake.run }),
+      finalizePodmanManagedSandbox(
+        { replacementReady: true, transaction },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
+      ),
     ).toThrow("pinned recreation semantics");
     expect(fake.calls.map((call) => call.args.slice(2))).not.toContainEqual(["rm", BACKUP_ID]);
     expect(fake.state()).toMatchObject({
@@ -1461,7 +1352,10 @@ describe("Podman managed sandbox recreation lifecycle", () => {
     const transaction = recreateWith(fake);
     fake.setOldRunning(true);
     expect(() =>
-      finalizePodmanManagedSandbox({ replacementReady: true, transaction }, { run: fake.run }),
+      finalizePodmanManagedSandbox(
+        { replacementReady: true, transaction },
+        { assertSocketAuthority: vi.fn(), run: fake.run },
+      ),
     ).toThrow("backup is running");
     expect(fake.calls.map((call) => call.args.slice(2))).not.toContainEqual(["rm", BACKUP_ID]);
     expect(fake.state().backupExists).toBe(true);

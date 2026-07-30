@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { PodmanManagedSandboxRecreateTransaction } from "../compute/podman/sandbox-recreate";
 import type { PodmanManagedStartupTransaction } from "./podman-root-apply";
 import type {
   PodmanManagedStartupCommandResult,
@@ -20,6 +21,21 @@ import {
 
 const SOCKET_PATH = "/run/user/1000/podman/podman.sock";
 const SOCKET_URL = `unix://${SOCKET_PATH}`;
+const SOCKET_AUTHORITY = {
+  directoryChain: [
+    {
+      device: "8",
+      inode: "7000",
+      mode: "448",
+      ownerUid: "1000",
+      path: "/run/user/1000/podman",
+    },
+  ],
+  device: "8",
+  inode: "9001",
+  ownerUid: "1000",
+  socketPath: SOCKET_PATH,
+} as const;
 const CONTAINER_ID = "b".repeat(64);
 const IMAGE_ID = `sha256:${"c".repeat(64)}`;
 const GRAPH_ROOT = "/home/test/.local/share/containers/storage";
@@ -34,9 +50,28 @@ function transaction(
     image: IMAGE_ID,
     runtime: {
       fingerprint: createHash("sha256").update(`${GRAPH_ROOT}\0${RUN_ROOT}`).digest("hex"),
+      socketAuthority: SOCKET_AUTHORITY,
       socketPath: SOCKET_PATH,
     },
   };
+}
+
+function rollbackAuthority(
+  overrides: Partial<PodmanManagedSandboxRecreateTransaction> = {},
+): PodmanManagedSandboxRecreateTransaction {
+  return {
+    applied: true,
+    driverName: "podman",
+    immutableImage: IMAGE_ID,
+    newContainerId: CONTAINER_ID,
+    socketAuthority: SOCKET_AUTHORITY,
+    socketPath: SOCKET_PATH,
+    ...overrides,
+  } as PodmanManagedSandboxRecreateTransaction;
+}
+
+function testDeps(run: RunManagedStartupPodmanCommand) {
+  return { assertSocketAuthority: vi.fn(), run };
 }
 
 function result(
@@ -117,11 +152,11 @@ describe("Podman managed-startup shared-state finalization", () => {
     const harness = identityRunner(() => result(0));
     const outcome = finalizePodmanManagedStartupSharedState(
       {
-        containerRollbackArmed: true,
+        containerRollbackAuthority: rollbackAuthority(),
         supervisorReady: true,
         transaction: transaction(agent),
       },
-      { run: harness.run },
+      testDeps(harness.run),
     );
 
     expect(outcome).toEqual({ failure: null, supervisorReady: true });
@@ -169,11 +204,11 @@ describe("Podman managed-startup shared-state finalization", () => {
     });
     const outcome = finalizePodmanManagedStartupSharedState(
       {
-        containerRollbackArmed: true,
+        containerRollbackAuthority: rollbackAuthority(),
         supervisorReady: true,
         transaction: transaction("hermes"),
       },
-      { run: harness.run },
+      testDeps(harness.run),
     );
 
     expect(outcome.supervisorReady).toBe(false);
@@ -241,7 +276,7 @@ describe("Podman managed-startup shared-state finalization", () => {
     expect(
       finalizePodmanManagedStartupSharedState(
         { supervisorReady: false, transaction: transaction() },
-        { run: harness.run },
+        testDeps(harness.run),
       ),
     ).toEqual({ failure: null, supervisorReady: false });
     expect(harness.calls).toEqual(["stop", "copy", "rollback", "remove", "exists"]);
@@ -257,11 +292,11 @@ describe("Podman managed-startup shared-state finalization", () => {
       expect(() =>
         finalizePodmanManagedStartupSharedState(
           {
-            containerRollbackArmed: true,
+            containerRollbackAuthority: rollbackAuthority(),
             supervisorReady: false,
             transaction: transaction(),
           },
-          { run: harness.run },
+          testDeps(harness.run),
         ),
       ).toThrow(/Protected receipt retained/u);
       expect(harness.calls).toEqual(["stop", "copy", "rollback"]);
@@ -282,11 +317,11 @@ describe("Podman managed-startup shared-state finalization", () => {
     expect(() =>
       finalizePodmanManagedStartupSharedState(
         {
-          containerRollbackArmed: true,
+          containerRollbackAuthority: rollbackAuthority(),
           supervisorReady: true,
           transaction: transaction(),
         },
-        { run: harness.run },
+        testDeps(harness.run),
       ),
     ).toThrow(/Could not copy/u);
     expect(harness.calls).toEqual(["copy", "stop"]);
@@ -306,11 +341,11 @@ describe("Podman managed-startup shared-state finalization", () => {
     expect(() =>
       finalizePodmanManagedStartupSharedState(
         {
-          containerRollbackArmed: true,
+          containerRollbackAuthority: rollbackAuthority(),
           supervisorReady: true,
           transaction: transaction(),
         },
-        { run },
+        testDeps(run),
       ),
     ).toThrow(/runtime identity changed/u);
     expect(run).toHaveBeenCalledOnce();
@@ -341,14 +376,57 @@ describe("Podman managed-startup shared-state finalization", () => {
     expect(() =>
       finalizePodmanManagedStartupSharedState(
         {
-          containerRollbackArmed: true,
+          containerRollbackAuthority: rollbackAuthority(),
           supervisorReady: true,
           transaction: transaction(),
         },
-        { run },
+        testDeps(run),
       ),
     ).toThrow(/image identity changed/u);
     expect(vi.mocked(run).mock.calls.some((call) => call[1].slice(2)[0] === "cp")).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "driver",
+      authority: rollbackAuthority({ driverName: "docker" as "podman" }),
+    },
+    {
+      label: "application state",
+      authority: rollbackAuthority({ applied: false as true }),
+    },
+    {
+      label: "runtime socket",
+      authority: rollbackAuthority({ socketPath: "/run/user/1000/podman/other.sock" }),
+    },
+    {
+      label: "socket identity",
+      authority: rollbackAuthority({
+        socketAuthority: { ...SOCKET_AUTHORITY, inode: "9002" },
+      }),
+    },
+    {
+      label: "replacement container",
+      authority: rollbackAuthority({ newContainerId: "d".repeat(64) }),
+    },
+    {
+      label: "immutable image",
+      authority: rollbackAuthority({ immutableImage: `sha256:${"e".repeat(64)}` }),
+    },
+  ])("rejects mismatched $label rollback authority before mutation", ({ authority }) => {
+    const run = vi.fn();
+
+    expect(() =>
+      finalizePodmanManagedStartupSharedState(
+        {
+          containerRollbackAuthority: authority,
+          supervisorReady: false,
+          transaction: transaction(),
+        },
+        testDeps(run),
+      ),
+    ).toThrow(/rollback authority does not match/u);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("is a no-op without a managed-startup transaction", () => {
@@ -356,7 +434,7 @@ describe("Podman managed-startup shared-state finalization", () => {
     expect(
       finalizePodmanManagedStartupSharedState(
         { supervisorReady: true, transaction: null },
-        { run },
+        testDeps(run),
       ),
     ).toEqual({ failure: null, supervisorReady: true });
     expect(run).not.toHaveBeenCalled();

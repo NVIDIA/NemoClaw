@@ -166,6 +166,9 @@ export const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() 
 export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+export const resolveManagedSnapshotRuntimeAuthorityMock = vi.fn((driverName: string) =>
+  driverName === "podman" ? { driverName: "podman" } : null,
+);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   (
     policyPath: string,
@@ -194,6 +197,7 @@ function managedStartupPatchFixture() {
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),
     ensureApplied: vi.fn(),
+    revalidateBeforeMutation: vi.fn(),
     waitForSupervisorReconnectIfNeeded: vi.fn(),
     commitAfterReady: vi.fn(),
     selectedMode: vi.fn(() => null),
@@ -293,6 +297,14 @@ vi.mock("../../shields/timer-control", () => ({
 vi.mock("../../sandbox/create-stream", () => ({
   streamSandboxCreate: streamSandboxCreateMock,
 }));
+
+vi.mock("./snapshot/runtime-authority", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./snapshot/runtime-authority")>();
+  return {
+    ...actual,
+    resolveManagedSnapshotRuntimeAuthority: resolveManagedSnapshotRuntimeAuthorityMock,
+  };
+});
 
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: isGatewayHealthyMock,
@@ -394,6 +406,9 @@ export function resetSnapshotRestoreMocks(): void {
   createDockerGpuSandboxCreatePatchMock.mockReset();
   createDockerGpuSandboxCreatePatchMock.mockImplementation(() => managedStartupPatchFixture());
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+  resolveManagedSnapshotRuntimeAuthorityMock.mockImplementation((driverName: string) =>
+    driverName === "podman" ? { driverName: "podman" } : null,
+  );
 }
 
 export function cleanupSnapshotRestoreMocks(): void {
