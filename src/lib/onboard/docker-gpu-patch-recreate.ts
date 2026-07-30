@@ -3,7 +3,6 @@
 
 import {
   dockerCapture,
-  dockerForceRm,
   dockerRename,
   dockerRm,
   dockerRunDetached,
@@ -48,7 +47,6 @@ type RecreateDeps = Required<
   Pick<
     DockerGpuPatchDeps,
     | "dockerCapture"
-    | "dockerForceRm"
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
@@ -66,7 +64,6 @@ type RecreateDeps = Required<
 function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
   return {
     dockerCapture,
-    dockerForceRm,
     dockerRunDetached,
     dockerRename,
     dockerRm,

@@ -84,7 +84,7 @@ For a local Docker-driver sandbox whose container still uses the legacy keepaliv
 
 NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check.
 Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
-It commits only after the replacement container identity and state restoration pass.
+It commits only after OpenShell reports the recreated sandbox as `Ready`, the replacement container identity matches, and state restoration passes.
 NemoClaw removes the temporary state backup after a successful restore or rollback.
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
