@@ -58,6 +58,23 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
+  it("requires protected all-agent GPU and rollback evidence for managed-image runtime changes", () => {
+    const result = plan(
+      "src/lib/onboard/managed-bootstrap/sequence.ts",
+      "scripts/checks/run-managed-image-openshell-e2e.ts",
+    );
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "managed-image-runtime",
+        requiredJobs: ["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"]),
+    );
+  });
+
   it("hashes trusted focused E2E selections into their canonical jobs", () => {
     const changedFiles = ["test/e2e/live/token-rotation.test.ts"];
     const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
@@ -300,8 +317,14 @@ describe("deterministic PR risk plan", () => {
     expect(rootImage.families.map((family) => family.id)).toEqual([
       "platform-install",
       "openclaw-image",
+      "managed-image-runtime",
     ]);
-    expect(riskPlanRequiredJobIds(rootImage)).toEqual(["cloud-onboard", "full-e2e"]);
+    expect(riskPlanRequiredJobIds(rootImage)).toEqual([
+      "cloud-onboard",
+      "full-e2e",
+      "managed-image-bootstrap-rollback",
+      "managed-image-gpu-e2e",
+    ]);
     expect(adjacentImage.families.map((family) => family.id)).toEqual(["platform-install"]);
     expect(riskPlanRequiredJobIds(adjacentImage)).toEqual(["cloud-onboard"]);
   });

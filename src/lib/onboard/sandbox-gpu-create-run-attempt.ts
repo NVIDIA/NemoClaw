@@ -154,11 +154,13 @@ export function createSandboxGpuCreateAttemptRunner(
     let managedSequence: ManagedBootstrapSequenceResult | null = null;
     if (managedBootstrap && managedMode) {
       const runtimeProvider = managedBootstrap.runtimeProvider;
-      const adapter = runtimeProvider.createAdapter({
-        runCaptureOpenshell: deps.runCaptureOpenshell,
-        runOpenshell: deps.runOpenshell,
-        sleep: deps.sleep,
-      });
+      const adapter =
+        deps.createManagedBootstrapAdapter?.() ??
+        runtimeProvider.createAdapter({
+          runCaptureOpenshell: deps.runCaptureOpenshell,
+          runOpenshell: deps.runOpenshell,
+          sleep: deps.sleep,
+        });
       try {
         managedSequence = await runManagedBootstrapSequence(adapter, {
           create: {

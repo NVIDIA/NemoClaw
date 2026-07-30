@@ -10,6 +10,8 @@ import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
 } from "../../src/lib/onboard/initial-policy.ts";
+import type { ManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
+import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/index.ts";
 import { resolveCurrentManagedBootstrapRuntimeProvider } from "../../src/lib/onboard/managed-bootstrap/runtime-providers.ts";
 import {
   encodeManagedStartupProfile,
@@ -20,10 +22,17 @@ import {
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
+import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
+import {
+  isManagedImageLocalInferenceKind,
+  type ManagedImageLocalInferenceKind,
+  resolveManagedImageLocalInferenceRoute,
+  withManagedImageLocalInferenceProfile,
+} from "./managed-image-protected-runtime-contract.ts";
 
 const MANAGED_AGENTS = new Set<ManagedStartupAgent>([
   "openclaw",
@@ -39,10 +48,24 @@ const MANAGED_AGENT_BASE_POLICIES: Record<ManagedStartupAgent, readonly string[]
   "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
 };
 
+function compactText(value = ""): string {
+  return String(value).replace(/\s+/gu, " ").trim();
+}
+
+function redactProtectedGpuProof(value: string): string {
+  return String(value)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer <REDACTED>")
+    .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))=([^\s]*)/giu, "$1=<REDACTED>");
+}
+
 type Inputs = {
   agent: ManagedStartupAgent;
   image: string;
   sandbox: string;
+  gpu?: true;
+  localProvider?: ManagedImageLocalInferenceKind;
+  model?: string;
+  failureInjection?: "bootstrap-completion";
 };
 
 type OnboardModule = {
@@ -67,13 +90,15 @@ function requiredValue(argv: readonly string[], flag: string): string {
 }
 
 export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): Inputs {
-  const unexpected = argv.filter(
-    (value, index) =>
-      !["--agent", "--image", "--sandbox"].includes(value) &&
-      !["--agent", "--image", "--sandbox"].includes(argv[index - 1] ?? ""),
-  );
-  if (unexpected.length > 0) {
-    throw new Error(`unsupported arguments: ${unexpected.join(" ")}`);
+  const valueFlags = new Set(["--agent", "--image", "--sandbox", "--local-provider", "--model"]);
+  const booleanFlags = new Set(["--gpu", "--inject-bootstrap-completion-failure"]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index] ?? "";
+    if (booleanFlags.has(value)) continue;
+    if (!valueFlags.has(value)) throw new Error(`unsupported arguments: ${value}`);
+    const next = argv[index + 1];
+    if (!next || next.startsWith("--")) throw new Error(`${value} is required`);
+    index += 1;
   }
   const agentValue = requiredValue(argv, "--agent");
   if (!MANAGED_AGENTS.has(agentValue as ManagedStartupAgent)) {
@@ -87,7 +112,38 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
   if (!/^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$/u.test(sandbox)) {
     throw new Error("--sandbox must be a valid RFC 1123 label");
   }
-  return { agent: agentValue as ManagedStartupAgent, image, sandbox };
+  const gpu = argv.includes("--gpu");
+  const localProviderValue = argv.includes("--local-provider")
+    ? requiredValue(argv, "--local-provider")
+    : null;
+  if (localProviderValue && !isManagedImageLocalInferenceKind(localProviderValue)) {
+    throw new Error("--local-provider must be one of: ollama, nim, vllm");
+  }
+  const model = argv.includes("--model") ? requiredValue(argv, "--model") : null;
+  if (model && !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$/u.test(model)) {
+    throw new Error("--model must be one bounded model identifier");
+  }
+  const failureInjection = argv.includes("--inject-bootstrap-completion-failure");
+  if (gpu && (!localProviderValue || !model)) {
+    throw new Error("--gpu requires --local-provider and --model");
+  }
+  if (!gpu && (localProviderValue || model)) {
+    throw new Error("--local-provider and --model require --gpu");
+  }
+  if (failureInjection && gpu) {
+    throw new Error("bootstrap failure injection cannot be combined with the GPU qualification");
+  }
+  return {
+    agent: agentValue as ManagedStartupAgent,
+    image,
+    sandbox,
+    ...(gpu ? { gpu: true as const } : {}),
+    ...(localProviderValue
+      ? { localProvider: localProviderValue as ManagedImageLocalInferenceKind }
+      : {}),
+    ...(model ? { model } : {}),
+    ...(failureInjection ? { failureInjection: "bootstrap-completion" as const } : {}),
+  };
 }
 
 export function managedImageOpenShellBasePolicyPath(agent: ManagedStartupAgent): string {
@@ -184,7 +240,10 @@ function managedConfigPath(agent: ManagedStartupAgent): string {
   }
 }
 
-export function managedImageOpenShellProbe(agent: ManagedStartupAgent): string {
+export function managedImageOpenShellProbe(
+  agent: ManagedStartupAgent,
+  model: string = MODEL,
+): string {
   const healthProbe =
     agent === "openclaw"
       ? "/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:18789/health >/dev/null"
@@ -200,7 +259,7 @@ export function managedImageOpenShellProbe(agent: ManagedStartupAgent): string {
           ? "/usr/local/bin/hermes"
           : "/usr/local/bin/dcode"
     }`,
-    `grep -F ${JSON.stringify(MODEL)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
+    `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     "test ! -L /run/nemoclaw/managed-startup-runtime.env",
     'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
     "test ! -L /run/nemoclaw/managed-startup-complete.json",
@@ -224,8 +283,9 @@ async function waitForCommittedSandboxProbe(
   onboard: OnboardModule,
   input: Inputs,
   env: NodeJS.ProcessEnv,
+  requireCommitted = true,
 ): Promise<void> {
-  const healthProbe = managedImageOpenShellProbe(input.agent);
+  const healthProbe = managedImageOpenShellProbe(input.agent, input.model ?? MODEL);
   const committedProbe = managedImageOpenShellCommittedProbe();
   const deadline = Date.now() + 240_000;
   const runProbe = (probe: string, timeoutMs: number) =>
@@ -249,6 +309,7 @@ async function waitForCommittedSandboxProbe(
     const remainingMs = deadline - Date.now();
     const health = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
     if (health.status === 0) {
+      if (!requireCommitted) return;
       const committed = runProbe(
         committedProbe,
         Math.max(1, Math.min(15_000, deadline - Date.now())),
@@ -267,6 +328,146 @@ async function waitForCommittedSandboxProbe(
   throw new Error(
     `OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: ${lastHealthDetail}`,
   );
+}
+
+function localInferenceBaseUrl(input: Inputs): string {
+  if (!input.localProvider) throw new Error("local provider is required");
+  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
+  const configured = String(process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL ?? "").trim();
+  const value = configured || route.defaultBaseUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("protected local inference base URL is invalid");
+  }
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "host.openshell.internal" ||
+    !/^[1-9][0-9]{0,4}$/u.test(parsed.port) ||
+    parsed.pathname.replace(/\/+$/u, "") !== "/v1" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("protected local inference must use http://host.openshell.internal:<port>/v1");
+  }
+  return value.replace(/\/+$/u, "");
+}
+
+function configureLocalInferenceRoute(
+  onboard: OnboardModule,
+  input: Inputs,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (!input.localProvider || !input.model) return;
+  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
+  const credential = String(env[route.credentialEnv] ?? "").trim();
+  if (!credential || /[\0\r\n]/u.test(credential)) {
+    throw new Error(`${route.credentialEnv} is required for protected local inference`);
+  }
+  const commandEnv = { ...env, [route.credentialEnv]: credential };
+  const create = onboard.runOpenshell(
+    [
+      "provider",
+      "create",
+      "--name",
+      route.providerName,
+      "--type",
+      "openai",
+      "--credential",
+      route.credentialEnv,
+      "--config",
+      `OPENAI_BASE_URL=${localInferenceBaseUrl(input)}`,
+    ],
+    { ignoreError: true, env: commandEnv, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (create.status !== 0) {
+    throw new Error(`protected local inference provider creation failed: ${commandDetail(create)}`);
+  }
+  const setRoute = onboard.runOpenshell(
+    [
+      "inference",
+      "set",
+      "--no-verify",
+      "--provider",
+      route.providerName,
+      "--model",
+      input.model,
+      "--timeout",
+      "120",
+    ],
+    { ignoreError: true, env: commandEnv, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (setRoute.status !== 0) {
+    throw new Error(`protected local inference route failed: ${commandDetail(setRoute)}`);
+  }
+}
+
+function localInferenceProbe(input: Inputs): string {
+  if (!input.model) throw new Error("local inference model is required");
+  const payload = JSON.stringify({
+    model: input.model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    reasoning_effort: "none",
+    max_tokens: 32,
+  });
+  return [
+    "set -eu",
+    "response=/tmp/nemoclaw-managed-image-inference.json",
+    `curl -fsS --max-time 180 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${JSON.stringify(payload)} > "$response"`,
+    "node - \"$response\" <<'NODE'",
+    'const fs = require("node:fs");',
+    'const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
+    "const choice = Array.isArray(body.choices) ? body.choices[0] : null;",
+    'const text = choice && choice.message && typeof choice.message.content === "string"',
+    "  ? choice.message.content",
+    '  : choice && typeof choice.text === "string" ? choice.text : "";',
+    'if (!/pong/i.test(text)) throw new Error("local inference did not return PONG");',
+    "NODE",
+    'rm -f "$response"',
+  ].join("\n");
+}
+
+function assertProtectedLocalInference(
+  onboard: OnboardModule,
+  input: Inputs,
+  env: NodeJS.ProcessEnv,
+): void {
+  const result = commandResult(
+    onboard.openshellArgv([
+      "sandbox",
+      "exec",
+      "--name",
+      input.sandbox,
+      "--",
+      "/bin/sh",
+      "-eu",
+      "-c",
+      localInferenceProbe(input),
+    ]),
+    env,
+    210_000,
+  );
+  if (result.status !== 0) {
+    throw new Error(`sandbox inference.local completion failed: ${commandDetail(result)}`);
+  }
+}
+
+function failureInjectingAdapter(onboard: OnboardModule): ManagedBootstrapAdapter {
+  const adapter = createDockerManagedBootstrapAdapter({
+    runCaptureOpenshell: onboard.runCaptureOpenshell,
+    runOpenshell: onboard.runOpenshell,
+    sleep: onboard.sleepSeconds,
+  });
+  return {
+    ...adapter,
+    async awaitBootstrap(input) {
+      await adapter.awaitBootstrap(input);
+      throw new Error("protected-e2e-injected-bootstrap-completion-failure");
+    },
+  };
 }
 
 function parseImmutableManifestReference(image: string): {
@@ -360,6 +561,32 @@ function assertExactSandboxImage(
   return resolved.exactIds[0] ?? "";
 }
 
+function assertFailedSandboxAbsent(
+  onboard: OnboardModule,
+  input: Inputs,
+  env: NodeJS.ProcessEnv,
+): void {
+  const get = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
+    ignoreError: true,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const list = onboard.runOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (
+    get.status === 0 ||
+    list.status !== 0 ||
+    `${list.stdout ?? ""}\n${list.stderr ?? ""}`.includes(input.sandbox)
+  ) {
+    throw new Error(
+      `managed-bootstrap rollback retained failed OpenShell sandbox state: get=${commandDetail(get)} list=${commandDetail(list)}`,
+    );
+  }
+}
+
 async function run(input: Inputs): Promise<void> {
   const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
   const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
@@ -377,6 +604,7 @@ async function run(input: Inputs): Promise<void> {
   let onboard: OnboardModule | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
+  let failureInjectionQualified = false;
   try {
     await assertGatewayPortAvailable();
     const image = parseImmutableManifestReference(input.image);
@@ -390,18 +618,31 @@ async function run(input: Inputs): Promise<void> {
       gatewayName: "nemoclaw",
       gatewayPort: GATEWAY_PORT,
     });
+    configureLocalInferenceRoute(onboard, input, process.env);
 
     const launchImport = (await import(
       "../../src/lib/onboard/sandbox-create-launch.ts"
     )) as unknown as SandboxCreateLaunchModule | { default: SandboxCreateLaunchModule };
     const launchModule = "default" in launchImport ? launchImport.default : launchImport;
-    const profile = encodeManagedStartupProfile(
-      managedStartupE2eProfile(input.agent, false, true, true),
-    );
+    const baseProfile = managedStartupE2eProfile(input.agent, false, true, true);
+    const protectedProfile =
+      input.localProvider && input.model
+        ? withManagedImageLocalInferenceProfile(
+            baseProfile,
+            resolveManagedImageLocalInferenceRoute(input.localProvider),
+            input.model,
+          )
+        : baseProfile;
+    const profile = encodeManagedStartupProfile(protectedProfile);
     initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
       managedImageOpenShellBasePolicyPath(input.agent),
       [],
-      { agentName: input.agent },
+      {
+        agentName: input.agent,
+        directGpu: input.gpu === true,
+        hostGpuAvailable: input.gpu === true,
+        additionalPresets: input.localProvider ? ["local-inference"] : [],
+      },
     );
     const createArgs = [
       "--from",
@@ -410,6 +651,7 @@ async function run(input: Inputs): Promise<void> {
       input.sandbox,
       "--policy",
       initialSandboxPolicy.policyPath,
+      ...(input.gpu ? ["--gpu"] : []),
     ];
     const launch = launchModule.prepareSandboxCreateManagedImageLaunch({
       agent: {
@@ -457,65 +699,108 @@ async function run(input: Inputs): Promise<void> {
       throw new Error("managed-image launch did not retain its identity-bound bootstrap contract");
     }
 
-    const flow = await runSandboxGpuCreateFlow(
-      {
-        sandboxName: input.sandbox,
-        provider: "nvidia",
-        sandboxGpuConfig: {
-          mode: "0",
-          hostGpuDetected: false,
-          hostGpuPlatform: null,
-          sandboxGpuEnabled: false,
-          sandboxGpuDevice: null,
-          errors: [],
-        },
-        gpuRoutePlan: "none",
-        initialGpuRoute: "none",
-        compatibilityPolicyPath: null,
-        dockerDriverGateway: true,
-        gatewayPort: GATEWAY_PORT,
-        sandboxReadyTimeoutSecs: 240,
-        createArgv: launch.createArgv,
-        sandboxEnv: launch.sandboxEnv,
-        sandboxStartupCommand: launch.sandboxStartupCommand,
-        prebuild: launch.prebuild,
-        restoreBackupPath: null,
-        terminalAgent: input.agent === "langchain-deepagents-code",
-        managedBootstrap: {
-          bootstrapIdentity: launch.managedBootstrapIdentity,
-          runtimeProvider: resolveCurrentManagedBootstrapRuntimeProvider("docker"),
-          request: launch.managedStartupRootApplyRequest,
-          image,
-          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-          intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
-          expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
-        },
-        ...startupPlan,
-      },
-      {
-        runOpenshell: onboard.runOpenshell,
-        runCaptureOpenshell: onboard.runCaptureOpenshell,
-        sleep: onboard.sleepSeconds,
-        openshellArgv: onboard.openshellArgv,
-        verifyDirectSandboxGpu: () => ({
-          status: "unverified",
+    const gpuEnabled = input.gpu === true;
+    const gpuConfig = {
+      mode: gpuEnabled ? ("1" as const) : ("0" as const),
+      hostGpuDetected: gpuEnabled,
+      hostGpuPlatform: gpuEnabled ? ("linux" as const) : null,
+      sandboxGpuEnabled: gpuEnabled,
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+    const verifyDirectSandboxGpu = gpuEnabled
+      ? createDirectSandboxGpuVerifier({
+          runOpenshell: onboard.runOpenshell,
+          compactText,
+          redact: redactProtectedGpuProof,
+        })
+      : () => ({
+          status: "unverified" as const,
           cudaVerified: false,
           label: "disabled",
           detail: null,
           at: new Date().toISOString(),
-        }),
-      },
-    );
-    if (flow.route !== "none" || flow.createResult.status !== 0) {
+        });
+    let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>>;
+    try {
+      flow = await runSandboxGpuCreateFlow(
+        {
+          sandboxName: input.sandbox,
+          provider: input.localProvider
+            ? resolveManagedImageLocalInferenceRoute(input.localProvider).providerName
+            : "nvidia",
+          sandboxGpuConfig: gpuConfig,
+          gpuRoutePlan: gpuEnabled ? "native-only" : "none",
+          initialGpuRoute: gpuEnabled ? "native" : "none",
+          compatibilityPolicyPath: null,
+          dockerDriverGateway: true,
+          gatewayPort: GATEWAY_PORT,
+          sandboxReadyTimeoutSecs: 240,
+          createArgv: launch.createArgv,
+          sandboxEnv: launch.sandboxEnv,
+          sandboxStartupCommand: launch.sandboxStartupCommand,
+          prebuild: launch.prebuild,
+          restoreBackupPath: null,
+          terminalAgent: input.agent === "langchain-deepagents-code",
+          managedBootstrap: {
+            bootstrapIdentity: launch.managedBootstrapIdentity,
+            runtimeProvider: resolveCurrentManagedBootstrapRuntimeProvider("docker"),
+            request: launch.managedStartupRootApplyRequest,
+            image,
+            agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+            intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
+            expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+          },
+          ...startupPlan,
+        },
+        {
+          runOpenshell: onboard.runOpenshell,
+          runCaptureOpenshell: onboard.runCaptureOpenshell,
+          sleep: onboard.sleepSeconds,
+          openshellArgv: onboard.openshellArgv,
+          verifyDirectSandboxGpu,
+          ...(input.failureInjection
+            ? { createManagedBootstrapAdapter: () => failureInjectingAdapter(onboard!) }
+            : {}),
+        },
+      );
+    } catch (error) {
+      if (
+        input.failureInjection === "bootstrap-completion" &&
+        error instanceof Error &&
+        error.message.includes("protected-e2e-injected-bootstrap-completion-failure")
+      ) {
+        const resolved = exactHarnessContainerIds(input, networkName, launch.sandboxEnv);
+        if (resolved.candidateCount !== 0 || resolved.exactIds.length !== 0) {
+          throw new Error(
+            `managed-bootstrap rollback retained a failed held sandbox: found ${resolved.candidateCount} labeled and ${resolved.exactIds.length} exact containers`,
+          );
+        }
+        assertFailedSandboxAbsent(onboard, input, launch.sandboxEnv);
+        failureInjectionQualified = true;
+        process.stdout.write(
+          `Injected managed-bootstrap completion failure removed the failed exact ${input.agent} sandbox before harness cleanup.\n`,
+        );
+        return;
+      }
+      throw error;
+    }
+    const expectedRoute = gpuEnabled ? "native" : "none";
+    if (flow.route !== expectedRoute || flow.createResult.status !== 0) {
       throw new Error(
         `production managed-bootstrap flow did not complete the exact PR image create: route=${flow.route} status=${flow.createResult.status}`,
       );
     }
 
-    await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
+    await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
     ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+    if (gpuEnabled) {
+      assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
+      await flow.dockerGpuCreatePatch.commitAfterReady();
+      await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
+    }
     process.stdout.write(
-      `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence.\n`,
+      `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${gpuEnabled ? ` with real NVIDIA GPU access and ${input.localProvider} inference.local completion` : ""}.\n`,
     );
   } finally {
     const cleanupErrors: string[] = [];
@@ -584,6 +869,27 @@ async function run(input: Inputs): Promise<void> {
         `harness network ${networkName} was not removed: ${commandDetail(removeNetwork)} ${commandDetail(verifyNetwork)}`.trim(),
       );
     }
+    const remainingSandboxContainers = commandResult(
+      [
+        "docker",
+        "ps",
+        "-aq",
+        "--filter",
+        "label=openshell.ai/managed-by=openshell",
+        "--filter",
+        `label=openshell.ai/sandbox-name=${input.sandbox}`,
+      ],
+      process.env,
+      15_000,
+    );
+    if (
+      remainingSandboxContainers.status !== 0 ||
+      String(remainingSandboxContainers.stdout ?? "").trim() !== ""
+    ) {
+      cleanupErrors.push(
+        `managed-image sandbox/container orphan remained after cleanup: ${commandDetail(remainingSandboxContainers)}`,
+      );
+    }
     try {
       initialSandboxPolicy?.cleanup?.();
     } catch (error) {
@@ -592,6 +898,11 @@ async function run(input: Inputs): Promise<void> {
     fs.rmSync(stateDir, { recursive: true, force: true });
     if (cleanupErrors.length > 0) {
       throw new Error(`managed-image OpenShell cleanup failed: ${cleanupErrors.join("; ")}`);
+    }
+    if (failureInjectionQualified) {
+      process.stdout.write(
+        `Managed-bootstrap failure injection left no sandbox, container, network, or harness state orphan for ${input.agent}.\n`,
+      );
     }
   }
 }
@@ -602,3 +913,5 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
+
+export { run as runManagedImageOpenShellE2e };

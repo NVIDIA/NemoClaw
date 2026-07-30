@@ -27,6 +27,7 @@ export type RiskFamilyId =
   | "openclaw-image"
   | "credentials-security"
   | "e2e-control-plane"
+  | "managed-image-runtime"
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -111,6 +112,16 @@ const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
 const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/live/cloud-onboard.test.ts",
   "test/e2e/risk-signal-reporter.ts",
+]);
+const MANAGED_IMAGE_RUNTIME_FILES = new Set([
+  ".github/workflows/managed-images.yaml",
+  "scripts/checks/build-protected-managed-images.sh",
+  "scripts/checks/managed-image-protected-runtime-contract.ts",
+  "scripts/checks/run-managed-image-openshell-e2e.ts",
+  "src/lib/onboard/sandbox-gpu-create-flow.ts",
+  "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
+  "test/e2e/live/managed-image-bootstrap-rollback.test.ts",
+  "test/e2e/live/managed-image-gpu-e2e.test.ts",
 ]);
 const FOCUSED_E2E_SUMMARY =
   "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
@@ -314,6 +325,25 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("test/e2e/") ||
       file.startsWith(".github/actions/prepare-e2e/") ||
       file.startsWith(".github/actions/upload-e2e-artifacts/"),
+  },
+  {
+    id: "managed-image-runtime",
+    summary:
+      "Managed-image changes must preserve exact-image bootstrap, rollback, GPU access, and host-local inference for every shipped agent.",
+    tier: 3,
+    requiredJobs: ["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"],
+    invariants: [
+      "OpenClaw, Hermes, and Deep Agents Code consume exact same-job protected image digests through real Docker and OpenShell",
+      "post-bootstrap failure removes failed sandboxes, containers, networks, registry state, and harness state",
+      "GPU qualification proves NVIDIA device use and real Ollama and vLLM backend use through inference.local",
+      "NIM source and route contracts remain distinct from vLLM and are not reported as engine-qualified without protected registry credentials",
+    ],
+    matches: (file) =>
+      MANAGED_IMAGE_RUNTIME_FILES.has(file) ||
+      file === "Dockerfile" ||
+      /^agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile$/u.test(file) ||
+      file.startsWith("src/lib/onboard/managed-bootstrap/") ||
+      file.startsWith("src/lib/onboard/managed-startup/"),
   },
   {
     id: "sandbox-boundary",
