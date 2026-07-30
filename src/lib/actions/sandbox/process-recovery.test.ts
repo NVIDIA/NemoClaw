@@ -169,7 +169,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3, 3]);
   });
 
-  it("retries opaque OpenShell follow-ups after an exact re-registration state", () => {
+  it("retries unstructured OpenShell follow-ups after an exact re-registration state", () => {
     const bufferError = Object.assign(new Error("spawnSync openshell ENOBUFS"), {
       code: "ENOBUFS",
     });
@@ -181,7 +181,12 @@ describe("recreated sandbox OpenShell readiness", () => {
         stdout: "",
         stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
       })
-      .mockReturnValueOnce({ status: 101, output: "", stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 101,
+        output: "Waiting for sandbox registration",
+        stdout: "Waiting for sandbox registration\n",
+        stderr: "",
+      })
       .mockReturnValueOnce({
         status: null,
         output: "",
