@@ -182,7 +182,7 @@ function runRecoveryHarness({
 }
 
 describe("OpenClaw PID 1 guard-chain recovery", () => {
-  it("re-stages packaged guards idempotently across repeated gateway restarts", () => {
+  it("re-stages packaged guards identically across five recovery preparations (#7919)", () => {
     const attempts = 5;
     const harness = runRecoveryHarness({ attempts });
     try {
@@ -398,10 +398,9 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
   // ── Recovery warning must reach the gateway log, not just stderr (#6065) ──
   //
   // #5874 moved recovery to a docker-IPC path where the warning was written to
-  // PID 1 stderr only; the live `issue-2478-crash-loop-recovery` E2E polls
-  // /tmp/gateway.log and went red. That target does not run on PR CI, so this
-  // mocked unit pins the file write through an extracted helper in the PR gate
-  // to keep a refactor from silently regressing to stderr-only.
+  // PID 1 stderr only. This deterministic test verifies the gateway-log mirror
+  // through an extracted production helper. It detects a refactor that moves
+  // the warning back to stderr-only diagnostics.
   it("mirrors the guard-chain restore warning into the gateway log file", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-warn-"));

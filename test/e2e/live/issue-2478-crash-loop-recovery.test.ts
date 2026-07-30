@@ -6,9 +6,9 @@
  * Preserves the contract with real Docker/OpenShell/NemoClaw boundaries:
  * onboard an OpenClaw sandbox, kill and recover the gateway via the production
  * `connect --probe-only` path, verify the guard-chain preloads remain present,
- * prove inference.local keeps serving models, and observe the recovered PID
- * long enough to catch an immediate crash loop. Repeated restoration and
- * missing proxy-state cases stay in deterministic tests.
+ * prove inference.local keeps serving models, and verify that the recovered PID
+ * remains unchanged for 15 seconds. Deterministic tests cover repeated
+ * restoration and missing `/tmp` proxy environment state.
  */
 
 import http from "node:http";
@@ -270,14 +270,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
+test("gateway recovery preserves the guard chain and PID for 15 seconds (#2478)", {
   meta: {
     e2ePhases: [
       "start the compatible endpoint and confirm host readiness",
       "onboard the guarded OpenClaw sandbox",
       "confirm initial gateway and inference health",
       "recover one terminated gateway through the production connect path",
-      "verify the recovered runtime stays healthy",
+      "verify the recovered PID remains unchanged for 15 seconds",
     ],
   },
 }, async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
@@ -338,7 +338,7 @@ test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
     timeoutMs: 60_000,
   });
 
-  progress.phase("verify the recovered runtime stays healthy");
+  progress.phase("verify the recovered PID remains unchanged for 15 seconds");
   const stablePid = await gateway.expectPidStable(instance, {
     durationSeconds: STABILITY_SECONDS,
     pollIntervalSeconds: 5,
