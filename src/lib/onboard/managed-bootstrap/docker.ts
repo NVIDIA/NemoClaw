@@ -129,6 +129,12 @@ interface DockerBootstrapTransaction {
   readonly originalSpecHash: string;
 }
 
+interface DockerBootstrapRollbackTombstone {
+  readonly profileFingerprint: string;
+  readonly imageReference: string;
+  readonly receipt: ManagedBootstrapFinalizationReceipt;
+}
+
 export interface DockerManagedBootstrapAdapter extends ManagedBootstrapAdapter {}
 
 function resolveDeps(deps: DockerManagedBootstrapDeps): ResolvedDeps {
@@ -995,6 +1001,54 @@ export function createDockerManagedBootstrapAdapter(
   const deps = resolveDeps(dependencies);
   const transactions = new Map<string, DockerBootstrapTransaction>();
   const committedTransactions = new Set<string>();
+  const rollbackTombstones = new Map<string, DockerBootstrapRollbackTombstone>();
+  const completedRollback = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+    alreadyRolledBack: boolean,
+  ): ManagedBootstrapFinalizationReceipt => {
+    const receipt = Object.freeze({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      outcome: "rolled-back",
+      restoredRuntimeId: null,
+      restoredSpecHash: null,
+      heldWorkloadRemoved: true,
+      alreadyRolledBack,
+      finalizedAt: deps.now().toISOString(),
+    } satisfies ManagedBootstrapFinalizationReceipt);
+    transactions.delete(handle.bootstrapIdentity);
+    rollbackTombstones.set(handle.bootstrapIdentity, {
+      profileFingerprint: handle.plan.profile.fingerprint,
+      imageReference: expectedImageReference(
+        handle.plan.image.repository,
+        handle.plan.image.manifestDigest,
+      ),
+      receipt,
+    });
+    return receipt;
+  };
+  const priorRollback = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+  ): ManagedBootstrapFinalizationReceipt | null => {
+    const tombstone = rollbackTombstones.get(handle.bootstrapIdentity);
+    if (!tombstone) return null;
+    const receipt = tombstone.receipt;
+    if (
+      receipt.sandbox.sandboxName !== handle.sandbox.sandboxName ||
+      receipt.sandbox.sandboxId !== handle.sandbox.sandboxId ||
+      receipt.sandbox.driverId !== handle.sandbox.driverId ||
+      tombstone.profileFingerprint !== handle.plan.profile.fingerprint ||
+      tombstone.imageReference !==
+        expectedImageReference(handle.plan.image.repository, handle.plan.image.manifestDigest)
+    ) {
+      throw new Error("Managed bootstrap rollback tombstone does not match its durable identity.");
+    }
+    return Object.freeze({
+      ...receipt,
+      alreadyRolledBack: true,
+    });
+  };
   const rollbackBootstrapNow = ({
     handle,
     snapshot,
@@ -1004,20 +1058,11 @@ export function createDockerManagedBootstrapAdapter(
     readonly snapshot: ManagedBootstrapObservedSnapshot | null;
     readonly replacement: ManagedBootstrapReplacementHandle | null;
   }): ManagedBootstrapFinalizationReceipt => {
+    const finalized = priorRollback(handle);
+    if (finalized) return finalized;
     if (!snapshot) {
       removeHeldWorkload(handle, deps);
-      transactions.delete(handle.bootstrapIdentity);
-      return Object.freeze({
-        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-        sandbox: handle.sandbox,
-        bootstrapIdentity: handle.bootstrapIdentity,
-        outcome: "rolled-back",
-        restoredRuntimeId: null,
-        restoredSpecHash: null,
-        heldWorkloadRemoved: true,
-        alreadyRolledBack: false,
-        finalizedAt: deps.now().toISOString(),
-      });
+      return completedRollback(handle, false);
     }
     const existing = transactions.get(handle.bootstrapIdentity);
     const originalName = dockerContainerName(
@@ -1057,18 +1102,8 @@ export function createDockerManagedBootstrapAdapter(
     if (restoredSpec.hash !== snapshot.specHash) {
       throw new Error("Managed bootstrap Docker rollback receipt spec does not match.");
     }
-    transactions.delete(handle.bootstrapIdentity);
-    return Object.freeze({
-      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-      sandbox: handle.sandbox,
-      bootstrapIdentity: handle.bootstrapIdentity,
-      outcome: "rolled-back",
-      restoredRuntimeId: transaction.originalRuntimeId,
-      restoredSpecHash: restoredSpec.hash,
-      heldWorkloadRemoved: false,
-      alreadyRolledBack,
-      finalizedAt: deps.now().toISOString(),
-    } satisfies ManagedBootstrapFinalizationReceipt);
+    removeHeldWorkload(handle, deps);
+    return completedRollback(handle, alreadyRolledBack);
   };
   const commitBootstrapNow = (receipt: ManagedBootstrapCompletionReceipt): void => {
     if (committedTransactions.has(receipt.bootstrapIdentity)) return;
