@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
+import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
+import { finalizeDockerGpuPatchBackup } from "../../onboard/docker-gpu-patch-finalize";
+import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import {
   type ManagedSupervisorRelaunchDeps,
   relaunchManagedSupervisorSession,
@@ -27,6 +29,60 @@ function patchResult(): DockerGpuPatchResult {
       args: [],
     },
     backupRemoved: false,
+  };
+}
+
+function composedHandoffDeps() {
+  const inspect = {
+    Id: "old-container-id",
+    Image: `sha256:${"c".repeat(64)}`,
+    Name: "/openshell-alpha",
+    Config: {
+      Image: "openshell/sandbox:abc",
+      Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
+      Labels: {
+        "openshell.ai/managed-by": "openshell",
+        "openshell.ai/sandbox-name": "alpha",
+      },
+      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+      Cmd: [],
+      User: "0",
+      WorkingDir: "/workspace",
+    },
+    HostConfig: {
+      NetworkMode: "openshell-docker",
+      RestartPolicy: { Name: "unless-stopped" },
+      CapAdd: [],
+      SecurityOpt: [],
+    },
+  };
+  const dockerCapture = vi.fn((args: readonly string[]) =>
+    args[0] === "ps" ? "old-container-id\n" : JSON.stringify([inspect]),
+  );
+  const dockerForceRm = vi.fn(() => ({ status: 0 }));
+  const dockerRm = vi.fn(() => ({ status: 0 }));
+  const dockerStart = vi.fn(() => ({ status: 0 }));
+  const dockerStop = vi.fn(() => ({ status: 0 }));
+  const dockerRename = vi.fn(() => ({ status: 0 }));
+  const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+  const dockerDeps: DockerGpuPatchDeps = {
+    detectSandboxFallbackDns: () => null,
+    dockerCapture,
+    dockerForceRm,
+    dockerRename,
+    dockerRm,
+    dockerRunDetached,
+    dockerStart,
+    dockerStop,
+    now: () => new Date("2026-07-10T00:00:00Z"),
+  };
+  return {
+    dockerDeps,
+    dockerForceRm,
+    dockerRename,
+    dockerRm,
+    dockerStart,
+    dockerStop,
   };
 }
 
@@ -140,6 +196,55 @@ describe("relaunchManagedSupervisorSession", () => {
       result: expect.objectContaining({ backupContainerName: expect.any(String) }),
       supervisorReady: false,
     });
+  });
+
+  it("removes the running original only after the handoff is finalized as ready", () => {
+    const handoff = composedHandoffDeps();
+    const deps = baseDeps({
+      recreate: (options) =>
+        recreateOpenShellDockerSandboxWithStartupCommand(options, handoff.dockerDeps),
+      finalize: (options) => finalizeDockerGpuPatchBackup(options, handoff.dockerDeps),
+    });
+
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.containerId).toBe("new-container-id");
+    expect(handoff.dockerStop).not.toHaveBeenCalled();
+    expect(handoff.dockerForceRm).not.toHaveBeenCalled();
+
+    expect(relaunch?.finalize(true)).toEqual({ backupRemoved: true, rolledBack: false });
+    expect(handoff.dockerForceRm).toHaveBeenCalledWith(
+      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(handoff.dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("restores the running original without restarting it when the handoff is finalized as not ready", () => {
+    const handoff = composedHandoffDeps();
+    const deps = baseDeps({
+      recreate: (options) =>
+        recreateOpenShellDockerSandboxWithStartupCommand(options, handoff.dockerDeps),
+      finalize: (options) => finalizeDockerGpuPatchBackup(options, handoff.dockerDeps),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(false)).toEqual({ backupRemoved: false, rolledBack: true });
+    expect(handoff.dockerStop).toHaveBeenCalledWith(
+      "new-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(handoff.dockerRm).toHaveBeenCalledWith(
+      "new-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(handoff.dockerRename).toHaveBeenLastCalledWith(
+      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(handoff.dockerStart).not.toHaveBeenCalled();
+    expect(handoff.dockerForceRm).not.toHaveBeenCalled();
   });
 
   it("returns null when the pinned recreation fails", () => {
