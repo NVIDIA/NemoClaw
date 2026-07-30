@@ -1027,16 +1027,23 @@ PYHISTORY
 }
 
 repair_hermes_startup_layout() {
-  # The cron and Discord recovery ledgers are created by gateway and backed
-  # up/restored by sandbox. Maintain their descriptor-verified, group-writable
-  # parents even when the rest of the config root is shields-up locked or was
-  # wiped.
-  ensure_hermes_cross_uid_state_dir gateway || return 1
-  ensure_hermes_cross_uid_state_dir cron || return 1
+  # The cron execution and Discord recovery ledgers are created by gateway and
+  # backed up/restored by sandbox. Maintain their descriptor-verified,
+  # group-writable runtime and gateway parents even when the rest of the config
+  # root is locked while Shields up is active or was wiped. The cron directory
+  # contains cron job definitions and must remain sealed.
+  if ! ensure_hermes_cross_uid_state_dir gateway; then
+    echo "[gateway] Hermes pre-launch layout repair failed at gateway state directory" >&2
+    return 1
+  fi
+  if ! ensure_hermes_cross_uid_state_dir runtime; then
+    echo "[gateway] Hermes pre-launch layout repair failed at runtime state directory" >&2
+    return 1
+  fi
 
   if hermes_config_root_is_locked; then
     # The locked-root posture seals config.yaml/.env, not the dir. The gateway
-    # and cron state parents were maintained above; also bring a missing
+    # and runtime state parents were maintained above; also bring a missing
     # prompt_toolkit history file into existence as a sandbox-owned regular
     # file. Sandboxes built before the precreate landed would otherwise stay
     # broken until the next `shields down` cycle.
@@ -1045,7 +1052,10 @@ repair_hermes_startup_layout() {
     # either let the TUI clobber an attacker-pointed path or repeat the
     # original keypress traceback.
     echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
-    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660 || return 1
+    if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
+      echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
+      return 1
+    fi
     return 0
   fi
 
