@@ -50,7 +50,8 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).not.toContain("'devices', 'list', '--json'");
     expect(restoredClone).toContain("'pending.json'");
     expect(restoredClone).toContain("'paired.json'");
-    expect(restoredClone).toContain("local_approval_auth_mode == 'runtime'");
+    expect(restoredClone).not.toContain("local_approval_auth_mode == 'runtime'");
+    expect(restoredClone).not.toContain("os.environ.get('OPENCLAW_GATEWAY_TOKEN'");
     expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
     expect(restoredClone).toContain("sync_approved_clone_device_auth");
     expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");

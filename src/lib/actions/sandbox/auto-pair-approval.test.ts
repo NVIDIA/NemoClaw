@@ -685,20 +685,17 @@ ${persistentRaceNeedle}`,
         receipt: parseAutoPairApprovalReceipt(initial.stdout),
         wroteClassifiedEnv: fs.existsSync(approveEnvFile),
       }).toEqual({
-        approvalCalls: 1,
-        approvals: 1,
-        receipt: "approved-one",
-        wroteClassifiedEnv: true,
+        approvalCalls: 0,
+        approvals: 0,
+        receipt: "request-rejected",
+        wroteClassifiedEnv: false,
       });
-      expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
-      expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
-      );
+      expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(false);
+      expect(readApprovals()).toEqual([]);
 
       resetLogs();
       const missingCloneToken = run([localRequest], { gatewayToken: "" });
-      expect(parseAutoPairApprovalReceipt(missingCloneToken.stdout)).toBe("approve-failed");
+      expect(parseAutoPairApprovalReceipt(missingCloneToken.stdout)).toBe("request-rejected");
       expect(readApprovals()).toEqual([]);
       expect(fs.existsSync(approveEnvFile)).toBe(false);
 
@@ -738,8 +735,9 @@ ${persistentRaceNeedle}`,
       };
       const combinedInitial = run([foreignRequest, combinedInitialRequest]);
       expect(combinedInitial.status).toBe(0);
-      expect(combinedInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
-      expect(readApprovals()).toEqual(["clone-pairing-with-write"]);
+      expect(parseAutoPairApprovalReceipt(combinedInitial.stdout)).toBe("request-rejected");
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
       resetLogs();
       const writeOnlyInitialRequest = {
         ...localRequest,
@@ -749,8 +747,9 @@ ${persistentRaceNeedle}`,
       };
       const writeOnlyInitial = run([foreignRequest, writeOnlyInitialRequest]);
       expect(writeOnlyInitial.status).toBe(0);
-      expect(writeOnlyInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
-      expect(readApprovals()).toEqual(["clone-write-only"]);
+      expect(parseAutoPairApprovalReceipt(writeOnlyInitial.stdout)).toBe("request-rejected");
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
       for (const clientAuth of ["missing", "stale"] as const) {
         resetLogs();
         const pairedPreconvergence = run([foreignRequest, writeOnlyInitialRequest], {
@@ -815,8 +814,9 @@ ${persistentRaceNeedle}`,
       const clonePending = JSON.stringify(clonePendingById);
       const clonePairing = run([], { pendingById: clonePendingById });
       expect(clonePairing.status).toBe(0);
-      expect(parseAutoPairApprovalReceipt(clonePairing.stdout)).toBe("approved-one");
-      expect(readApprovals()).toEqual(["clone-write-only"]);
+      expect(parseAutoPairApprovalReceipt(clonePairing.stdout)).toBe("request-rejected");
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
       expect(`${clonePairing.stdout}${clonePairing.stderr}`.includes("raw list output")).toBe(
         false,
       );
@@ -831,9 +831,7 @@ ${persistentRaceNeedle}`,
         primaryPaired,
       );
       expect(fs.existsSync(listEnvFile)).toBe(false);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
-      );
+      expect(fs.existsSync(approveEnvFile)).toBe(false);
 
       const cloneScopePendingById = {
         [foreignRequest.requestId]: foreignRequest,
@@ -914,12 +912,11 @@ ${persistentRaceNeedle}`,
         timeoutAfterCommit: true,
       });
       expect(parseAutoPairApprovalReceipt(timedOutWithoutPairedBaseline.stdout)).toBe(
-        "approve-failed",
+        "request-rejected",
       );
-      expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toEqual([
-        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
-      ]);
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
+      expect(fs.existsSync(approveEnvFile)).toBe(false);
       expect(
         `${timedOutWithoutPairedBaseline.stdout}${timedOutWithoutPairedBaseline.stderr}`.includes(
           "raw timed-out approval output",
