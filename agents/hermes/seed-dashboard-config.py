@@ -117,41 +117,44 @@ class InvalidDashboardSeedDocumentError(Exception):
     pass
 
 
-def _directory_is_empty_no_follow(path: str) -> bool:
-    """Return whether a directory is empty without following its final path component."""
+def _open_directory_no_follow(path: str, *, dir_fd: int | None = None) -> int:
+    """Open a directory without following its final path component."""
 
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    fd = os.open(path, flags)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    return os.open(path, flags, dir_fd=dir_fd)
+
+
+def _directory_is_empty_at(parent_fd: int, name: str) -> bool:
+    """Return whether a child directory is empty without following symlinks."""
+
+    fd = _open_directory_no_follow(name, dir_fd=parent_fd)
     try:
         return not os.listdir(fd)
     finally:
         os.close(fd)
 
 
-def _ensure_profile_parent(path: str) -> bool:
-    """Create the canonical profile parent and reject non-directory replacements."""
+def _open_profile_parent(config_fd: int, path: str) -> int | None:
+    """Create and securely open the canonical profile parent."""
 
     try:
-        os.mkdir(path, 0o700)
+        os.mkdir("profiles", 0o700, dir_fd=config_fd)
     except FileExistsError:
         pass
     except OSError as exc:
         print(f"[dashboard] failed to create profile directory {path} ({exc})", file=sys.stderr)
-        return False
+        return None
 
     try:
-        parent_stat = os.lstat(path)
+        return _open_directory_no_follow("profiles", dir_fd=config_fd)
     except OSError as exc:
-        print(f"[dashboard] failed to inspect profile directory {path} ({exc})", file=sys.stderr)
-        return False
-    if not stat.S_ISDIR(parent_stat.st_mode):
         print(
             f"[SECURITY] Refusing to migrate legacy dashboard profile because {path} "
-            "is not a safe directory",
+            f"is not a safe directory ({exc})",
             file=sys.stderr,
         )
-        return False
-    return True
+        return None
 
 
 def _migrate_legacy_dashboard_profile(dst: str) -> bool:
@@ -169,54 +172,80 @@ def _migrate_legacy_dashboard_profile(dst: str) -> bool:
 
     legacy_home = os.path.join(config_dir, "dashboard-home")
     try:
-        legacy_stat = os.lstat(legacy_home)
-    except FileNotFoundError:
-        return True
-    if not stat.S_ISDIR(legacy_stat.st_mode):
+        config_fd = _open_directory_no_follow(config_dir)
+    except OSError as exc:
         print(
-            f"[SECURITY] Refusing to migrate legacy dashboard profile because {legacy_home} "
-            "is not a safe directory",
+            f"[SECURITY] Refusing to inspect dashboard profile root {config_dir} ({exc})",
             file=sys.stderr,
         )
         return False
 
+    profiles_fd = -1
     try:
-        current_stat = os.lstat(dashboard_home)
-    except FileNotFoundError:
-        current_stat = None
-    if current_stat is not None:
-        if not stat.S_ISDIR(current_stat.st_mode):
+        try:
+            legacy_stat = os.stat("dashboard-home", dir_fd=config_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return True
+        if not stat.S_ISDIR(legacy_stat.st_mode):
             print(
-                f"[SECURITY] Refusing to migrate legacy dashboard profile because "
-                f"{dashboard_home} is not a safe directory",
+                f"[SECURITY] Refusing to migrate legacy dashboard profile because {legacy_home} "
+                "is not a safe directory",
                 file=sys.stderr,
             )
             return False
+
+        opened_profiles_fd = _open_profile_parent(config_fd, profiles_dir)
+        if opened_profiles_fd is None:
+            return False
+        profiles_fd = opened_profiles_fd
+
         try:
-            destination_is_empty = _directory_is_empty_no_follow(dashboard_home)
+            current_stat = os.stat("dashboard-home", dir_fd=profiles_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            current_stat = None
+        if current_stat is not None:
+            if not stat.S_ISDIR(current_stat.st_mode):
+                print(
+                    f"[SECURITY] Refusing to migrate legacy dashboard profile because "
+                    f"{dashboard_home} is not a safe directory",
+                    file=sys.stderr,
+                )
+                return False
+            try:
+                destination_is_empty = _directory_is_empty_at(profiles_fd, "dashboard-home")
+            except OSError as exc:
+                print(
+                    f"[SECURITY] Refusing to inspect dashboard profile {dashboard_home} ({exc})",
+                    file=sys.stderr,
+                )
+                return False
+            if not destination_is_empty:
+                print(
+                    "[dashboard] Refusing to merge legacy and current dashboard profiles; "
+                    "move the legacy files manually before restarting",
+                    file=sys.stderr,
+                )
+                return False
+            os.rmdir("dashboard-home", dir_fd=profiles_fd)
+
+        try:
+            os.rename(
+                "dashboard-home",
+                "dashboard-home",
+                src_dir_fd=config_fd,
+                dst_dir_fd=profiles_fd,
+            )
         except OSError as exc:
             print(
-                f"[SECURITY] Refusing to inspect dashboard profile {dashboard_home} ({exc})",
+                f"[dashboard] failed to migrate legacy dashboard profile ({exc})",
                 file=sys.stderr,
             )
             return False
-        if not destination_is_empty:
-            print(
-                "[dashboard] Refusing to merge legacy and current dashboard profiles; "
-                "move the legacy files manually before restarting",
-                file=sys.stderr,
-            )
-            return False
-        os.rmdir(dashboard_home)
+    finally:
+        if profiles_fd >= 0:
+            os.close(profiles_fd)
+        os.close(config_fd)
 
-    if not _ensure_profile_parent(profiles_dir):
-        return False
-
-    try:
-        os.rename(legacy_home, dashboard_home)
-    except OSError as exc:
-        print(f"[dashboard] failed to migrate legacy dashboard profile ({exc})", file=sys.stderr)
-        return False
     print(
         f"[dashboard] migrated legacy dashboard profile to {dashboard_home}",
         file=sys.stderr,
@@ -288,16 +317,21 @@ def _load_yaml(path: str, label: str) -> dict:
 
 
 def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], None]) -> bool:
-    tmp = f"{dst}.nemoclaw.tmp"
+    parent, basename = os.path.split(dst)
+    parent = parent or "."
+    tmp_basename = f"{basename}.nemoclaw.tmp"
+    tmp = os.path.join(parent, tmp_basename)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     for flag_name in ("O_CLOEXEC", "O_NOFOLLOW"):
         flags |= getattr(os, flag_name, 0)
 
     owner_ids = _seed_owner_ids()
+    parent_fd = -1
     fd = -1
     created = False
     try:
-        fd = os.open(tmp, flags, 0o600)
+        parent_fd = _open_directory_no_follow(parent)
+        fd = os.open(tmp_basename, flags, 0o600, dir_fd=parent_fd)
         created = True
         with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
             writer(handle)
@@ -307,7 +341,7 @@ def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], Non
         os.fchmod(fd, 0o600)
         os.close(fd)
         fd = -1
-        os.replace(tmp, dst)
+        os.replace(tmp_basename, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
         created = False
         return True
     except FileExistsError:
@@ -333,11 +367,13 @@ def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], Non
                 pass
         if created:
             try:
-                os.unlink(tmp)
+                os.unlink(tmp_basename, dir_fd=parent_fd)
             except OSError:
                 # Best-effort temp cleanup after a failed atomic write; the
                 # caller already gets the seed failure above.
                 pass
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _provider_key(raw: object, fallback: str = "nemoclaw-inference") -> str:
