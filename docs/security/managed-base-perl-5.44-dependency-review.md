@@ -9,7 +9,7 @@ Date: 2026-07-29
 
 ## Scope
 
-This review extends the existing Perl 5.44.0 remediation to the Hermes and Deep Agents Code base images.
+This review extends the existing Perl 5.44.0 remediation to the Hermes and LangChain Deep Agents Code base images.
 
 The OpenClaw base image already installs the reviewed packages.
 The sibling images used Debian Perl 5.40.1-6 before this change.
@@ -86,8 +86,10 @@ The image build also executes the reviewed Socket argument-length rejection and 
 
 ## Downstream boundaries
 
-The change does not modify agent configuration, credentials, network policy, runtime entrypoints, persistent state, or image selection.
+The change does not modify agent configuration, credentials, network policy, runtime entrypoints, or persistent state.
 It changes the Perl files and dpkg identities inside the three existing managed base images.
+It also lets a clean committed checkout resolve its exact published source-SHA candidate before the committed-input divergence check requires a local build.
+Dirty base-image inputs still require a local build.
 
 Rollback selects an earlier immutable base-image digest.
 The change does not add a data migration or a compatibility fallback.
