@@ -4,6 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ManagedImageCatalogError,
+  ManagedImageCatalogUnavailableError,
+} from "./managed-image/catalog";
+import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -237,7 +241,7 @@ describe("sandbox workload preparation", () => {
 
   it("uses an unavailable-catalog fallback only under an explicit preferred policy (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => {
-      throw new Error("registry offline");
+      throw new ManagedImageCatalogUnavailableError("registry offline");
     });
     const preferred = await prepareSandboxWorkloadSource(
       { ...input("openclaw"), policy: "prefer-managed" },
@@ -253,6 +257,31 @@ describe("sandbox workload preparation", () => {
     await expect(
       prepareSandboxWorkloadSource(input("openclaw"), { resolveCatalog }),
     ).rejects.toThrow(SandboxWorkloadPreparationError);
+  });
+
+  it("rejects catalog integrity failures under the preferred policy (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => {
+      throw new ManagedImageCatalogError("manifest bytes do not match the selected digest");
+    });
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("openclaw"), policy: "prefer-managed" },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("managed image catalog 'v0.0.97' failed validation");
+  });
+
+  it("rejects an invalid release before preferred-policy catalog fallback (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("openclaw"), version: "../mutable", policy: "prefer-managed" },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("managed image release for CLI version '../mutable' failed validation");
+    expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
   it("does not hide a malformed catalog contract behind preferred fallback (#7744)", async () => {
