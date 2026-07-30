@@ -3427,7 +3427,7 @@ A custom-port uninstall does not stop or remove the default gateway service or i
 ##### Uninstalling Every Gateway Port
 
 A single uninstall is scoped to one gateway port, so the other ports on the host keep running and keep their ports bound.
-When uninstall detects other gateway-port environments, it names each one, gives the `NEMOCLAW_GATEWAY_PORT=<port>` command that removes it, and points at the whole-host sweep.
+When uninstall detects other gateway-port environments, it names each one, gives the `NEMOCLAW_GATEWAY_PORT=<port>` command that removes one of them, and points at the whole-host sweep.
 A gateway environment whose port cannot be read is reported as an unidentified environment rather than omitted.
 
 `--all-gateway-ports`, or `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, uninstalls all of them in one run.

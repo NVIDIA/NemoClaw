@@ -34,7 +34,7 @@ Do not use `--gateway` to select another instance; when supplied for compatibili
 
 One uninstall removes one gateway port.
 A host that onboarded under more than one `NEMOCLAW_GATEWAY_PORT` keeps the other ports bound after that uninstall, because each port is a separate environment with its own sandboxes, registry, and gateway.
-When other ports remain, uninstall names them and prints the command that removes them.
+When other ports remain, uninstall names them, prints the command that removes one of them, and prints the command that removes every port.
 An environment whose port cannot be read is reported as unidentified, and the per-port command appears only when at least one port is known:
 
 ```text
