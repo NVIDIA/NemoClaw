@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const PATCHER = path.join(ROOT, "agents", "hermes", "patch-gateway-process-identity.py");
-const DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 
 // The pinned Hermes matcher, reduced to the tokenizing/allowlist shape the
 // patcher rewrites. Keeping the real grammar here means the assertions below
