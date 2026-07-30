@@ -149,11 +149,11 @@ describe("cloudflared update-check workflow contract", () => {
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
   });
 
-  it("extracts exactly four identical reviewed version and SHA256 pins", () => {
+  it("extracts exactly five identical reviewed version and SHA256 pins", () => {
     const versions = pinValues(e2e, "CLOUDFLARED_VERSION");
     const hashes = pinValues(e2e, "CLOUDFLARED_DEB_SHA256");
-    expect(versions).toHaveLength(4);
-    expect(hashes).toHaveLength(4);
+    expect(versions).toHaveLength(5);
+    expect(hashes).toHaveLength(5);
     expect(new Set(versions).size).toBe(1);
     expect(new Set(hashes).size).toBe(1);
     expect(versions[0]).toMatch(/^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$/u);
