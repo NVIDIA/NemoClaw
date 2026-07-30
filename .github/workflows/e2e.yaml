@@ -1474,9 +1474,10 @@ jobs:
         # localhost-compatible routing, namespace-aware HTTPS pinning, DNS
         # rebinding resistance, private-target redirect rejection, and
         # credential-bearing URL state rejection without live provider quota.
-        # It also proves runtime identity through a deterministic public OAuth
-        # refresh, real OpenShell provider attachment/injection, rotation, and
-        # rollback without using a third-party tenant.
+        # It also proves generic and Entra-shaped runtime identity through a
+        # deterministic public OAuth refresh, real OpenShell provider
+        # attachment/injection, Graph /v1.0/me policy, rotation, and rollback
+        # without storing a third-party tenant credential in PR CI.
         # Provider smokes live in inference-routing-provider-smoke.test.ts; any
         # future secret-bearing lane must run that file from trusted main.
         run: |
