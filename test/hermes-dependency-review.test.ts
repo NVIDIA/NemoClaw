@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -30,6 +31,18 @@ function arg(name: string): string {
   const match = dockerfileBase.match(new RegExp(`^ARG ${name}=(.+)$`, "mu"));
   expect(match, `Missing Dockerfile ARG ${name}`).not.toBeNull();
   return match?.[1] ?? "";
+}
+
+function uvVersionCheckStatus(output: string): number | null {
+  const script = [
+    'uv() { printf "%s\\n" "$UV_OUTPUT"; }',
+    'uv_version_output="$(uv --version)"',
+    'uv_version="${uv_version_output#uv }"',
+    'test "${uv_version%% *}" = "${UV_VERSION}"',
+  ].join("\n");
+  return spawnSync("/bin/sh", ["-c", script], {
+    env: { ...process.env, UV_OUTPUT: output, UV_VERSION: "0.11.33" },
+  }).status;
 }
 
 describe("Hermes 0.19.0 dependency review", () => {
@@ -79,6 +92,13 @@ describe("Hermes 0.19.0 dependency review", () => {
     }
   });
 
+  it("accepts uv build metadata and rejects a different semantic version", () => {
+    expect(
+      uvVersionCheckStatus("uv 0.11.33 (fece32fc5 2026-07-28 aarch64-unknown-linux-gnu)"),
+    ).toBe(0);
+    expect(uvVersionCheckStatus("uv 0.11.32 (different build metadata)")).not.toBe(0);
+  });
+
   it("ships the reviewed Python dependency remediations and records residual debt", () => {
     expect(dockerfileBase).toContain(
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
@@ -89,6 +109,10 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
+    expect(dockerfileBase).toContain('uv_version_output="$(uv --version)"');
+    expect(dockerfileBase).toContain('uv_version="${uv_version_output#uv }"');
+    expect(dockerfileBase).toContain('test "${uv_version%% *}" = "${UV_VERSION}"');
+    expect(dockerfileBase).not.toContain('test "$(uv --version)" = "uv ${UV_VERSION}"');
     for (const selection of [
       '"cryptography==48.0.1"',
       '"mcp==1.28.1"',
