@@ -40,15 +40,9 @@ function uvVersionCheckStatus(output: string, expectedVersion: string): number |
   );
   expect(installIndex, "Missing Dockerfile uv install command").toBeGreaterThanOrEqual(0);
 
-  const commandLines: string[] = [];
-  for (let index = installIndex; index < dockerfileLines.length; index += 1) {
-    const line = dockerfileLines[index] ?? "";
-    commandLines.push(line);
-    if (!line.endsWith("\\")) {
-      break;
-    }
-  }
-  const versionCheckLines = commandLines.slice(1);
+  const commandLines = dockerfileLines.slice(installIndex);
+  const commandEndIndex = commandLines.findIndex((line) => !line.endsWith("\\"));
+  const versionCheckLines = commandLines.slice(1, commandEndIndex + 1);
   expect(versionCheckLines, "Missing Dockerfile uv version check").not.toHaveLength(0);
 
   const script = [
