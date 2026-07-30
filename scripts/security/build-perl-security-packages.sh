@@ -77,9 +77,10 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
   cmp \
     "${build_root}/perl-tests-full.sorted" \
     "${build_root}/perl-tests-combined.sorted"
+  # harness -dumptests reports paths from the source root and removes ../.
   test "$(
     grep -Fxc \
-      '../cpan/ExtUtils-Constant/t/Constant.t' \
+      'cpan/ExtUtils-Constant/t/Constant.t' \
       "${build_root}/perl-tests-combined.sorted"
   )" -eq 1
   # Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP

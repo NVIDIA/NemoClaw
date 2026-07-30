@@ -82,8 +82,11 @@ function sandboxSecurityCommand(
   return { command, inventory, debianSecurityDebs, nativeSecurityDebs, pythonShim };
 }
 
-function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string {
-  return [
+function securityInventory(
+  architecture: (typeof ARCHITECTURES)[number],
+  includePerl = true,
+): string {
+  const inventory = [
     `architecture=${architecture}`,
     "libexpat1=2.8.2-1",
     "libonig5=6.9.9-1+b1",
@@ -93,8 +96,11 @@ function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string
     "vim-tiny=2:9.2.0782-1",
     "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
     "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
-    "",
-  ].join("\n");
+  ];
+  if (includePerl) {
+    inventory.push("perl-base=5.44.0-1nemoclaw1", "perl=5.44.0-1nemoclaw1");
+  }
+  return `${inventory.join("\n")}\n`;
 }
 
 function completedImageSecurityCommand(
@@ -125,7 +131,8 @@ describe("sandbox base security packages", () => {
 
     try {
       const result = runLoggedDockerShell(prepared.command, tmp, [
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        "perl_packages_installed=0",
+        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_packages_installed=1; }',
         'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
         'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
         ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
@@ -133,8 +140,11 @@ describe("sandbox base security packages", () => {
       expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
       const calls = fs.readFileSync(path.join(tmp, "calls.log"), "utf-8");
       expect(calls).toContain("dpkg-install");
-      expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(securityInventory(architecture));
-      expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
+      const includesPerl = image.name !== "OpenClaw";
+      expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(
+        securityInventory(architecture, includesPerl),
+      );
+      expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(includesPerl ? 0o444 : 0o644);
       expect(
         calls
           .split("\n")
@@ -164,6 +174,7 @@ describe("sandbox base security packages", () => {
 
     try {
       const result = runLoggedDockerShell(prepared.command, tmp, [
+        "perl_packages_installed=1",
         [
           "stat() {",
           `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
