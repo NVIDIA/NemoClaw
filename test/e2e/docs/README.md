@@ -29,7 +29,7 @@ unique live boundary and declare:
   minutes for matrix expansion;
 - a runner class and earliest eligible `pr`, `nightly`, `weekly`, or `release`
   tier;
-- the owning-file mappings that drive changed-area selection;
+- validated owning-file mappings for each covered live unit;
 - required telemetry and artifacts; and
 - the condition for review, consolidation, or retirement.
 
