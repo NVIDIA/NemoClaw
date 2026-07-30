@@ -95,7 +95,7 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it("maps a shared gateway live test to both retained migration tiers (#7921)", () => {
+  it("maps a shared gateway live test to the retained migration job (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
     const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
@@ -105,15 +105,8 @@ describe("deterministic PR risk plan", () => {
         id: "openshell-gateway-upgrade",
         matchedFiles: changedFiles,
       },
-      {
-        id: "openshell-gateway-upgrade-compatibility",
-        matchedFiles: changedFiles,
-      },
     ]);
-    expect(riskPlanRequiredJobIds(result)).toEqual([
-      "openshell-gateway-upgrade",
-      "openshell-gateway-upgrade-compatibility",
-    ]);
+    expect(riskPlanRequiredJobIds(result)).toEqual(["openshell-gateway-upgrade"]);
   });
 
   it("keeps an unknown live test behind the broad control-plane floor (#7921)", () => {

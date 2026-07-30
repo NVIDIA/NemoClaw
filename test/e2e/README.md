@@ -254,31 +254,6 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
-### Gateway migration tiers
-
-The OpenShell gateway migration matrix separates the current state-migration
-boundary from retained historical and architecture boundaries:
-
-| Job | NemoClaw row | Runner | Boundary | Scheduled cadence |
-| --- | --- | --- | --- | --- |
-| `openshell-gateway-upgrade` | `v0.0.89-x86_64` | `ubuntu-latest` | current OpenClaw state migration | Daily |
-| `openshell-gateway-upgrade-compatibility` | `v0.0.36-x86_64` | `ubuntu-latest` | oldest retained registry migration | Sunday |
-| `openshell-gateway-upgrade-compatibility` | `v0.0.55-x86_64` | `ubuntu-latest` | x86_64 OpenShell 0.0.44 regression | Sunday |
-| `openshell-gateway-upgrade-compatibility` | `v0.0.55-aarch64` | `ubuntu-24.04-arm` | arm64 OpenShell 0.0.44 regression | Sunday |
-| `openshell-gateway-upgrade-compatibility` | `v0.0.74-x86_64` | `ubuntu-latest` | immediate predecessor registry migration | Sunday |
-
-The workflow schedules the nightly path Monday through Saturday and schedules
-the complete tier set on Sunday. The current row runs on both schedules because
-`openshell-gateway-upgrade` is default-enabled.
-`openshell-gateway-upgrade-compatibility` is explicit-only outside the Sunday
-schedule. Select that job directly through the `jobs` or `targets` input for a
-focused PR run or another required qualification.
-
-Nightly reports list the compatibility job as skipped when it is not selected;
-they do not classify that tier as failed. The split removes four shards from
-each Monday-through-Saturday scheduled run. Runner-minute measurements for the
-new cadence are pending.
-
 A manual run with `jobs=staging-brev-launchable` runs only the exact staging
 Launchable E2E job. Scheduled runs do not select this job.
 
@@ -612,8 +587,7 @@ Runtime families and changes to workflow-wired live tests or their owning
 helpers select canonical jobs from the trusted `e2e.yaml` inventory
 independently of advisor output. A workflow-wired live test or owning helper
 selects one to three focused E2E journeys. A gateway-migration live test or
-owning helper selects both `openshell-gateway-upgrade` and
-`openshell-gateway-upgrade-compatibility`.
+owning helper selects `openshell-gateway-upgrade`.
 
 Changes only under `test/e2e/support/` select no credentialed live E2E job.
 The `e2e-support` Vitest project runs those support tests in PR CI. A new or

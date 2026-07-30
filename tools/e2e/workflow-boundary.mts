@@ -155,7 +155,6 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
-  "openshell-gateway-upgrade-compatibility",
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
@@ -579,14 +578,8 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
-  [
-    "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-    ["openshell-gateway-upgrade", "openshell-gateway-upgrade-compatibility"],
-  ],
-  [
-    "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
-    ["openshell-gateway-upgrade", "openshell-gateway-upgrade-compatibility"],
-  ],
+  ["test/e2e/live/openshell-gateway-upgrade-helpers.ts", ["openshell-gateway-upgrade"]],
+  ["test/e2e/live/openshell-gateway-upgrade-old-installer.ts", ["openshell-gateway-upgrade"]],
 ]);
 
 export function focusedE2eJobsForChangedFiles(
@@ -1005,10 +998,7 @@ function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
   const cronEntries = schedule
     .map((entry) => asRecord(entry).cron)
     .filter((cron): cron is string => typeof cron === "string");
-  const runsDaily =
-    cronEntries.includes("0 0 * * *") ||
-    (cronEntries.includes("0 0 * * 1-6") && cronEntries.includes("0 0 * * 0"));
-  if (!runsDaily) {
+  if (!cronEntries.includes("0 0 * * *")) {
     errors.push("workflow schedule must run daily at 00:00 UTC");
   }
 }

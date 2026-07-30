@@ -188,12 +188,6 @@ export function renderE2eReport(input: {
       reason:
         "default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected",
     },
-    "openshell-gateway-upgrade-compatibility": {
-      job: "openshell-gateway-upgrade-compatibility",
-      target: "openshell-gateway-upgrade-compatibility",
-      reason:
-        "nightly and default manual dispatches exclude weekly gateway compatibility migrations unless selected",
-    },
     "mcp-bridge-dev": {
       job: "mcp-bridge-dev",
       target: "mcp-bridge-dev",
@@ -211,14 +205,9 @@ export function renderE2eReport(input: {
       reason: "default dispatch excludes the destructive rlimit fork/connect probe unless selected",
     },
   };
-  const explicitlySelected = new Set(
-    [...requestedTestIdsCsv.split(","), ...requestedTargets.split(",")].filter(Boolean),
-  );
   const explicitOnlySkippedJobs = (env.EXPLICIT_ONLY_JOBS || "")
     .split(",")
     .filter(Boolean)
-    .filter((job) => !explicitlySelected.has(job))
-    .filter((job) => input.needs[job]?.result === "skipped")
     .map(
       (job) =>
         explicitOnlyReasons[job] ?? {
@@ -305,9 +294,7 @@ export function renderE2eReport(input: {
   for (const job of apiJobs) {
     const jobName = job.name || "";
     const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
-    const aggregateJobName = aggregateJobNames.find(
-      (name) => jobName.startsWith(`${name} (`) || jobName.startsWith(`${name} / `),
-    );
+    const aggregateJobName = aggregateJobNames.find((name) => jobName.startsWith(`${name} (`));
     const reportEntryName =
       match?.[1] ??
       aggregateJobName ??
@@ -441,14 +428,14 @@ export function renderE2eReport(input: {
       ? "**Requested test IDs:** _(selector rejected by workflow validation)_"
       : requestedTestIdsCsv
         ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
-        : "**Requested test IDs:** _(default — workflow policy selected the enabled tests for this run)_",
+        : "**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_",
     `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
     "",
     "| Test | Result | Total wall clock time |",
     "|-----|--------|-----------------------|",
     ...rows,
   ];
-  if (!selectiveDispatch && explicitOnlySkippedJobs.length > 0) {
+  if (!selectiveDispatch) {
     const skippedJobHints = explicitOnlySkippedJobs
       .map(
         ({ job, target, reason }) =>

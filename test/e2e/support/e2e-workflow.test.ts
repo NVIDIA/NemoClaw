@@ -769,10 +769,6 @@ describe("e2e workflow boundary", () => {
         id: "openshell-gateway-upgrade",
         matchedFiles: ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
       },
-      {
-        id: "openshell-gateway-upgrade-compatibility",
-        matchedFiles: ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
-      },
     ]);
   });
 
