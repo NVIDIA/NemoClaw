@@ -72,7 +72,12 @@ function brokerDiagnostics(child: ChildProcess, output: () => string): string {
 
 function controlRequest(
   socketPath: string,
-  route: "/credentials/register" | "/credentials/unregister",
+  route:
+    | "/credentials/activate"
+    | "/credentials/discard"
+    | "/credentials/register"
+    | "/credentials/stage"
+    | "/credentials/unregister",
   payload: Record<string, string>,
 ): Promise<{ readonly body: string; readonly status: number }> {
   const body = JSON.stringify(payload);
@@ -176,6 +181,24 @@ describe("Hermes managed-tool gateway broker", () => {
         hashMatches: false,
       }),
     ).toBe("start-or-restart");
+  });
+
+  it("probes private broker boot/control and classifies failures before clone mutation", async () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+
+    expect(() =>
+      broker.probeHermesToolGatewayBrokerStart({
+        spawnSyncImpl: () => ({ status: 2 }),
+      }),
+    ).toThrow("could not bind its runtime endpoints");
+    expect(() =>
+      broker.probeHermesToolGatewayBrokerStart({
+        spawnSyncImpl: () => ({ status: 3 }),
+      }),
+    ).toThrow("control registration path failed");
+    const probePort = await freePort();
+    expect(() => broker.probeHermesToolGatewayBrokerStart({ port: probePort })).not.toThrow();
   });
 
   it("refreshes via header, replaces upstream auth, normalizes responses, and rotates OpenShell storage", {
@@ -394,7 +417,8 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(openshellOutput).toContain(
       "provider update sandbox-hermes-tool-gateway --credential NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
     );
-    expect(openshellOutput).toContain("refresh=refresh-2");
+    expect(openshellOutput).toContain("refresh=broker-1");
+    expect(openshellOutput).not.toContain("refresh=refresh-2");
     expect(openshellOutput).toContain(
       "provider update hermes-provider --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://inference-api.nousresearch.com/v1",
     );
@@ -455,10 +479,20 @@ describe("Hermes managed-tool gateway broker", () => {
     const controlSocket = path.join(socketDir, "control.sock");
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     fs.mkdirSync(binDir, { recursive: true });
+    const openshellLog = path.join(tmp, "openshell.log");
     const openshellBin = path.join(binDir, "openshell");
-    fs.writeFileSync(openshellBin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(
+      openshellBin,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${openshellLog}"\nexit 0\n`,
+      { mode: 0o755 },
+    );
 
-    const writeState = (sandbox: string, brokerToken: string, refreshToken: string): void => {
+    const writeState = (
+      sandbox: string,
+      brokerToken: string,
+      refreshToken: string,
+      inferenceProviderName: string,
+    ): void => {
       fs.writeFileSync(
         path.join(stateDir, `${sandbox}.json`),
         JSON.stringify(
@@ -466,6 +500,8 @@ describe("Hermes managed-tool gateway broker", () => {
             version: 1,
             sandbox,
             provider_name: `${sandbox}-hermes-tool-gateway`,
+            inference_provider_name: inferenceProviderName,
+            inference_credential_env: "OPENAI_API_KEY",
             credential_env: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
             broker_token: brokerToken,
             broker_token_sha256: sha256(brokerToken),
@@ -478,8 +514,13 @@ describe("Hermes managed-tool gateway broker", () => {
         { mode: 0o600 },
       );
     };
-    writeState("source", "source-broker-token", "source-refresh-token");
-    writeState("destination", "destination-broker-token", "destination-refresh-token");
+    writeState("source", "source-broker-token", "source-refresh-token", "hermes-provider");
+    writeState(
+      "destination",
+      "destination-broker-token",
+      "destination-refresh-token",
+      "destination-hermes-inference",
+    );
 
     const refreshHeaders: string[] = [];
     const portal = resources.ownServer(
@@ -500,7 +541,7 @@ describe("Hermes managed-tool gateway broker", () => {
           }
           const refreshToken = String(req.headers["x-nous-refresh-token"] || "");
           refreshHeaders.push(refreshToken);
-          const identity = refreshToken.startsWith("destination") ? "destination" : "source";
+          const identity = refreshToken.split("-")[0] || "source";
           res.end(
             JSON.stringify({
               access_token: `access-${identity}`,
@@ -590,6 +631,27 @@ describe("Hermes managed-tool gateway broker", () => {
     ).resolves.toMatchObject({ status: 200 });
     expect((await proxy("destination-broker-token")).status).toBe(200);
 
+    const stagedResponse = await controlRequest(controlSocket, "/credentials/stage", {
+      sandbox: "staged",
+      refresh_token: "staged-refresh-token",
+      inference_provider_name: "staged-hermes-inference",
+    });
+    expect(stagedResponse.status, `${stagedResponse.body}\n${output}`).toBe(200);
+    const staged = JSON.parse(stagedResponse.body) as {
+      activation_token: string;
+      broker_token: string;
+    };
+    expect(staged.activation_token).toMatch(/^nc_activate_/u);
+    expect(staged.broker_token).toMatch(/^nc_broker_/u);
+    writeState("staged", staged.broker_token, "staged-refresh-token", "staged-hermes-inference");
+    await expect(
+      controlRequest(controlSocket, "/credentials/activate", {
+        sandbox: "staged",
+        activation_token: staged.activation_token,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    expect((await proxy(staged.broker_token)).status).toBe(200);
+
     await expect(
       controlRequest(controlSocket, "/credentials/unregister", {
         sandbox: "destination",
@@ -601,10 +663,21 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(upstreamAuthorizations).toEqual([
       "Bearer access-source",
       "Bearer access-destination",
+      "Bearer access-staged",
       "Bearer access-source",
     ]);
     expect(refreshHeaders).toEqual(
       expect.arrayContaining(["source-refresh-token", "destination-refresh-token"]),
+    );
+    const openshellUpdates = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellUpdates).toContain(
+      "provider update hermes-provider --credential OPENAI_API_KEY",
+    );
+    expect(openshellUpdates).toContain(
+      "provider update destination-hermes-inference --credential OPENAI_API_KEY",
+    );
+    expect(openshellUpdates).toContain(
+      "provider update staged-hermes-inference --credential OPENAI_API_KEY",
     );
     expect(output).not.toContain("source-refresh-token");
     expect(output).not.toContain("destination-refresh-token");

@@ -351,18 +351,19 @@ Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/u
 
 </AgentOnly>
 
-On supported `amd64` Docker hosts, stock onboarding prefers a complete immutable release image for the selected shipped agent.
+On supported `amd64` and `arm64` hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
 NemoClaw accepts the release catalog only when the same publication cohort contains OpenClaw, Hermes, and Deep Agents images.
 It resolves the selected image to an exact repository digest and builds a secret-free startup profile for the current sandbox configuration.
 The startup applicator verifies and materializes that profile when the sandbox starts.
 Managed rebuilds resolve the current CLI release to an exact digest, while managed clones retain the source image digest and prepare a target-specific profile.
 
-If catalog or registry resolution fails, Docker falls back to the trusted canonical Dockerfile recipe.
-An explicit `--from <Dockerfile>` request also remains a local Dockerfile build.
-NemoClaw shows a Dockerfile build-time estimate only after one of those local-build paths is known.
+If catalog or registry resolution fails, stock onboarding stops before mutation.
+NemoClaw never silently falls back from a managed image to a Dockerfile.
+An explicit `--from <Dockerfile>` request remains a separate local Dockerfile build.
+NemoClaw shows a Dockerfile build-time estimate only after that explicit local-build path is known.
 Stock managed-image launch does not show the estimate because it does not run a local Dockerfile build.
 
-The base-image resolution controls below apply to the trusted Dockerfile fallback and explicit custom Dockerfile workflows.
+The base-image resolution controls below apply only to explicit custom Dockerfile workflows.
 When Docker exposes the required identity metadata, NemoClaw records the resolved base identity on a locally built sandbox image.
 During a warm recreate or rebuild of that path, it validates the local image identity and platform, the exact repository digest for a published base, and any active OpenShell ABI requirement before reusing the base.
 Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1` to bypass the recorded Dockerfile base hint without changing onboarding session handling:
@@ -2711,7 +2712,7 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox, recreates it through `onboard --resume`, and restores workspace state into the new sandbox.
 Managed rebuilds resolve the current CLI release to an exact image digest and a fresh startup profile.
-Custom Dockerfile and trusted fallback rebuilds retain their local-build behavior.
+Explicit custom Dockerfile rebuilds retain their local-build behavior.
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
@@ -3358,7 +3359,7 @@ $$nemoclaw credentials reset nvidia-prod
 ### `$$nemoclaw gc`
 
 Remove orphaned sandbox Docker images from the host.
-Custom Dockerfile and trusted fallback creation can build sandbox-owned images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository.
+Explicit custom Dockerfile creation can build sandbox-owned images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository.
 Shared immutable managed release images are not sandbox-owned orphan candidates.
 The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
 This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
@@ -3826,7 +3827,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
-| `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded base-image resolution metadata for the trusted Dockerfile fallback or explicit custom Dockerfile during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible base from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state and does not override managed complete-image selection. |
+| `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded base-image resolution metadata for an explicit custom Dockerfile during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible base from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state and does not override managed complete-image selection. |
 | `NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to enable; `0`, `false`, `no`, or `off` to disable | Controls whether Dockerfile base-image resolution may build a compatible base locally. The default allows builds during normal CLI runs and disables them when `NODE_ENV=test` or `VITEST=true`. When source inputs or a missing or incompatible release-version base require a fresh build, disabling local builds makes Dockerfile resolution fail instead of using an unproven image. This setting does not override managed complete-image selection. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary native Linux. `fallback` explicitly opts into one native attempt followed by one bounded compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts `0` only as a troubleshooting override that bypasses device-group propagation. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.85's directly supported glibc 2.28+ path; see the [OpenShell gateway compatibility review](/user-guide/openclaw/security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the unchanged container boundary. |

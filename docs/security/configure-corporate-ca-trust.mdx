@@ -36,8 +36,8 @@ For a managed release image, NemoClaw passes the bounded CA bundle separately wh
 The secret-free startup profile contains only the bundle's SHA-256 digest.
 The root-owned startup applicator verifies that digest and installs `/usr/local/share/nemoclaw/corporate-ca.pem` as a read-only file.
 
-For the trusted Dockerfile fallback, NemoClaw encodes the bundle as `NEMOCLAW_CORPORATE_CA_B64`.
-The canonical Dockerfile decodes it to the same root-owned, read-only file.
+For an explicitly selected custom Dockerfile, NemoClaw encodes the bundle as `NEMOCLAW_CORPORATE_CA_B64`.
+The Dockerfile must decode it to the same root-owned, read-only file.
 
 <AgentOnly variant="openclaw">
 
@@ -76,18 +76,17 @@ A corporate root that exists only as a hand-edited entry in a merged trust store
 ## Verify the Selected Source
 
 For a managed release image, sandbox startup verifies the CA digest before the agent launches.
-For the Dockerfile fallback, build output logs `baking corporate proxy CA from ...` without printing certificate contents.
+For an explicit custom Dockerfile that implements the contract, build output can log the selected corporate CA source without printing certificate contents.
 
 If a conventional variable points at a missing or invalid file, onboarding logs that the source was skipped for corporate CA import.
 An administrator anchor directory that contains candidates but no valid CA logs a similar warning.
 
 ## Use a Custom Dockerfile
 
-The trusted canonical Dockerfile fallback implements the corporate CA build contract automatically.
 A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64` and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem` for runtime trust.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
-Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits that argument.
+Automatically discovered host-store sources are a no-op when a custom Dockerfile omits that argument.
 The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when the argument is absent so the requested trust change cannot silently disappear.
 
 ## Review the Trust Boundary

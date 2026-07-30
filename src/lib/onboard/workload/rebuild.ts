@@ -37,6 +37,7 @@ import {
 } from "./preparation";
 import {
   type ManagedImageWorkloadSource,
+  managedImageRuntimePlatform,
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
 } from "./source";
@@ -224,6 +225,18 @@ export async function prepareManagedWorkloadRebuildHandoff(
 ): Promise<ManagedWorkloadRebuildCatalogHandoff | null> {
   const authority = readManagedWorkloadRebuildAuthority(entry);
   if (!authority) return null;
+  const runtimePlatform = managedImageRuntimePlatform(options.runtime);
+  if (runtimePlatform === null) {
+    throw new ManagedWorkloadRebuildError(
+      `driver '${options.runtime.driverName}' has no unambiguous managed-image host platform`,
+    );
+  }
+  if (authority.contract.platform !== runtimePlatform) {
+    throw new ManagedWorkloadRebuildError(
+      `the recorded workload targets '${authority.contract.platform}', but driver ` +
+        `'${options.runtime.driverName}' requires '${runtimePlatform}'`,
+    );
+  }
 
   let replacement: PreparedSandboxWorkloadSource;
   try {

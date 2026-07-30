@@ -221,7 +221,7 @@ Use these details when your first-run path needs more control.
     <Note>
     Managed release-image onboarding puts the `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting in the secret-free startup profile.
     NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
-    The trusted Dockerfile fallback applies the same setting during its local build.
+    An explicitly selected custom Dockerfile must apply the same setting during its local build.
     Setting the variable after onboarding does not affect an existing sandbox.
     </Note>
 

@@ -4,6 +4,21 @@
 export type HermesToolGatewayCloneBroker = {
   readonly HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: string;
   getHermesToolGatewayProviderName(sandboxName: string): string;
+  getHermesInferenceProviderName(sandboxName: string): string;
+  preflightHermesToolGatewayCloneBinding(sandboxName: string): void;
+  stageHermesToolGatewayCloneBinding(
+    sandboxName: string,
+    refreshToken: string,
+  ): { readonly activationToken: string; readonly brokerToken: string };
+  activateHermesToolGatewayCloneBinding(
+    sandboxName: string,
+    refreshToken: string,
+    stagedBinding: { readonly activationToken: string; readonly brokerToken: string },
+  ): { readonly file: string; readonly brokerToken: string };
+  discardHermesToolGatewayCloneBinding(
+    sandboxName: string,
+    stagedBinding: { readonly activationToken: string; readonly brokerToken: string },
+  ): boolean;
   bindHermesToolGatewayCloneProviderState(
     sandboxName: string,
     refreshToken: string,

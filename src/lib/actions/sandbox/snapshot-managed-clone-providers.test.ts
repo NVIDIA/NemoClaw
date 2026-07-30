@@ -49,9 +49,22 @@ function managedHermesToolProfile() {
 function fakeBroker() {
   return {
     HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: REFRESH_ENV,
+    getHermesInferenceProviderName: vi.fn(
+      (sandboxName: string) => `${sandboxName}-hermes-inference`,
+    ),
     getHermesToolGatewayProviderName: vi.fn(
       (sandboxName: string) => `${sandboxName}-hermes-tool-gateway`,
     ),
+    preflightHermesToolGatewayCloneBinding: vi.fn(),
+    stageHermesToolGatewayCloneBinding: vi.fn(() => ({
+      activationToken: "nc_activate_test-only",
+      brokerToken: "nc_broker_test-only",
+    })),
+    activateHermesToolGatewayCloneBinding: vi.fn(() => ({
+      file: "/test-only/beta.json",
+      brokerToken: "nc_broker_test-only",
+    })),
+    discardHermesToolGatewayCloneBinding: vi.fn(() => true),
     bindHermesToolGatewayCloneProviderState: vi.fn(() => ({
       file: "/test-only/beta.json",
       brokerToken: "test-only-broker-token",
@@ -72,7 +85,10 @@ describe("managed snapshot clone provider credentials", () => {
         environment: { [REFRESH_ENV]: "  test-only-refresh\r\n" },
         runDeviceCodeFlow,
       }),
-    ).resolves.toEqual({ [REFRESH_ENV]: "test-only-refresh" });
+    ).resolves.toEqual({
+      [REFRESH_ENV]: "test-only-refresh",
+      OPENAI_API_KEY: expect.stringMatching(/^nc_clone_/u),
+    });
     expect(runDeviceCodeFlow).not.toHaveBeenCalled();
   });
 
@@ -102,7 +118,10 @@ describe("managed snapshot clone provider credentials", () => {
         environment: {},
         runDeviceCodeFlow,
       }),
-    ).resolves.toEqual({ [REFRESH_ENV]: "test-only-device-refresh" });
+    ).resolves.toEqual({
+      [REFRESH_ENV]: "test-only-device-refresh",
+      OPENAI_API_KEY: expect.stringMatching(/^nc_clone_/u),
+    });
     expect(runDeviceCodeFlow).toHaveBeenCalledOnce();
   });
 
@@ -110,6 +129,10 @@ describe("managed snapshot clone provider credentials", () => {
     const broker = fakeBroker();
     const runner = vi.fn(
       s.managedProviderCreationRunner({
+        "beta-hermes-inference": {
+          type: "openai",
+          credential: "OPENAI_API_KEY",
+        },
         "beta-hermes-tool-gateway": {
           type: "generic",
           credential: REFRESH_ENV,
@@ -121,13 +144,23 @@ describe("managed snapshot clone provider credentials", () => {
       messagingPlan: null,
       destinationSandboxName: "beta",
       destinationWillBeReplaced: false,
-      environment: { [REFRESH_ENV]: "test-only-refresh" },
+      environment: {
+        [REFRESH_ENV]: "test-only-refresh",
+        OPENAI_API_KEY: "test-only-placeholder",
+      },
       root: "/repo",
       runOpenshell: runner,
       hermesToolGatewayBroker: broker,
     });
 
     expect(prepared).toEqual([
+      {
+        providerName: "beta-hermes-inference",
+        providerType: "openai",
+        providerEnvKey: "OPENAI_API_KEY",
+        source: "hermes-inference",
+        replaceExistingCredential: false,
+      },
       {
         providerName: "beta-hermes-tool-gateway",
         providerType: "generic",
@@ -139,31 +172,53 @@ describe("managed snapshot clone provider credentials", () => {
     ]);
     expect(
       provisionManagedCloneProviders(prepared, {
-        environment: { [REFRESH_ENV]: "test-only-refresh" },
+        environment: {
+          [REFRESH_ENV]: "test-only-refresh",
+          OPENAI_API_KEY: "test-only-placeholder",
+        },
         runOpenshell: runner,
         hermesToolGatewayBroker: broker,
+        stagedHermesBinding: {
+          activationToken: "nc_activate_test-only",
+          brokerToken: "nc_broker_test-only",
+        },
       }),
-    ).toEqual(["beta-hermes-tool-gateway"]);
-    expect(broker.bindHermesToolGatewayCloneProviderState).toHaveBeenCalledExactlyOnceWith(
+    ).toEqual(["beta-hermes-inference", "beta-hermes-tool-gateway"]);
+    expect(broker.preflightHermesToolGatewayCloneBinding).toHaveBeenCalledExactlyOnceWith("beta");
+    expect(broker.activateHermesToolGatewayCloneBinding).toHaveBeenCalledExactlyOnceWith(
       "beta",
       "test-only-refresh",
+      {
+        activationToken: "nc_activate_test-only",
+        brokerToken: "nc_broker_test-only",
+      },
     );
     expect(
       runner.mock.calls.some(([, options]) =>
         String(JSON.stringify(options?.env)).includes("test-only-refresh"),
+      ),
+    ).toBe(false);
+    expect(
+      runner.mock.calls.some(([, options]) =>
+        String(JSON.stringify(options?.env)).includes("nc_broker_test-only"),
       ),
     ).toBe(true);
     expect(runner.mock.calls.map(([args]) => args.join(" ")).join("\n")).not.toContain(
       "test-only-refresh",
     );
 
-    cleanupManagedCloneProviders(["beta-hermes-tool-gateway"], runner, undefined, broker);
+    cleanupManagedCloneProviders(
+      ["beta-hermes-inference", "beta-hermes-tool-gateway"],
+      runner,
+      undefined,
+      broker,
+    );
     expect(broker.removeHermesToolGatewayProviderState).toHaveBeenCalledExactlyOnceWith("beta");
   });
 
   it("rolls back the destination provider when broker rebinding fails", () => {
     const broker = fakeBroker();
-    broker.bindHermesToolGatewayCloneProviderState.mockImplementation(() => {
+    broker.activateHermesToolGatewayCloneBinding.mockImplementation(() => {
       throw new Error("synthetic broker bind failure");
     });
     const commands: string[] = [];
@@ -172,10 +227,15 @@ describe("managed snapshot clone provider credentials", () => {
       commands.push(args.join(" "));
       if (args[1] === "get") {
         const providerName = args[2] ?? "";
+        const inference = providerName.endsWith("-hermes-inference");
         return created.has(providerName)
           ? {
               status: 0,
-              stdout: s.providerMetadata(providerName, "generic", REFRESH_ENV),
+              stdout: s.providerMetadata(
+                providerName,
+                inference ? "openai" : "generic",
+                inference ? "OPENAI_API_KEY" : REFRESH_ENV,
+              ),
               output: "",
             }
           : { status: 1, output: "" };
@@ -189,7 +249,10 @@ describe("managed snapshot clone provider credentials", () => {
       messagingPlan: null,
       destinationSandboxName: "beta",
       destinationWillBeReplaced: false,
-      environment: { [REFRESH_ENV]: "test-only-refresh" },
+      environment: {
+        [REFRESH_ENV]: "test-only-refresh",
+        OPENAI_API_KEY: "test-only-placeholder",
+      },
       root: "/repo",
       runOpenshell: runner,
       hermesToolGatewayBroker: broker,
@@ -197,12 +260,49 @@ describe("managed snapshot clone provider credentials", () => {
 
     expect(() =>
       provisionManagedCloneProviders(prepared, {
-        environment: { [REFRESH_ENV]: "test-only-refresh" },
+        environment: {
+          [REFRESH_ENV]: "test-only-refresh",
+          OPENAI_API_KEY: "test-only-placeholder",
+        },
         runOpenshell: runner,
         hermesToolGatewayBroker: broker,
+        stagedHermesBinding: {
+          activationToken: "nc_activate_test-only",
+          brokerToken: "nc_broker_test-only",
+        },
       }),
     ).toThrow("synthetic broker bind failure");
     expect(commands).toContain("provider delete beta-hermes-tool-gateway");
+    expect(commands).toContain("provider delete beta-hermes-inference");
+    expect(broker.discardHermesToolGatewayCloneBinding).toHaveBeenCalledExactlyOnceWith("beta", {
+      activationToken: "nc_activate_test-only",
+      brokerToken: "nc_broker_test-only",
+    });
     expect(broker.removeHermesToolGatewayProviderState).toHaveBeenCalledExactlyOnceWith("beta");
+  });
+
+  it("rejects broker runtime incompatibility before inspecting or mutating providers", () => {
+    const broker = fakeBroker();
+    broker.preflightHermesToolGatewayCloneBinding.mockImplementation(() => {
+      throw new Error("synthetic active broker runtime mismatch");
+    });
+    const runner = vi.fn();
+
+    expect(() =>
+      prepareManagedCloneProviders({
+        profile: managedHermesToolProfile(),
+        messagingPlan: null,
+        destinationSandboxName: "beta",
+        destinationWillBeReplaced: true,
+        environment: {
+          [REFRESH_ENV]: "test-only-refresh",
+          OPENAI_API_KEY: "test-only-placeholder",
+        },
+        root: "/repo",
+        runOpenshell: runner,
+        hermesToolGatewayBroker: broker,
+      }),
+    ).toThrow("synthetic active broker runtime mismatch");
+    expect(runner).not.toHaveBeenCalled();
   });
 });

@@ -831,9 +831,12 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     );
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    vi.stubEnv("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN", "test-only-destination-refresh-token");
     f.runOpenshellMock.mockImplementation(
       s.managedProviderCreationRunner({
+        "beta-hermes-inference": {
+          type: "openai",
+          credential: "OPENAI_API_KEY",
+        },
         "beta-hermes-tool-gateway": {
           type: "generic",
           credential: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
@@ -842,6 +845,106 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
     const { runSandboxSnapshot } = await import("./snapshot");
 
+    vi.stubEnv("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN", "");
+    f.preflightHermesToolGatewayCloneBindingMock.mockImplementationOnce(() => {
+      throw new Error("Hermes managed-tool broker preflight could not start");
+    });
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    expect(
+      f.runOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+    ).toBe(false);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.runDeviceCodeFlowMock).not.toHaveBeenCalled();
+
+    f.runOpenshellMock.mockClear();
+    f.streamSandboxCreateMock.mockClear();
+    f.preflightHermesToolGatewayCloneBindingMock.mockReset();
+    vi.stubEnv("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN", "test-only-destination-refresh-token");
+    f.preflightHermesToolGatewayCloneBindingMock.mockImplementationOnce(() => {
+      throw new Error("Hermes managed-tool broker preflight control registration path failed");
+    });
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    expect(
+      f.runOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+    ).toBe(false);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+
+    f.runOpenshellMock.mockClear();
+    f.preflightHermesToolGatewayCloneBindingMock.mockReset();
+    f.stageHermesToolGatewayCloneBindingMock.mockImplementationOnce(() => {
+      throw new Error("synthetic portal agent-key mint failure");
+    });
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("synthetic portal agent-key mint failure");
+    expect(
+      f.runOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+    ).toBe(false);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+
+    f.runOpenshellMock.mockClear();
+    f.stageHermesToolGatewayCloneBindingMock.mockReset();
+    f.stageHermesToolGatewayCloneBindingMock.mockImplementationOnce(() => {
+      throw new Error("synthetic broker registration failure");
+    });
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("synthetic broker registration failure");
+    expect(
+      f.runOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+    ).toBe(false);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+
+    f.runOpenshellMock.mockClear();
+    f.stageHermesToolGatewayCloneBindingMock.mockReset();
+    f.stageHermesToolGatewayCloneBindingMock.mockReturnValue({
+      activationToken: "nc_activate_test-only",
+      brokerToken: "nc_broker_test-only",
+    });
+    f.preflightHermesToolGatewayCloneBindingMock
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error("synthetic broker race at destructive edge");
+      });
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("synthetic broker race at destructive edge");
+    expect(
+      f.runOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+    ).toBe(false);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+
+    f.preflightHermesToolGatewayCloneBindingMock.mockReset();
     await runSandboxSnapshot("alpha", {
       kind: "restore",
       to: "beta",
@@ -854,19 +957,73 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(
       createArgs.some(
         (argument, index) =>
+          argument === "--provider" && createArgs[index + 1] === "beta-hermes-inference",
+      ),
+    ).toBe(true);
+    expect(
+      createArgs.some(
+        (argument, index) =>
           argument === "--provider" && createArgs[index + 1] === "beta-hermes-tool-gateway",
       ),
     ).toBe(true);
     expect(createArgs.join(" ")).not.toContain("test-only-destination-refresh-token");
     expect(createEnv?.NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN).toBeUndefined();
-    expect(f.bindHermesToolGatewayCloneProviderStateMock).toHaveBeenCalledExactlyOnceWith(
+    expect(createEnv?.OPENAI_API_KEY).toBeUndefined();
+    expect(f.runOpenshellMock).toHaveBeenCalledWith(
+      [
+        "provider",
+        "create",
+        "--name",
+        "beta-hermes-tool-gateway",
+        "--type",
+        "generic",
+        "--credential",
+        "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+      ],
+      expect.objectContaining({
+        env: {
+          NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "nc_broker_test-only",
+        },
+      }),
+    );
+    expect(f.stageHermesToolGatewayCloneBindingMock).toHaveBeenCalledExactlyOnceWith(
       "beta",
       "test-only-destination-refresh-token",
     );
+    expect(f.activateHermesToolGatewayCloneBindingMock).toHaveBeenCalledExactlyOnceWith(
+      "beta",
+      "test-only-destination-refresh-token",
+      {
+        activationToken: "nc_activate_test-only",
+        brokerToken: "nc_broker_test-only",
+      },
+    );
+    expect(f.bindHermesToolGatewayCloneProviderStateMock).not.toHaveBeenCalled();
+    const deleteCallIndex = f.runOpenshellMock.mock.calls.findIndex(
+      ([args]) => args[0] === "sandbox" && args[1] === "delete",
+    );
+    expect(deleteCallIndex).toBeGreaterThanOrEqual(0);
+    expect(f.stageHermesToolGatewayCloneBindingMock.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      f.runOpenshellMock.mock.invocationCallOrder[deleteCallIndex] ?? 0,
+    );
     expect(f.runDeviceCodeFlowMock).not.toHaveBeenCalled();
+    const registered = f.registerSandboxMock.mock.calls.at(-1)?.[0] as
+      | {
+          workload?: { encodedProfile?: string };
+        }
+      | undefined;
+    expect(registered?.workload?.encodedProfile).toBeTruthy();
+    expect(
+      decodeManagedStartupProfile(registered?.workload?.encodedProfile ?? "").inference,
+    ).toMatchObject({
+      routeProvider: "inference",
+      upstreamProvider: "beta-hermes-inference",
+    });
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "beta",
+        provider: "hermes-provider",
+        hermesInferenceProvider: "beta-hermes-inference",
         hermesToolGateways: ["nous-web"],
       }),
     );
@@ -1317,63 +1474,5 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
         expect.stringContaining("authenticated gateway verification failed"),
       ],
     });
-  });
-
-  it.each([
-    "hermes",
-    "langchain-deepagents-code",
-  ])("does not run OpenClaw pairing for a cross-sandbox %s restore (#7431)", async (agent) => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent,
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
-
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
-    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
-  });
-
-  it("leaves the working gateway credentials untouched on a self-restore", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["user.md"],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
 });

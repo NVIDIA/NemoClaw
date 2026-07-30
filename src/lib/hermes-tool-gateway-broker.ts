@@ -6,6 +6,7 @@
 
 const crypto = require("crypto");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 
@@ -73,6 +74,10 @@ function getHermesToolGatewayProviderName(sandboxName) {
   return `${validateName(sandboxName, "sandbox name")}-hermes-tool-gateway`;
 }
 
+function getHermesInferenceProviderName(sandboxName) {
+  return `${validateName(sandboxName, "sandbox name")}-hermes-inference`;
+}
+
 function getHermesToolGatewayStatePath(sandboxName) {
   ensurePrivateDir(HERMES_TOOL_GATEWAY_STATE_DIR);
   return path.join(
@@ -111,7 +116,12 @@ function getHermesToolGatewayBrokerToken(sandboxName) {
   return token || null;
 }
 
-function persistHermesToolGatewayProviderState(sandboxName, refreshToken, brokerToken = null) {
+function persistHermesToolGatewayProviderState(
+  sandboxName,
+  refreshToken,
+  brokerToken = null,
+  inferenceProviderName = "hermes-provider",
+) {
   const file = getHermesToolGatewayStatePath(sandboxName);
   const previous = readHermesToolGatewayProviderState(sandboxName);
   const normalizedBrokerToken =
@@ -124,6 +134,8 @@ function persistHermesToolGatewayProviderState(sandboxName, refreshToken, broker
     version: 1,
     sandbox: validateName(sandboxName, "sandbox name"),
     provider_name: getHermesToolGatewayProviderName(sandboxName),
+    inference_provider_name: validateName(inferenceProviderName, "Hermes inference provider name"),
+    inference_credential_env: "OPENAI_API_KEY",
     credential_env: HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
     broker_token: normalizedBrokerToken,
     broker_token_sha256: hashRefreshToken(normalizedBrokerToken),
@@ -135,8 +147,8 @@ function persistHermesToolGatewayProviderState(sandboxName, refreshToken, broker
   return { file, brokerToken: normalizedBrokerToken };
 }
 
-function brokerControlRequest(route, payload) {
-  if (!fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)) return false;
+function brokerControlJsonRequest(route, payload) {
+  if (!fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)) return null;
   const result = spawnSync(
     "curl",
     [
@@ -156,17 +168,31 @@ function brokerControlRequest(route, payload) {
     {
       encoding: "utf8",
       input: JSON.stringify(payload),
-      stdio: ["pipe", "ignore", "ignore"],
-      timeout: 5000,
+      stdio: ["pipe", "pipe", "ignore"],
+      timeout: 30_000,
     },
   );
-  return result.status === 0;
+  if (result.status !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout || "{}");
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
-function registerHermesToolGatewayRuntimeCredential(refreshToken) {
+function brokerControlRequest(route, payload) {
+  return brokerControlJsonRequest(route, payload) !== null;
+}
+
+function registerHermesToolGatewayRuntimeCredential(refreshToken, exactSandboxName = null) {
   const digest = hashRefreshToken(refreshToken);
   let matched = false;
-  for (const name of fs.readdirSync(HERMES_TOOL_GATEWAY_STATE_DIR)) {
+  const stateNames =
+    exactSandboxName === null
+      ? fs.readdirSync(HERMES_TOOL_GATEWAY_STATE_DIR)
+      : [`${validateName(exactSandboxName, "sandbox name")}.json`];
+  for (const name of stateNames) {
     if (!name.endsWith(".json")) continue;
     const sandboxName = name.slice(0, -".json".length);
     const state = readHermesToolGatewayProviderState(sandboxName);
@@ -221,7 +247,7 @@ function registerHermesToolGatewayRefreshProvider(sandboxName, refreshToken, run
     "generic",
     HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
     null,
-    { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: normalized },
+    { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: state.brokerToken },
     runOpenshell,
   );
   if (!result.ok) {
@@ -232,9 +258,9 @@ function registerHermesToolGatewayRefreshProvider(sandboxName, refreshToken, run
 
 /**
  * Bind a newly created snapshot destination to its own host-broker identity.
- * The refresh credential remains process-local and in OpenShell provider
- * storage; the durable state file records only its digest plus a fresh opaque
- * broker token.
+ * The refresh credential remains process-local; OpenShell stores only a fresh
+ * opaque broker token. The durable state file records the refresh digest and
+ * destination identity without persisting the upstream OAuth secret.
  */
 function bindHermesToolGatewayCloneProviderState(sandboxName, refreshToken) {
   const normalized = String(refreshToken || "").trim();
@@ -245,12 +271,175 @@ function bindHermesToolGatewayCloneProviderState(sandboxName, refreshToken) {
     sandboxName,
     normalized,
     generateHermesToolGatewayBrokerToken(),
+    getHermesInferenceProviderName(sandboxName),
   );
-  if (ensureHermesToolGatewayBroker({ refreshToken: normalized })) {
+  if (
+    ensureHermesToolGatewayBroker({
+      refreshToken: normalized,
+      sandboxName: validateName(sandboxName, "sandbox name"),
+    })
+  ) {
     return state;
   }
   removeHermesToolGatewayProviderState(sandboxName);
   throw new Error("Hermes managed-tool gateway broker did not become ready");
+}
+
+function stageHermesToolGatewayCloneBinding(sandboxName, refreshToken) {
+  const sandbox = validateName(sandboxName, "sandbox name");
+  const normalized = String(refreshToken || "").trim();
+  if (!normalized) {
+    throw new Error("Hermes tool gateway refresh credential is empty");
+  }
+  if (!ensureHermesToolGatewayBroker({ startWithoutCredential: true })) {
+    throw new Error("Hermes managed-tool gateway broker could not start before destination change");
+  }
+  const response = brokerControlJsonRequest("credentials/stage", {
+    sandbox,
+    refresh_token: normalized,
+    inference_provider_name: getHermesInferenceProviderName(sandbox),
+  });
+  const activationToken =
+    response && typeof response.activation_token === "string"
+      ? response.activation_token.trim()
+      : "";
+  const brokerToken =
+    response && typeof response.broker_token === "string" ? response.broker_token.trim() : "";
+  if (!activationToken.startsWith("nc_activate_") || !brokerToken.startsWith("nc_broker_")) {
+    throw new Error("Hermes managed-tool gateway broker could not stage destination credentials");
+  }
+  return Object.freeze({ activationToken, brokerToken });
+}
+
+function activateHermesToolGatewayCloneBinding(sandboxName, refreshToken, stagedBinding) {
+  const sandbox = validateName(sandboxName, "sandbox name");
+  const normalized = String(refreshToken || "").trim();
+  const activationToken = String(stagedBinding?.activationToken || "").trim();
+  const brokerToken = String(stagedBinding?.brokerToken || "").trim();
+  if (!normalized || !activationToken || !brokerToken) {
+    throw new Error("Hermes staged destination credential binding is incomplete");
+  }
+  const state = persistHermesToolGatewayProviderState(
+    sandbox,
+    normalized,
+    brokerToken,
+    getHermesInferenceProviderName(sandbox),
+  );
+  if (
+    brokerControlRequest("credentials/activate", {
+      sandbox,
+      activation_token: activationToken,
+    })
+  ) {
+    return state;
+  }
+  removeHermesToolGatewayProviderState(sandbox);
+  throw new Error("Hermes managed-tool gateway broker could not activate destination credentials");
+}
+
+function discardHermesToolGatewayCloneBinding(sandboxName, stagedBinding) {
+  const activationToken = String(stagedBinding?.activationToken || "").trim();
+  if (!activationToken) return true;
+  return brokerControlRequest("credentials/discard", {
+    sandbox: validateName(sandboxName, "sandbox name"),
+    activation_token: activationToken,
+  });
+}
+
+function probeHermesToolGatewayBrokerStart(options = {}) {
+  const spawnProbe = options.spawnSyncImpl || spawnSync;
+  const probePort = Number.isInteger(options.port) ? options.port : HERMES_TOOL_GATEWAY_PORT;
+  // AF_UNIX paths are short on macOS; TMPDIR can already consume most of the
+  // limit before the private control-socket name is appended.
+  const probeTempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  const probeRoot = fs.mkdtempSync(path.join(probeTempRoot, "nc-hermes-probe-"));
+  fs.chmodSync(probeRoot, 0o700);
+  const stateDir = path.join(probeRoot, "state");
+  const controlSocket = path.join(probeRoot, "control.sock");
+  ensurePrivateDir(stateDir);
+  try {
+    const result = spawnProbe(
+      process.execPath,
+      ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: ROOT,
+        env: buildSubprocessEnv({
+          HERMES_TOOL_GATEWAY_PORT: String(probePort),
+          HERMES_TOOL_GATEWAY_STATE_DIR: stateDir,
+          HERMES_TOOL_GATEWAY_MATRIX_PATH,
+          HERMES_TOOL_GATEWAY_CONTROL_SOCKET: controlSocket,
+          HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+          HERMES_TOOL_GATEWAY_PREFLIGHT_PROBE: "1",
+          NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
+          NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
+        }),
+        timeout: 10_000,
+      },
+    );
+    if (result.error) {
+      throw new Error(
+        `Hermes managed-tool broker preflight could not start: ${result.error.message}`,
+      );
+    }
+    if (result.status === 2) {
+      throw new Error("Hermes managed-tool broker preflight could not bind its runtime endpoints");
+    }
+    if (result.status === 3) {
+      throw new Error("Hermes managed-tool broker preflight control registration path failed");
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Hermes managed-tool broker preflight did not become ready (exit ${String(result.status)})`,
+      );
+    }
+  } finally {
+    fs.rmSync(probeRoot, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Prove that a clone can use the current broker runtime before any destination
+ * is deleted or any OAuth flow begins. The isolated probe creates only
+ * disposable private runtime files and performs no durable provider,
+ * credential, or broker-process mutation.
+ */
+function preflightHermesToolGatewayCloneBinding(sandboxName) {
+  validateName(sandboxName, "sandbox name");
+  const requiredRuntimeFiles = [
+    HERMES_TOOL_GATEWAY_SCRIPT,
+    HERMES_TOOL_GATEWAY_MATRIX_PATH,
+    HERMES_TOOL_GATEWAY_RUNTIME_CREDENTIALS_PATH,
+  ];
+  const missing = requiredRuntimeFiles.filter((file) => brokerRuntimeFileHash(file) === "missing");
+  if (missing.length > 0) {
+    throw new Error(
+      `Hermes managed-tool broker runtime is incomplete (${missing
+        .map((file) => path.basename(file))
+        .join(", ")})`,
+    );
+  }
+
+  const pid = readPid();
+  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid) || brokerStartedThisRun;
+  const currentBrokerHealthy = isHermesToolGatewayBrokerHealthy();
+  if (currentBrokerHealthy && !currentBrokerOwned) {
+    throw new Error("Hermes managed-tool broker health endpoint is not owned by NemoClaw");
+  }
+  if (!currentBrokerOwned || !currentBrokerHealthy) {
+    probeHermesToolGatewayBrokerStart();
+    return;
+  }
+  if (readBrokerHash() !== brokerRuntimeHash()) {
+    throw new Error(
+      "Hermes managed-tool broker runtime changed while an existing broker is active; " +
+        "reauthorize every managed-tool Hermes sandbox before retrying",
+    );
+  }
+  if (!fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)) {
+    throw new Error("Hermes managed-tool broker control socket is unavailable");
+  }
 }
 
 function readPid() {
@@ -356,7 +545,7 @@ function killStaleHermesToolGatewayBroker() {
   }
 }
 
-function spawnHermesToolGatewayBroker(refreshToken) {
+function spawnHermesToolGatewayBroker(refreshToken, initialSandboxName = null) {
   ensurePrivateDir(HERMES_TOOL_GATEWAY_STATE_DIR);
   const credentialEnv = {};
   if (typeof refreshToken === "string" && refreshToken.trim()) {
@@ -375,6 +564,11 @@ function spawnHermesToolGatewayBroker(refreshToken) {
         HERMES_TOOL_GATEWAY_MATRIX_PATH,
         HERMES_TOOL_GATEWAY_CONTROL_SOCKET: HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH,
         HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+        ...(initialSandboxName === null
+          ? {}
+          : {
+              HERMES_TOOL_GATEWAY_INITIAL_SANDBOX: validateName(initialSandboxName, "sandbox name"),
+            }),
         NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
         NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
         ...credentialEnv,
@@ -411,6 +605,25 @@ function ensureHermesToolGatewayBroker(options = {}) {
   const pid = readPid();
   const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid) || brokerStartedThisRun;
   const currentBrokerHealthy = currentBrokerOwned && isHermesToolGatewayBrokerHealthy();
+  if (options.startWithoutCredential) {
+    if (currentBrokerHealthy) {
+      return hashMatches && fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH);
+    }
+    killStaleHermesToolGatewayBroker();
+    const nextPid = spawnHermesToolGatewayBroker("");
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (
+        isHermesToolGatewayBrokerProcess(nextPid) &&
+        isHermesToolGatewayBrokerHealthy() &&
+        fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)
+      ) {
+        brokerStartedThisRun = true;
+        return true;
+      }
+      sleep(250);
+    }
+    return false;
+  }
   const refreshPlan = refreshToken
     ? planHermesToolGatewayBrokerRefresh({
         currentBrokerHealthy,
@@ -427,18 +640,21 @@ function ensureHermesToolGatewayBroker(options = {}) {
     return false;
   }
   if (refreshPlan === "register-with-current") {
-    const registered = registerHermesToolGatewayRuntimeCredential(refreshToken);
+    const registered = registerHermesToolGatewayRuntimeCredential(
+      refreshToken,
+      options.sandboxName ?? null,
+    );
     if (registered) brokerStartedThisRun = true;
     return registered;
   }
   if (refreshPlan === "start-or-restart") {
     killStaleHermesToolGatewayBroker();
-    const nextPid = spawnHermesToolGatewayBroker(refreshToken);
+    const nextPid = spawnHermesToolGatewayBroker(refreshToken, options.sandboxName ?? null);
     for (let attempt = 0; attempt < 20; attempt++) {
       if (
         isHermesToolGatewayBrokerProcess(nextPid) &&
         isHermesToolGatewayBrokerHealthy() &&
-        registerHermesToolGatewayRuntimeCredential(refreshToken)
+        registerHermesToolGatewayRuntimeCredential(refreshToken, options.sandboxName ?? null)
       ) {
         brokerStartedThisRun = true;
         return true;
@@ -497,11 +713,17 @@ module.exports = {
   hashRefreshToken,
   generateHermesToolGatewayBrokerToken,
   getHermesToolGatewayProviderName,
+  getHermesInferenceProviderName,
   getHermesToolGatewayStatePath,
   getHermesToolGatewayBrokerToken,
   persistHermesToolGatewayProviderState,
   removeHermesToolGatewayProviderState,
   registerHermesToolGatewayRefreshProvider,
+  probeHermesToolGatewayBrokerStart,
+  preflightHermesToolGatewayCloneBinding,
+  stageHermesToolGatewayCloneBinding,
+  activateHermesToolGatewayCloneBinding,
+  discardHermesToolGatewayCloneBinding,
   bindHermesToolGatewayCloneProviderState,
   planHermesToolGatewayBrokerRefresh,
   isHermesToolGatewayBrokerHealthy,

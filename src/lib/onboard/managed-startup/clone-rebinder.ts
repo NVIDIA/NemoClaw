@@ -58,6 +58,8 @@ export interface ManagedStartupCloneRebindInput {
   readonly destinationSandboxName: string;
   readonly expectedAgent: ManagedStartupAgent;
   readonly destinationDashboardPort: number | null;
+  /** Destination-scoped OpenShell identity for Hermes' host-minted inference key. */
+  readonly destinationHermesInferenceProvider?: string;
   readonly encodedProfile: string;
   readonly startupProfileSha256: string;
   readonly corporateCaB64?: string;
@@ -412,6 +414,23 @@ function destinationMessagingPlan(
   return JSON.parse(JSON.stringify(rebound)) as ManagedStartupJsonObject;
 }
 
+function destinationInference(
+  profile: ManagedStartupProfile,
+  input: ManagedStartupCloneRebindInput,
+): ManagedStartupProfile["inference"] {
+  if (profile.agent !== "hermes" || profile.tools.enabledGateways.length === 0) {
+    return profile.inference;
+  }
+  const provider = requireCurrentString(
+    input.destinationHermesInferenceProvider,
+    "destination Hermes inference provider",
+  );
+  return {
+    ...profile.inference,
+    upstreamProvider: provider,
+  };
+}
+
 /**
  * Verify a source managed receipt transport and bind its secret-free intent to
  * a newly allocated destination identity before any snapshot mutation occurs.
@@ -447,6 +466,7 @@ export function rebindManagedStartupProfileForClone(
     const currentSourceProfile = reconcileCurrentSourceProfile(sourceProfile, input.currentSource);
     profile = validateManagedStartupProfile({
       ...currentSourceProfile,
+      inference: destinationInference(currentSourceProfile, input),
       dashboard: destinationDashboard(currentSourceProfile, input.destinationDashboardPort),
       messaging: {
         plan: destinationMessagingPlan(
