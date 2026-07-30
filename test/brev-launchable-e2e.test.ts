@@ -26,6 +26,7 @@ function fixture(
     deleteFails?: boolean;
     e2eFails?: boolean;
     imageRepositorySha?: string;
+    missingProvisionReceipt?: boolean;
     omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
     provisionImageRepositorySha?: string;
     provisionSha?: string;
@@ -35,6 +36,7 @@ function fixture(
     repoSha?: string;
     runtimeOverrides?: boolean;
     schemaVersion?: number;
+    settleSeconds?: number;
     sourceRepository?: string;
     sourcePath?: string;
   } = {},
@@ -49,6 +51,10 @@ function fixture(
   fs.mkdirSync(workDir);
 
   executable(path.join(bin, "timeout"), '#!/usr/bin/env bash\nshift\nexec "$@"\n');
+  executable(
+    path.join(bin, "sleep"),
+    '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
+  );
   executable(
     path.join(bin, "gh"),
     `#!/usr/bin/env bash
@@ -98,16 +104,20 @@ case "$1" in
       '{workspaces:[{id:"ws-1",name:$name,status:"RUNNING",shell_status:$shell,build_status:$build}]}' > "$FAKE_STATE" ;;
   exec)
     case "$3" in
+      *NEMOCLAW_BOOT_IMAGE*)
+        printf 'NEMOCLAW_BOOT_IMAGE=%s\\n' "$FAKE_BOOT_IMAGE"
+        printf '%s\\n' "$INSTANCE_NAME" ;;
       *repo_clean*)
+        [ "$FAKE_MISSING_PROVISION_RECEIPT" != 1 ] || exit 2
         printf 'NEMOCLAW_IDENTITY='
-        jq -cn --arg bootImage "$FAKE_BOOT_IMAGE" --arg sourcePath "$FAKE_SOURCE_PATH" \
-          --arg repo "$FAKE_REPO_SHA" --arg provision "$FAKE_PROVISION_SHA" \
+        jq -cn --arg sourcePath "$FAKE_SOURCE_PATH" --arg repo "$FAKE_REPO_SHA" \
+          --arg provision "$FAKE_PROVISION_SHA" \
           --arg sourceRepository "$FAKE_SOURCE_REPOSITORY" \
           --arg imageRepositorySha "$FAKE_PROVISION_IMAGE_REPOSITORY_SHA" \
           --argjson schemaVersion "$FAKE_SCHEMA_VERSION" --argjson clean "$FAKE_REPO_CLEAN" \
           --argjson overrides "$FAKE_RUNTIME_OVERRIDES" \
-          '{bootImage:$bootImage,schemaVersion:$schemaVersion,sourceRepository:$sourceRepository,
-            sourcePath:$sourcePath,repoSha:$repo,provisionSha:$provision,
+          '{schemaVersion:$schemaVersion,sourceRepository:$sourceRepository,sourcePath:$sourcePath,
+            repoSha:$repo,provisionSha:$provision,
             imageRepositorySha:$imageRepositorySha,repoClean:$clean,runtimeOverrides:$overrides}'
         printf '%s\\n' "$INSTANCE_NAME" ;;
       *) exit 2 ;;
@@ -146,6 +156,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
+    FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PROVISION_IMAGE_REPOSITORY_SHA:
       options.provisionImageRepositorySha ?? options.imageRepositorySha ?? "b".repeat(40),
@@ -163,6 +174,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "789",
     INSTANCE_NAME: "nclaw-e2e-test-1",
+    LAUNCHABLE_FAMILY_SETTLE_SECONDS: String(options.settleSeconds ?? 0),
     NVIDIA_INFERENCE_API_KEY: "nvapi-test-value",
     POLL_SECONDS: "0",
     RUNNER_TEMP: root,
@@ -177,11 +189,15 @@ function run(env: NodeJS.ProcessEnv) {
 
 describe("focused staging Brev Launchable lane", () => {
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
-    const { calls, env, state, workDir } = fixture();
+    const { calls, env, state, workDir } = fixture({ settleSeconds: 7 });
     const result = run(env);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands.match(/\/dispatches/gu)).toHaveLength(1);
+    expect(commands).toContain("sleep 7");
+    expect(commands.indexOf("sleep 7")).toBeLessThan(
+      commands.indexOf("create nclaw-e2e-test-1 --launchable env-staging123"),
+    );
     expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
     expect(commands).not.toContain("nvapi-test-value");
@@ -240,8 +256,16 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(unready.calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
     expect(fs.existsSync(unready.state)).toBe(false);
 
+    const wrongImage = fixture({
+      bootImage: "projects/brevdevprod/global/images/wrong-image",
+    });
+    const wrongImageResult = run(wrongImage.env);
+    expect(wrongImageResult.status).not.toBe(0);
+    expect(wrongImageResult.stderr).toContain("booted image does not match the producer handoff");
+    expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
+    expect(fs.existsSync(wrongImage.state)).toBe(false);
+
     for (const boot of [
-      fixture({ bootImage: "projects/brevdevprod/global/images/wrong-image" }),
       fixture({ repoSha: "b".repeat(40) }),
       fixture({ provisionSha: "b".repeat(40) }),
       fixture({ provisionImageRepositorySha: "c".repeat(40) }),
@@ -269,6 +293,21 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
+    });
+  });
+
+  it("preserves the booted image when the provision receipt is missing", () => {
+    const { calls, env, state, workDir } = fixture({ missingProvisionReceipt: true });
+    const result = run(env);
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readFileSync(calls, "utf8")).not.toContain("full-e2e.test.ts");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8")),
+    ).toMatchObject({
+      candidateSha,
+      boot: { bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image" },
+      fullE2e: "pending",
     });
   });
 
