@@ -1,0 +1,37 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.98
+
+NemoClaw v0.0.98 upgrades managed Hermes to 0.19.0 and adds structured non-interactive output for LangChain Deep Agents Code, no-clobber skill installation, and explicit storage-remediation readiness evidence.
+It also repairs post-reboot delivery recovery, OpenShell-preserving uninstall, messaging conflict enforcement, Docker host diagnostics, sandbox dependency baselines, and bounded runtime diagnostics.
+
+- Managed Hermes now uses the checksum-pinned `v2026.7.20` release and reports version `0.19.0`.
+  NemoClaw preserves its approval, browser, session, output, wrapper, and durable-state contracts across the upgrade.
+  Follow-up runtime fixes move mutable cron execution history into the writable runtime boundary and preserve the sealed cron definition directory.
+  They also apply the current dashboard seed marker and use Hermes 0.19 Model Context Protocol (MCP) tool names.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/hermes/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- Managed Deep Agents Code now emits one schema-versioned JSON envelope for `dcode -n <prompt> --json`, with bounded output and distinct terminal outcomes.
+  Fresh skill installs target `/sandbox/.deepagents/agent/skills/<name>`, verify the staged archive, and refuse automatic replacement when agent-authored content shares the destination.
+  Onboarding also rejects a base image whose security package inventory is obsolete, even when its distribution version matches.
+  For more information, refer to [Quickstart with Deep Agents](/user-guide/deepagents/get-started/quickstart), [CLI Commands Reference](/user-guide/deepagents/reference/commands), and [Understand Sandbox State](/user-guide/deepagents/manage-sandboxes/state-and-backups/understand-sandbox-state).
+- `nemoclaw host probe --json` now reports `host.docker.storage_remediation_available` when the Linux Docker storage conflict has a supported NemoClaw remediation.
+  Onboarding reports an unsupported `DOCKER_HOST` as `invalid_docker_host` instead of suggesting an unrelated Docker group change.
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- `nemoclaw status` now verifies and restores the managed OpenClaw gateway and host forward for a visible, `Ready` Docker sandbox after a host reboot.
+  Recovery fails with `sandbox_recovery_failed` when it cannot prove the delivery chain, and sandbox recreation now allows 120 seconds for OpenShell readiness.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- `nemoclaw uninstall --keep-openshell` now preserves the selected local gateway state required by the retained OpenShell service and process.
+  Uninstall also preserves that state when an external supervisor owns the gateway, while a full NemoClaw-managed uninstall continues to remove it.
+  For more information, refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) and [Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority).
+- Messaging credential and shared-resource conflicts now stop onboarding, rebuild, and `channels add` for every channel.
+  The explicit `channels add <channel> --force` flag remains the only conflict bypass and accepts the duplicate-consumer or shared-resource risk.
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
+- Hermes sandbox images now pin reviewed versions of `cryptography`, `Pillow`, and `starlette`.
+  Deep Agents Code sandbox images now pin a reviewed `Pillow` version.
+  Hermes images also exclude upstream test sources from the published runtime filesystem, and image builds fail when dependency or filesystem identity drifts.
+- Gateway startup and Docker pulls now limit retained subprocess diagnostics.
+  The shared decoder preserves UTF-8 and stream boundaries.
+  Gateway failures retain fixed-size leading and trailing evidence instead of allowing malformed child output to grow memory without limit.
