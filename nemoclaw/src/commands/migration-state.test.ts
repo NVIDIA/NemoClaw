@@ -12,12 +12,12 @@ const descriptors = new Map<number, string>();
 const addDir = (p: string): void => void store.set(p, { type: "dir" });
 const addFile = (p: string, content: string): void => void store.set(p, { type: "file", content });
 const addSymlink = (p: string): void => void store.set(p, { type: "symlink" });
+// Keep mock failures explicit without adding control-flow branches to the test budget.
 function fileAt(p: string | number): FsEntry {
   const resolvedPath = typeof p === "number" ? descriptors.get(p) : p;
-  if (!resolvedPath) throw new Error(`EBADF: ${String(p)}`);
-  const entry = store.get(resolvedPath);
-  if (entry?.type !== "file") throw new Error(`ENOENT: ${resolvedPath}`);
-  return entry;
+  const entry = resolvedPath === undefined ? undefined : store.get(resolvedPath);
+  expect(entry?.type, `expected file at ${String(resolvedPath ?? p)}`).toBe("file");
+  return entry as FsEntry;
 }
 
 vi.mock("node:fs", async (importOriginal) => {

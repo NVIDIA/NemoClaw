@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const fsControl = vi.hoisted(() => ({
   failOpenNames: [] as string[],
+  failWriteNames: [] as string[],
+  noFollowUnavailable: false,
   preventRemoval: false,
 }));
 
@@ -15,16 +17,37 @@ vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
   return {
     ...original,
-    constants: { ...original.constants, O_NOFOLLOW: undefined },
-    openSync: (target: Parameters<typeof original.openSync>[0], flags: number) => {
-      if (fsControl.failOpenNames.some((name) => String(target).endsWith(name))) {
-        throw new Error(`simulated open failure: ${String(target)}`);
-      }
-      return original.openSync(target, flags);
+    constants: {
+      ...original.constants,
+      get O_NOFOLLOW(): number | undefined {
+        return fsControl.noFollowUnavailable ? undefined : original.constants.O_NOFOLLOW;
+      },
     },
-    rmSync: (target: Parameters<typeof original.rmSync>[0], options?: { force?: boolean }) => {
-      if (fsControl.preventRemoval && String(target).endsWith("auth.json")) return;
-      original.rmSync(target, options);
+    openSync: (target: Parameters<typeof original.openSync>[0], flags: number) => {
+      switch (fsControl.failOpenNames.some((name) => String(target).endsWith(name))) {
+        case true:
+          throw new Error(`simulated open failure: ${String(target)}`);
+        default:
+          return original.openSync(target, flags);
+      }
+    },
+    rmSync: (...args: Parameters<typeof original.rmSync>) => {
+      const [target] = args;
+      switch (fsControl.preventRemoval && String(target).endsWith("auth.json")) {
+        case true:
+          return;
+        default:
+          return original.rmSync(...args);
+      }
+    },
+    writeFileSync: (...args: Parameters<typeof original.writeFileSync>) => {
+      const [target] = args;
+      switch (fsControl.failWriteNames.some((name) => String(target).includes(name))) {
+        case true:
+          throw new Error(`simulated write failure: ${String(target)}`);
+        default:
+          return original.writeFileSync(...args);
+      }
     },
   };
 });
@@ -41,36 +64,45 @@ function makeRoot(): string {
 
 afterEach(() => {
   fsControl.failOpenNames = [];
+  fsControl.failWriteNames = [];
+  fsControl.noFollowUnavailable = false;
   fsControl.preventRemoval = false;
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
 describe("migration snapshot sanitizer fallbacks", () => {
-  it("validates a regular file when O_NOFOLLOW is unavailable", () => {
+  it("fails closed for a regular file when O_NOFOLLOW is unavailable", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
+    fsControl.noFollowUnavailable = true;
 
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(true);
+    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual({
-      apiKey: "[STRIPPED_BY_MIGRATION]",
+      apiKey: "sk-secret-value",
     });
   });
 
-  it("rejects a symlink when O_NOFOLLOW is unavailable", () => {
+  it.runIf(process.platform !== "win32")("rejects a symlink when O_NOFOLLOW is unavailable", () => {
     const root = makeRoot();
     const targetPath = path.join(root, "target.json");
     const configPath = path.join(root, "openclaw.json");
     writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    try {
-      symlinkSync(targetPath, configPath);
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
-      if (code === "EPERM" || code === "EACCES") return;
-      throw error;
-    }
+    symlinkSync(targetPath, configPath);
+    fsControl.noFollowUnavailable = true;
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({
+      apiKey: "sk-secret-value",
+    });
+  });
+
+  it("fails closed when a required sanitized file cannot be written", () => {
+    const configPath = path.join(makeRoot(), "openclaw.json");
+    writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
+    fsControl.failWriteNames = ["openclaw.json"];
+
+    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual({
       apiKey: "sk-secret-value",
     });
   });

@@ -56,13 +56,11 @@ function writeSnapshotFile(filePath: string, contents: string): boolean {
 }
 
 function readRegularSnapshotFile(filePath: string): string | null {
+  const noFollowFlag = constants.O_NOFOLLOW;
+  if (typeof noFollowFlag !== "number") return null;
+
   let fd: number;
   try {
-    if (typeof constants.O_NOFOLLOW !== "number") {
-      const stat = lstatSync(filePath);
-      if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    }
-    const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
     fd = openSync(filePath, constants.O_RDONLY | noFollowFlag);
   } catch {
     return null;

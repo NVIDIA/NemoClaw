@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,28 +56,26 @@ describe("migration snapshot sanitizer", () => {
     expect(JSON.parse(readFileSync(benignPath, "utf-8"))).toBe("keep-me");
   });
 
-  it("removes sensitive files without following unrelated symlinks", () => {
-    const root = makeRoot();
-    const targetPath = path.join(root, "target.json");
-    const linkPath = path.join(root, "linked.json");
-    writeFileSync(path.join(root, "auth.json"), JSON.stringify({ token: "raw" }));
-    writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    try {
+  it.runIf(process.platform !== "win32")(
+    "removes sensitive files without following unrelated symlinks",
+    () => {
+      const root = makeRoot();
+      const externalRoot = makeRoot();
+      const targetPath = path.join(externalRoot, "target.json");
+      const linkPath = path.join(root, "linked.json");
+      writeFileSync(path.join(root, "auth.json"), JSON.stringify({ token: "raw" }));
+      writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret-value" }));
       symlinkSync(targetPath, linkPath);
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
-      if (code === "EPERM" || code === "EACCES") return;
-      throw error;
-    }
 
-    sanitizeMigrationDirectory(path.join(root, "missing"));
-    sanitizeMigrationDirectory(root);
+      sanitizeMigrationDirectory(path.join(root, "missing"));
+      sanitizeMigrationDirectory(root);
 
-    expect(() => readFileSync(path.join(root, "auth.json"))).toThrow();
-    expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({
-      apiKey: "[STRIPPED_BY_MIGRATION]",
-    });
-  });
+      expect(() => readFileSync(path.join(root, "auth.json"))).toThrow();
+      expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({
+        apiKey: "sk-secret-value",
+      });
+    },
+  );
 
   it("omits malformed optional artifacts", () => {
     const root = makeRoot();
@@ -108,40 +98,26 @@ describe("migration snapshot sanitizer", () => {
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
   });
 
-  it("does not follow a required OpenClaw configuration symlink", () => {
-    const root = makeRoot();
-    const targetPath = path.join(root, "target.json");
-    const configPath = path.join(root, "openclaw.json");
-    writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    try {
+  it.runIf(process.platform !== "win32")(
+    "does not follow a required OpenClaw configuration symlink",
+    () => {
+      const root = makeRoot();
+      const externalRoot = makeRoot();
+      const targetPath = path.join(externalRoot, "target.json");
+      const configPath = path.join(root, "openclaw.json");
+      writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret-value" }));
       symlinkSync(targetPath, configPath);
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
-      if (code === "EPERM" || code === "EACCES") return;
-      throw error;
-    }
 
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
-    expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({
-      apiKey: "sk-secret-value",
-    });
-  });
+      expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+      expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({
+        apiKey: "sk-secret-value",
+      });
+    },
+  );
 
   it("rejects a non-regular required OpenClaw configuration", () => {
     const root = makeRoot();
     expect(sanitizeOpenClawConfigFile(root)).toBe(false);
-  });
-
-  it("fails closed when a required sanitized file cannot be written", () => {
-    const root = makeRoot();
-    const configPath = path.join(root, "openclaw.json");
-    writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    chmodSync(root, 0o500);
-    try {
-      expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
-    } finally {
-      chmodSync(root, 0o700);
-    }
   });
 
   it("preserves empty and comment-only YAML artifacts", () => {
