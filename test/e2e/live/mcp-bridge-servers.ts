@@ -9,13 +9,13 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import {
   closeServer,
   writeJsonResponse as jsonResponse,
   listenServer as listenOnRandomPort,
   readRequestBody,
 } from "../fixtures/http-protocol.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 
 type TestServer = http.Server | https.Server;
@@ -403,6 +403,48 @@ export async function startCompatibleMock(options: {
           requiredContent.every((value) => content.includes(value))
         );
       };
+      const parsedToolResult = (index: number, toolCallId: string) => {
+        const message = toolResults[index];
+        if (message?.tool_call_id !== toolCallId || typeof message.content !== "string") {
+          return undefined;
+        }
+        try {
+          const parsed = JSON.parse(message.content);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const hasExpectedHermesSearchResult = (toolName: string) => {
+        const parsed = parsedToolResult(0, "call_hermes_tool_search");
+        return (
+          Array.isArray(parsed?.matches) &&
+          parsed.matches.some(
+            (match) =>
+              match &&
+              typeof match === "object" &&
+              !Array.isArray(match) &&
+              (match as Record<string, unknown>).name === toolName,
+          )
+        );
+      };
+      const hasExpectedHermesDescription = (toolName: string) => {
+        const parsed = parsedToolResult(1, "call_hermes_tool_describe");
+        const parameters = parsed?.parameters;
+        const properties =
+          parameters && typeof parameters === "object" && !Array.isArray(parameters)
+            ? (parameters as Record<string, unknown>).properties
+            : undefined;
+        return (
+          parsed?.name === toolName &&
+          properties !== null &&
+          typeof properties === "object" &&
+          !Array.isArray(properties) &&
+          Object.hasOwn(properties, "challenge")
+        );
+      };
       let plannedToolCall:
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
@@ -448,12 +490,7 @@ export async function startCompatibleMock(options: {
             arguments: { query: options.deferredToolName },
           };
         } else if (toolResultCount === 1) {
-          if (
-            hasExpectedToolResult(0, "call_hermes_tool_search", [
-              "matches",
-              options.deferredToolName,
-            ])
-          ) {
+          if (hasExpectedHermesSearchResult(options.deferredToolName)) {
             plannedToolCall = {
               id: "call_hermes_tool_describe",
               name: "tool_describe",
@@ -463,13 +500,7 @@ export async function startCompatibleMock(options: {
             protocolError = "Hermes tool_search did not return the deferred target";
           }
         } else if (toolResultCount === 2) {
-          if (
-            hasExpectedToolResult(1, "call_hermes_tool_describe", [
-              options.deferredToolName,
-              "parameters",
-              "challenge",
-            ])
-          ) {
+          if (hasExpectedHermesDescription(options.deferredToolName)) {
             plannedToolCall = {
               id: "call_hermes_tool_call",
               name: "tool_call",
