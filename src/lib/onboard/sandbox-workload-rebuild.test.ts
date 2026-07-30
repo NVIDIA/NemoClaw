@@ -257,17 +257,22 @@ describe("managed workload rebuild handoff", () => {
 
   it("interprets a pre-platform receipt as amd64 and rejects it on an arm64-only runtime", async () => {
     const oldEntry = entry("openclaw");
-    installReplacement("openclaw");
-    const handoff = (await prepareManagedWorkloadRebuildHandoff(oldEntry, {
-      runtime: RUNTIME,
-      version: NEW_RELEASE,
-    }))!;
+    expect(oldEntry.workload?.kind).toBe("managed-image");
+    expect(
+      oldEntry.workload?.kind === "managed-image" ? oldEntry.workload.platform : null,
+    ).toBeUndefined();
+    const { spy } = installReplacement("openclaw");
 
-    expect(handoff.previousReceipt.platform).toBeUndefined();
-    expect(handoff.previousContract.platform).toBe(MANAGED_IMAGE_PLATFORMS[0]);
-    expect(() => prepareSandboxWorkloadSourceFromRebuildHandoff(handoff, ARM64_RUNTIME)).toThrow(
-      "recorded managed workload is not supported by the selected runtime",
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(oldEntry, {
+        runtime: ARM64_RUNTIME,
+        version: NEW_RELEASE,
+      }),
+    ).rejects.toThrow(
+      `recorded workload targets '${MANAGED_IMAGE_PLATFORMS[0]}', but driver 'docker' ` +
+        `requires '${MANAGED_IMAGE_PLATFORMS[1]}'`,
     );
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it.each(

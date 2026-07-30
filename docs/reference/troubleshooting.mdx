@@ -64,7 +64,7 @@ Then re-run the installer.
 
 ### Local Dockerfile image push fails with out-of-memory errors
 
-This failure applies to the trusted Dockerfile fallback and explicit custom Dockerfile workflows.
+This failure applies only to explicit custom Dockerfile workflows.
 Their locally built sandbox image can be approximately 2.4 GB compressed.
 During local image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory.
 On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
@@ -150,7 +150,7 @@ To avoid these issues, install the prerequisites in the following order before r
 Homebrew Colima does not install the Docker CLI binary.
 If you install only Colima, `colima start` can succeed while later `docker` commands fail with `command not found`.
 
-Install both packages, start Colima with enough resources for the sandbox and any local Dockerfile fallback or custom build, and verify Docker before onboarding:
+Install both packages, start Colima with enough resources for the sandbox and any explicit custom Dockerfile build, and verify Docker before onboarding:
 
 ```bash
 brew install colima docker
@@ -198,7 +198,7 @@ If the L4T version is not recognized, the setup step is skipped and the installe
 
 Some corporate networks block outbound UDP port 53 to public DNS servers and force all host name resolution through DNS over TLS on TCP port 853.
 Containers do not inherit the host's DNS-over-TLS configuration.
-This can block sandbox startup and, on a trusted fallback or explicit custom Dockerfile path, make dependency installation time out while resolving `registry.npmjs.org`.
+This can block sandbox startup and, on an explicit custom Dockerfile path, make dependency installation time out while resolving `registry.npmjs.org`.
 
 NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before it prepares the sandbox.
 The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress.
@@ -688,15 +688,14 @@ colima status
 ### Sandbox startup or local Dockerfile build is slow (under-provisioned container runtime)
 
 Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for a NemoClaw sandbox.
-Stock onboarding on a supported `amd64` Docker host prefers an exact managed image and avoids a local Dockerfile build.
-A trusted Dockerfile fallback or explicit custom Dockerfile can still stall part-way through a local BuildKit build on an under-provisioned runtime.
+Stock onboarding on a supported `amd64` or `arm64` host requires an exact managed image and avoids a local Dockerfile build.
+An explicit custom Dockerfile can still stall part-way through a local BuildKit build on an under-provisioned runtime.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
 In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before sandbox preparation reaches the likely failure point.
 Type `y` only when you intentionally want to continue on the smaller runtime.
 Non-interactive onboarding prints the warning and continues.
 The configuration review shows a local build-time estimate only for an explicit custom Dockerfile.
-If NemoClaw selects the trusted Dockerfile fallback later during sandbox creation, it prints the fallback notice and build estimate at that point.
 Managed-image launch does not show a Dockerfile build estimate.
 On Colima, raise the resources before re-running onboard:
 
@@ -1685,7 +1684,7 @@ Streaming defects then surface at runtime instead of during onboarding.
 
 This is expected behavior.
 `NEMOCLAW_DISABLE_DEVICE_AUTH` is a sandbox-creation setting.
-Managed-image onboarding includes it in the secret-free startup profile, while the trusted Dockerfile fallback applies it during the local build.
+Managed-image onboarding includes it in the secret-free startup profile, while an explicitly selected custom Dockerfile must apply it during the local build.
 Changing or exporting it later does not rewrite `openclaw.json` inside an existing sandbox.
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw recreates the sandbox with the desired configuration.

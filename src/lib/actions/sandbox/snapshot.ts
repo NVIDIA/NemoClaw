@@ -59,12 +59,14 @@ import {
   dockerCapture,
   findAvailableDashboardPort,
   formatSnapshotBaselineExclusionSummary,
+  getHermesToolGatewayCloneBroker,
   getOpenshellBinary,
   getRegistryOccupiedDashboardPorts,
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
   HERMES_DASHBOARD_PORT_ENV,
   HERMES_DASHBOARD_TUI_ENV,
+  type HermesToolGatewayCloneBroker,
   isValidForwardPort,
   MANAGED_STARTUP_CA_ENV,
   MANAGED_STARTUP_HOLD_EXECUTABLE,
@@ -307,8 +309,15 @@ function managedCloneRegistryFields(
   const hermesDashboard = profile.dashboard.agent === "hermes" ? profile.dashboard : null;
   const dcodeConfig =
     profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;
+  const hermesInferenceProvider =
+    profile.agent === "hermes" && profile.tools.enabledGateways.length > 0
+      ? profile.inference.upstreamProvider
+      : undefined;
   return {
-    provider: profile.inference.upstreamProvider,
+    // Snapshot peers stay on the source gateway's configured route. The
+    // destination-scoped provider below owns only that sandbox's rotating key.
+    provider:
+      hermesInferenceProvider === undefined ? profile.inference.upstreamProvider : source.provider,
     model: profile.inference.model,
     endpointUrl: source.endpointUrl ?? null,
     endpointSource: source.endpointSource ?? null,
@@ -336,6 +345,7 @@ function managedCloneRegistryFields(
       profile.agent === "hermes" && profile.tools.enabledGateways.length > 0
         ? [...profile.tools.enabledGateways]
         : undefined,
+    hermesInferenceProvider,
     hermesDashboardEnabled: hermesDashboard?.mode === "loopback-forwarded" ? true : undefined,
     hermesDashboardPort:
       hermesDashboard?.mode === "loopback-forwarded" ? hermesDashboard.publicPort : undefined,
@@ -382,11 +392,21 @@ async function prepareManagedSnapshotClone(
   const { rebindManagedStartupProfileForClone } = await import(
     "../../onboard/managed-startup/clone-rebinder"
   );
+  const hermesToolGatewayBroker = getHermesToolGatewayCloneBroker();
+  const destinationHermesInferenceProvider =
+    source.agent === "hermes" &&
+    Array.isArray(source.hermesToolGateways) &&
+    source.hermesToolGateways.length > 0
+      ? hermesToolGatewayBroker.getHermesInferenceProviderName(destinationSandboxName)
+      : undefined;
   const rebound = rebindManagedStartupProfileForClone({
     sourceSandboxName,
     destinationSandboxName,
     expectedAgent: source.agent as ManagedStartupAgent,
     destinationDashboardPort,
+    ...(destinationHermesInferenceProvider === undefined
+      ? {}
+      : { destinationHermesInferenceProvider }),
     encodedProfile: workload.encodedProfile,
     startupProfileSha256: workload.startupProfileSha256,
     ...(workload.corporateCaB64 === undefined ? {} : { corporateCaB64: workload.corporateCaB64 }),
@@ -413,6 +433,11 @@ async function prepareManagedSnapshotClone(
   const { prepareManagedCloneProviders, resolveManagedCloneCredentialEnvironment } = await import(
     "./snapshot/managed-clone-providers"
   );
+  if (rebound.profile.agent === "hermes" && rebound.profile.tools.enabledGateways.length > 0) {
+    // This read-only compatibility/health proof must precede both interactive
+    // OAuth and the force-restore destination deletion boundary.
+    hermesToolGatewayBroker.preflightHermesToolGatewayCloneBinding(destinationSandboxName);
+  }
   const credentialEnvironment = await resolveManagedCloneCredentialEnvironment({
     profile: rebound.profile,
   });
@@ -436,6 +461,7 @@ async function prepareManagedSnapshotClone(
       environment: providerEnvironment,
       root: ROOT,
       runOpenshell,
+      hermesToolGatewayBroker,
     }),
   };
 }
@@ -1437,7 +1463,30 @@ async function runSnapshotRestoreUnlocked(
           : null;
         let mutatedCredentialProviders: string[] = [];
         let cloneCreateAttempted = false;
+        let stagedHermesBinding:
+          | { readonly activationToken: string; readonly brokerToken: string }
+          | undefined;
+        let stagedHermesBroker: HermesToolGatewayCloneBroker | undefined;
         try {
+          const hasHermesToolGateway = managedClone?.credentialProviders.some(
+            (provider) => provider.source === "hermes-tool-gateway",
+          );
+          if (hasHermesToolGateway && managedClone) {
+            // Recheck boot/control viability, then complete OAuth refresh and
+            // agent-key mint into an identity-bound in-memory stage. Every
+            // network/register failure therefore occurs before force deletion.
+            stagedHermesBroker = getHermesToolGatewayCloneBroker();
+            stagedHermesBroker.preflightHermesToolGatewayCloneBinding(targetSandbox);
+            const refreshToken =
+              managedClone.credentialEnvironment.NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN;
+            if (!refreshToken) {
+              throw new Error("Hermes destination refresh credential disappeared before staging");
+            }
+            stagedHermesBinding = stagedHermesBroker.stageHermesToolGatewayCloneBinding(
+              targetSandbox,
+              refreshToken,
+            );
+          }
           if (targetExists) {
             if (targetEntry) {
               verifyRestoreDestinationOnOwnGateway(targetSandbox);
@@ -1462,8 +1511,10 @@ async function runSnapshotRestoreUnlocked(
                   : {}),
                 runOpenshell,
                 ...(targetExists ? { rollbackSandboxName: targetSandbox } : {}),
+                ...(stagedHermesBinding === undefined ? {} : { stagedHermesBinding }),
               },
             ) ?? [];
+          stagedHermesBinding = undefined;
           cloneCreateAttempted = true;
           await autoCreateSandboxFromSource(
             sandboxName,
@@ -1475,6 +1526,12 @@ async function runSnapshotRestoreUnlocked(
           // destination and owned by its rebound messaging plan.
           mutatedCredentialProviders = [];
         } catch (error) {
+          if (stagedHermesBinding && stagedHermesBroker) {
+            stagedHermesBroker.discardHermesToolGatewayCloneBinding(
+              targetSandbox,
+              stagedHermesBinding,
+            );
+          }
           if (cloneCreateAttempted) cleanupFailedSnapshotCloneTarget(targetSandbox);
           managedProviderLifecycle?.cleanupManagedCloneProviders(
             mutatedCredentialProviders,

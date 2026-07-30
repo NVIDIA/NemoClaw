@@ -21,6 +21,10 @@ export {
   HERMES_DASHBOARD_TUI_ENV,
 } from "../../../hermes-dashboard";
 export {
+  getHermesToolGatewayCloneBroker,
+  type HermesToolGatewayCloneBroker,
+} from "../../../hermes-tool-gateway-clone-broker";
+export {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
   withDashboardPortReservationLock,

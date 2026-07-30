@@ -151,6 +151,9 @@ function rebind(
     destinationSandboxName: "destination",
     expectedAgent,
     destinationDashboardPort,
+    ...(expectedAgent === "hermes" && profile.tools.enabledGateways.length > 0
+      ? { destinationHermesInferenceProvider: "destination-hermes-inference" }
+      : {}),
     encodedProfile: built.encodedProfile,
     startupProfileSha256: built.startupProfileSha256,
     ...(built.corporateCaB64 === undefined ? {} : { corporateCaB64: built.corporateCaB64 }),
@@ -279,6 +282,21 @@ describe("rebindManagedStartupProfileForClone", () => {
       sandboxName: "destination",
       credentialBindings: [{ providerName: "destination-telegram-bridge" }],
     });
+  });
+
+  it("rebinds managed-tool Hermes inference to the destination provider identity", () => {
+    const built = buildManagedStartupProfile({
+      ...hermesInput(),
+      hermesToolGateways: ["nous-web"],
+    });
+
+    const rebound = rebind(built, "hermes", 21_189);
+
+    expect(rebound.profile.inference).toMatchObject({
+      routeProvider: "inference",
+      upstreamProvider: "destination-hermes-inference",
+    });
+    expect(rebound.profile.tools.enabledGateways).toEqual(["nous-web"]);
   });
 
   it("rebinds DCode without inventing dashboard or messaging state", () => {

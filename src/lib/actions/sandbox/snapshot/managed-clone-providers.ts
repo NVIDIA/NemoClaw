@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
 import {
   getHermesToolGatewayCloneBroker,
   type HermesToolGatewayCloneBroker,
@@ -17,9 +18,14 @@ import {
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
 
-type ManagedCloneProviderSource = "hermes-tool-gateway" | "messaging" | "web-search";
+type ManagedCloneProviderSource =
+  | "hermes-inference"
+  | "hermes-tool-gateway"
+  | "messaging"
+  | "web-search";
 
 const HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
+const HERMES_INFERENCE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 
 type ManagedCloneProviderCommandResult = {
   readonly status: number | null;
@@ -50,6 +56,11 @@ export interface PreparedManagedCloneProvider {
    * sandbox is attached before it deletes and recreates the provider.
    */
   readonly replaceExistingCredential: boolean;
+}
+
+export interface StagedHermesCloneBinding {
+  readonly activationToken: string;
+  readonly brokerToken: string;
 }
 
 type ProviderInspection =
@@ -165,6 +176,13 @@ function addHermesToolGatewayProvider(
   if (providerEnvKey !== HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV) {
     throw new Error("Hermes managed-tool gateway credential contract changed");
   }
+  broker.preflightHermesToolGatewayCloneBinding(destinationSandboxName);
+  addProvider(providers, {
+    providerName: broker.getHermesInferenceProviderName(destinationSandboxName),
+    providerType: "openai",
+    providerEnvKey: HERMES_INFERENCE_CREDENTIAL_ENV,
+    source: "hermes-inference",
+  });
   addProvider(providers, {
     providerName: broker.getHermesToolGatewayProviderName(destinationSandboxName),
     providerType: "generic",
@@ -187,7 +205,13 @@ export async function resolveManagedCloneCredentialEnvironment(input: {
   const explicit = environment[HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]
     ?.replace(/\r/gu, "")
     .trim();
-  if (explicit) return { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: explicit };
+  const inferencePlaceholder = `nc_clone_${randomBytes(32).toString("base64url")}`;
+  if (explicit) {
+    return {
+      [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: explicit,
+      [HERMES_INFERENCE_CREDENTIAL_ENV]: inferencePlaceholder,
+    };
+  }
   if (input.nonInteractive ?? environment.NEMOCLAW_NON_INTERACTIVE === "1") {
     throw new Error(
       "managed Hermes tool-gateway clone requires a fresh Nous OAuth refresh credential; " +
@@ -205,7 +229,10 @@ export async function resolveManagedCloneCredentialEnvironment(input: {
   if (!refreshToken) {
     throw new Error("Nous OAuth returned no refresh credential for the snapshot destination");
   }
-  return { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: refreshToken };
+  return {
+    [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: refreshToken,
+    [HERMES_INFERENCE_CREDENTIAL_ENV]: inferencePlaceholder,
+  };
 }
 
 function ensureRequiredWebSearchProfiles(
@@ -347,6 +374,7 @@ export function provisionManagedCloneProviders(
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly rollbackSandboxName?: string;
     readonly hermesToolGatewayBroker?: HermesToolGatewayCloneBroker;
+    readonly stagedHermesBinding?: StagedHermesCloneBinding;
   },
 ): string[] {
   const environment = input.environment ?? process.env;
@@ -395,6 +423,15 @@ export function provisionManagedCloneProviders(
           `managed clone credential ${provider.providerEnvKey} disappeared before provider creation`,
         );
       }
+      const providerCredential =
+        provider.source === "hermes-tool-gateway"
+          ? input.stagedHermesBinding?.brokerToken
+          : credential;
+      if (!providerCredential) {
+        throw new Error(
+          `managed clone provider '${provider.providerName}' has no staged broker credential`,
+        );
+      }
       const result = input.runOpenshell(
         [
           "provider",
@@ -408,7 +445,7 @@ export function provisionManagedCloneProviders(
         ],
         {
           ignoreError: true,
-          env: { [provider.providerEnvKey]: credential },
+          env: { [provider.providerEnvKey]: providerCredential },
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
@@ -427,11 +464,26 @@ export function provisionManagedCloneProviders(
             `managed clone provider '${provider.providerName}' has no destination broker identity`,
           );
         }
-        broker.bindHermesToolGatewayCloneProviderState(provider.brokerSandboxName, credential);
+        if (!input.stagedHermesBinding) {
+          throw new Error(
+            `managed clone provider '${provider.providerName}' has no staged destination binding`,
+          );
+        }
+        broker.activateHermesToolGatewayCloneBinding(
+          provider.brokerSandboxName,
+          credential,
+          input.stagedHermesBinding,
+        );
       }
     }
     return mutated;
   } catch (error) {
+    const stagedSandbox = prepared.find(
+      (provider) => provider.source === "hermes-tool-gateway",
+    )?.brokerSandboxName;
+    if (stagedSandbox && input.stagedHermesBinding) {
+      broker.discardHermesToolGatewayCloneBinding(stagedSandbox, input.stagedHermesBinding);
+    }
     cleanupCreatedProviders(mutated, input.runOpenshell, input.rollbackSandboxName, broker);
     throw error;
   }

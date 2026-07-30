@@ -9,8 +9,9 @@
  *
  * Hermes managed tools need a Nous subscription credential, but the sandbox
  * must not own raw Nous OAuth state. NemoClaw stores the refresh credential in
- * OpenShell provider storage, gives the sandbox only an OpenShell resolver
- * placeholder, and keeps the raw refresh token in this host process after OAuth
+ * host-broker memory, gives the sandbox only an opaque per-sandbox broker
+ * credential through OpenShell provider storage, and keeps the raw refresh
+ * token in this host process after OAuth
  * onboarding. The broker refreshes on the host with x-nous-refresh-token,
  * injects a short-lived access token upstream, and persists only credential
  * hashes so rotated refresh tokens can update OpenShell without writing raw
@@ -38,6 +39,7 @@ const CREDENTIAL_ENV =
   process.env.HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV ||
   "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
 const CONTROL_SOCKET_PATH = process.env.HERMES_TOOL_GATEWAY_CONTROL_SOCKET || "";
+const PREFLIGHT_PROBE = process.env.HERMES_TOOL_GATEWAY_PREFLIGHT_PROBE === "1";
 const HERMES_INFERENCE_PROVIDER_NAME =
   process.env.HERMES_INFERENCE_PROVIDER_NAME || "hermes-provider";
 const HERMES_INFERENCE_CREDENTIAL_ENV =
@@ -64,6 +66,7 @@ const UPSTREAM_REQUEST_TIMEOUT_MS = readPositiveIntEnv(
   60_000,
   1000,
 );
+const STAGED_CLONE_BINDING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_INFERENCE_BASE_URL = "https://inference-api.nousresearch.com/v1";
 const TRUSTED_INFERENCE_BASE_URLS = new Set([DEFAULT_INFERENCE_BASE_URL]);
 
@@ -103,6 +106,7 @@ const TOKEN_HEADERS = [
 ];
 
 const accessTokenCache = new Map();
+const stagedCloneBindings = new Map();
 
 function sha256(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex");
@@ -224,14 +228,20 @@ function resolveRuntimeRefreshToken(loaded) {
 function registerInitialRuntimeRefreshCredential() {
   const refreshToken = String(process.env[CREDENTIAL_ENV] || "").trim();
   if (!refreshToken) return;
+  const exactSandbox = String(process.env.HERMES_TOOL_GATEWAY_INITIAL_SANDBOX || "").trim();
   const digest = sha256(refreshToken);
   for (const file of stateFiles()) {
     const loaded = loadStateFile(file);
-    if (loaded && timingSafeEqualString(String(loaded.state.refresh_token_sha256 || ""), digest)) {
+    if (
+      loaded &&
+      (!exactSandbox || loaded.state.sandbox === exactSandbox) &&
+      timingSafeEqualString(String(loaded.state.refresh_token_sha256 || ""), digest)
+    ) {
       runtimeRefreshCredentials.register(loaded.state, refreshToken);
     }
   }
   delete process.env[CREDENTIAL_ENV];
+  delete process.env.HERMES_TOOL_GATEWAY_INITIAL_SANDBOX;
 }
 
 registerInitialRuntimeRefreshCredential();
@@ -280,13 +290,17 @@ function atomicWriteJson(file, value) {
 function updateOpenshellRefreshProvider(state, refreshToken) {
   const providerName = String(state.provider_name || "");
   if (!providerName) return;
+  const providerCredential =
+    typeof state.broker_token === "string" && state.broker_token
+      ? state.broker_token
+      : refreshToken;
   const result = spawnSync(
     OPENSHELL_BIN,
     ["provider", "update", providerName, "--credential", CREDENTIAL_ENV],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, [CREDENTIAL_ENV]: refreshToken },
+      env: { ...process.env, [CREDENTIAL_ENV]: providerCredential },
       timeout: 30_000,
     },
   );
@@ -297,11 +311,12 @@ function updateOpenshellRefreshProvider(state, refreshToken) {
   }
 }
 
-function updateOpenshellInferenceProvider(apiKey, baseUrl) {
+function updateOpenshellInferenceProvider(state, apiKey, baseUrl) {
+  const providerName = String(state.inference_provider_name || HERMES_INFERENCE_PROVIDER_NAME);
   const args = [
     "provider",
     "update",
-    HERMES_INFERENCE_PROVIDER_NAME,
+    providerName,
     "--credential",
     HERMES_INFERENCE_CREDENTIAL_ENV,
   ];
@@ -340,6 +355,7 @@ async function refreshAccessToken(refreshToken, loaded) {
       "x-nous-refresh-token": refreshToken,
     },
     body,
+    signal: AbortSignal.timeout(UPSTREAM_REQUEST_TIMEOUT_MS),
   });
 
   if (!resp.ok) {
@@ -389,6 +405,132 @@ function agentKeyExpiresAt() {
   return new Date(Date.now() + AGENT_KEY_MIN_TTL_SECONDS * 1000).toISOString();
 }
 
+async function stageCloneBinding(sandbox, refreshToken, inferenceProviderName) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/u.test(sandbox)) {
+    throw Object.assign(new Error("invalid_stage_sandbox"), { code: "invalid_stage_sandbox" });
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/u.test(inferenceProviderName)) {
+    throw Object.assign(new Error("invalid_stage_provider"), { code: "invalid_stage_provider" });
+  }
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: CLIENT_ID,
+  });
+  const refreshResponse = await fetch(`${PORTAL_BASE_URL}/api/oauth/token`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "x-nous-refresh-token": refreshToken,
+    },
+    body,
+    signal: AbortSignal.timeout(UPSTREAM_REQUEST_TIMEOUT_MS),
+  });
+  if (!refreshResponse.ok) {
+    const code =
+      refreshResponse.status === 400 || refreshResponse.status === 401
+        ? "reauth_required"
+        : "refresh_failed";
+    throw Object.assign(new Error(`refresh_failed_http_${refreshResponse.status}`), { code });
+  }
+  const refreshed = await refreshResponse.json();
+  if (!refreshed?.access_token) {
+    throw Object.assign(new Error("token_response_missing_access_token"), {
+      code: "refresh_failed",
+    });
+  }
+  const nextRefreshToken =
+    typeof refreshed.refresh_token === "string" && refreshed.refresh_token
+      ? refreshed.refresh_token
+      : refreshToken;
+  const agentKey = await mintAgentKey(refreshed.access_token);
+  const activationToken = `nc_activate_${crypto.randomBytes(32).toString("base64url")}`;
+  const brokerToken = `nc_broker_${crypto.randomBytes(32).toString("base64url")}`;
+  const runtime_credential_state = {
+    sandbox: `staged:${activationToken}`,
+    refresh_token_sha256: sha256(nextRefreshToken),
+  };
+  if (!runtimeRefreshCredentials.register(runtime_credential_state, nextRefreshToken)) {
+    throw Object.assign(new Error("staged_runtime_registration_failed"), {
+      code: "staged_runtime_registration_failed",
+    });
+  }
+  stagedCloneBindings.set(activationToken, {
+    sandbox,
+    original_refresh_token_sha256: sha256(refreshToken),
+    runtime_credential_state,
+    broker_token: brokerToken,
+    inference_provider_name: inferenceProviderName,
+    inference_api_key: agentKey.api_key,
+    inference_base_url: trustedInferenceBaseUrl(agentKey.inference_base_url),
+    inference_agent_key_expires_at: agentKeyExpiresAt(),
+    expires_at_ms: Date.now() + STAGED_CLONE_BINDING_TTL_MS,
+  });
+  const expiryTimer = setTimeout(
+    () => discardStagedCloneBinding(activationToken),
+    STAGED_CLONE_BINDING_TTL_MS,
+  );
+  expiryTimer.unref?.();
+  return { activationToken, brokerToken };
+}
+
+function stagedCloneBinding(activationToken, sandbox) {
+  const staged = stagedCloneBindings.get(activationToken);
+  if (!staged || staged.sandbox !== sandbox || staged.expires_at_ms <= Date.now()) {
+    discardStagedCloneBinding(activationToken);
+    return null;
+  }
+  return staged;
+}
+
+function discardStagedCloneBinding(activationToken) {
+  const staged = stagedCloneBindings.get(activationToken);
+  if (staged?.runtime_credential_state?.sandbox) {
+    runtimeRefreshCredentials.unregister(staged.runtime_credential_state.sandbox);
+  }
+  return stagedCloneBindings.delete(activationToken);
+}
+
+function activateStagedCloneBinding(sandbox, activationToken) {
+  const staged = stagedCloneBinding(activationToken, sandbox);
+  const loaded = loadStateForSandbox(sandbox);
+  const stagedRefreshToken = runtimeRefreshCredentials.resolve(staged?.runtime_credential_state);
+  if (
+    !staged ||
+    !stagedRefreshToken ||
+    !loaded ||
+    loaded.state.refresh_token_sha256 !== staged.original_refresh_token_sha256 ||
+    loaded.state.broker_token !== staged.broker_token ||
+    loaded.state.inference_provider_name !== staged.inference_provider_name
+  ) {
+    throw Object.assign(new Error("staged_binding_mismatch"), {
+      code: "staged_binding_mismatch",
+    });
+  }
+  const nextState = {
+    ...loaded.state,
+    refresh_token_sha256: sha256(stagedRefreshToken),
+    inference_credential_env: HERMES_INFERENCE_CREDENTIAL_ENV,
+    inference_base_url: staged.inference_base_url,
+    inference_agent_key_expires_at: staged.inference_agent_key_expires_at,
+    inference_agent_key_rotated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  if (!runtimeRefreshCredentials.register(nextState, stagedRefreshToken)) {
+    throw Object.assign(new Error("staged_runtime_registration_failed"), {
+      code: "staged_runtime_registration_failed",
+    });
+  }
+  updateOpenshellInferenceProvider(
+    loaded.state,
+    staged.inference_api_key,
+    staged.inference_base_url,
+  );
+  atomicWriteJson(loaded.file, nextState);
+  loaded.state = nextState;
+  discardStagedCloneBinding(activationToken);
+}
+
 function trustedInferenceBaseUrl(value) {
   const normalized = String(value || "")
     .trim()
@@ -408,6 +550,7 @@ async function mintAgentKey(accessToken) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ min_ttl_seconds: AGENT_KEY_MIN_TTL_SECONDS }),
+    signal: AbortSignal.timeout(UPSTREAM_REQUEST_TIMEOUT_MS),
   });
   if (!resp.ok) {
     const code =
@@ -430,10 +573,10 @@ async function ensureInferenceAgentKey(loaded, refreshToken, options = {}) {
   const accessToken = await refreshAccessToken(refreshToken, loaded);
   const agentKey = await mintAgentKey(accessToken);
   const inferenceBaseUrl = trustedInferenceBaseUrl(agentKey.inference_base_url);
-  updateOpenshellInferenceProvider(agentKey.api_key, inferenceBaseUrl);
+  updateOpenshellInferenceProvider(loaded.state, agentKey.api_key, inferenceBaseUrl);
   const nextState = {
     ...loaded.state,
-    inference_provider_name: HERMES_INFERENCE_PROVIDER_NAME,
+    inference_provider_name: loaded.state.inference_provider_name || HERMES_INFERENCE_PROVIDER_NAME,
     inference_credential_env: HERMES_INFERENCE_CREDENTIAL_ENV,
     inference_base_url: inferenceBaseUrl,
     inference_agent_key_expires_at: agentKeyExpiresAt(),
@@ -549,12 +692,50 @@ async function handleControlRequest(req, res) {
   }
   const payload = await readControlJson(req);
   const sandbox = String(payload?.sandbox || "").trim();
+  if (PREFLIGHT_PROBE && req.url === "/preflight") {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (req.url === "/credentials/stage") {
+    const refreshToken = String(payload?.refresh_token || "").trim();
+    const inferenceProviderName = String(payload?.inference_provider_name || "").trim();
+    if (!refreshToken) {
+      sendText(res, 409, "staged credential is empty");
+      return;
+    }
+    const staged = await stageCloneBinding(sandbox, refreshToken, inferenceProviderName);
+    sendJson(res, 200, {
+      ok: true,
+      activation_token: staged.activationToken,
+      broker_token: staged.brokerToken,
+    });
+    return;
+  }
+  if (req.url === "/credentials/activate") {
+    const activationToken = String(payload?.activation_token || "").trim();
+    activateStagedCloneBinding(sandbox, activationToken);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (req.url === "/credentials/discard") {
+    const activationToken = String(payload?.activation_token || "").trim();
+    const staged = stagedCloneBinding(activationToken, sandbox);
+    if (staged) discardStagedCloneBinding(activationToken);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (req.url === "/credentials/register") {
     const loaded = loadStateForSandbox(sandbox);
     const refreshToken = String(payload?.refresh_token || "").trim();
     if (!loaded || !runtimeRefreshCredentials.register(loaded.state, refreshToken)) {
       sendText(res, 409, "credential does not match destination broker state");
       return;
+    }
+    try {
+      await ensureInferenceAgentKey(loaded, refreshToken);
+    } catch (error) {
+      runtimeRefreshCredentials.unregister(sandbox);
+      throw error;
     }
     sendJson(res, 200, { ok: true });
     return;
@@ -702,6 +883,47 @@ const server = http.createServer((req, res) => {
 });
 
 let controlServer = null;
+let preflightPublicReady = false;
+let preflightControlReady = !CONTROL_SOCKET_PATH;
+let preflightRunning = false;
+
+function finishPreflightProbe(status) {
+  if (!PREFLIGHT_PROBE) return;
+  if (CONTROL_SOCKET_PATH) {
+    try {
+      fs.unlinkSync(CONTROL_SOCKET_PATH);
+    } catch {
+      /* ignore */
+    }
+  }
+  process.exit(status);
+}
+
+function maybeRunPreflightProbe() {
+  if (!PREFLIGHT_PROBE || preflightRunning || !preflightPublicReady || !preflightControlReady) {
+    return;
+  }
+  preflightRunning = true;
+  const body = "{}";
+  const request = http.request(
+    {
+      socketPath: CONTROL_SOCKET_PATH,
+      path: "/preflight",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    },
+    (response) => {
+      response.resume();
+      response.on("end", () => finishPreflightProbe(response.statusCode === 200 ? 0 : 3));
+    },
+  );
+  request.on("error", () => finishPreflightProbe(3));
+  request.end(body);
+}
+
 if (CONTROL_SOCKET_PATH) {
   try {
     fs.unlinkSync(CONTROL_SOCKET_PATH);
@@ -718,24 +940,38 @@ if (CONTROL_SOCKET_PATH) {
   });
   controlServer.listen(CONTROL_SOCKET_PATH, () => {
     fs.chmodSync(CONTROL_SOCKET_PATH, 0o600);
+    preflightControlReady = true;
+    maybeRunPreflightProbe();
   });
+  if (PREFLIGHT_PROBE) controlServer.on("error", () => finishPreflightProbe(2));
 }
 
 server.listen(PORT, "0.0.0.0", () => {
+  if (PREFLIGHT_PROBE) {
+    preflightPublicReady = true;
+    maybeRunPreflightProbe();
+    return;
+  }
   console.error(`Hermes managed-tool gateway broker listening on :${PORT}`);
   refreshManagedInferenceForRuntimeCredentials().catch((err) => {
     const code = errorCode(err) || "agent_key_refresh_failed";
     console.error(`Hermes inference provider refresh failed: ${code}`);
   });
 });
+if (PREFLIGHT_PROBE) {
+  server.on("error", () => finishPreflightProbe(2));
+  setTimeout(() => finishPreflightProbe(4), 5000);
+}
 
-const refreshTimer = setInterval(() => {
-  refreshManagedInferenceForRuntimeCredentials().catch((err) => {
-    const code = errorCode(err) || "agent_key_refresh_failed";
-    console.error(`Hermes inference provider refresh failed: ${code}`);
-  });
-}, AGENT_KEY_REFRESH_INTERVAL_MS);
-refreshTimer.unref?.();
+if (!PREFLIGHT_PROBE) {
+  const refreshTimer = setInterval(() => {
+    refreshManagedInferenceForRuntimeCredentials().catch((err) => {
+      const code = errorCode(err) || "agent_key_refresh_failed";
+      console.error(`Hermes inference provider refresh failed: ${code}`);
+    });
+  }, AGENT_KEY_REFRESH_INTERVAL_MS);
+  refreshTimer.unref?.();
+}
 
 function closeBroker() {
   const exit = () => {

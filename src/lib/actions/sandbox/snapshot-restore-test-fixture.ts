@@ -133,14 +133,31 @@ const managedCloneCredentialMock = vi.hoisted(() => ({
     file: "/test-only/hermes-tool-gateway-state.json",
     brokerToken: "test-only-broker-token",
   })),
+  stageBrokerState: vi.fn(() => ({
+    activationToken: "nc_activate_test-only",
+    brokerToken: "nc_broker_test-only",
+  })),
+  activateBrokerState: vi.fn(() => ({
+    file: "/test-only/hermes-tool-gateway-state.json",
+    brokerToken: "nc_broker_test-only",
+  })),
+  discardBrokerState: vi.fn(() => true),
   removeBrokerState: vi.fn(() => true),
+  preflightBrokerState: vi.fn(),
 }));
 
 export const runDeviceCodeFlowMock = managedCloneCredentialMock.runDeviceCodeFlow;
 export const bindHermesToolGatewayCloneProviderStateMock =
   managedCloneCredentialMock.bindBrokerState;
+export const stageHermesToolGatewayCloneBindingMock = managedCloneCredentialMock.stageBrokerState;
+export const activateHermesToolGatewayCloneBindingMock =
+  managedCloneCredentialMock.activateBrokerState;
+export const discardHermesToolGatewayCloneBindingMock =
+  managedCloneCredentialMock.discardBrokerState;
 export const removeHermesToolGatewayProviderStateMock =
   managedCloneCredentialMock.removeBrokerState;
+export const preflightHermesToolGatewayCloneBindingMock =
+  managedCloneCredentialMock.preflightBrokerState;
 
 export const backupSandboxStateMock = vi.fn();
 export const loadAgentMock = vi.fn((name: string) => ({
@@ -271,7 +288,12 @@ vi.mock("../../oauth-device-code", () => ({
 vi.mock("../../hermes-tool-gateway-clone-broker", () => ({
   getHermesToolGatewayCloneBroker: () => ({
     HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+    getHermesInferenceProviderName: (sandboxName: string) => `${sandboxName}-hermes-inference`,
     getHermesToolGatewayProviderName: (sandboxName: string) => `${sandboxName}-hermes-tool-gateway`,
+    preflightHermesToolGatewayCloneBinding: managedCloneCredentialMock.preflightBrokerState,
+    stageHermesToolGatewayCloneBinding: managedCloneCredentialMock.stageBrokerState,
+    activateHermesToolGatewayCloneBinding: managedCloneCredentialMock.activateBrokerState,
+    discardHermesToolGatewayCloneBinding: managedCloneCredentialMock.discardBrokerState,
     bindHermesToolGatewayCloneProviderState: managedCloneCredentialMock.bindBrokerState,
     removeHermesToolGatewayProviderState: managedCloneCredentialMock.removeBrokerState,
   }),
@@ -399,6 +421,19 @@ export function resetSnapshotRestoreMocks(): void {
   });
   managedCloneCredentialMock.removeBrokerState.mockReset();
   managedCloneCredentialMock.removeBrokerState.mockReturnValue(true);
+  managedCloneCredentialMock.preflightBrokerState.mockReset();
+  managedCloneCredentialMock.stageBrokerState.mockReset();
+  managedCloneCredentialMock.stageBrokerState.mockReturnValue({
+    activationToken: "nc_activate_test-only",
+    brokerToken: "nc_broker_test-only",
+  });
+  managedCloneCredentialMock.activateBrokerState.mockReset();
+  managedCloneCredentialMock.activateBrokerState.mockReturnValue({
+    file: "/test-only/hermes-tool-gateway-state.json",
+    brokerToken: "nc_broker_test-only",
+  });
+  managedCloneCredentialMock.discardBrokerState.mockReset();
+  managedCloneCredentialMock.discardBrokerState.mockReturnValue(true);
   resolveAgentBaselinePolicyMock.mockImplementation((agent: string) => ({
     agent,
     policyPath:
