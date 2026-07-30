@@ -230,6 +230,8 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
     teams: {
       appId: requireEnvValue(env, "MSTEAMS_APP_ID"),
       tenantId: requireEnvValue(env, "MSTEAMS_TENANT_ID"),
+      allowedUsers: requireEnvValue(env, "TEAMS_ALLOWED_USERS"),
+      webhookPort: requireEnvValue(env, "MSTEAMS_PORT"),
       requireMention: requireEnvValue(env, "TEAMS_REQUIRE_MENTION"),
     },
   };
