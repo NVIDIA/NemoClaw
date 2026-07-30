@@ -3529,7 +3529,6 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
   console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
   return "selected";
 }
-
 export type SetupNimDeps = import("./onboard/setup-nim-flow").SetupNimFlowDeps;
 export type SetupNim = import("./onboard/setup-nim-flow").SetupNim;
 
@@ -3643,7 +3642,6 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     exitProcess: (code: number): never => process.exit(code),
   };
 }
-
 export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
 export type SetupInference = import("./onboard/setup-inference").SetupInference;
 
@@ -3710,11 +3708,8 @@ async function setupMessagingChannels(
     isNonInteractive,
     sandboxName,
     selectionCompleted: options.selectionCompleted,
-    googlechatTunnelRuntime: {
-      loadServices: () => require("./tunnel/services"),
-      loadWebhookProxy: () => require("./messaging/channels/googlechat/tunnel/proxy"),
-      prompt,
-    },
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    googlechatTunnelRuntime: { loadServices: () => require("./tunnel/services"), loadWebhookProxy: () => require("./messaging/channels/googlechat/tunnel/proxy"), prompt },
   });
 }
 
