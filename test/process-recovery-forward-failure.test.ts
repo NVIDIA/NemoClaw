@@ -232,6 +232,54 @@ beta  127.0.0.1  18789  12345  dead`,
 });
 
 describe("ensureSandboxPortForwardForPort already-forwarded idempotency (#7085)", () => {
+  it("retries when a newly started forward drops during the managed health guard", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    let forwardLive = false;
+    let startCount = 0;
+    let guardCount = 0;
+
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardLive);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output: forwardLive
+        ? `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18791  12345  running`
+        : "SANDBOX  BIND  PORT  PID  STATUS",
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        if (args[0] === "forward" && args[1] === "stop") {
+          forwardLive = false;
+        }
+        if (args[0] === "forward" && args[1] === "start") {
+          startCount += 1;
+          forwardLive = true;
+        }
+        return { status: 0 } as never;
+      });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          afterSuccess: () => {
+            guardCount += 1;
+            if (guardCount === 1) forwardLive = false;
+            return true;
+          },
+          expectedBind: "127.0.0.1",
+        }),
+      ),
+    ).toBe(true);
+    expect(startCount).toBe(2);
+    expect(guardCount).toBe(2);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "18791", "beta"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
   it("reconciles a reachable ownerless listener with a nonzero recovery wait", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
     let started = false;

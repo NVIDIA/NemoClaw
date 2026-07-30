@@ -11,7 +11,7 @@ import {
 } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT } from "../../core/ports";
-import { waitUntil } from "../../core/wait";
+import { sleepMs, waitUntil } from "../../core/wait";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
@@ -45,6 +45,14 @@ type SandboxForwardRecoveryOptions = {
   afterSuccess?: () => boolean;
   beforeStart?: () => boolean;
   isWsl?: boolean;
+};
+
+type SandboxPortForwardRecoveryOptions = {
+  afterSuccess?: () => boolean;
+  forwardTarget?: string;
+  forceRestart?: boolean;
+  expectedBind?: string;
+  beforeStart?: () => boolean;
 };
 
 type DashboardForwardStopRunner = (
@@ -237,16 +245,11 @@ export function isSandboxPortForwardHealthy(
   );
 }
 
-export function ensureSandboxPortForwardForPort(
+function ensureSandboxPortForwardForPortWithRetries(
   sandboxName: string,
   port: number,
-  options: {
-    afterSuccess?: () => boolean;
-    forwardTarget?: string;
-    forceRestart?: boolean;
-    expectedBind?: string;
-    beforeStart?: () => boolean;
-  } = {},
+  options: SandboxPortForwardRecoveryOptions,
+  guardedDropRetries: number,
 ): boolean {
   const {
     afterSuccess = () => true,
@@ -255,25 +258,47 @@ export function ensureSandboxPortForwardForPort(
     expectedBind,
     beforeStart = () => true,
   } = options;
+  const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
+  const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
+  const guardedSettleMs = Math.min(waitMs, 500);
   const acceptSuccessfulForward = () => {
-    let accepted = false;
+    let guardAccepted = false;
     try {
-      accepted = afterSuccess();
+      guardAccepted = afterSuccess();
     } catch {
-      accepted = false;
+      guardAccepted = false;
     }
-    if (accepted) return true;
+    if (!guardAccepted) {
+      runOpenshell(["forward", "stop", String(port), sandboxName], {
+        ignoreError: true,
+        stdio: "ignore",
+      });
+      return false;
+    }
+    let forwardAccepted = true;
+    if (options.afterSuccess) {
+      // A newly registered relay can report running and then drop while the
+      // pinned managed-health guard executes. Re-prove the authoritative owner
+      // and listener after that guard before status reports recovery success.
+      sleepMs(guardedSettleMs);
+      forwardAccepted = isSandboxPortForwardHealthy(sandboxName, port, expectedBind) === true;
+    }
+    if (forwardAccepted) return true;
     runOpenshell(["forward", "stop", String(port), sandboxName], {
       ignoreError: true,
       stdio: "ignore",
     });
-    return false;
+    if (!options.afterSuccess || guardedDropRetries <= 0) return false;
+    return ensureSandboxPortForwardForPortWithRetries(
+      sandboxName,
+      port,
+      options,
+      guardedDropRetries - 1,
+    );
   };
   let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
   if (forwardHealth === true && !forceRestart) return acceptSuccessfulForward();
   if (forwardHealth === "occupied") return false;
-  const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
-  const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
   const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
     ignoreError: true,
@@ -377,6 +402,19 @@ export function ensureSandboxPortForwardForPort(
     },
   );
   return settled && !occupied && acceptSuccessfulForward();
+}
+
+export function ensureSandboxPortForwardForPort(
+  sandboxName: string,
+  port: number,
+  options: SandboxPortForwardRecoveryOptions = {},
+): boolean {
+  return ensureSandboxPortForwardForPortWithRetries(
+    sandboxName,
+    port,
+    options,
+    options.afterSuccess ? 1 : 0,
+  );
 }
 
 export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
