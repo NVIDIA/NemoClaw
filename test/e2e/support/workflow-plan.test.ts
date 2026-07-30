@@ -29,6 +29,11 @@ function firstId<T extends { id: string }>(rows: readonly T[], label: string): s
   return rows[0]!.id;
 }
 
+function retiredControllerSelectorIds(): string[] {
+  const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
+  return RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
+}
+
 describe("E2E workflow plan", () => {
   it("defaults to every supported registry target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
@@ -157,7 +162,7 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
-          JOBS: [activeJobs, ...RETIRED_CONTROLLER_SELECTOR_IDS].join(","),
+          JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -224,7 +229,7 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("emits an empty live plan for P2 selectors handled by target compatibility (#7615)", () => {
+  it("emits an empty matrix for retired free-standing rebuild selectors (#7615)", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");

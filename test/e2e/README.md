@@ -103,12 +103,14 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
-PR-gate requests using the retired `sandbox-rebuild` and
+## Retired selector compatibility
+
+PR gate requests using the retired `sandbox-rebuild` and
 `upgrade-stale-sandbox` job or target selectors run focused replacement tests
 through the compatibility controller. `rebuild-openclaw` is the canonical live
-rebuild and upgrade seam.
+rebuild and upgrade target.
 
-### Current OpenClaw plugin EXDEV lifecycle
+## Current OpenClaw plugin EXDEV lifecycle
 
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 

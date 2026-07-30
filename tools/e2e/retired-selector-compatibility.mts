@@ -131,7 +131,11 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
     tests: [
       {
-        files: ["src/lib/sandbox/version.test.ts"],
+        files: [
+          "src/lib/actions/sandbox/rebuild-route-preflight.test.ts",
+          "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
+          "src/lib/sandbox/version.test.ts",
+        ],
         project: "cli",
       },
       {
@@ -151,7 +155,9 @@ export function selectedRetiredControllerJobs(options: {
   if (!SHA_PATTERN.test(options.expectedSha ?? "")) return [];
   for (const selectors of [options.jobs, options.targets]) {
     if (selectors && !SELECTOR_LIST_PATTERN.test(selectors)) {
-      throw new Error("retired selector compatibility requires safe comma-separated selector IDs");
+      throw new Error(
+        "retired selector compatibility requires comma-separated selector IDs containing only letters, numbers, underscores, and hyphens",
+      );
     }
   }
   const allowedJobs = new Set(options.allowedJobs);
