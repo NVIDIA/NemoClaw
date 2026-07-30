@@ -107,17 +107,35 @@ function wipeAndHardenLiveSandbox(
       allowLegacyHermesProtocol: true,
     });
   } catch (error) {
-    // #7727: hardening before delete is a best-effort narrowing of the open
-    // shields-down window, not a precondition for removal. When the lock
-    // cannot be re-established — a deleted `.config-hash` in the locked
-    // posture makes the guard fail closed, and neither `shields up` nor
-    // `shields down` can repair it by design — refusing to delete stranded
-    // the sandbox the user explicitly asked to remove, with no supported
-    // recovery path. Deleting removes the unguarded config along with the
-    // sandbox, so report the failure and continue. `hardenedForDelete: false`
-    // keeps the delete-abort path honest: it will not open a bounded
-    // shields-down rollback window it never closed.
-    //
+    /**
+     * SOURCE_OF_TRUTH
+     * Invalid state: the locked OpenClaw config pair lost its `.config-hash`
+     * integrity sidecar, so the guard refuses every lock transition and the
+     * sandbox cannot be re-hardened (#7727).
+     * Source boundary: the sidecar is removed out of band by host root inside
+     * the container (the reporter used `docker exec --user root rm -f`). The
+     * refusal itself belongs to `scripts/openclaw-config-guard.py`, which
+     * repairs an absent hash only in lock-from-mutable mode and fail-stops in
+     * the locked posture on purpose.
+     * Source-fix constraint: NemoClaw cannot stop host root from deleting a
+     * file inside the sandbox, and regenerating the hash from the current
+     * bytes in the locked posture is exactly the tamper laundering the guard
+     * exists to prevent — #7727 explicitly keeps that fail-closed. So destroy
+     * cannot repair this state at its source; it can only stop treating a
+     * best-effort hardening step as a precondition for removal.
+     * Regression proof: destroy-flow.test.ts covers delete-proceeds-after-
+     * failed-hardening, the emitted warning, timer cleanup ordering, and MCP
+     * restore when the delete then fails.
+     * Removal condition: drop this fallback when the config guard gains a
+     * supported authenticated repair for a missing sidecar in the locked
+     * posture, so a pre-delete `shieldsUp` can be required again.
+     *
+     * Hardening before delete narrows the open shields-down window; it is not
+     * a precondition for removal. Deleting removes the unguarded config along
+     * with the sandbox, so report the failure and continue.
+     * `hardenedForDelete: false` keeps the delete-abort path honest: it will
+     * not open a bounded shields-down rollback window it never closed.
+     */
     // The auto-restore timer stays authoritative until deletion succeeds, for
     // the same reason `shieldsUp` keeps it through its own commit: revoking it
     // here would turn a delete that then fails into an unbounded mutable
