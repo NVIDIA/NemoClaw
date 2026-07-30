@@ -333,6 +333,10 @@ network_policies:
       "hermes-real-mcp-tool-call-after-dns-rebinding-remove",
       beforeRemoveToolCall,
     );
+    const concurrencyStress = source.indexOf(
+      "await assertConcurrentAddSerialized",
+      afterRemoveToolCall,
+    );
     const offset = source.indexOf(
       "const survivingDiscoveryOffset = fakeMcp.requests.length",
       afterRemoveToolCall,
@@ -348,7 +352,8 @@ network_policies:
     expect(rebinding).toBeGreaterThan(hermesTest);
     expect(beforeRemoveToolCall).toBeGreaterThan(rebinding);
     expect(afterRemoveToolCall).toBeGreaterThan(beforeRemoveToolCall);
-    expect(offset).toBeGreaterThan(afterRemoveToolCall);
+    expect(concurrencyStress).toBeGreaterThan(afterRemoveToolCall);
+    expect(offset).toBeGreaterThan(concurrencyStress);
     expect(restart).toBeGreaterThan(offset);
     expect(toolCall).toBeGreaterThan(restart);
     expect(rediscovery).toBeGreaterThan(toolCall);

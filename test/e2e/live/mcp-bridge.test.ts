@@ -415,6 +415,7 @@ async function assertConcurrentAddSerialized(
     mcpUrl: string;
     expectedAdapter: McpAdapter;
     artifactPrefix: string;
+    remainingServerName?: string;
   },
 ): Promise<void> {
   cleanup.add(`remove ${options.artifactPrefix} concurrent MCP bridge`, () =>
@@ -508,7 +509,11 @@ async function assertConcurrentAddSerialized(
     timeoutMs: 60_000,
   });
   expectExitZero(list, `${options.artifactPrefix} lists after concurrent bridge removal`);
-  expect(JSON.parse(list.stdout).bridges).toEqual([]);
+  expect(JSON.parse(list.stdout).bridges).toEqual(
+    options.remainingServerName
+      ? [expect.objectContaining({ server: options.remainingServerName })]
+      : [],
+  );
 }
 
 async function expectMcpCliFailure(
@@ -1200,13 +1205,6 @@ mcpBridgeShardTest("hermes")(
     );
 
     progress.phase("configure and inspect the Hermes MCP bridge");
-    await assertConcurrentAddSerialized(host, cleanup, {
-      sandboxName: HERMES_SANDBOX_NAME,
-      mcpUrl,
-      expectedAdapter: "hermes-config",
-      artifactPrefix: "hermes",
-    });
-
     const initialDiscoveryOffset = fakeMcp.requests.length;
     const providerName = await addBridgeAndReadStatus(host, {
       sandboxName: HERMES_SANDBOX_NAME,
@@ -1263,6 +1261,13 @@ mcpBridgeShardTest("hermes")(
       secretPaths: ["/sandbox/.hermes"],
     });
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-dns-rebinding-remove");
+    await assertConcurrentAddSerialized(host, cleanup, {
+      sandboxName: HERMES_SANDBOX_NAME,
+      mcpUrl,
+      expectedAdapter: "hermes-config",
+      artifactPrefix: "hermes",
+      remainingServerName: SERVER_NAME,
+    });
     const survivingDiscoveryOffset = fakeMcp.requests.length;
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-rediscovery-restart");
