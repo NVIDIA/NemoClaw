@@ -62,10 +62,10 @@ import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
-// Protected PR E2E checks out the exact head while the trusted controller runs
+// Protected PR E2E checks out the PR commit while the trusted controller runs
 // the base workflow. Older controller revisions therefore cannot provide the
 // newly introduced CLI build and OpenShell install steps. Keep the test pinned
-// to the exact checked-out launcher and bootstrap only what that controller
+// to the checked-out launcher and bootstrap only what that controller
 // revision omits; the PR workflow remains the canonical execution path.
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 // The rebuild regression invokes the checked-out CLI directly. Full install.sh

@@ -21,6 +21,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -1787,11 +1788,44 @@ function restoreSandboxStateInternal(
 
 // ── Manifest ───────────────────────────────────────────────────────
 
-function writeManifest(backupPath: string, manifest: RebuildManifest): void {
+type ManifestPublishOps = {
+  write(filePath: string, contents: string, options: { mode: number; flag: "wx" }): void;
+  rename(source: string, destination: string): void;
+  remove(filePath: string, options: { force: true }): void;
+};
+
+const manifestPublishOps: ManifestPublishOps = {
+  write: (filePath, contents, options) => writeFileSync(filePath, contents, options),
+  rename: (source, destination) => renameSync(source, destination),
+  remove: (filePath, options) => rmSync(filePath, options),
+};
+
+function writeManifest(
+  backupPath: string,
+  manifest: RebuildManifest,
+  ops: ManifestPublishOps = manifestPublishOps,
+): void {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  chmodSync(manifestPath, 0o600);
+  const tempPath = path.join(backupPath, `.rebuild-manifest.json.tmp.${String(process.pid)}`);
+  let published = false;
+  try {
+    // A snapshot becomes recoverable only after its complete, private manifest
+    // is atomically renamed into place.
+    ops.write(tempPath, JSON.stringify(manifest, null, 2), { mode: 0o600, flag: "wx" });
+    ops.rename(tempPath, manifestPath);
+    published = true;
+  } finally {
+    if (!published) {
+      try {
+        ops.remove(tempPath, { force: true });
+      } catch {
+        // Preserve the publish failure; a same-directory temp file is never a snapshot.
+      }
+    }
+  }
 }
+
+export const __test = { writeManifest };
 
 function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
@@ -1837,6 +1871,32 @@ function readManifest(backupPath: string): RebuildManifest | null {
 export type RebuildRecoveryManifestValidation =
   | { ok: true; manifest: RebuildManifest }
   | { ok: false; reason: string };
+
+/**
+ * Remove one completed rebuild backup without allowing a caller-controlled
+ * path to escape the sandbox's timestamped backup directory.
+ */
+export function removeSandboxStateBackup(sandboxName: string, backupPath: string): boolean {
+  const rebuildBackupsRoot = path.resolve(REBUILD_BACKUPS_DIR);
+  const sandboxBackupRoot = path.resolve(rebuildBackupsRoot, sandboxName);
+  const candidateBackupPath = path.resolve(backupPath);
+
+  if (
+    sandboxBackupRoot === rebuildBackupsRoot ||
+    !isWithinRoot(sandboxBackupRoot, rebuildBackupsRoot) ||
+    normalizeHostPath(path.dirname(candidateBackupPath)) !== normalizeHostPath(sandboxBackupRoot)
+  ) {
+    return false;
+  }
+
+  try {
+    rejectSymlinksOnPath(candidateBackupPath);
+    rmSync(candidateBackupPath, { recursive: true, force: true });
+    return !existsSync(candidateBackupPath);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Re-read and validate a prepared rebuild backup before a destructive recovery.
