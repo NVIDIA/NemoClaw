@@ -8,7 +8,11 @@ import {
   type PlatformQualificationInput,
   projectPlatformQualification,
 } from "./platform-qualification";
-import { isStationGb300PciDevice, isStationGb300ProductName } from "./station-qualification";
+import {
+  isStationGb300PciDevice,
+  isStationGb300ProductName,
+  STATION_RELEASE_MARKER_MAX_BYTES,
+} from "./station-qualification";
 
 function input(overrides: Partial<PlatformQualificationInput> = {}): PlatformQualificationInput {
   return {
@@ -408,6 +412,24 @@ describe("platform readiness qualification (#7410)", () => {
     ).toMatchObject({
       stationProfile: "unsupported-dgx-os",
     });
+  });
+
+  it("classifies an oversized DGX Station release marker as unqualified (#7877)", () => {
+    const identity = collectStationIdentity(
+      noOtaStationRelease(),
+      trustedMarkerStat({ size: STATION_RELEASE_MARKER_MAX_BYTES + 1 }),
+    );
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        ...identity,
+      }),
+    );
+
+    expect(identity.stationProfile).toBe("unsupported-dgx-os");
+    expect(qualification(result, "host.platform.dgx_station")).toBe("unqualified");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_unqualified");
   });
 
   it.each([
