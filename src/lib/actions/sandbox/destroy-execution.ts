@@ -139,9 +139,10 @@ function wipeAndHardenLiveSandbox(
     // The auto-restore timer stays authoritative until deletion succeeds, for
     // the same reason `shieldsUp` keeps it through its own commit: revoking it
     // here would turn a delete that then fails into an unbounded mutable
-    // window. It cannot preempt this process — a live transition-lock owner is
-    // never reclaimed, and the timer only stops a shields-down owner that
-    // published a `preparing` transition record, which destroy never does.
+    // window. At the absolute deadline it may stop this exact token-bound
+    // destroy owner and its subprocesses before reclaiming the transition
+    // lock, then restore lockdown. The token and process identity checks make
+    // a mismatched owner fail closed instead of signaling an unrelated process.
     const detail = redact(error instanceof Error ? error.message : String(error));
     console.warn(
       `  ${YW}⚠${R} Could not re-lock shields for '${sandboxName}' before delete: ${detail}`,
