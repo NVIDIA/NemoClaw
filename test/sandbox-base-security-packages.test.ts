@@ -43,6 +43,18 @@ const SECURITY_IMAGES = [
   },
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
+const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
+  "libexpat1=2.8.2-1",
+  "libonig5=6.9.9-1+b1",
+  "libjq1=1.8.2-1",
+  "jq=1.8.2-1",
+  "vim-common=2:9.2.0782-1",
+  "vim-tiny=2:9.2.0782-1",
+  "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
+  "perl-base=5.44.0-1nemoclaw1",
+  "perl=5.44.0-1nemoclaw1",
+] as const;
 const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
@@ -97,7 +109,7 @@ function sandboxSecurityCommand(
 }
 
 function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string {
-  return `${[`architecture=${architecture}`, ...SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY].join("\n")}\n`;
+  return `${[`architecture=${architecture}`, ...EXPECTED_SECURITY_PACKAGE_INVENTORY].join("\n")}\n`;
 }
 
 function completedImageSecurityCommand(
@@ -120,6 +132,10 @@ function completedImageSecurityCommand(
 }
 
 describe("sandbox base security packages", () => {
+  it("keeps runtime validation aligned with the independent image inventory", () => {
+    expect(SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(EXPECTED_SECURITY_PACKAGE_INVENTORY);
+  });
+
   it.each(
     SECURITY_CASES,
   )("executes the exact security package contract for %s on %s", (_name, architecture, image) => {
