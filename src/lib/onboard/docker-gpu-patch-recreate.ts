@@ -6,6 +6,7 @@ import {
   dockerForceRm,
   dockerRename,
   dockerRm,
+  dockerRmi,
   dockerRun,
   dockerRunDetached,
   dockerStart,
@@ -54,6 +55,7 @@ type RecreateDeps = Required<
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
+    | "dockerRmi"
     | "dockerStart"
     | "dockerStop"
     | "sleep"
@@ -73,6 +75,7 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
     dockerRunDetached,
     dockerRename,
     dockerRm,
+    dockerRmi,
     dockerStart,
     dockerStop,
     sleep: (seconds: number) => {
@@ -159,6 +162,7 @@ export function recreateOpenShellDockerSandboxContainer(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     keepOriginalRunningUntilFinalize?: boolean;
+    preserveWritableLayer?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
@@ -173,11 +177,18 @@ export function recreateOpenShellDockerSandboxContainer(
     sandboxName: options.sandboxName,
     modeAttempts: [],
   };
+  let snapshotImageId: string | null = null;
+  let retainSnapshotImage = false;
   try {
     validateRequiredDockerUlimits(options.requiredUlimits);
     if (options.keepOriginalRunningUntilFinalize && options.waitForSupervisor !== false) {
       throw new Error(
         "Keeping the original OpenShell supervisor running requires deferred supervisor finalization.",
+      );
+    }
+    if (options.preserveWritableLayer && options.openshellSandboxCommand == null) {
+      throw new Error(
+        "Preserving a sandbox writable layer is supported only for startup-command recreation.",
       );
     }
     const containerIds = findOpenShellDockerSandboxContainerIds(options.sandboxName, deps);
@@ -286,13 +297,45 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       }
     }
-    const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
-
     const containerMutationOptions = {
       ignoreError: true,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     };
+    if (options.preserveWritableLayer) {
+      // Docker commit pauses the source container by default. Do not pass the
+      // deprecated --pause flag: newer Docker clients print its warning into
+      // the captured output alongside the committed image ID.
+      const commitResult = d.dockerRun(["commit", oldContainerId], {
+        ...containerMutationOptions,
+        timeout: Math.max(
+          DOCKER_GPU_PATCH_TIMEOUT_MS,
+          (options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS) * 1000,
+        ),
+      });
+      if (!hasZeroDockerExitStatus(commitResult)) {
+        throw new Error(
+          `Could not snapshot the sandbox writable layer before recovery: ${resultText(
+            commitResult,
+          )}`,
+        );
+      }
+      const committedImages = String(commitResult.stdout || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => /^sha256:[0-9a-f]{64}$/i.test(line));
+      if (committedImages.length !== 1) {
+        throw new Error(
+          "Docker committed the sandbox writable layer but did not return a valid immutable image ID.",
+        );
+      }
+      const [committedImage] = committedImages;
+      snapshotImageId = committedImage;
+      context.snapshotImageId = committedImage;
+      cloneOptions.image = committedImage;
+    }
+    const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
+
     const backupWasRunning = options.keepOriginalRunningUntilFinalize === true;
     if (!backupWasRunning) {
       const stopResult = d.dockerStop(oldContainerId, {
@@ -397,9 +440,13 @@ export function recreateOpenShellDockerSandboxContainer(
       backupContainerName,
       mode: selectedMode,
       backupWasRunning,
+      ...(snapshotImageId ? { snapshotImageId } : {}),
       backupRemoved,
     });
-    if (options.waitForSupervisor === false) return result(false);
+    if (options.waitForSupervisor === false) {
+      retainSnapshotImage = true;
+      return result(false);
+    }
 
     const execReady = waitForOpenShellSupervisorReconnect(
       options.sandboxName,
@@ -415,8 +462,16 @@ export function recreateOpenShellDockerSandboxContainer(
       context.rolledBack = reconcile.rolledBack;
       throw reconcile.error;
     }
+    retainSnapshotImage = true;
     return result(reconcile.backupRemoved);
   } catch (error) {
+    if (snapshotImageId && !retainSnapshotImage) {
+      d.dockerRmi(snapshotImageId, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+    }
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);
   }
 }

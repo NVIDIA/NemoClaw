@@ -142,6 +142,7 @@ export function relaunchManagedSupervisorSession(
       openshellSandboxCommand: startupCommand,
       expectedOldContainerId: containerId,
       keepOriginalRunningUntilFinalize: true,
+      preserveWritableLayer: true,
       waitForSupervisor: false,
     });
     let completed: { supervisorReady: boolean; outcome: DockerGpuPatchFinalizeOutcome } | null =

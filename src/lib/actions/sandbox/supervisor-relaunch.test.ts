@@ -115,6 +115,7 @@ describe("relaunchManagedSupervisorSession", () => {
       sandboxName: "alpha",
       expectedOldContainerId: "old-container-id",
       keepOriginalRunningUntilFinalize: true,
+      preserveWritableLayer: true,
       waitForSupervisor: false,
     });
     const serialized = options?.openshellSandboxCommand.join(" ") ?? "";

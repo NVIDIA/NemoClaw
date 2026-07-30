@@ -16,6 +16,7 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     keepOriginalRunningUntilFinalize?: boolean;
+    preserveWritableLayer?: boolean;
     openshellSandboxCommand: readonly string[];
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
