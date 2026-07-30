@@ -81,7 +81,7 @@ Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-
 <AgentOnly variant="openclaw,hermes">
 Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
 For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can restart the credential-free managed workload in the registered container.
-NemoClaw keeps the container identity and writable state unchanged, then requires managed gateway health and OpenShell `Ready` before starting the primary dashboard or API host forward.
+NemoClaw keeps the container identity and preserves the existing writable-layer state, then requires managed gateway health and OpenShell `Ready` before starting the primary dashboard or API host forward.
 A definitive managed-health failure stops immediately; if readiness does not complete within the configured budget, the forward stays stopped.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
