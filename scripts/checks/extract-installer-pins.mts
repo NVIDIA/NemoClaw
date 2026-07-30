@@ -47,12 +47,13 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // only in a prerequisite trust-anchor PR that keeps the currently selected
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
-// #7555 completes the Homebrew trust transition anchored by #7601. Keep only
-// the reviewed successor: it trusts a checksum-verified stable formula,
-// revokes that temporary trust after success or failure, and removes inherited
-// trust around an unverified dev install.
+// #7555 completes the Homebrew trust transition anchored by #7601. #7744
+// pre-authorizes the reviewed native-Podman component-selection successor in
+// this prerequisite stack layer; the operational installer PR must revoke the
+// prior template when it adopts that successor.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
   "0fa737a64cf2a7a6a437dc5f203dad81f66f191dc316214c2f343f762ad9b0a5",
+  "1d6b2ff3375533786a9cf880cc284ff894707299266b3f68fbb30324ea756214",
 ] as const;
 const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",

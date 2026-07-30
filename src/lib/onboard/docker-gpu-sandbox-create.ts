@@ -28,6 +28,13 @@ import {
   type RecreateGpuPatchFn,
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
+import {
+  applyDockerManagedStartupRootRequest,
+  type DockerManagedStartupTransaction,
+  getDockerManagedStartupFailureTransaction,
+} from "./managed-startup/docker-root-apply";
+import { finalizeDockerManagedStartupSharedState } from "./managed-startup/docker-shared-state";
+import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 export type {
@@ -42,13 +49,15 @@ export {
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
-  "runOpenshell" | "runCaptureOpenshell" | "sleep" | "dockerCapture"
+  "runOpenshell" | "runCaptureOpenshell" | "sleep" | "dockerCapture" | "dockerRun" | "dockerStop"
 >;
 
 type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
 type FindContainerIdsFn = typeof findOpenShellDockerSandboxContainerIds;
 type FinalizeBackupFn = typeof finalizeDockerGpuPatchBackup;
 type CapturePreRollbackDiagnosticsFn = typeof captureDockerGpuPreRollbackDiagnostics;
+type FinalizeManagedStartupSharedStateFn = typeof finalizeDockerManagedStartupSharedState;
+type ApplyManagedStartupRootRequestFn = typeof applyDockerManagedStartupRootRequest;
 // Loosen the override return type from `never` to `void` so tests can pass a
 // plain `vi.fn()` mock. Production wires `printDockerGpuPatchFailureAndExit`
 // which has return type `never`; that is assignable to `void`.
@@ -61,6 +70,7 @@ type PatchFailureExitFn = (
 type DockerGpuSandboxCreatePatchOptions = {
   route: SelectedDockerGpuRoute;
   persistStartupCommand?: boolean;
+  managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
   sandboxName: string;
   gpuDevice?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
@@ -84,8 +94,10 @@ type DockerGpuSandboxCreatePatchOptions = {
     findContainerIds?: FindContainerIdsFn;
     recreatePatch?: RecreateGpuPatchFn;
     recreateStartupPatch?: RecreateStartupPatchFn;
+    applyManagedStartupRootRequest?: ApplyManagedStartupRootRequestFn;
     waitForSupervisor?: WaitSupervisorFn;
     finalizeBackup?: FinalizeBackupFn;
+    finalizeManagedStartupSharedState?: FinalizeManagedStartupSharedStateFn;
     capturePreRollbackDiagnostics?: CapturePreRollbackDiagnosticsFn;
     onPatchFailureExit?: PatchFailureExitFn;
   };
@@ -95,8 +107,14 @@ export type DockerGpuSandboxCreatePatch = {
   maybeApplyDuringCreate: () => void;
   createFailureMessage: () => string | null;
   exitOnPatchError: () => void;
+  rollbackManagedStartupAfterCreateFailure: () => void;
   ensureApplied: () => void;
   waitForSupervisorReconnectIfNeeded: () => void;
+  /**
+   * Irreversibly commit managed shared state and remove any recreation backup.
+   * Call only after the authoritative Ready gate and required GPU proof pass.
+   */
+  commitAfterReady: () => void;
   selectedMode: () => DockerGpuPatchMode | null;
   /**
    * Print the Docker GPU readiness-failure block (including the Error-phase
@@ -121,16 +139,23 @@ export function createDockerGpuSandboxCreatePatch(
 ): DockerGpuSandboxCreatePatch {
   const routeAdapter = adaptDockerGpuRouteForPatch(options.route);
   let result: DockerGpuPatchResult | null = null;
+  let managedStartupTransaction: DockerManagedStartupTransaction | null = null;
+  let managedStartupApplied = false;
   let patchError: unknown = null;
   let needsSupervisorWait = false;
+  let managedStartupFinalized = false;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
   const recreatePatch = options.overrides?.recreatePatch ?? recreateOpenShellDockerSandboxWithGpu;
   const recreateStartupPatch = options.overrides?.recreateStartupPatch;
+  const applyManagedStartupRootRequest =
+    options.overrides?.applyManagedStartupRootRequest ?? applyDockerManagedStartupRootRequest;
   const waitForSupervisor =
     options.overrides?.waitForSupervisor ?? waitForOpenShellSupervisorReconnect;
   const finalizeBackup = options.overrides?.finalizeBackup ?? finalizeDockerGpuPatchBackup;
+  const finalizeManagedStartupSharedState =
+    options.overrides?.finalizeManagedStartupSharedState ?? finalizeDockerManagedStartupSharedState;
   const captureFailedClone =
     options.overrides?.capturePreRollbackDiagnostics ?? captureDockerGpuPreRollbackDiagnostics;
   const onPatchFailureExit =
@@ -145,8 +170,18 @@ export function createDockerGpuSandboxCreatePatch(
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
-  const patchEnabled = routeAdapter.enabled || options.persistStartupCommand === true;
-  const patchTarget = routeAdapter.enabled ? "NVIDIA GPU access" : "restart-safe startup";
+  const recreationEnabled = routeAdapter.enabled || options.persistStartupCommand === true;
+  const managedStartupEnabled = options.managedStartupRootApplyRequest != null;
+  const patchEnabled = recreationEnabled || managedStartupEnabled;
+  const patchTarget = routeAdapter.enabled
+    ? managedStartupEnabled
+      ? "NVIDIA GPU access and managed startup"
+      : "NVIDIA GPU access"
+    : recreationEnabled
+      ? managedStartupEnabled
+        ? "restart-safe startup and managed startup"
+        : "restart-safe startup"
+      : "managed startup";
   const recreateSelectedPatch = createDockerSandboxRecreator({
     gpuEnabled: routeAdapter.enabled,
     gpuOptions: applyOptions,
@@ -156,22 +191,103 @@ export function createDockerGpuSandboxCreatePatch(
     recreateStartup: recreateStartupPatch,
   });
 
+  const applyManagedStartupToContainer = (containerId: string): void => {
+    const request = options.managedStartupRootApplyRequest;
+    if (!request) return;
+    console.log(
+      `  Applying the ${request.agent} managed startup profile to exact container ${containerId.slice(0, 12)}...`,
+    );
+    managedStartupTransaction = applyManagedStartupRootRequest(
+      { containerId, request },
+      { dockerCapture: options.deps.dockerCapture },
+    );
+    managedStartupApplied = true;
+    console.log(
+      managedStartupTransaction
+        ? `  ✓ Managed startup profile applied for ${request.agent}`
+        : `  ✓ Managed startup profile was already complete for ${request.agent}`,
+    );
+  };
+
+  const applyPatch = (deps: DockerGpuPatchDeps): void => {
+    let targetContainerId: string;
+    if (recreationEnabled) {
+      result = recreateSelectedPatch(false, deps);
+      needsSupervisorWait = true;
+      targetContainerId = result.newContainerId;
+      console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
+    } else {
+      const containerIds = findContainerIds(options.sandboxName);
+      if (containerIds.length !== 1) {
+        throw new Error(
+          `Managed startup requires exactly one OpenShell Docker container; found ${String(
+            containerIds.length,
+          )}.`,
+        );
+      }
+      targetContainerId = containerIds[0] as string;
+    }
+    applyManagedStartupToContainer(targetContainerId);
+  };
+
+  const rollbackAfterFailure = (): Error | null => {
+    if (managedStartupFinalized || (!managedStartupTransaction && !result)) return null;
+    try {
+      if (managedStartupTransaction) {
+        finalizeManagedStartupSharedState(
+          {
+            transaction: managedStartupTransaction,
+            patchResult: result,
+            supervisorReady: false,
+          },
+          options.deps,
+        );
+      }
+      if (result) finalizeBackup({ result, supervisorReady: false }, options.deps);
+      managedStartupFinalized = true;
+      needsSupervisorWait = false;
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  };
+
+  const reportPatchErrorAndExit = (): void => {
+    if (!patchError) return;
+    const rollbackError = rollbackAfterFailure();
+    if (rollbackError) {
+      patchError = new Error(
+        `${patchError instanceof Error ? patchError.message : String(patchError)}; managed startup rollback failed: ${rollbackError.message}`,
+      );
+    }
+    onPatchFailureExit(options.sandboxName, patchError, {
+      runCaptureOpenshell: options.deps.runCaptureOpenshell,
+      dockerCapture: options.deps.dockerCapture,
+      additionalSummaryLines: routeAdapter.additionalSummaryLines,
+    });
+  };
+
   return {
     maybeApplyDuringCreate() {
-      if (!patchEnabled || result || patchError) return;
+      if (!patchEnabled || result || managedStartupApplied || patchError) return;
       const containerIds = findContainerIds(options.sandboxName);
       if (containerIds.length === 0) return;
+      if (containerIds.length !== 1) {
+        patchError = new Error(
+          `Managed startup observed ${String(containerIds.length)} matching Docker containers; refusing an ambiguous root application.`,
+        );
+        return;
+      }
       console.log(
-        `  OpenShell Docker container detected; recreating it with ${patchTarget} before readiness wait...`,
+        `  OpenShell Docker container detected; applying ${patchTarget} before readiness wait...`,
       );
       try {
-        result = recreateSelectedPatch(false, {
+        applyPatch({
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           sleep: options.deps.sleep,
         });
-        needsSupervisorWait = true;
-        console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
       } catch (error) {
+        managedStartupTransaction ??= getDockerManagedStartupFailureTransaction(error);
         patchError = error;
       }
     },
@@ -180,12 +296,19 @@ export function createDockerGpuSandboxCreatePatch(
       if (!patchError) return null;
       return routeAdapter.enabled
         ? "Docker GPU patch failed while OpenShell sandbox create was still waiting."
-        : "Docker startup-command patch failed while OpenShell sandbox create was still waiting.";
+        : managedStartupEnabled
+          ? "Docker managed startup failed while OpenShell sandbox create was still waiting."
+          : "Docker startup-command patch failed while OpenShell sandbox create was still waiting.";
     },
 
     exitOnPatchError() {
-      if (!patchError) return;
-      onPatchFailureExit(options.sandboxName, patchError, {
+      reportPatchErrorAndExit();
+    },
+
+    rollbackManagedStartupAfterCreateFailure() {
+      const rollbackError = rollbackAfterFailure();
+      if (!rollbackError) return;
+      onPatchFailureExit(options.sandboxName, rollbackError, {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
@@ -193,23 +316,19 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     ensureApplied() {
-      if (!patchEnabled || result) return;
-      console.log(`  Recreating OpenShell Docker sandbox container with ${patchTarget}...`);
+      if (!patchEnabled || result || managedStartupApplied) return;
+      console.log(`  Applying ${patchTarget} to the OpenShell Docker sandbox...`);
       try {
-        result = recreateSelectedPatch(false, options.deps);
-        needsSupervisorWait = true;
-        console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
+        applyPatch(options.deps);
       } catch (error) {
-        onPatchFailureExit(options.sandboxName, error, {
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
-          dockerCapture: options.deps.dockerCapture,
-          additionalSummaryLines: routeAdapter.additionalSummaryLines,
-        });
+        managedStartupTransaction ??= getDockerManagedStartupFailureTransaction(error);
+        patchError = error;
+        reportPatchErrorAndExit();
       }
     },
 
     waitForSupervisorReconnectIfNeeded() {
-      if (!needsSupervisorWait) return;
+      if (!needsSupervisorWait || managedStartupFinalized) return;
       const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
         options.timeoutSecs,
       );
@@ -221,14 +340,17 @@ export function createDockerGpuSandboxCreatePatch(
         supervisorReconnectTimeoutSecs,
         {
           runOpenshell: options.deps.runOpenshell,
-          // Pass `runCaptureOpenshell` so the supervisor-reconnect wait can
-          // short-circuit on a terminal sandbox phase instead of burning
-          // the full reconnect timeout window when the patched container
-          // crashed on startup (#4316).
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           sleep: options.deps.sleep,
         },
       );
+      if (supervisorReady) {
+        // Reconnect is necessary but not sufficient for cutover. Keep both the
+        // managed shared-state receipt and recreation backup until the caller
+        // accepts authoritative Ready and any required GPU proof.
+        needsSupervisorWait = false;
+        return;
+      }
       if (!supervisorReady && result) {
         try {
           captureFailedClone(options.sandboxName, result, options.deps);
@@ -238,15 +360,140 @@ export function createDockerGpuSandboxCreatePatch(
           );
         }
       }
+      let managedSharedStateOutcome = {
+        supervisorReady: false,
+        failure: null as Error | null,
+      };
+      if (managedStartupTransaction) {
+        try {
+          managedSharedStateOutcome = finalizeManagedStartupSharedState(
+            {
+              transaction: managedStartupTransaction,
+              patchResult: result,
+              supervisorReady: false,
+            },
+            options.deps,
+          );
+        } catch (error) {
+          onPatchFailureExit(options.sandboxName, error, {
+            runCaptureOpenshell: options.deps.runCaptureOpenshell,
+            dockerCapture: options.deps.dockerCapture,
+            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+            context: {
+              sandboxName: options.sandboxName,
+              oldContainerId: result?.oldContainerId ?? null,
+              newContainerId: result?.newContainerId ?? managedStartupTransaction.containerId,
+              backupContainerName: result?.backupContainerName ?? null,
+              selectedMode: result?.mode ?? null,
+              rolledBack: false,
+            },
+          });
+          return;
+        }
+      }
       const finalizeOutcome = result
-        ? finalizeBackup({ result, supervisorReady }, options.deps)
+        ? finalizeBackup(
+            { result, supervisorReady: managedSharedStateOutcome.supervisorReady },
+            options.deps,
+          )
         : null;
-      if (supervisorReady) {
+      managedStartupFinalized = true;
+      needsSupervisorWait = false;
+      const failureMessage = (() => {
+        if (managedSharedStateOutcome.failure) {
+          if (!result) {
+            return `${managedSharedStateOutcome.failure.message}; failed container removed after shared-state rollback.`;
+          }
+          return finalizeOutcome?.rolledBack
+            ? `${managedSharedStateOutcome.failure.message}; pre-patch sandbox restored.`
+            : `${managedSharedStateOutcome.failure.message}; container rollback failed and pre-patch sandbox was NOT restored.`;
+        }
+        if (!finalizeOutcome) {
+          return "OpenShell supervisor did not reconnect to the recreated container.";
+        }
+        return finalizeOutcome.rolledBack
+          ? "OpenShell supervisor did not reconnect to the recreated container; pre-patch sandbox restored."
+          : "OpenShell supervisor did not reconnect to the recreated container and rollback failed; pre-patch sandbox was NOT restored.";
+      })();
+      onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
+        runCaptureOpenshell: options.deps.runCaptureOpenshell,
+        dockerCapture: options.deps.dockerCapture,
+        additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        context: {
+          sandboxName: options.sandboxName,
+          oldContainerId: result?.oldContainerId,
+          newContainerId: result?.newContainerId,
+          backupContainerName: result?.backupContainerName,
+          selectedMode: result?.mode ?? null,
+          rolledBack: finalizeOutcome?.rolledBack ?? false,
+        },
+      });
+    },
+
+    commitAfterReady() {
+      if (managedStartupFinalized || (!managedStartupTransaction && !result)) return;
+      if (needsSupervisorWait) {
+        const error = new Error(
+          "Managed startup cannot commit before the recreated OpenShell supervisor reconnects.",
+        );
+        const rollbackError = rollbackAfterFailure();
+        onPatchFailureExit(
+          options.sandboxName,
+          rollbackError
+            ? new Error(`${error.message} Rollback failed: ${rollbackError.message}`)
+            : error,
+          {
+            runCaptureOpenshell: options.deps.runCaptureOpenshell,
+            dockerCapture: options.deps.dockerCapture,
+            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          },
+        );
+        return;
+      }
+      let managedSharedStateOutcome = {
+        supervisorReady: true,
+        failure: null as Error | null,
+      };
+      if (managedStartupTransaction) {
+        try {
+          managedSharedStateOutcome = finalizeManagedStartupSharedState(
+            {
+              transaction: managedStartupTransaction,
+              patchResult: result,
+              supervisorReady: true,
+            },
+            options.deps,
+          );
+        } catch (error) {
+          onPatchFailureExit(options.sandboxName, error, {
+            runCaptureOpenshell: options.deps.runCaptureOpenshell,
+            dockerCapture: options.deps.dockerCapture,
+            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+            context: {
+              sandboxName: options.sandboxName,
+              oldContainerId: result?.oldContainerId ?? null,
+              newContainerId: result?.newContainerId ?? managedStartupTransaction.containerId,
+              backupContainerName: result?.backupContainerName ?? null,
+              selectedMode: result?.mode ?? null,
+              rolledBack: false,
+            },
+          });
+          return;
+        }
+      }
+      const finalizeOutcome = result
+        ? finalizeBackup(
+            { result, supervisorReady: managedSharedStateOutcome.supervisorReady },
+            options.deps,
+          )
+        : null;
+      managedStartupFinalized = true;
+      if (managedSharedStateOutcome.supervisorReady) {
         if (finalizeOutcome && !finalizeOutcome.backupRemoved) {
           onPatchFailureExit(
             options.sandboxName,
             new Error(
-              "OpenShell supervisor reconnected, but the recreated backup container could not be removed.",
+              "Managed startup passed Ready, but the recreated backup container could not be removed.",
             ),
             {
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
@@ -266,12 +513,12 @@ export function createDockerGpuSandboxCreatePatch(
         return;
       }
       const failureMessage = (() => {
-        if (!finalizeOutcome) {
-          return "OpenShell supervisor did not reconnect to the recreated container.";
+        if (!result) {
+          return `${managedSharedStateOutcome.failure?.message ?? "Managed shared-state commit failed"}; failed container removed after shared-state rollback.`;
         }
-        return finalizeOutcome.rolledBack
-          ? "OpenShell supervisor did not reconnect to the recreated container; pre-patch sandbox restored."
-          : "OpenShell supervisor did not reconnect to the recreated container and rollback failed; pre-patch sandbox was NOT restored.";
+        return finalizeOutcome?.rolledBack
+          ? `${managedSharedStateOutcome.failure?.message ?? "Managed shared-state commit failed"}; pre-patch sandbox restored.`
+          : `${managedSharedStateOutcome.failure?.message ?? "Managed shared-state commit failed"}; container rollback failed and pre-patch sandbox was NOT restored.`;
       })();
       onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
@@ -334,6 +581,14 @@ export function createDockerGpuSandboxCreatePatch(
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
             },
           );
+          const rollbackError = rollbackAfterFailure();
+          if (rollbackError) {
+            onPatchFailureExit(options.sandboxName, rollbackError, {
+              runCaptureOpenshell: options.deps.runCaptureOpenshell,
+              dockerCapture: options.deps.dockerCapture,
+              additionalSummaryLines: routeAdapter.additionalSummaryLines,
+            });
+          }
           process.exit(1);
         }
       }

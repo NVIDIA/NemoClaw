@@ -156,6 +156,190 @@ describe("Docker startup-command sandbox creation", () => {
     expect(context.rolledBack).toBe(true);
   });
 
+  it("applies managed startup directly to the exact container without recreation", () => {
+    const deps = makeDeps();
+    const containerId = "b".repeat(64);
+    const request = {
+      schemaVersion: 1,
+      agent: "openclaw",
+      encodedProfile: "profile",
+      profileFingerprint: "a".repeat(64),
+      corporateCaB64: null,
+    } as const;
+    const transaction = {
+      agent: "openclaw",
+      containerId,
+      image: `sha256:${"c".repeat(64)}`,
+    } as const;
+    const applyManagedStartupRootRequest = vi.fn(() => transaction);
+    const finalizeManagedStartupSharedState = vi.fn(() => ({
+      supervisorReady: true,
+      failure: null,
+    }));
+    const recreateStartupPatch = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      persistStartupCommand: false,
+      managedStartupRootApplyRequest: request,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "/usr/local/bin/nemoclaw-managed-startup-hold"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => [containerId]),
+        recreateStartupPatch,
+        applyManagedStartupRootRequest,
+        finalizeManagedStartupSharedState,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(recreateStartupPatch).not.toHaveBeenCalled();
+    expect(applyManagedStartupRootRequest).toHaveBeenCalledWith(
+      { containerId, request },
+      { dockerCapture: deps.dockerCapture },
+    );
+    expect(finalizeManagedStartupSharedState).not.toHaveBeenCalled();
+
+    patch.commitAfterReady();
+    expect(finalizeManagedStartupSharedState).toHaveBeenCalledWith(
+      { transaction, patchResult: null, supervisorReady: true },
+      deps,
+    );
+  });
+
+  it("treats an already-finalized same-profile replay as an applied no-op", () => {
+    const deps = makeDeps();
+    const containerId = "c".repeat(64);
+    const request = {
+      schemaVersion: 1,
+      agent: "openclaw",
+      encodedProfile: "profile",
+      profileFingerprint: "a".repeat(64),
+      corporateCaB64: null,
+    } as const;
+    const applyManagedStartupRootRequest = vi.fn(() => null);
+    const finalizeManagedStartupSharedState = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      managedStartupRootApplyRequest: request,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => [containerId]),
+        applyManagedStartupRootRequest,
+        finalizeManagedStartupSharedState,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.maybeApplyDuringCreate();
+    patch.ensureApplied();
+    patch.waitForSupervisorReconnectIfNeeded();
+    patch.commitAfterReady();
+
+    expect(applyManagedStartupRootRequest).toHaveBeenCalledOnce();
+    expect(finalizeManagedStartupSharedState).not.toHaveBeenCalled();
+  });
+
+  it("finishes resource recreation before applying managed startup to the replacement", () => {
+    const deps = makeDeps();
+    const result = { ...startupResult(), newContainerId: "d".repeat(64) };
+    const request = {
+      schemaVersion: 1,
+      agent: "langchain-deepagents-code",
+      encodedProfile: "profile",
+      profileFingerprint: "a".repeat(64),
+      corporateCaB64: null,
+    } as const;
+    const transaction = {
+      agent: request.agent,
+      containerId: result.newContainerId,
+      image: `sha256:${"c".repeat(64)}`,
+    } as const;
+    const calls: string[] = [];
+    const recreateStartupPatch = vi.fn(() => {
+      calls.push("recreate");
+      return result;
+    });
+    const applyManagedStartupRootRequest = vi.fn(() => {
+      calls.push("apply");
+      return transaction;
+    });
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      persistStartupCommand: true,
+      managedStartupRootApplyRequest: request,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "/usr/local/bin/nemoclaw-managed-startup-hold"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreateStartupPatch,
+        applyManagedStartupRootRequest,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+
+    expect(calls).toEqual(["recreate", "apply"]);
+    expect(applyManagedStartupRootRequest).toHaveBeenCalledWith(
+      { containerId: result.newContainerId, request },
+      { dockerCapture: deps.dockerCapture },
+    );
+  });
+
+  it("rolls back direct managed shared state when create fails after root application", () => {
+    const deps = makeDeps();
+    const containerId = "e".repeat(64);
+    const request = {
+      schemaVersion: 1,
+      agent: "hermes",
+      encodedProfile: "profile",
+      profileFingerprint: "a".repeat(64),
+      corporateCaB64: null,
+    } as const;
+    const transaction = {
+      agent: request.agent,
+      containerId,
+      image: `sha256:${"f".repeat(64)}`,
+    } as const;
+    const finalizeManagedStartupSharedState = vi.fn(() => ({
+      supervisorReady: false,
+      failure: null,
+    }));
+    const finalizeBackup = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      managedStartupRootApplyRequest: request,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => [containerId]),
+        applyManagedStartupRootRequest: vi.fn(() => transaction),
+        finalizeManagedStartupSharedState,
+        finalizeBackup,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    expect(finalizeManagedStartupSharedState).not.toHaveBeenCalled();
+
+    patch.rollbackManagedStartupAfterCreateFailure();
+
+    expect(finalizeManagedStartupSharedState).toHaveBeenCalledWith(
+      { transaction, patchResult: null, supervisorReady: false },
+      deps,
+    );
+    expect(finalizeBackup).not.toHaveBeenCalled();
+  });
+
   it("reports startup-command creation failures through the composed patch boundary", () => {
     const deps = makeDeps();
     const onPatchFailureExit = vi.fn();

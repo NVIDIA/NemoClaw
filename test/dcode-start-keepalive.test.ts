@@ -14,6 +14,13 @@ const START_SCRIPT = path.join(
   "langchain-deepagents-code",
   "start.sh",
 );
+const ENTRYPOINT_ENV_WRAPPER = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
+);
 
 // start.sh hardcodes this runtime-env path; clean it up so the test is hermetic.
 const RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
@@ -67,6 +74,7 @@ function makeStartFixture(options: { installRlimitHelper?: RlimitHelperInstaller
   const portFile = path.join(tempDir, "trusted-proxy-port");
   const fixture = fs
     .readFileSync(START_SCRIPT, "utf8")
+    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER)
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',

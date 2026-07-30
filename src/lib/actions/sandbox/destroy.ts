@@ -216,7 +216,8 @@ export function removeShieldsState(
 }
 
 /**
- * Remove the host-side Docker image that was built for a sandbox during onboard.
+ * Remove the host-side Docker image that was built only for this sandbox.
+ * Shared immutable managed-image cohorts remain in the runtime cache.
  * Must be called before registry.removeSandbox() since the imageTag is stored there.
  */
 export function removeSandboxImage(sandboxName: string, deps: RemoveSandboxImageDeps = {}): void {
@@ -224,7 +225,7 @@ export function removeSandboxImage(sandboxName: string, deps: RemoveSandboxImage
   const removeImage =
     deps.dockerRmi ?? (require("../../adapters/docker") as { dockerRmi: DockerRmi }).dockerRmi;
   const sb = getSandbox(sandboxName);
-  if (!sb?.imageTag) return;
+  if (!sb?.imageTag || sb.workload?.shared === true) return;
   const result = removeImage(sb.imageTag, { ignoreError: true });
   if (result.status === 0) {
     console.log(`  Removed Docker image ${sb.imageTag}`);

@@ -42,7 +42,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     vi.restoreAllMocks();
   });
 
-  it("defers backup removal until waitForSupervisorReconnectIfNeeded sees supervisorReady=true", () => {
+  it("retains the backup after reconnect and removes it only after post-Ready commit", () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
@@ -84,6 +84,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.waitForSupervisorReconnectIfNeeded();
     expect(waitForSupervisor).toHaveBeenCalledTimes(1);
+    expect(finalizeBackup).not.toHaveBeenCalled();
+
+    patch.commitAfterReady();
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
@@ -113,6 +116,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
+    expect(onPatchFailureExit).not.toHaveBeenCalled();
+
+    patch.commitAfterReady();
 
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(

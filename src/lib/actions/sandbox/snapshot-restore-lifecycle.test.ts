@@ -6,10 +6,109 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import { decodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import { SANDBOX_CREATE_MAX_ARGUMENT_BYTES } from "../../onboard/sandbox-create/transport";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import * as s from "./snapshot/lifecycle-test-support";
 import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
+const PROXY_ENV_NAMES = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+] as const;
+
+function managedMessagingPlan(
+  agent: "openclaw" | "hermes",
+  sandboxName: string,
+  allowedId: string,
+  credentialHash?: string,
+): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent,
+    workflow: "onboard",
+    channels: [
+      {
+        channelId: "telegram",
+        configured: true,
+        active: true,
+        disabled: false,
+        inputs: [
+          { inputId: "botToken", credentialAvailable: true },
+          { inputId: "allowedIds", value: [allowedId] },
+        ],
+      },
+    ],
+    disabledChannels: [],
+    credentialBindings: credentialHash
+      ? [
+          {
+            channelId: "telegram",
+            providerEnvKey: "TELEGRAM_BOT_TOKEN",
+            credentialAvailable: true,
+            credentialHash,
+          },
+        ]
+      : [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
+    stateUpdates: [],
+    healthChecks: [],
+  } as unknown as SandboxMessagingPlan;
+}
+
+function providerMetadata(name: string, type: string, credentialEnv: string): string {
+  return [
+    `Name: ${name}`,
+    `Type: ${type}`,
+    `Credential keys: ${credentialEnv}`,
+    "Config keys: <none>",
+    "",
+  ].join("\n");
+}
+
+function managedOpenClawProfile() {
+  return buildManagedStartupProfile({
+    agent: "openclaw",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "openai-api",
+      model: "gpt-5.4",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-responses",
+      primaryModelRef: "inference/gpt-5.4",
+      compatibility: {},
+    },
+    dashboard: {
+      agent: "openclaw",
+      mode: "loopback",
+      url: "http://127.0.0.1:18789",
+      port: 18_789,
+      bindAddress: "127.0.0.1",
+      wslExposure: false,
+    },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    environment: {},
+    corporateCa: null,
+  });
+}
+
 beforeEach(() => {
   f.resetSnapshotRestoreMocks();
 });
@@ -20,6 +119,738 @@ afterEach(() => {
   }
 });
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
+  it("requires proxy re-onboarding before mutating a forced managed-clone destination", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const built = managedOpenClawProfile();
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "openclaw",
+          dashboardPort: 18_789,
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: true,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "openclaw",
+          dashboardPort: 19_789,
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\nbeta 127.0.0.1 19789 24189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    for (const name of PROXY_ENV_NAMES) vi.stubEnv(name, "");
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output).toContain("requires a credential-bearing proxy");
+    expect(output).toContain("Re-onboard the source before retrying this restore");
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("bounds a managed clone launch before deleting a forced destination", async () => {
+    const built = buildManagedStartupProfile({
+      agent: "langchain-deepagents-code",
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "openrouter",
+        model: "openai/gpt-5.4",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: "https://openrouter.ai/api/v1",
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+      },
+      dashboard: { agent: "langchain-deepagents-code", mode: "disabled" },
+      webSearch: null,
+      toolDisclosure: "progressive",
+      hermesToolGateways: [],
+      messagingPlan: null,
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+      environment: {},
+      corporateCa: null,
+    });
+    const reference = `registry.example.test/${"a".repeat(SANDBOX_CREATE_MAX_ARGUMENT_BYTES)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "langchain-deepagents-code",
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("idle") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toThrow(/safe per-argument transport limit/u);
+
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid managed profile before deleting a forced destination", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(
+      64,
+    )}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: "e30",
+            startupProfileSha256:
+              "beab987bef9c00dfc301b490ddb45321517e7d6a6bb3d31d259898b7d46393d8",
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "langchain-deepagents-code",
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("idle") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "source profile transport is not canonical and valid",
+    );
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "malformed messaging state",
+      { messaging: { schemaVersion: 2, plan: {} } },
+      "current source messaging state is invalid",
+    ],
+    [
+      "unknown tool disclosure",
+      { toolDisclosure: "automatic" },
+      "current source tool disclosure is invalid",
+    ],
+  ])("rejects %s before deleting a forced managed-clone destination", async (_label, currentOverride, expectedError) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const built = managedOpenClawProfile();
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "openclaw",
+          dashboardPort: 18_789,
+          dashboardRemoteBindPrepared: false,
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-responses",
+          compatibleEndpointReasoning: null,
+          toolDisclosure: "progressive",
+          webSearchEnabled: false,
+          webSearchProvider: null,
+          ...currentOverride,
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "openclaw",
+          dashboardPort: 19_789,
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\nbeta 127.0.0.1 19789 24189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(expectedError);
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incompatible destination provider binding before force-delete", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const built = managedOpenClawProfile();
+    const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "openclaw",
+          dashboardPort: 18_789,
+          dashboardRemoteBindPrepared: false,
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-responses",
+          compatibleEndpointReasoning: null,
+          toolDisclosure: "progressive",
+          webSearchEnabled: false,
+          webSearchProvider: null,
+          messaging: { schemaVersion: 1, plan: currentMessaging },
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "openclaw",
+          dashboardPort: 19_789,
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\nbeta 127.0.0.1 19789 24189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.runOpenshellMock.mockImplementation(
+      s.commandRouter({
+        "provider get beta-telegram-bridge": () => ({
+          status: 0,
+          stdout: providerMetadata("beta-telegram-bridge", "brave", "TELEGRAM_BOT_TOKEN"),
+          stderr: "",
+          output: "",
+        }),
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "exists with an incompatible type or credential binding",
+    );
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("detaches and replaces an exact forced-destination provider with the explicit clone credential", async () => {
+    const built = managedOpenClawProfile();
+    const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    let registeredClone: f.SandboxRecord | null = null;
+    f.registerSandboxMock.mockImplementation((entry) => {
+      registeredClone = entry as f.SandboxRecord;
+    });
+    f.getSandboxMock.mockImplementation(
+      s.valueFactoryByName({
+        alpha: () =>
+          ({
+            name: "alpha",
+            agent: "openclaw",
+            dashboardPort: 18_789,
+            dashboardRemoteBindPrepared: false,
+            imageTag: reference,
+            openshellDriver: "docker",
+            provider: "openai-api",
+            model: "gpt-5.4",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-responses",
+            compatibleEndpointReasoning: null,
+            toolDisclosure: "progressive",
+            webSearchEnabled: false,
+            webSearchProvider: null,
+            messaging: { schemaVersion: 1, plan: currentMessaging },
+            workload: {
+              schemaVersion: 1,
+              kind: "managed-image",
+              reference,
+              release: "v0.0.99",
+              sourceRevision: "b".repeat(40),
+              sourceCohort: "ghrun-123456-1",
+              capabilityContractVersion: 1,
+              startupProfileContractVersion: 1,
+              encodedProfile: built.encodedProfile,
+              startupProfileSha256: built.startupProfileSha256,
+              credentialProxyReplayRequired: false,
+              shared: true,
+            },
+          }) as never,
+        beta: () =>
+          registeredClone ?? {
+            name: "beta",
+            agent: "openclaw",
+            dashboardPort: 19_789,
+            imageTag: "nemoclaw-beta:test",
+            openshellDriver: "docker",
+            provider: "openai-api",
+            model: "gpt-5.4",
+          },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\nbeta 127.0.0.1 19789 24189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "new-clone-token");
+    const providerHarness = s.createReplacementProviderHarness((options) => {
+      expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "new-clone-token" });
+    });
+    const { events } = providerHarness;
+    f.runOpenshellMock.mockImplementation(providerHarness.runner);
+    f.streamSandboxCreateMock.mockImplementation(async () => {
+      events.push("sandbox-create");
+      return {
+        status: 0,
+        output: "",
+        sawProgress: false,
+        forcedReady: false,
+      };
+    });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", {
+      kind: "restore",
+      to: "beta",
+      force: true,
+      yes: true,
+    });
+
+    expect(events.indexOf("detach")).toBeLessThan(events.indexOf("sandbox-delete"));
+    expect(events.indexOf("sandbox-delete")).toBeLessThan(events.indexOf("provider-delete"));
+    expect(events.indexOf("provider-delete")).toBeLessThan(
+      events.indexOf("provider-create:new-clone-token"),
+    );
+    expect(events.indexOf("provider-create:new-clone-token")).toBeLessThan(
+      events.indexOf("sandbox-create"),
+    );
+  });
+
+  it("removes a recreated forced-target provider when downstream sandbox create fails", async () => {
+    const built = managedOpenClawProfile();
+    const currentMessaging = managedMessagingPlan("openclaw", "alpha", "222222");
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    const providerHarness = s.createFailedReplacementProviderHarness((options) => {
+      expect(options?.env).toEqual({ TELEGRAM_BOT_TOKEN: "rotated-clone-token" });
+    });
+    const { events } = providerHarness;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "openclaw",
+          dashboardPort: 18_789,
+          dashboardRemoteBindPrepared: false,
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-responses",
+          compatibleEndpointReasoning: null,
+          toolDisclosure: "progressive",
+          webSearchEnabled: false,
+          webSearchProvider: null,
+          messaging: { schemaVersion: 1, plan: currentMessaging },
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "openclaw",
+          dashboardPort: 19_789,
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "openai-api",
+          model: "gpt-5.4",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\nbeta 127.0.0.1 19789 24189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\n" },
+      }),
+    );
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "rotated-clone-token");
+    f.runOpenshellMock.mockImplementation(providerHarness.runner);
+    f.streamSandboxCreateMock.mockImplementation(async () => {
+      providerHarness.markSandboxCreateFailed();
+      return {
+        status: 1,
+        output: "synthetic create failure",
+        sawProgress: false,
+        forcedReady: false,
+      };
+    });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    const expectedOrder = [
+      "provider-delete:survived",
+      "replacement-provider-delete",
+      "provider-create:rotated-clone-token",
+      "sandbox-create:failed",
+      "partial-provider-detach:failed",
+      "partial-sandbox-delete:failed",
+      "provider-delete:blocked-attached",
+      "rollback-provider-detach:recovered",
+      "provider-delete:rollback",
+    ];
+    const observedOrder = expectedOrder.map((event) => events.indexOf(event));
+    expect(observedOrder).not.toContain(-1);
+    expect(observedOrder).toEqual([...observedOrder].sort((left, right) => left - right));
+    expect(providerHarness.state()).toEqual({
+      destinationProviderExists: false,
+      partialSandboxExists: true,
+    });
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses rollback recovery when provider attachment names an unrelated sandbox", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rollbackRunner = vi.fn(
+      s.commandRouter({
+        "provider delete beta-telegram-bridge": () => ({
+          status: 1,
+          stdout: "",
+          stderr: "provider 'beta-telegram-bridge' is attached to sandbox(es): beta, gamma",
+        }),
+      }),
+    );
+    const { cleanupManagedCloneProviders } = await import("./snapshot/managed-clone-providers");
+
+    cleanupManagedCloneProviders(["beta-telegram-bridge"], rollbackRunner, "beta");
+
+    expect(
+      rollbackRunner.mock.calls.some(
+        ([args]) => args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach",
+      ),
+    ).toBe(false);
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "could not clean up managed clone provider 'beta-telegram-bridge'",
+    );
+  });
+
+  it("fails before force-delete when Hermes tool gateways need a fresh broker binding", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const built = buildManagedStartupProfile({
+      agent: "hermes",
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "hermes-provider",
+        model: "new-model",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+      },
+      dashboard: {
+        agent: "hermes",
+        mode: "disabled",
+        url: "http://127.0.0.1:19189",
+        publicPort: null,
+        internalPort: null,
+        tuiEnabled: false,
+      },
+      webSearch: { fetchEnabled: false, provider: "tavily" },
+      toolDisclosure: "direct",
+      hermesToolGateways: [],
+      messagingPlan: null,
+      dcodeAutoApprovalMode: null,
+      observabilityEnabled: null,
+      environment: {},
+      corporateCa: null,
+    });
+    const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "hermes",
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "hermes-provider",
+          model: "new-model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "direct",
+          webSearchEnabled: false,
+          webSearchProvider: null,
+          hermesToolGateways: ["nous-web"],
+          hermesDashboardEnabled: false,
+          messaging: undefined,
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "hermes",
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "hermes-provider",
+          model: "new-model",
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "fresh Nous OAuth refresh credential and destination broker binding",
+    );
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
   it("restores the latest snapshot into the source sandbox", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({

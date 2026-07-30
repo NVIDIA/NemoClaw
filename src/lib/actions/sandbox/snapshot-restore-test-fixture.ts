@@ -177,7 +177,7 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
 export const registerSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
-export const runOpenshellMock = vi.fn((args: string[]) => {
+export const runOpenshellMock = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
@@ -187,6 +187,25 @@ export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(as
   sawProgress: false,
   forcedReady: false,
 }));
+function managedStartupPatchFixture() {
+  return {
+    maybeApplyDuringCreate: vi.fn(),
+    createFailureMessage: vi.fn(() => null),
+    exitOnPatchError: vi.fn(),
+    rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    ensureApplied: vi.fn(),
+    waitForSupervisorReconnectIfNeeded: vi.fn(),
+    commitAfterReady: vi.fn(),
+    selectedMode: vi.fn(() => null),
+    printReadinessFailureIfEnabled: vi.fn(),
+    verifyGpuOrExit: vi.fn((verifyDirectSandboxGpu: (sandboxName: string) => unknown) =>
+      verifyDirectSandboxGpu("beta"),
+    ),
+  };
+}
+export const createDockerGpuSandboxCreatePatchMock = vi.fn((_options?: unknown) =>
+  managedStartupPatchFixture(),
+);
 export const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
@@ -196,7 +215,13 @@ export { lifecycleMock, shieldsMock };
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
+  dockerForceRm: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
   dockerInspect: dockerInspectMock,
+  dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+}));
+
+vi.mock("../../onboard/docker-gpu-sandbox-create", () => ({
+  createDockerGpuSandboxCreatePatch: createDockerGpuSandboxCreatePatchMock,
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -210,7 +235,9 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../credentials/store", () => ({
+  getCredential: vi.fn(),
   prompt: vi.fn(),
+  saveCredential: vi.fn(),
 }));
 
 vi.mock("../../domain/sandbox/destroy", () => ({
@@ -354,12 +381,18 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
+  runOpenshellMock.mockImplementation((args) => {
+    args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
+    return { status: 0, output: "" };
+  });
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,
     output: "",
     sawProgress: false,
     forcedReady: false,
   }));
+  createDockerGpuSandboxCreatePatchMock.mockReset();
+  createDockerGpuSandboxCreatePatchMock.mockImplementation(() => managedStartupPatchFixture());
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
 }
 

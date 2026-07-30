@@ -1,0 +1,317 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_CONTRACT_VERSION,
+  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_SOURCE_REPOSITORY,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageContractCatalog,
+  type ManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ShippedManagedImageAgent,
+} from "./managed-image/contract";
+import {
+  prepareSandboxWorkloadSource,
+  SandboxWorkloadPreparationError,
+} from "./workload/preparation";
+import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
+import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
+
+const RELEASE = "v0.0.97";
+const REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
+const COHORT = "ghrun-7744-2";
+
+function contract(agent: ShippedManagedImageAgent, index: number): ManagedImageContractV1 {
+  const image = MANAGED_IMAGE_REPOSITORIES[agent];
+  const digest = `sha256:${String(index + 1).repeat(64)}` as const;
+  return {
+    contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
+    agent,
+    platform: MANAGED_IMAGE_PLATFORM,
+    image,
+    digest,
+    reference: `${image}@${digest}`,
+    source: {
+      repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
+      revision: REVISION,
+      release: RELEASE,
+      cohort: COHORT,
+    },
+    startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+    capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  };
+}
+
+const CATALOG: ManagedImageContractCatalog = Object.fromEntries(
+  SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
+);
+
+function runtime(driverName = "docker"): SandboxWorkloadRuntimeCapabilities {
+  return {
+    driverName,
+    managedImageSelectionPolicy: driverName === "docker" ? "prefer-managed" : "require-managed",
+    legacyDockerfileBuilds: driverName === "docker",
+    managedImages: {
+      exactDigestReferences: true,
+      platforms: [MANAGED_IMAGE_PLATFORM],
+      startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
+      capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
+    },
+  };
+}
+
+function input(agentName: string) {
+  return {
+    agentName,
+    legacyDockerfilePath: `agents/${agentName}/Dockerfile`,
+    runtime: runtime(),
+    version: "0.0.97",
+  };
+}
+
+describe("sandbox workload preparation", () => {
+  it.each(
+    SHIPPED_MANAGED_IMAGE_AGENTS,
+  )("resolves the complete release catalog and exact %s image (#7744)", async (agent) => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    const prepared = await prepareSandboxWorkloadSource(input(agent), { resolveCatalog });
+
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({ release: RELEASE });
+    expect(prepared).toEqual({
+      source: {
+        kind: "managed-image",
+        reference: contract(agent, SHIPPED_MANAGED_IMAGE_AGENTS.indexOf(agent)).reference,
+        contract: contract(agent, SHIPPED_MANAGED_IMAGE_AGENTS.indexOf(agent)),
+      },
+      release: RELEASE,
+      fallbackDiagnostic: null,
+    });
+  });
+
+  it("never resolves a catalog for an explicit custom Dockerfile (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("openclaw"),
+        customDockerfilePath: "/workspace/CustomDockerfile",
+      },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toEqual({
+      kind: "legacy-dockerfile",
+      dockerfilePath: "/workspace/CustomDockerfile",
+      reason: "custom-dockerfile",
+    });
+  });
+
+  it("does not fetch for a runtime that has not registered managed-image support (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("hermes"),
+        runtime: {
+          driverName: "kubernetes",
+          managedImageSelectionPolicy: "prefer-managed",
+          legacyDockerfileBuilds: true,
+          managedImages: null,
+        },
+      },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toMatchObject({
+      kind: "legacy-dockerfile",
+      reason: "runtime-unsupported",
+    });
+  });
+
+  it("retains Dockerfile fallback for Docker on an unshipped host architecture (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("openclaw"),
+        runtime: resolveSandboxWorkloadRuntimeCapabilities(
+          { driverName: "docker" },
+          undefined,
+          "arm64",
+        ),
+      },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toMatchObject({
+      kind: "legacy-dockerfile",
+      reason: "runtime-unsupported",
+    });
+  });
+
+  it.each([
+    "podman",
+    "mxc",
+  ])("rejects custom Dockerfile preparation for buildless %s before catalog access (#7744)", async (driverName) => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const profiles = {
+      [driverName]: {
+        support: runtime(driverName).managedImages!,
+        hostArchitectures: ["amd64"],
+        managedImageSelectionPolicy: "require-managed" as const,
+        legacyDockerfileBuilds: false,
+      },
+    };
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          customDockerfilePath: "/workspace/CustomDockerfile",
+          runtime: resolveSandboxWorkloadRuntimeCapabilities({ driverName }, profiles, "x64"),
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("cannot use the legacy Dockerfile workload for custom-dockerfile");
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("fails before catalog access when an incapable runtime requires managed images (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("langchain-deepagents-code"),
+          runtime: {
+            driverName: "podman",
+            managedImageSelectionPolicy: "require-managed",
+            legacyDockerfileBuilds: false,
+            managedImages: null,
+          },
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("does not advertise managed images");
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("preserves Dockerfile fallback on an unavailable catalog only when policy allows it (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => {
+      throw new Error("registry offline");
+    });
+    const preferred = await prepareSandboxWorkloadSource(input("openclaw"), { resolveCatalog });
+
+    expect(preferred.source).toMatchObject({
+      kind: "legacy-dockerfile",
+      reason: "contract-unavailable",
+    });
+    expect(preferred.fallbackDiagnostic).toContain("registry offline");
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("openclaw"), policy: "require-managed" },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow(SandboxWorkloadPreparationError);
+  });
+
+  it("does not hide a malformed catalog contract behind preferred fallback (#7744)", async () => {
+    const malformed = {
+      ...CATALOG,
+      hermes: {
+        ...contract("hermes", 1),
+        reference: `${MANAGED_IMAGE_REPOSITORIES.hermes}:${RELEASE}`,
+      },
+    };
+
+    await expect(
+      prepareSandboxWorkloadSource(input("hermes"), {
+        resolveCatalog: async () => malformed,
+      }),
+    ).rejects.toThrow("failed closed validation");
+  });
+
+  it("rejects a catalog that would support only the selected agent (#7744)", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(input("openclaw"), {
+        resolveCatalog: async () => ({ openclaw: contract("openclaw", 0) }),
+      }),
+    ).rejects.toThrow("catalog is incomplete; 'hermes' is missing");
+  });
+
+  it("rejects a complete catalog assembled from different revisions (#7744)", async () => {
+    const mixed = {
+      ...CATALOG,
+      hermes: {
+        ...contract("hermes", 1),
+        source: {
+          ...contract("hermes", 1).source,
+          revision: "3f03907c37822ea6f1ac9d1bf5c82a4a4568585f",
+        },
+      },
+    };
+
+    await expect(
+      prepareSandboxWorkloadSource(input("hermes"), {
+        resolveCatalog: async () => mixed,
+      }),
+    ).rejects.toThrow("one all-agent source revision");
+  });
+
+  it("rejects a complete catalog assembled from different publication cohorts (#7744)", async () => {
+    const mixed = {
+      ...CATALOG,
+      hermes: {
+        ...contract("hermes", 1),
+        source: {
+          ...contract("hermes", 1).source,
+          cohort: "ghrun-7744-3",
+        },
+      },
+    };
+
+    await expect(
+      prepareSandboxWorkloadSource(input("hermes"), {
+        resolveCatalog: async () => mixed,
+      }),
+    ).rejects.toThrow("one all-agent publication cohort");
+  });
+
+  it("rejects a complete catalog whose release identity differs from the requested tag (#7744)", async () => {
+    const wrongRelease = {
+      ...CATALOG,
+      "langchain-deepagents-code": {
+        ...contract("langchain-deepagents-code", 2),
+        source: {
+          ...contract("langchain-deepagents-code", 2).source,
+          release: "v0.0.98",
+        },
+      },
+    };
+
+    await expect(
+      prepareSandboxWorkloadSource(input("langchain-deepagents-code"), {
+        resolveCatalog: async () => wrongRelease,
+      }),
+    ).rejects.toThrow("belongs to 'v0.0.98', not 'v0.0.97'");
+  });
+
+  it("supports an independently registered MXC-shaped runtime without branching (#7744)", async () => {
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("hermes"), runtime: runtime("mxc") },
+      { resolveCatalog: async () => CATALOG },
+    );
+
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      reference: contract("hermes", 1).reference,
+    });
+  });
+});

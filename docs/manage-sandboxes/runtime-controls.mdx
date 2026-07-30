@@ -4,7 +4,7 @@
 title: "Understand Runtime Changes"
 sidebar-title: "Understand Runtime Changes"
 description: "Determine which NemoClaw sandbox changes apply at runtime and which require a rebuild or re-onboard."
-description-agent: "Maps common OpenClaw and Hermes configuration changes to runtime updates, gateway restarts, rebuilds, or re-onboarding. Use when deciding how a sandbox change takes effect."
+description-agent: "Maps supported agent configuration changes to runtime updates, gateway restarts, rebuilds, or re-onboarding. Use when deciding how a sandbox change takes effect."
 keywords: ["sandbox mutability", "sandbox runtime configuration", "sandbox rebuild"]
 content:
   type: "concept"
@@ -13,7 +13,16 @@ skill:
 agent-variants: ["openclaw", "hermes"]
 ---
 Use this matrix to choose the operation that makes a sandbox change take effect.
-NemoClaw applies its security posture in three layers: what onboarding writes into the sandbox image, what the running sandbox can hot-reload, and what requires a rebuild or re-onboard.
+NemoClaw separates immutable image contents, startup configuration, hot-reloadable state, and changes that require a rebuild or re-onboard.
+
+## Managed Image and Startup Profile Changes
+
+On supported `amd64` Docker hosts, stock OpenClaw, Hermes, and Deep Agents onboarding prefers complete immutable release images.
+NemoClaw resolves each selected image to an exact digest and applies current configuration through a secret-free startup profile.
+Managed rebuilds resolve the current CLI release to an exact image digest and prepare a replacement startup profile.
+Managed clones retain the source image digest and rebind target-specific configuration through the same startup-profile contract.
+If managed image resolution is unavailable, Docker uses the trusted canonical Dockerfile recipe as a fallback.
+Explicit custom Dockerfile and custom-image workflows continue to use their local-build behavior.
 
 <AgentOnly variant="openclaw">
 
@@ -21,18 +30,18 @@ NemoClaw applies its security posture in three layers: what onboarding writes in
 
 | Item | When the change takes effect | How to change it |
 |---|---|---|
-| Inference provider | Runtime route and config update while shields are down; rebuild only if you need to recreate the image | Run `$$nemoclaw <name> shields down`, then `$$nemoclaw inference set`, then restore shields |
+| Inference provider | Runtime route and config update while shields are down; rebuild only if you need to recreate sandbox startup state | Run `$$nemoclaw <name> shields down`, then `$$nemoclaw inference set`, then restore shields |
 | Inference model on the current provider | Runtime route and config update while shields are down | Run `$$nemoclaw <name> shields down`, then `$$nemoclaw inference set`, then restore shields |
-| Sub-agent | Re-onboard required because the sub-agent and workspace are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` |
+| Sub-agent | Re-onboard required because onboarding prepares the sub-agent and workspace together | `$$nemoclaw onboard --recreate-sandbox` |
 | Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
 | Channel enable or disable | Rebuild required because `openclaw.json` is the runtime source of truth | `$$nemoclaw <name> channels stop <channel>`, then rebuild |
 | Dashboard forward port | Runtime; the port is re-resolved on the next `connect` | `NEMOCLAW_DASHBOARD_PORT=<port> $$nemoclaw <name> connect` |
-| Dashboard bind address | Build and runtime; an existing local-only sandbox must be recreated with the remote-bind opt-in | `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`, then use the same variable with `connect` |
+| Dashboard bind address | Sandbox creation and runtime; an existing local-only sandbox must be recreated with the remote-bind opt-in | `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`, then use the same variable with `connect` |
 | Gateway process environment or startup-only plugin state | Runtime after gateway restart | `$$nemoclaw <name> gateway restart` |
-| Default workspace template seed | Locked at first sandbox boot; re-onboard required to change the bake-time choice | Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before `$$nemoclaw onboard` to skip default template seeding for new or pristine workspaces; existing files are not deleted |
-| Web search provider | Rebuild required because onboarding bakes the provider plugin configuration and credential attachment into the image | Set `NEMOCLAW_WEB_SEARCH_PROVIDER=brave`, `tavily`, or `none`, then rerun onboarding and recreate the sandbox |
+| Default workspace template seed | Locked at first sandbox boot; re-onboard required to change the onboarding choice | Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before `$$nemoclaw onboard` to skip default template seeding for new or pristine workspaces; existing files are not deleted |
+| Web search provider | Rebuild required because onboarding prepares the provider configuration and credential attachment for sandbox creation | Set `NEMOCLAW_WEB_SEARCH_PROVIDER=brave`, `tavily`, or `none`, then rerun onboarding and recreate the sandbox |
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
@@ -43,7 +52,7 @@ For a new or pristine OpenClaw workspace, `NEMOCLAW_MINIMAL_BOOTSTRAP=1` avoids 
 It does not delete existing workspace files.
 
 The runtime source of truth is `/sandbox/.openclaw/openclaw.json`.
-The host registry caches metadata, but the image and OpenClaw read from the in-sandbox file.
+The host registry caches metadata, but OpenClaw reads from the in-sandbox file.
 
 OpenClaw config and inference changes are refused while shields are up.
 Run `$$nemoclaw <name> shields down` before the change, then restore lockdown with `$$nemoclaw <name> shields up`.
@@ -66,23 +75,24 @@ If preflight detects an unsafe path, invalid config, invalid ownership posture, 
 
 | Item | When the change takes effect | How to change it |
 |---|---|---|
-| Inference provider | Runtime route changes apply immediately; rebuild if you need to rebake model metadata into the image | `$$nemoclaw inference set` for route changes, or `$$nemoclaw <name> rebuild` after changing build-time settings |
+| Inference provider | Runtime route changes apply immediately; rebuild if you need to recreate the sandbox startup configuration | `$$nemoclaw inference set` for route changes, or `$$nemoclaw <name> rebuild` after changing startup settings |
 | Inference model on the current provider | Hot-reloadable through the Hermes config sync path | `$$nemoclaw inference set` |
-| Agent runtime | Re-onboard required because the agent and state layout are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` or `nemoclaw onboard --agent openclaw --recreate-sandbox` |
+| Agent runtime | Re-onboard required because onboarding selects the agent and state layout together | `$$nemoclaw onboard --recreate-sandbox` or `nemoclaw onboard --agent openclaw --recreate-sandbox` |
 | Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
-| Channel enable or disable | Rebuild required because `/sandbox/.hermes/.env` and Hermes config are baked at image build time | `$$nemoclaw <name> channels stop <channel>`, then rebuild |
+| Channel enable or disable | Rebuild required because sandbox creation materializes `/sandbox/.hermes/.env` and the Hermes configuration | `$$nemoclaw <name> channels stop <channel>`, then rebuild |
 | API or dashboard forward port | Runtime; the host-side forward is re-resolved on the next `connect` | `$$nemoclaw <name> connect` or `openshell forward start` |
-| Hermes plugin code, Langfuse settings, or other startup-only runtime config | Runtime after a supported host-side update and gateway restart | Bake plugin code into the image or use a supported host config command, then run `$$nemoclaw <name> gateway restart` |
-| Web search provider | Rebuild required because onboarding bakes `web.backend`, the environment placeholder, and the credential attachment into the image | Set `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` or `none`, then rerun onboarding and recreate the sandbox |
+| Hermes plugin code or dependencies | Rebuild required because custom plugin contents come from the custom Dockerfile image | Update the custom Dockerfile, then run `$$nemoclaw <name> rebuild` |
+| Langfuse settings or other supported startup-only runtime config | Runtime after a supported host-side update and gateway restart | Use a supported host config command, then run `$$nemoclaw <name> gateway restart` |
+| Web search provider | Rebuild required because onboarding prepares `web.backend`, the environment placeholder, and the credential attachment for sandbox creation | Set `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` or `none`, then rerun onboarding and recreate the sandbox |
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
 | Hermes `config.yaml` keys | Mixed; inference and supported config keys can be patched by host commands, while image, policy, and channel changes still require rebuild | Use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` so the config and root-owned trust anchor change together |
 
 The runtime source of truth is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`.
-The host registry caches metadata, but the image and Hermes runtime read from the in-sandbox files.
+The host registry caches metadata, but the Hermes runtime reads from the in-sandbox files.
 
 Do not edit those files or their hash files directly and then expect `gateway restart` to establish the bytes as trusted.
 Use supported host config and inference commands so NemoClaw updates the managed config metadata together.

@@ -438,6 +438,10 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
   const prelude = src
     .slice(start, end)
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
+      path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    )
     .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
     .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);
 

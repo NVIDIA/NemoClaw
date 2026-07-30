@@ -9,7 +9,16 @@ import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
+import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "./managed-startup/hold";
+import {
+  createManagedStartupRootApplyRequest,
+  type ManagedStartupRootApplyRequest,
+} from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  assertSandboxCreateArgvWithinTransportLimit,
+  SANDBOX_CREATE_MAX_ARGUMENT_BYTES,
+} from "./sandbox-create/transport";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
@@ -18,6 +27,13 @@ import {
 
 type OpenshellShellCommand = (args: string[]) => string;
 type OpenshellArgv = (args: string[]) => string[];
+
+export type SandboxWorkloadStartupRequirement = "sandbox-command" | "trusted-image-init";
+
+export {
+  assertSandboxCreateArgvWithinTransportLimit,
+  SANDBOX_CREATE_MAX_ARGUMENT_BYTES,
+} from "./sandbox-create/transport";
 
 // These non-secret scheduler controls are intentionally forwarded for bounded
 // live-test and operator tuning. Keep this as an exact allowlist: the host's
@@ -55,6 +71,10 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
+  managedStartupProfile?: {
+    encodedProfile: string;
+    corporateCaB64?: string;
+  };
 }
 
 export interface SandboxCreateLaunch {
@@ -64,6 +84,8 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+  startupRequirement: SandboxWorkloadStartupRequirement;
+  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -74,6 +96,10 @@ export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunc
 export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
   prebuild: SandboxPrebuildResult;
 }
+
+export type SandboxCreateManagedImageLaunchInput = SandboxCreateLaunchInput & {
+  sandboxName: string;
+};
 
 export function renderSandboxCreateCommand(
   createArgs: readonly string[],
@@ -183,18 +209,31 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     sandboxName: input.sandboxName,
     env,
   });
-
-  const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
-  // Remove host-infrastructure credentials that the generic allowlist
-  // permits for host-side processes but that must not enter the sandbox.
-  delete sandboxEnv.KUBECONFIG;
-  delete sandboxEnv.SSH_AUTH_SOCK;
+  const managedStartupRootApplyRequest = input.managedStartupProfile
+    ? createManagedStartupRootApplyRequest({
+        agent: (input.agent?.name ?? "openclaw") as ManagedStartupRootApplyRequest["agent"],
+        encodedProfile: input.managedStartupProfile.encodedProfile,
+        ...(input.managedStartupProfile.corporateCaB64 === undefined
+          ? {}
+          : { corporateCaB64: input.managedStartupProfile.corporateCaB64 }),
+      })
+    : null;
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const sandboxStartupCommand = managedStartupRootApplyRequest
+    ? [
+        "env",
+        ...envArgs,
+        MANAGED_STARTUP_HOLD_EXECUTABLE,
+        "--agent",
+        managedStartupRootApplyRequest.agent,
+        "--profile-fingerprint",
+        managedStartupRootApplyRequest.profileFingerprint,
+      ]
+    : ["env", ...envArgs, "nemoclaw-start"];
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     input.createArgs,
@@ -204,6 +243,13 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   const createArgv = input.openshellArgv
     ? input.openshellArgv(openshellArgs)
     : ["bash", "-lc", createCommand];
+  assertSandboxCreateArgvWithinTransportLimit(createArgv);
+
+  const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
+  // Remove host-infrastructure credentials that the generic allowlist
+  // permits for host-side processes but that must not enter the sandbox.
+  delete sandboxEnv.KUBECONFIG;
+  delete sandboxEnv.SSH_AUTH_SOCK;
 
   return {
     createCommand,
@@ -212,6 +258,8 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+    startupRequirement: "sandbox-command",
+    managedStartupRootApplyRequest,
   };
 }
 
@@ -227,6 +275,22 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   });
   return {
     ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    prebuild,
+  };
+}
+
+/** Launch an immutable complete image without invoking any Dockerfile build path. */
+export function prepareSandboxCreateManagedImageLaunch(
+  input: SandboxCreateManagedImageLaunchInput,
+): SandboxCreateLaunchWithPrebuild {
+  const prebuild: SandboxPrebuildResult = {
+    createArgs: [...input.createArgs],
+    imageRef: null,
+    imageId: null,
+  };
+  return {
+    ...prepareSandboxCreateLaunch(input),
+    startupRequirement: "trusted-image-init",
     prebuild,
   };
 }

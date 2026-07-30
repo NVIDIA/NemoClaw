@@ -95,6 +95,37 @@ describe("Docker GPU clone envelope", () => {
     );
   });
 
+  it("persists the image-owned hold without replacing the original supervisor entrypoint", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Entrypoint = ["/opt/openshell/bin/openshell-sandbox", "--gateway-mode"];
+    inspect.Config!.Cmd = ["serve", "--foreground"];
+    const immutableImage = inspect.Image as string;
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      image: immutableImage,
+      openshellSandboxCommand: [
+        "env",
+        "/usr/local/bin/nemoclaw-managed-startup-hold",
+        "--agent",
+        "hermes",
+        "--profile-fingerprint",
+        "a".repeat(64),
+      ],
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `OPENSHELL_SANDBOX_COMMAND=env /usr/local/bin/nemoclaw-managed-startup-hold --agent hermes --profile-fingerprint ${"a".repeat(64)}`,
+        "--entrypoint",
+        "/opt/openshell/bin/openshell-sandbox",
+      ]),
+    );
+    const imageIndex = args.indexOf(immutableImage);
+    expect(imageIndex).toBeGreaterThan(0);
+    expect(args.slice(imageIndex)).toEqual([immutableImage]);
+    expect(args).not.toContain("openshell/sandbox:abc");
+  });
+
   it("preserves inspected ulimits and overrides DCode's exact required limits", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.Ulimits = [

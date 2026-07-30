@@ -119,6 +119,12 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   imageTag?: string | null;
+  /**
+   * Durable source and ownership receipt for the workload behind imageTag.
+   * Managed images are immutable shared release artifacts and must never flow
+   * through per-sandbox image deletion.
+   */
+  workload?: SandboxWorkloadReceipt;
   messaging?: SandboxMessagingState;
   mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
@@ -140,6 +146,33 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   gatewayName?: string | null;
   gatewayPort?: number | null;
 }
+
+export type SandboxWorkloadReceipt =
+  | {
+      readonly schemaVersion: 1;
+      readonly kind: "managed-image";
+      readonly reference: string;
+      readonly release: string;
+      readonly sourceRevision: string;
+      /** Exact all-agent publication cohort that produced the immutable image. */
+      readonly sourceCohort: string;
+      readonly capabilityContractVersion: number;
+      readonly startupProfileContractVersion: number;
+      /** Canonical, secret-free base64url profile transport used to start this image. */
+      readonly encodedProfile: string;
+      readonly startupProfileSha256: string;
+      /** Re-acquire launch-only proxy credentials from the operator environment when cloning. */
+      readonly credentialProxyReplayRequired: boolean;
+      /** Optional canonical standard-base64 public CA bundle bound by the profile digest. */
+      readonly corporateCaB64?: string;
+      readonly shared: true;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly kind: "legacy-dockerfile";
+      readonly reference: string | null;
+      readonly shared: false;
+    };
 
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;

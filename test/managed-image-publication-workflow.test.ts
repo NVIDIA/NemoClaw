@@ -1,11 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
+import {
+  managedImageOpenShellBasePolicyPath,
+  managedImageOpenShellCommittedProbe,
+  managedImageOpenShellProbe,
+  parseManagedImageOpenShellE2eInputs,
+} from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 import {
   publicationAgents,
@@ -17,6 +27,7 @@ import {
 type Step = {
   env?: Record<string, unknown>;
   id?: string;
+  if?: string;
   name?: string;
   run?: string;
   uses?: string;
@@ -27,7 +38,9 @@ type MatrixEntry = {
   agent?: string;
   arch?: string;
   artifact_platform?: string;
+  base_alias?: string;
   base_image?: string;
+  base_repository?: string;
   display_name?: string;
   dockerfile?: string;
   image?: string;
@@ -38,6 +51,7 @@ type MatrixEntry = {
 
 type Job = {
   if?: string;
+  name?: string;
   needs?: string | string[];
   permissions?: Record<string, string>;
   "runs-on"?: string;
@@ -58,6 +72,10 @@ type Workflow = {
   env?: Record<string, string>;
   jobs?: Record<string, Job>;
   on?: {
+    pull_request?: {
+      branches?: string[];
+      paths?: string[];
+    };
     push?: {
       paths?: string[];
     };
@@ -68,7 +86,10 @@ type Workflow = {
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const managedInputPaths = [
+const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
+  ...parameters: string[]
+) => (...args: unknown[]) => Promise<unknown>;
+const managedArtifactInputPaths = [
   ".dockerignore",
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
@@ -78,11 +99,18 @@ const managedInputPaths = [
   "nemoclaw-blueprint/**",
   "scripts/**",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
+  "src/lib/core/json-types.ts",
+  "src/lib/core/ports.ts",
   "src/lib/messaging/**",
+  "src/lib/onboard/managed-startup/**",
+  "src/lib/security/credential-hash.ts",
+  "src/lib/state/paths.ts",
+  "src/lib/state/state-root.ts",
   "src/lib/tool-disclosure.ts",
   "tools/mcp-tool-discovery-runtime/**",
   "tsconfig.runtime-preloads.json",
 ] as const;
+const managedPrRuntimeInputPaths = [...managedArtifactInputPaths, "src/lib/**"] as const;
 
 function readWorkflow(file: string): Workflow {
   return YAML.parse(
@@ -106,10 +134,10 @@ function step(job: Job, name: string): Step {
   );
 }
 
-function managedPublisher(workflow: Workflow): Job {
+function managedBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["build-and-validate"],
-    "managed-image workflow is missing its publisher",
+    "managed-image workflow is missing its build-and-validate matrix",
   );
 }
 
@@ -138,15 +166,31 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
     'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
     "bootstrap the GHCR package",
-    ".Config.Entrypoint",
-    ".Config.Cmd",
-    "/usr/local/bin/nemoclaw-start",
     "/opt/nemoclaw-blueprint/blueprint.yaml",
     "/usr/local/share/nemoclaw/node-tar-inventory.json",
     "/usr/local/share/nemoclaw/corporate-ca.pem",
     'entry.status !== "fixed"',
     '--entrypoint "$REQUIRED_BINARY"',
     "io.nvidia.nemoclaw.managed-image.contract",
+    "io.nvidia.nemoclaw.managed-image.startup-profile",
+    "io.nvidia.nemoclaw.managed-image.capabilities",
+    "io.nvidia.nemoclaw.managed-image.cohort",
+    "^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$",
+    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+    "@openclaw/diagnostics-otel",
+    "@openclaw/brave-plugin",
+    "@openclaw/discord",
+    "@tencent-weixin/openclaw-weixin",
+    "@openclaw/slack",
+    "@openclaw/whatsapp",
+    "@openclaw/msteams",
+    "microsoft-teams-apps",
+    "config.plugins?.entries?.[id]?.enabled !== false",
+    'config["platforms"].get(name) != {"enabled": False}',
+    "run-managed-image-direct-e2e.ts",
+    '--agent "$AGENT"',
+    '--image "$reference"',
+    '--platform "$PLATFORM"',
   ];
   const forbiddenPerLanePromotionMarkers = [
     'aliases=("${IMAGE}:${GITHUB_SHA}")',
@@ -154,11 +198,53 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "docker tag ",
     "docker push ",
   ];
-  const buildIndex = steps.indexOf(build);
-  const validateIndex = steps.indexOf(validate);
+  const barrierMarkers = [
+    "expected exactly three managed image candidate artifacts",
+    "managed-image-candidate-openclaw-linux-amd64",
+    "managed-image-candidate-hermes-linux-amd64",
+    "managed-image-candidate-langchain-deepagents-code-linux-amd64",
+    "length == 3",
+    "([.[].source.repository] | unique) == [$repository]",
+    "([.[].source.revision] | unique) == [$revision]",
+    "([.[].source.ref] | unique) == [$ref]",
+    "([.[].source.cohort] | unique) == [$cohort]",
+    "^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$",
+    "([.[].run] | unique) == [{id: $runId, attempt: $runAttempt}]",
+    'and .release == (if $release == "" then null else $release end)',
+  ];
+  const promotionMarkers = [
+    'cohort="ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
+    "^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$",
+    'cohort_alias="${image}:cohort-${cohort}"',
+    'docker buildx imagetools create --tag "$cohort_alias" "$reference"',
+    'docker buildx imagetools inspect "$cohort_alias" --raw',
+    'openclaw_candidate="$(jq -ce \'.[] | select(.agent == "openclaw")\' "$CANDIDATE_SET")"',
+    'consumer_aliases=("${openclaw_image}:${GITHUB_SHA}")',
+    'consumer_aliases+=("${openclaw_image}:${release_tag}")',
+    'docker buildx imagetools create "${consumer_tag_args[@]}" "$openclaw_reference"',
+    'docker buildx imagetools inspect "$reference" --raw',
+    'docker buildx imagetools inspect "$alias" --raw',
+    'cmp -s "$exact_raw" "$cohort_raw"',
+    'cmp -s "$openclaw_exact_raw" "$alias_raw"',
+  ];
+  const buildIndex = buildSteps.indexOf(build);
+  const validateIndex = buildSteps.indexOf(validate);
+  const candidateIndex = buildSteps.indexOf(candidate);
+  const barrierIndex = promoteSteps.indexOf(barrier);
+  const promoteIndex = promoteSteps.indexOf(promote);
+  const promotionSource = promote.run ?? "";
+  const stageIndex = promotionSource.indexOf(
+    "# Stage all three unique cohort aliases before any consumer pointer",
+  );
+  const verifyIndex = promotionSource.indexOf(
+    "# Verify every staged cohort alias against its exact validated",
+  );
+  const pointerIndex = promotionSource.indexOf(
+    'consumer_aliases=("${openclaw_image}:${GITHUB_SHA}")',
+  );
 
   return [
-    ...managedInputPaths
+    ...managedArtifactInputPaths
       .filter((input) => !triggerPaths.includes(input))
       .map((input) => `managed image trigger is missing ${input}`),
     ...(baseWorkflow.concurrency?.group === "base-image-${{ github.ref }}"
@@ -277,12 +363,13 @@ describe("complete managed-image publication workflow", () => {
 
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const publisher = managedPublisher(workflow);
+    const builder = managedBuilder(workflow);
+    const promoter = managedPromoter(workflow);
 
-    expect(Object.keys(workflow.on ?? {})).toEqual(["workflow_call"]);
+    expect(Object.keys(workflow.on ?? {}).sort()).toEqual(["pull_request", "workflow_call"]);
     expect(workflow.permissions).toEqual({
       contents: "read",
-      packages: "write",
+      packages: "read",
     });
     expect(publisher["runs-on"]).toBe("${{ matrix.runner }}");
     expect(publisher["timeout-minutes"]).toBe(120);
@@ -381,22 +468,35 @@ describe("complete managed-image publication workflow", () => {
     )) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
-    expect(step(publisher, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(step(publisher, "Download exact base image contract").with).toMatchObject({
+    expect(step(builder, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(step(builder, "Download exact base image contract").with).toMatchObject({
       name: "managed-base-${{ matrix.agent }}",
       path: "${{ runner.temp }}/managed-base-contract",
     });
 
-    const guard = step(publisher, "Validate production build args");
-    const build = step(publisher, "Build and push managed image by digest");
-    expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(build));
+    const guard = step(builder, "Validate production build args");
+    const build = step(builder, "Build and push managed image by digest");
+    const validate = step(builder, "Validate exact managed image before promotion");
+    const dependencies = step(builder, "Install managed-image publication harness dependencies");
+    const install = step(builder, "Install pinned OpenShell runtime for publication");
+    const openshell = step(
+      builder,
+      "Exercise exact candidate through real OpenShell before promotion",
+    );
+    const exportDiagnostics = step(
+      builder,
+      "Export sanitized managed-image OpenShell failure diagnostics",
+    );
+    const diagnostics = step(builder, "Upload managed-image OpenShell failure diagnostics");
+    expect(buildSteps.indexOf(guard)).toBeLessThan(buildSteps.indexOf(build));
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
     expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
     expect(build.with).toMatchObject({
       context: ".",
       file: "${{ matrix.dockerfile }}",
       platforms: "${{ matrix.platform }}",
-      "build-args": "BASE_IMAGE=${{ steps.base.outputs.ref }}",
+      "build-args":
+        "BASE_IMAGE=${{ steps.base.outputs.ref }}\nNEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1\nNEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root\n",
       provenance: "mode=max",
       sbom: true,
     });
@@ -419,6 +519,7 @@ describe("complete managed-image publication workflow", () => {
       "--arg platform",
       "--arg cohort",
       "--arg revision",
+      "--arg cohort",
       "--argjson runAttempt",
       "--argjson runId",
       "contractVersion: 1",
@@ -427,7 +528,7 @@ describe("complete managed-image publication workflow", () => {
       'provenance: "mode=max"',
       "sbom: true",
     ]) {
-      expect(contract.run).toContain(marker);
+      expect(candidate.run).toContain(marker);
     }
     expect(step(publisher, "Upload validated managed image candidate").with).toMatchObject({
       name: "managed-image-candidate-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
@@ -435,9 +536,36 @@ describe("complete managed-image publication workflow", () => {
       "if-no-files-found": "error",
       "retention-days": 1,
     });
+    expect(step(promoter, "Upload Hermes managed image contract").with).toMatchObject({
+      name: "managed-image-hermes-linux-amd64",
+      path: "${{ runner.temp }}/managed-image-contracts/hermes/contract.json",
+      "retention-days": 90,
+    });
+    expect(step(promoter, "Upload Deep Agents Code managed image contract").with).toMatchObject({
+      name: "managed-image-langchain-deepagents-code-linux-amd64",
+      path: "${{ runner.temp }}/managed-image-contracts/langchain-deepagents-code/contract.json",
+      "retention-days": 90,
+    });
+
+    const validation = required(
+      step(builder, "Validate exact managed image before promotion").run,
+      "managed image validation script is missing",
+    );
+    expect(validation.match(/docker run/g)).toHaveLength(2);
+    expect(validation).toContain("run-managed-image-direct-e2e.ts");
+    expect(validation).toContain("npx --no-install tsx");
+    expect(validation).toContain('--image "$reference"');
+    expect(validation).toContain("printf 'local_id=%s\\n' \"$image_id\"");
+    expect(validation).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
+    expect(validation).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
+    expect(validation).not.toContain(".Config.Entrypoint");
+    expect(validation).not.toContain(".Config.Cmd");
+    expect(buildSteps.indexOf(dependencies)).toBeLessThan(
+      buildSteps.indexOf(step(builder, "Validate exact managed image before promotion")),
+    );
   });
 
-  it("cannot publish a public mutable alias from an individual agent lane (#7744)", () => {
+  it("executes the all-three barrier and rejects incomplete or stale sets before promotion", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const publisher = managedPublisher(workflow);
     const steps = publisher.steps ?? [];

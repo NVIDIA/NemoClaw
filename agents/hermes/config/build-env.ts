@@ -22,6 +22,7 @@ export type HermesBuildSettings = {
   contextWindow: number | null;
   toolDisclosure: "progressive" | "direct";
   webSearchProvider: HermesWebSearchProvider | null;
+  managedImageCapabilityUnion: boolean;
   messagingCredentialPlaceholders: Array<{
     envKey: string;
     placeholder: string;
@@ -50,12 +51,24 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     contextWindow: readContextWindow(env),
     toolDisclosure: readToolDisclosureEnv(env),
     webSearchProvider: readWebSearchProvider(env),
+    managedImageCapabilityUnion: readBooleanBuildFlag(
+      env,
+      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+    ),
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
       presets: readBase64Json<string[]>(env, "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "W10="),
     },
   };
+}
+
+function readBooleanBuildFlag(env: NodeJS.ProcessEnv, name: string): boolean {
+  const value = env[name] ?? "0";
+  if (value !== "0" && value !== "1") {
+    throw new Error(`${name} must be "0" or "1"`);
+  }
+  return value === "1";
 }
 
 /**

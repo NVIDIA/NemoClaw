@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { runManagedImageBuildlessE2e } from "../../helpers/managed-image-buildless-e2e.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -295,6 +296,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   meta: {
     e2ePhases: [
       "check full E2E prerequisites",
+      "validate all-agent buildless managed-image orchestration",
       "install and onboard OpenClaw sandbox",
       "validate CLI sandbox and policy state",
       "exercise hosted and sandbox inference",
@@ -315,6 +317,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       USE_PREINSTALLED_LAUNCHABLE
         ? "the baked Launchable completes onboarding without installing from source"
         : "install.sh --non-interactive completes onboarding",
+      "source-backed OpenClaw, Hermes, and DCode onboarding selects exact managed images without invoking legacy build hooks",
       "nemoclaw and openshell are installed and usable",
       "sandbox appears in list/status and has policy/inference configuration",
       "direct hosted inference and sandbox inference.local both respond",
@@ -324,6 +327,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
         : []),
     ],
   });
+
+  progress.phase("validate all-agent buildless managed-image orchestration");
+  runManagedImageBuildlessE2e();
 
   const docker = await host.command("docker", ["info"], {
     artifactName: "phase-0-docker-info",
