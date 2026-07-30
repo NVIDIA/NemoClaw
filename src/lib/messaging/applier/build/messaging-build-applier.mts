@@ -28,6 +28,11 @@ import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
+import {
+  selectActiveMessagingChannelIds,
+  selectEnabledMessagingAgentRender,
+  selectEnabledPostAgentInstallBuildFiles,
+} from "../../post-agent-install-selection.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -341,19 +346,7 @@ export function applyMessagingAgentRenderToLocalFiles(
 
 export function activeChannels(plan: MessagingBuildPlan | null): string[] {
   if (!plan) return [];
-  const seen = new Set<string>();
-  const channels: string[] = [];
-  for (const item of plan.channels) {
-    const channel = String(item.channelId || "")
-      .trim()
-      .toLowerCase();
-    if (!channel || seen.has(channel)) continue;
-    if (item.active === true && item.disabled !== true) {
-      seen.add(channel);
-      channels.push(channel);
-    }
-  }
-  return channels;
+  return selectActiveMessagingChannelIds(plan);
 }
 
 export function messagingRuntimePlanPath(env: Env = process.env): string {
@@ -974,10 +967,7 @@ function resolveAgentRenderTarget(
 }
 
 function enabledAgentRender(plan: MessagingBuildPlan): MessagingRenderEntry[] {
-  const active = new Set(activeChannels(plan));
-  return plan.agentRender.filter(
-    (render) => render.agent === plan.agent && active.has(render.channelId),
-  );
+  return selectEnabledMessagingAgentRender(plan);
 }
 
 function enabledBuildStepsForPhase(
@@ -985,6 +975,9 @@ function enabledBuildStepsForPhase(
   phase: MessagingHookPhase,
 ): MessagingBuildStep[] {
   if (!plan) return [];
+  if (phase === "post-agent-install") {
+    return selectEnabledPostAgentInstallBuildFiles(plan);
+  }
   return enabledBuildSteps(plan).filter((step) => buildStepMatchesPhase(plan, step, phase));
 }
 
@@ -1714,11 +1707,25 @@ function formatError(error: unknown): string {
 
 export type MessagingBuildPhase = "runtime-setup" | "agent-install" | "post-agent-install";
 
+export interface MessagingBuildPhaseOptions {
+  /**
+   * A managed image already contains the reviewed capability union. Apply only
+   * the explicit render and build-file plan to its durable home directory.
+   */
+  readonly managedStartupRuntime?: boolean;
+}
+
 export function applyMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,
   env: Env = process.env,
+  options: MessagingBuildPhaseOptions = {},
 ): readonly string[] {
+  if (options.managedStartupRuntime && phase !== "post-agent-install") {
+    throw new MessagingBuildApplierError(
+      "Managed startup runtime mode is only valid for post-agent-install",
+    );
+  }
   if (phase === "runtime-setup") {
     const target = writeMessagingRuntimePlanArtifact(plan, messagingRuntimePlanPath(env));
     return target ? [target] : [];
@@ -1732,7 +1739,7 @@ export function applyMessagingBuildPhase(
     ...applyPostAgentInstallBuildFilesToLocalFiles(plan),
   ];
   const appliedTargets = applyPostAgentInstallOutputs();
-  if (plan?.agent === "openclaw") {
+  if (plan?.agent === "openclaw" && !options.managedStartupRuntime) {
     runOpenClawMessagingDoctor(plan, env);
     return uniqueStrings([...appliedTargets, ...applyPostAgentInstallOutputs()]);
   }
@@ -1802,28 +1809,34 @@ export function describeMessagingBuildPhase(
 }
 
 export function main(argv: readonly string[] = process.argv.slice(2)): void {
-  const { agent, phase, dryRun } = parseMessagingBuildArgs(argv);
+  const { agent, phase, dryRun, managedStartupRuntime } = parseMessagingBuildArgs(argv);
   const plan = readMessagingBuildPlanFromEnv(process.env, agent);
   if (dryRun) {
     console.log(JSON.stringify(describeMessagingBuildPhase(plan, phase, process.env), null, 2));
     return;
   }
-  applyMessagingBuildPhase(plan, phase, process.env);
+  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime });
 }
 
 function parseMessagingBuildArgs(argv: readonly string[]): {
   readonly agent: MessagingAgentId;
   readonly phase: MessagingBuildPhase;
   readonly dryRun: boolean;
+  readonly managedStartupRuntime: boolean;
 } {
   let agent: MessagingAgentId | undefined;
   let phase: MessagingBuildPhase | undefined;
   let dryRun = false;
+  let managedStartupRuntime = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--dry-run") {
       dryRun = true;
+      continue;
+    }
+    if (arg === "--managed-startup-runtime") {
+      managedStartupRuntime = true;
       continue;
     }
     if (arg === "--agent") {
@@ -1851,10 +1864,17 @@ function parseMessagingBuildArgs(argv: readonly string[]): {
     throw new MessagingBuildApplierError(`Unknown messaging build applier argument: ${arg}`);
   }
 
+  const resolvedPhase = phase ?? "post-agent-install";
+  if (managedStartupRuntime && resolvedPhase !== "post-agent-install") {
+    throw new MessagingBuildApplierError(
+      "--managed-startup-runtime requires --phase post-agent-install",
+    );
+  }
   return {
     agent: agent ?? "openclaw",
-    phase: phase ?? "post-agent-install",
+    phase: resolvedPhase,
     dryRun,
+    managedStartupRuntime,
   };
 }
 
