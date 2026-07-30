@@ -116,7 +116,7 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("does not fetch for a runtime that has not registered managed-image support (#7744)", async () => {
+  it("does not fetch for a runtime that has not registered managed-image capabilities (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
     const prepared = await prepareSandboxWorkloadSource(
       {
@@ -336,7 +336,7 @@ describe("sandbox workload preparation", () => {
     ).rejects.toThrow("belongs to 'v0.0.98', not 'v0.0.97'");
   });
 
-  it("supports an independently registered MXC-shaped runtime without branching (#7744)", async () => {
+  it("prepares a managed image for an independently registered MXC-shaped runtime without branching (#7744)", async () => {
     const prepared = await prepareSandboxWorkloadSource(
       { ...input("hermes"), runtime: runtime("mxc") },
       { resolveCatalog: async () => CATALOG },
