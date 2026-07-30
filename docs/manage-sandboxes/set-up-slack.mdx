@@ -8,6 +8,7 @@ description-agent: "Explains Slack bot and app token validation, allowlists, men
 keywords: ["nemoclaw slack", "slack socket mode", "slack app token", "slack allowlist"]
 content:
   type: "how_to"
+agent-variants: ["openclaw", "hermes"]
 ---
 Slack uses Socket Mode and requires both a bot token and an app-level token.
 
@@ -45,10 +46,11 @@ This uses the existing Slack credentials and does not require additional scopes 
 
 ## Avoid Duplicate Socket Mode Sessions
 
-Slack Socket Mode allows one active connection per app-level token.
-If another sandbox on the same gateway already uses the same Slack app token, onboarding and `channels add slack` warn before continuing in interactive mode and abort in non-interactive mode.
-
-Use `--force` only when you intentionally want to move the Slack Socket Mode session to the new sandbox.
+The [cross-sandbox conflict policy](manage-messaging-channels) applies to Slack.
+Use different bot tokens, app tokens, and gateways for each active Slack sandbox.
+Onboarding, rebuild, and `channels add slack` abort on a conflict.
+Onboarding and rebuild have no override.
+For `channels add slack` only, pass `--force` to accept the conflict risk.
 
 ## Enable Slack
 
