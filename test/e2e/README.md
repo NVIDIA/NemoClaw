@@ -103,6 +103,15 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
+## Retired selector transition
+
+When a candidate no longer contains `test/e2e/live/sandbox-rebuild.test.ts` or
+`test/e2e/live/upgrade-stale-sandbox.test.ts`, PR gate requests for the
+corresponding job or target selector run focused replacement tests through the
+compatibility controller. While the file remains, the selector runs its
+dedicated live E2E test. `rebuild-openclaw` is the canonical live rebuild and
+upgrade target.
+
 ## Larger-runner routing
 
 The larger-runner experiment is inactive while the configuration variable
@@ -142,7 +151,7 @@ Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
-the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
+the Hermes stable MCP shard, the Hermes common-egress and channel
 stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
 dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
@@ -162,17 +171,21 @@ lanes:
 
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
-- both `hermes-inference-switch` modes;
+- the Anthropic-compatible `hermes-inference-switch` mode;
 - `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - `rebuild-hermes`;
 - `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
-The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard, and
-`mcp-bridge-dev` remain on `ubuntu-latest`; unrelated jobs retain their
-existing runner assignments. Before setting the variable, an organization
-owner must:
+The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
+`mcp-bridge-dev`, and `openshell-credential-generation-window` remain on
+`ubuntu-latest`; unrelated jobs retain their existing runner assignments.
+The credential-generation window runs as an independent fresh-runner job in
+parallel with the stable MCP agent matrix. Default full-suite dispatches and
+explicit `mcp-bridge` selections run both jobs, while the credential-window job
+keeps its own exact-release provenance, secret scan, and artifact.
+Before setting the variable, an organization owner must:
 
 1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and
    300 GB SSD in a dedicated runner group.
@@ -294,11 +307,10 @@ window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 13 routed workflow lane identities / 16
+telemetry for 12 routed workflow lane identities / 14
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
-- `bedrock-runtime-compatible-anthropic` with the `hermes` shard
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
 - `rebuild-hermes`
@@ -308,19 +320,18 @@ concrete job executions.
 - `channels-stop-start` with the `hermes` shard
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
-- `hermes-inference-switch` with the `hosted` and `anthropic` modes
+- `hermes-inference-switch` with the `anthropic` mode
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The three extra executions come from `common-egress-agent`, which runs three
-scenario shards, and `hermes-inference-switch`, which runs both listed modes.
+The two extra executions come from `common-egress-agent`, which runs three
+scenario shards.
 The OpenClaw matrix entries for `mcp-bridge`,
-`channels-stop-start`, `security-posture`, and
-`bedrock-runtime-compatible-anthropic` are not instrumented.
+`channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and
 equivalent workload while varying the runner class. The newly instrumented
-`agent-turn-latency` and Bedrock Hermes lanes extend diagnostic coverage; this
-change does not route them to a larger runner.
+`agent-turn-latency` extends diagnostic coverage; this does not route it to a
+larger runner.
 
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:

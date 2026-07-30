@@ -251,7 +251,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/actions/upgrade-sandboxes.ts",
       family: "upgrade-rebuild",
-      jobs: ["state-backup-restore", "upgrade-stale-sandbox"],
+      jobs: ["rebuild-openclaw", "state-backup-restore"],
     },
     {
       file: "src/lib/actions/sandbox/agents/apply.ts",
@@ -414,8 +414,8 @@ describe("deterministic PR risk plan", () => {
       "network-policy",
       "onboard-repair",
       "onboard-resume",
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
   });
 
