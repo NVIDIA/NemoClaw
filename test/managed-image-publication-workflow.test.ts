@@ -464,6 +464,7 @@ describe("complete managed-image publication workflow", () => {
     const steps = promoter.steps ?? [];
     const barrier = step(promoter, "Validate complete managed image candidate set");
     const promotion = step(promoter, "Promote validated multi-platform managed image cohort");
+    const promotionRun = promotion.run ?? "";
 
     expect(promoter.needs).toBe("build-and-validate");
     expect(step(promoter, "Download all validated managed image candidates").with).toEqual({
@@ -484,7 +485,11 @@ describe("complete managed-image publication workflow", () => {
       'docker buildx imagetools create --tag "$cohort_alias" "${sources[@]}"',
     );
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotion.run).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
+    expect(promotionRun).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
+    expect(promotionRun).toContain('docker image rm "$cohort_reference"');
+    expect(promotionRun.indexOf('docker image rm "$cohort_reference"')).toBeGreaterThan(
+      promotionRun.indexOf('DOCKER_CONFIG="$anonymous_config" docker pull'),
+    );
     expect(promotion.run).toContain(
       'consumer_aliases=("$(jq -r \'.image\' <<<"$openclaw_manifest"):${GITHUB_SHA}")',
     );
