@@ -1,0 +1,54 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.97
+
+NemoClaw v0.0.97 adds read-only host readiness reporting, a Deferred automatic two-Station vLLM evaluation, compatible-endpoint reasoning effort controls, and an experimental runtime identity reference for direct OpenClaw blueprints.
+It also hardens compatible-provider switching, managed sandbox images, Jetson GPU access, lifecycle recovery, network policy guidance, MCP discovery, and release E2E evidence.
+
+- `nemoclaw host probe` now produces a schema-versioned readiness report without changing host, Docker, gateway, provider, policy, credential, or sandbox state.
+  Human-readable and JSON output share the same redacted evidence, stable capability and finding IDs, deterministic exit codes, and fail-closed Linux, macOS, WSL, DGX Spark, and DGX Station qualification.
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- DGX Station Express can now select and prepare one pretrusted two-Station GB300 pair for distributed Nemotron Ultra when reciprocal Station identity, GPU, SSH, route, neighbor, rail, and jumbo-frame checks pass.
+  The installer records durable controller and pair ownership, stops for manual reboots, resumes from owner-only receipts, and cleans up the recorded pair during full uninstall.
+  If no trusted pair qualifies, automatic selection keeps the single-Station Ultra path, while an explicitly selected peer must qualify.
+  The two-Station path remains a Deferred evaluation and does not change single-Station support status.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- The direct OpenClaw blueprint runner now has an experimental, explicit opt-in provider-neutral runtime identity component with a bundled data-only Okta reference profile.
+  The runner validates the complete profile and DNS destinations before mutation, keeps refresh material out of plans and command arguments, records resource ownership as it applies changes, and uses those receipts for compensation and rollback.
+  The shipped blueprint and normal onboarding do not enable this component, custom Okta domains are outside the reviewed policy, and this release does not add Entra, OBO, OAuth bootstrap, production middleware, or real-tenant certification.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
+- OpenClaw-compatible endpoints can now set `NEMOCLAW_REASONING_EFFORT` or pass `inference set --reasoning-effort` with `low`, `medium`, `high`, or `default` on `openai-completions` routes.
+  NemoClaw validates the value, provider, and API before mutation, records the effective state for diagnostics, preserves it through resume, rebuild, and restart, and clears it when the resulting route no longer supports the setting.
+  For more information, refer to [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities), [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Compatible-provider switching now creates and verifies an absent direct provider before route selection and removes that provider if selection fails.
+  An existing direct provider is reused only when its recorded endpoint and credential environment exactly match the request; NemoClaw refuses an endpoint replacement that OpenShell cannot expose safely enough to roll back.
+  Host-side `config set` also accepts the exact `http://host.openshell.internal:<unprivileged-port>` shape only for supported provider `baseUrl` fields, while generic keys and other private URL shapes remain rejected.
+  Retired NVIDIA Build MiniMax and Qwen model paths are no longer offered.
+  For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers), [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), and [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- Docker-driver post-reboot recovery now waits for the labeled container to reach Docker readiness.
+  It restores the in-sandbox gateway and host forwards before reporting success, refreshes stale stopped-container evidence, and fails closed when delivery cannot be proven.
+  Recovery also unpauses a paused original container before reporting success.
+  Resumed onboarding writes a secret-free same-name recreation journal before deletion so an interrupted run can continue or fail closed on ambiguous identity.
+  Uninstall checks for the `openshell` command after confirmation and before cleanup mutation, while source-checkout installation preserves an absolute `NEMOCLAW_OPENSHELL_BIN` selection during user-local OpenShell discovery.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- Jetson setup now explains why host preparation was skipped when it encounters an unrecognized or unparseable release.
+  GPU onboarding carries eligible numeric group IDs for real, non-symlink DRI render character devices into the recreated container while preserving the established Tegra device allowlist.
+  The sandbox CUDA proof remains fail-closed, and physical IGX Orin validation of the reported configuration remains pending.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Telegram channel status now returns `unreachable` with a nonzero exit when the Bot API startup probe receives a definitive HTTP error.
+  Managed MCP tool discovery accepts compliant case-variant or parameterized SSE media types through the reviewed SDK runtime.
+  Hermes image assembly normalizes executable modes before metadata validation, and locked restart integrity accepts the generated v1 managed MCP state record while retaining fail-closed hashing and failed-reload rollback.
+  Hermes now keeps gateway PID, lock, and status records in the writable runtime directory.
+  This lets a restart replace the tracked gateway while shields are up without weakening config locks or crash quarantine.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels), [Manage MCP Servers with OpenClaw](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), [Manage MCP Servers with Hermes](/user-guide/hermes/manage-sandboxes/mcp-servers/manage-mcp-servers), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Deep Agents now publishes the bounded approval, baseline, preset, custom-preset, and live-policy tasks that apply to its maintained runtime.
+  The `claude-code` preset permits browser login only through `GET` and `POST` on `platform.claude.com/v1/oauth/**`, without widening unrelated Anthropic or telemetry access.
+  For more information, refer to [Approve or Deny Network Requests](/user-guide/deepagents/network-policy/approve-network-requests), [Apply Policy Presets](/user-guide/deepagents/network-policy/configure-policies/apply-policy-presets), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Every managed OpenClaw, Hermes, and Deep Agents Code base image now installs checksum-bound backports for four libssh2 memory-safety fixes and the Python 3.13 `HTMLParser` incremental-input complexity fix.
+  Image builds verify immutable source and package identities, libssh2 compatibility and upstream tests, Python file identity and behavior, final package inventories, and clean package-manager state on amd64 and arm64.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
+- Pre-tag release validation now derives its exact candidate test ledger from the candidate commit's E2E workflow, accumulates attempt-aware green evidence in parallel, and keeps every missing execution visible for an itemized maintainer decision.
+  A one-off exact-SHA Launchable qualification can contribute evidence without replacing the default suite, while phase-specific E2E diagnostics, consolidated journeys, checksum-verified official Node.js 22.23.1 archives for WSL, and stricter workflow boundaries improve failure attribution.

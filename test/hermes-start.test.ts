@@ -623,6 +623,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       extractShellFunctionFromSource(src, "ensure_hermes_state_dir"),
+      extractShellFunctionFromSource(src, "ensure_hermes_cross_uid_state_dir"),
       extractShellFunctionFromSource(src, "repair_hermes_log_permissions"),
       extractShellFunctionFromSource(src, "ensure_hermes_history_file"),
       extractShellFunctionFromSource(src, "repair_hermes_startup_layout"),
@@ -650,7 +651,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
     });
     const legacyPidStat = lstatIfPresent(legacyPid);
     const requiredDirs = Object.fromEntries(
-      ["logs", "logs/curator", "hooks", "image_cache", "audio_cache"].map((entry) => {
+      ["gateway", "logs", "logs/curator", "hooks", "image_cache", "audio_cache"].map((entry) => {
         const entryPath = path.join(hermesHome, entry);
         return [
           entry,
@@ -659,7 +660,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       }),
     );
     const requiredDirFullModes = Object.fromEntries(
-      ["logs", "logs/curator"].map((entry) => {
+      ["gateway", "logs", "logs/curator"].map((entry) => {
         const entryPath = path.join(hermesHome, entry);
         return [
           entry,
@@ -1176,6 +1177,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).toBe(0);
     expect(run.hermesDirMode).toBe("3770");
     expect(run.requiredDirs).toEqual({
+      gateway: "770",
       logs: "770",
       "logs/curator": "770",
       hooks: "770",
@@ -1183,6 +1185,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       audio_cache: "770",
     });
     expect(run.requiredDirFullModes).toMatchObject({
+      gateway: "2770",
       logs: "2770",
       "logs/curator": "2770",
     });
@@ -1239,6 +1242,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).toBe(0);
     expect(run.hermesDirMode).toBe("755");
     expect(run.requiredDirs).toEqual({
+      gateway: "770",
       logs: "missing",
       "logs/curator": "missing",
       hooks: "missing",

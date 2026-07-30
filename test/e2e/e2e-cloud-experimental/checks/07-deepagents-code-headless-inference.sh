@@ -7,9 +7,10 @@
 # Headless `dcode -n "<prompt>"`, run inside a built Deep Agents Code sandbox,
 # must route through the managed https://inference.local/v1 endpoint using the
 # placeholder OpenAI-compatible key NemoClaw writes into config.toml. The login
-# shell path must reject an empty prompt with exit 2, then return PONG with exit
-# 0 for a real prompt; provider, connection, DNS, timeout, and ambiguous failures
-# are not acceptable. No real provider/proxy credentials may appear in
+# shell path must reject an empty prompt with exit 2, then return a versioned
+# JSON success envelope containing PONG with exit 0 for a real prompt; provider,
+# connection, DNS, timeout, and ambiguous failures are not acceptable. No real
+# provider/proxy credentials may appear in
 # config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or output.
 # The sandbox entrypoint, direct managed launcher, and both login/interactive
 # shell paths must keep the documented nproc=512 and nofile=65536 contract.
@@ -359,14 +360,17 @@ is_empty_prompt_rejection() {
 }
 
 # Route reachability is proved separately with /v1/models. This classifier has
-# the stronger #6191 acceptance contract: dcode itself must be usable and return
-# exit-zero PONG, so authentication, quota, provider, and model errors are
-# intentionally failures rather than route-only success signals.
+# the stronger #6191 and #7773 acceptance contract: dcode itself must be usable
+# and return an exit-zero, versioned JSON envelope containing PONG. Authentication,
+# quota, provider, model, and malformed-envelope errors are intentionally failures.
 classify_headless_output() {
   local dcode_exit="$1"
   local headless_output="$2"
   local payload
-  payload="$(printf '%s' "$headless_output" | sed 's/DCODE_EXIT:[0-9]*//g')"
+  payload="$(
+    printf '%s' "$headless_output" \
+      | sed '$ { /^DCODE_EXIT:[0-9][0-9]*$/d; }'
+  )"
 
   if [ "$dcode_exit" = "124" ]; then
     printf '%s\n' "timeout"
@@ -403,12 +407,51 @@ classify_headless_output() {
     return 1
   fi
 
-  if printf '%s\n' "$payload" | tr -d '\r' | grep -Eiq '^[[:space:]]*PONG[[:space:]]*$'; then
-    printf '%s\n' "pong"
+  if printf '%s' "$payload" | python3 -c '
+import json
+import sys
+
+try:
+    envelope = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+if not isinstance(envelope, dict):
+    raise SystemExit(1)
+if set(envelope) != {"schema_version", "command", "data"}:
+    raise SystemExit(1)
+if envelope["schema_version"] != 1 or envelope["command"] != "non-interactive":
+    raise SystemExit(1)
+data = envelope["data"]
+if not isinstance(data, dict) or set(data) != {
+    "status",
+    "exit_code",
+    "response",
+    "completion",
+}:
+    raise SystemExit(1)
+if data["status"] != "success" or data["exit_code"] != 0:
+    raise SystemExit(1)
+if not isinstance(data["response"], str) or data["response"].strip() != "PONG":
+    raise SystemExit(1)
+completion = data["completion"]
+if not isinstance(completion, dict) or set(completion) != {
+    "thread_id",
+    "duration_ms",
+    "response_bytes",
+}:
+    raise SystemExit(1)
+if not isinstance(completion["thread_id"], str) or not completion["thread_id"]:
+    raise SystemExit(1)
+if not isinstance(completion["duration_ms"], int) or completion["duration_ms"] < 0:
+    raise SystemExit(1)
+if completion["response_bytes"] != len(data["response"].encode("utf-8")):
+    raise SystemExit(1)
+'; then
+    printf '%s\n' "json-pong"
     return 0
   fi
 
-  printf '%s\n' "ambiguous-output"
+  printf '%s\n' "invalid-json-envelope"
   return 1
 }
 
@@ -500,7 +543,6 @@ main() {
     fail_test "config.toml does not use the managed placeholder API key env reference (captured config redacted from log)"
   fi
   if printf '%s\n' "$config_output" | uses_native_openrouter_config; then
-    native_openrouter=1
     openrouter_identity_output="$(sandbox_direct_dcode identity || true)"
     if printf '%s\n' "$openrouter_identity_output" | grep -Fxq "Provider: openrouter" \
       && printf '%s\n' "$openrouter_identity_output" | grep -Eq '^Model:[[:space:]]+openrouter:' \
@@ -510,7 +552,6 @@ main() {
       fail_test "installed dcode identity does not report native OpenRouter consistently"
     fi
   else
-    native_openrouter=0
     openrouter_identity_output=""
   fi
 
@@ -553,25 +594,17 @@ main() {
     fail_test "login-shell proxy did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
   fi
 
-  # 5. The same login-shell path runs dcode and returns PONG.
-  headless_output="$(sandbox_login_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG'; echo \"DCODE_EXIT:\$?\"" || true)"
+  # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
+  headless_output="$(sandbox_login_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG' --json; echo \"DCODE_EXIT:\$?\"" || true)"
   dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
   if classification="$(classify_headless_output "${dcode_exit:-unknown}" "$headless_output")"; then
     pass "login-shell dcode -n reached managed inference with ${classification} (exit ${dcode_exit:-unknown}; direct DNS/hosts ${direct_dns_state})"
-    if [ "$native_openrouter" -eq 1 ]; then
-      if printf '%s\n' "$headless_output" | grep -Fq "Usage Stats" \
-        && printf '%s\n' "$headless_output" | grep -Eiq '(^|[[:space:]])openrouter([[:space:]]|$)'; then
-        pass "headless usage output reports the native OpenRouter provider"
-      else
-        fail_test "headless usage output does not report the native OpenRouter provider"
-      fi
-    fi
   else
-    fail_test "login-shell dcode -n did not exit 0 with PONG (${classification}, exit ${dcode_exit:-unknown})"
+    fail_test "login-shell dcode -n --json did not return a success envelope with PONG (${classification}, exit ${dcode_exit:-unknown})"
   fi
 
   # 6. The public direct-exec path reaches inference without shell startup files.
-  if direct_output="$(sandbox_direct_dcode -n "Reply with exactly one word: PONG")"; then
+  if direct_output="$(sandbox_direct_dcode -n "Reply with exactly one word: PONG" --json)"; then
     direct_exit=0
   else
     direct_exit=$?
@@ -581,7 +614,7 @@ DCODE_EXIT:${direct_exit}"
   if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output")"; then
     pass "direct-exec dcode -n reached managed inference with ${direct_classification} (exit ${direct_exit}; direct DNS/hosts ${direct_dns_state})"
   else
-    fail_test "direct-exec dcode -n did not exit 0 with PONG (${direct_classification}, exit ${direct_exit})"
+    fail_test "direct-exec dcode -n --json did not return a success envelope with PONG (${direct_classification}, exit ${direct_exit})"
   fi
 
   # 7. The user-facing bare-connect readiness path must route every observed
