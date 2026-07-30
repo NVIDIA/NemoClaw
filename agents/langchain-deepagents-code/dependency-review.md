@@ -7,12 +7,24 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332`
+- Lockfile SHA-256: `d112ad4a01ff2b87211b1a10ecb98950e62d4bdffb37a122326af7b352250d25`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
-- Audit date: 2026-07-09
-- Audit result: `No known vulnerabilities found`
+- Audit date: 2026-07-29
+- Targeted audit result: `Pillow 12.3.0 has no known vulnerabilities`
+- Complete-lock audit result: `6 records in 3 unrelated packages`
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
+The lock now selects `Pillow==12.3.0` instead of the transitive `12.2.0`
+resolution, removing the image-parser advisories in this remediation scope.
+The image build runs `pip3 check` and asserts the exact installed Pillow
+version before publishing.
+
+The complete point-in-time audit also reports one record for `mcp==1.28.0`,
+three for `pyasn1==0.6.3`, and two duplicate database records for
+`setuptools==82.0.1`. These newly published records are not introduced by the
+Pillow-only lock regeneration and remain visible for a separate
+dependency-lifecycle review; this review does not claim the complete lock is
+vulnerability-free.
 
 ## Managed `fetch_url` Proxy Adapter
 
@@ -202,10 +214,11 @@ staged into the image, and image regression tests enforce that absence.
 
 Deep Agents Code `0.1.34` is the released consumer; prerelease risk is limited
 to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
-consumer and SDK are hash locked, the dependency audit is clean, and all source,
-version, middleware, graph, and dispatch contracts are enforced by the isolated
-image-build validator. That validator is the fail-closed gate because Deep
-Agents deliberately isolates and logs third-party plugin callback failures.
+consumer and SDK are hash locked and all source, version, middleware, graph,
+and dispatch contracts are enforced by the isolated image-build validator.
+Separately, the point-in-time audit reports no known vulnerabilities for
+Pillow `12.3.0`. The validator is the fail-closed gate because Deep Agents
+deliberately isolates and logs third-party plugin callback failures.
 
 The exact version and source-hash gates remain the executable lifecycle check
 for the alias adapter: any dependency change stops the image build and requires

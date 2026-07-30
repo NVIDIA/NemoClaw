@@ -333,11 +333,13 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).toContain("--body-file /tmp/nemoclaw-pr-body.md");
     expect(createPr).not.toContain('--body "..."');
     expect(judgment).toContain("{candidate_comments}");
-    expect(
-      mergeGate.match(
-        /the PR is open and that the PR SHA, base SHA, and coordination identity still match/gu,
-      ),
-    ).toHaveLength(2);
+    expect(mergeGate).toContain(
+      "The first attempt requires the triggering actor to have current `maintain` or `admin` access.",
+    );
+    expect(mergeGate).toContain(
+      "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.",
+    );
+    expect(mergeGate).toContain("Approval cannot record success by itself.");
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
     expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
     expect(salvage).toContain("If `maintainerCanModify` is false, do not push");

@@ -556,9 +556,9 @@ describe("complete managed-image publication workflow", () => {
     expect(build.with?.outputs).toBeUndefined();
     expect(build.with?.["cache-to"]).toBeUndefined();
     expect(steps.indexOf(build)).toBeLessThan(steps.indexOf(contract));
-    expect(steps.indexOf(contract)).toBeLessThan(steps.indexOf(gate));
-    expect(steps.indexOf(gate)).toBeLessThan(steps.indexOf(dependencies));
-    expect(steps.indexOf(dependencies)).toBeLessThan(steps.indexOf(install));
+    expect(steps.indexOf(contract)).toBeLessThan(steps.indexOf(dependencies));
+    expect(steps.indexOf(dependencies)).toBeLessThan(steps.indexOf(gate));
+    expect(steps.indexOf(gate)).toBeLessThan(steps.indexOf(install));
     expect(steps.indexOf(install)).toBeLessThan(steps.indexOf(openshell));
     expect(contract).toMatchObject({
       id: "contract",
@@ -601,9 +601,11 @@ describe("complete managed-image publication workflow", () => {
     }
     expect(gate.run).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(gate.run).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
+    expect(gate.run).toContain("npx --no-install tsx");
 
     expect(dependencies.run).toContain("npm ci --ignore-scripts");
     expect(dependencies.run).toContain("npm run build:policy-boundary");
+    expect(steps.indexOf(dependencies)).toBeLessThan(steps.indexOf(gate));
     expect(install.env).toMatchObject({
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85",
@@ -977,8 +979,8 @@ fi
     );
 
     const candidate = step(builder, "Export validated managed image candidate");
-    expect(buildSteps.indexOf(validate)).toBeLessThan(buildSteps.indexOf(dependencies));
-    expect(buildSteps.indexOf(dependencies)).toBeLessThan(buildSteps.indexOf(install));
+    expect(buildSteps.indexOf(dependencies)).toBeLessThan(buildSteps.indexOf(validate));
+    expect(buildSteps.indexOf(validate)).toBeLessThan(buildSteps.indexOf(install));
     expect(buildSteps.indexOf(install)).toBeLessThan(buildSteps.indexOf(openshell));
     expect(buildSteps.indexOf(openshell)).toBeLessThan(buildSteps.indexOf(candidate));
     expect(dependencies.run).toContain("npm ci --ignore-scripts");
@@ -1065,12 +1067,16 @@ fi
     );
     expect(validation.match(/docker run/g)).toHaveLength(2);
     expect(validation).toContain("run-managed-image-direct-e2e.ts");
+    expect(validation).toContain("npx --no-install tsx");
     expect(validation).toContain('--image "$reference"');
     expect(validation).toContain("printf 'local_id=%s\\n' \"$image_id\"");
     expect(validation).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(validation).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
     expect(validation).not.toContain(".Config.Entrypoint");
     expect(validation).not.toContain(".Config.Cmd");
+    expect(buildSteps.indexOf(dependencies)).toBeLessThan(
+      buildSteps.indexOf(step(builder, "Validate exact managed image before promotion")),
+    );
   });
 
   it("executes the all-three barrier and rejects incomplete or stale sets before promotion", () => {

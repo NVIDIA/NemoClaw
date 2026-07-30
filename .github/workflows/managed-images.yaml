@@ -230,6 +230,11 @@ jobs:
           printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
             >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Install managed-image OpenShell harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
       - name: Exercise managed startup root stdin and hold
         shell: bash
         env:
@@ -237,16 +242,11 @@ jobs:
           IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
         run: |
           set -euo pipefail
-          node --no-warnings --experimental-strip-types \
+          npx --no-install tsx \
             scripts/checks/run-managed-image-direct-e2e.ts \
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --platform linux/amd64
-
-      - name: Install managed-image OpenShell harness dependencies
-        run: |
-          npm ci --ignore-scripts
-          npm run build:policy-boundary
 
       - name: Install pinned OpenShell runtime
         env:
@@ -429,6 +429,11 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
           sbom: true
+
+      - name: Install managed-image publication harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
 
       - name: Validate exact managed image before promotion
         id: validate
@@ -638,18 +643,13 @@ jobs:
           fi
 
           DOCKER_CONFIG="$anonymous_config" \
-            node --no-warnings --experimental-strip-types \
+            npx --no-install tsx \
               scripts/checks/run-managed-image-direct-e2e.ts \
               --agent "$AGENT" \
               --image "$reference" \
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
-
-      - name: Install managed-image publication harness dependencies
-        run: |
-          npm ci --ignore-scripts
-          npm run build:policy-boundary
 
       - name: Install pinned OpenShell runtime for publication
         env:

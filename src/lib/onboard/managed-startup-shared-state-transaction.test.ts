@@ -21,14 +21,16 @@ function mode(target: string): number {
   return fs.lstatSync(target).mode & 0o7777;
 }
 
+function unavailableIdentity(name: string): never {
+  throw new Error(`effective ${name} is unavailable`);
+}
+
 function effectiveUid(): number {
-  if (!process.geteuid) throw new Error("effective uid is unavailable");
-  return process.geteuid();
+  return process.geteuid?.() ?? unavailableIdentity("uid");
 }
 
 function effectiveGid(): number {
-  if (!process.getegid) throw new Error("effective gid is unavailable");
-  return process.getegid();
+  return process.getegid?.() ?? unavailableIdentity("gid");
 }
 
 describe("managed startup shared-state transaction", () => {
@@ -94,12 +96,15 @@ describe("managed startup shared-state transaction", () => {
       fs.writeFileSync(target, "changed\n");
       fs.chmodSync(target, 0o600);
     }
-    if (agent === "openclaw" || agent === "hermes") {
-      fs.writeFileSync(path.join(root, ".config-hash"), "new\n");
-    } else {
-      fs.mkdirSync(path.join(root, ".state"));
-      fs.mkdirSync(path.join(root, "skills"));
-    }
+    const createManagedDrift: Record<ManagedStartupAgent, () => void> = {
+      openclaw: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
+      hermes: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
+      "langchain-deepagents-code": () => {
+        fs.mkdirSync(path.join(root, ".state"));
+        fs.mkdirSync(path.join(root, "skills"));
+      },
+    };
+    createManagedDrift[agent]();
 
     expect(rollbackManagedStartupSharedStateTransaction(agent, options)).toBe(true);
     for (const [name, contents, fileMode] of originalFiles) {
@@ -110,11 +115,13 @@ describe("managed startup shared-state transaction", () => {
       expect(fs.lstatSync(target).gid).toBe(effectiveGid());
     }
     expect(mode(root)).toBe(0o750);
-    if (agent === "openclaw" || agent === "hermes") {
-      expect(fs.existsSync(path.join(root, ".config-hash"))).toBe(false);
-    } else {
-      expect(fs.existsSync(path.join(root, ".state"))).toBe(false);
-      expect(fs.existsSync(path.join(root, "skills"))).toBe(false);
+    const absentManagedPaths: Record<ManagedStartupAgent, readonly string[]> = {
+      openclaw: [".config-hash"],
+      hermes: [".config-hash"],
+      "langchain-deepagents-code": [".state", "skills"],
+    };
+    for (const relativePath of absentManagedPaths[agent]) {
+      expect(fs.existsSync(path.join(root, relativePath))).toBe(false);
     }
     expect(fs.existsSync(transactionDirectory)).toBe(false);
   });

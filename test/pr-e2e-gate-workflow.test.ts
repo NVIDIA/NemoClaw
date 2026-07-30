@@ -107,7 +107,7 @@ function runStartStep(headBranch: string, prNumber = "42") {
   }
 }
 
-function runControlPlaneStartStep(reviewReason: string) {
+function runApprovalStartStep(reviewReason: string) {
   const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
   const start = step(workflow.jobs.coordinate, "Start evaluation");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-authorize-"));
@@ -135,49 +135,6 @@ function runControlPlaneStartStep(reviewReason: string) {
         MANUAL_PR_NUMBER: "42",
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         REVIEW_REASON: reviewReason,
-        WORKFLOW_RUN_ATTEMPT: "1",
-        WORKFLOW_SHA,
-        WORK_DIR: tempDir,
-      },
-      timeout: 5_000,
-    });
-    return {
-      arguments: fs.readFileSync(argumentsPath, "utf8").split("\0").slice(0, -1),
-      result,
-    };
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
-function runApprovedForkStartStep() {
-  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-  const approve = step(workflow.jobs["approve-e2e"], "Start approved E2E");
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-approve-"));
-  const binDir = path.join(tempDir, "bin");
-  const argumentsPath = path.join(tempDir, "node-arguments");
-  fs.mkdirSync(binDir);
-  fs.writeFileSync(
-    path.join(binDir, "node"),
-    '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\0\' "$@" > "$FAKE_NODE_ARGUMENTS"\n',
-    { mode: 0o755 },
-  );
-
-  try {
-    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", approve.run!], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        APPROVAL_MODE: "start-approved-fork",
-        APPROVAL_RUN_ATTEMPT: "1",
-        APPROVAL_RUN_ID: "101",
-        EXPECTED_BASE_SHA: BASE_SHA,
-        EXPECTED_HEAD_SHA: HEAD_SHA,
-        FAKE_NODE_ARGUMENTS: argumentsPath,
-        GATE_RUN_ID: "101",
-        GITHUB_TOKEN: "token",
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        PR_NUMBER: "42",
         WORKFLOW_RUN_ATTEMPT: "1",
         WORKFLOW_SHA,
         WORK_DIR: tempDir,
@@ -309,7 +266,6 @@ describe("PR E2E gate workflow", () => {
     const required = workflow.jobs.required;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
-    const approveE2e = workflow.jobs["approve-e2e"];
     const longestSelectedE2eMinutes = 130;
     const controllerWaitMinutes = 140;
     const evidenceAndKillGraceMinutes = 10.5;
@@ -339,9 +295,9 @@ describe("PR E2E gate workflow", () => {
           operation: {
             description: "E2E gate action to perform.",
             required: true,
-            default: "run-control-plane",
+            default: "approve-e2e",
             type: "choice",
-            options: ["run-control-plane"],
+            options: ["approve-e2e"],
           },
           pr_number: {
             description: "Pull request number for the selected E2E gate action.",
@@ -359,7 +315,7 @@ describe("PR E2E gate workflow", () => {
             type: "string",
           },
           review_reason: {
-            description: "Why this internal PR may run control-plane E2E.",
+            description: "Why this PR may run credentialed E2E.",
             required: true,
             type: "string",
           },
@@ -450,7 +406,7 @@ describe("PR E2E gate workflow", () => {
     expect(coordinate.if).toContain(
       "endsWith(github.event.workflow_run.display_title, ' gate true')",
     );
-    expect(coordinate.if).toContain("inputs.operation == 'run-control-plane'");
+    expect(coordinate.if).toContain("inputs.operation == 'approve-e2e'");
     expect(coordinate.if).toContain("github.ref == 'refs/heads/main'");
     expect(coordinate.if).toContain("github.run_attempt == 1");
     expect(coordinate.if).not.toContain("head_repository.full_name == github.repository");
@@ -466,47 +422,16 @@ describe("PR E2E gate workflow", () => {
     expect(coordinate.concurrency?.queue).toBe("max");
     expect(coordinate.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(coordinate["timeout-minutes"]).toBe(330);
-    expect(coordinate.outputs).toEqual({
-      approval_mode: "${{ steps.start.outputs.approval_mode }}",
-      approval_environment: "${{ steps.start.outputs.approval_environment }}",
-      approval_pr_number: "${{ steps.start.outputs.approval_pr_number }}",
-      approval_head_sha: "${{ steps.start.outputs.approval_head_sha }}",
-      approval_base_sha: "${{ steps.start.outputs.approval_base_sha }}",
-    });
-    expect(approveE2e.name).toBe("Approve credentialed E2E for reviewed PR");
-    expect(approveE2e.needs).toBe("coordinate");
-    expect(approveE2e.if).toBe(
-      "${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode != '' && github.run_attempt == 1 }}",
-    );
-    expect(approveE2e.environment).toEqual({
-      name: "${{ needs.coordinate.outputs.approval_environment }}",
-      deployment: false,
-    });
-    expect(approveE2e.permissions).toEqual({
-      actions: "write",
-      checks: "write",
-      contents: "read",
-      "pull-requests": "read",
-    });
-    expect(approveE2e.concurrency).toEqual({
-      group:
-        "pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.approval_pr_number }}-${{ needs.coordinate.outputs.approval_head_sha }}-${{ needs.coordinate.outputs.approval_base_sha }}",
-      queue: "max",
-      "cancel-in-progress": false,
-    });
-    expect(approveE2e["timeout-minutes"]).toBe(330);
+    expect(coordinate.outputs).toBeUndefined();
+    expect(workflow.jobs["approve-e2e"]).toBeUndefined();
     expect(controllerWaitMinutes).toBeGreaterThan(longestSelectedE2eMinutes);
     expect(coordinate["timeout-minutes"]).toBeGreaterThanOrEqual(
-      twoAttemptMinimum + controllerSetupReserveMinutes,
-    );
-    expect(approveE2e["timeout-minutes"]).toBeGreaterThanOrEqual(
       twoAttemptMinimum + controllerSetupReserveMinutes,
     );
     expect(observerPollMinutes).toBeGreaterThanOrEqual(
       coordinate["timeout-minutes"]! + maxPrerequisiteCiMinutes + observerApiSlackMinutes,
     );
     expect(required["timeout-minutes"]).toBeGreaterThan(observerPollMinutes);
-    expect(approveE2e.secrets).toBeUndefined();
     expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
     expect(step(initialize, "Reserve PR/base SHA gate").run).toContain('--head "$HEAD_SHA"');
     expect(step(initialize, "Reserve PR/base SHA gate").env?.BASE_SHA).toBe(
@@ -519,28 +444,9 @@ describe("PR E2E gate workflow", () => {
     expect(start.env?.MAINTAINER).toBe("${{ github.triggering_actor }}");
     expect(start.env?.MANUAL_HEAD_SHA).toBe("${{ inputs.expected_head_sha }}");
     expect(start.env?.MANUAL_BASE_SHA).toBe("${{ inputs.expected_base_sha }}");
-    expect(start.run).toContain("--mode start-control-plane");
+    expect(start.run).toContain("--mode approve-e2e");
     expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
     expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
-    const approvedStart = step(approveE2e, "Start approved E2E");
-    expect(approvedStart.env).toMatchObject({
-      APPROVAL_MODE: "${{ needs.coordinate.outputs.approval_mode }}",
-      APPROVAL_RUN_ATTEMPT: "${{ github.run_attempt }}",
-      APPROVAL_RUN_ID: "${{ github.run_id }}",
-      EXPECTED_BASE_SHA: "${{ needs.coordinate.outputs.approval_base_sha }}",
-      EXPECTED_HEAD_SHA: "${{ needs.coordinate.outputs.approval_head_sha }}",
-      GATE_RUN_ID: "${{ github.run_id }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-      PR_NUMBER: "${{ needs.coordinate.outputs.approval_pr_number }}",
-      WORKFLOW_RUN_ATTEMPT: "${{ github.run_attempt }}",
-      WORKFLOW_SHA: "${{ github.workflow_sha }}",
-    });
-    expect(approvedStart.run).toContain("start-approved-control-plane | start-approved-fork");
-    expect(approvedStart.run).toContain('--mode "$APPROVAL_MODE"');
-    expect(approvedStart.run).toContain('--approval-run-id "$APPROVAL_RUN_ID"');
-    expect(approvedStart.run).toContain('--approval-run-attempt "$APPROVAL_RUN_ATTEMPT"');
-    expect(approvedStart.run).toContain('--head "$EXPECTED_HEAD_SHA"');
-    expect(approvedStart.run).toContain('--base "$EXPECTED_BASE_SHA"');
     const wait = step(coordinate, "Wait for E2E run");
     expect(wait.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
     expect(wait.run).toContain("--mode wait");
@@ -587,7 +493,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(5);
+    expect(checkouts).toHaveLength(4);
     expect(
       checkouts.every(
         (checkout) =>
@@ -595,11 +501,11 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(5);
+    expect(nodeSetups).toHaveLength(4);
     expect(nodeSetups.every((setup) => setup.uses === TRUSTED_SETUP_NODE_ACTION)).toBe(true);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
-    expect(installs).toHaveLength(4);
+    expect(installs).toHaveLength(3);
     expect(
       installs.every((install) => install.run === "npm ci --ignore-scripts --no-audit --no-fund"),
     ).toBe(true);
@@ -652,45 +558,14 @@ describe("PR E2E gate workflow", () => {
     expect(execution.arguments[prFlag + 1]).toBe("");
   });
 
-  it("passes the approved fork E2E identity as inert arguments", () => {
-    const execution = runApprovedForkStartStep();
-
-    expect(execution.result.status).toBe(0);
-    expect(execution.result.stderr).toBe("");
-    expect(execution.arguments).toEqual([
-      "--experimental-strip-types",
-      "tools/e2e/pr-e2e-gate.mts",
-      "--mode",
-      "start-approved-fork",
-      "--pr",
-      "42",
-      "--head",
-      HEAD_SHA,
-      "--base",
-      BASE_SHA,
-      "--workflow-sha",
-      WORKFLOW_SHA,
-      "--approval-run-id",
-      "101",
-      "--approval-run-attempt",
-      "1",
-      "--gate-run-id",
-      "101",
-      "--workflow-run-attempt",
-      "1",
-      "--work-dir",
-      expect.any(String),
-    ]);
-  });
-
-  it("passes the control-plane review reason as one inert argument", () => {
+  it("passes the maintainer review reason as one inert argument", () => {
     const reason = "Reviewed PR/base SHA pair; $(printf injected)";
-    const execution = runControlPlaneStartStep(reason);
+    const execution = runApprovalStartStep(reason);
     const reasonFlag = execution.arguments.indexOf("--reason");
 
     expect(execution.result.status).toBe(0);
     expect(execution.result.stderr).toBe("");
-    expect(execution.arguments).toContain("start-control-plane");
+    expect(execution.arguments).toContain("approve-e2e");
     expect(execution.arguments[reasonFlag + 1]).toBe(reason);
     expect(execution.arguments).toContain(HEAD_SHA);
     expect(execution.arguments).toContain(BASE_SHA);
@@ -734,7 +609,6 @@ describe("PR E2E gate workflow", () => {
   it("orders the coordinate steps and always finalizes through the controller", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const coordinate = workflow.jobs.coordinate;
-    const approveE2e = workflow.jobs["approve-e2e"];
 
     expect((coordinate.steps ?? []).map((candidate) => candidate.name)).toEqual([
       "Checkout controller",
@@ -766,45 +640,5 @@ describe("PR E2E gate workflow", () => {
     expect(cleanup.if).toContain("always()");
     expect(cleanup.if).toContain("steps.workspace.outputs.work_dir");
     expect(cleanup.run).toBe('rm -rf -- "${{ steps.workspace.outputs.work_dir }}"');
-
-    expect((approveE2e.steps ?? []).map((candidate) => candidate.name)).toEqual([
-      "Checkout controller",
-      "Setup Node",
-      "Install controller dependencies",
-      "Create private workspace",
-      "Start approved E2E",
-      "Upload approved risk plan",
-      "Wait for approved E2E run",
-      "Download approved evidence",
-      "Verify approved evidence",
-      "Retry approved E2E after hosted runner loss",
-      "Wait for approved retry E2E run",
-      "Download approved retry evidence",
-      "Verify approved retry evidence",
-      "Close incomplete approved retry check",
-      "Terminalize interrupted approved retry setup",
-      "Close incomplete approved check",
-      "Remove private workspace",
-    ]);
-    expect(step(approveE2e, "Download approved evidence").if).toContain("always()");
-    expect(step(approveE2e, "Verify approved evidence").if).toContain("always()");
-    expect(step(approveE2e, "Retry approved E2E after hosted runner loss").if).toContain(
-      "github.run_attempt == 1",
-    );
-    expect(step(approveE2e, "Download approved retry evidence").run).toContain(
-      "--slot runner-loss-retry",
-    );
-    expect(step(approveE2e, "Verify approved retry evidence").if).toContain("always()");
-    expect(step(approveE2e, "Close incomplete approved retry check").if).toContain("always()");
-    const approvedInterruptedRetry = step(
-      approveE2e,
-      "Terminalize interrupted approved retry setup",
-    );
-    expect(approvedInterruptedRetry.if).toContain("steps.retry.outcome != 'success'");
-    expect(approvedInterruptedRetry.if).not.toContain("steps.retry.outcome == 'failure'");
-    expect(approvedInterruptedRetry.if).toContain("steps.retry.outputs.check_id == ''");
-    expect(approvedInterruptedRetry.run).toContain("--mode abandon-runner-loss-retry");
-    expect(step(approveE2e, "Close incomplete approved check").if).toContain("always()");
-    expect(step(approveE2e, "Remove private workspace").if).toContain("always()");
   });
 });
