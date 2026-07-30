@@ -553,14 +553,16 @@ of its credential, and the upstream ledger is required to contain no literal
 resolve placeholder.
 The stable workflow keeps the OpenClaw, Hermes, and Deep Agents MCP lifecycles
 on three fresh-runner shards with separate artifacts. It runs the
-`openshell-credential-generation-window` live target once, after the Deep Agents
-case, rather than repeating that proof in every shard.
+`openshell-credential-generation-window` live target once on a fourth fresh
+runner in parallel with the Deep Agents case, rather than serializing or
+repeating that proof in the agent matrix.
 The workflow first ran this bounded target against the exact reviewed development
 artifacts and scanned its artifacts for the whole generated-secret prefix. The
 stable-source review retains the upstream
 `expired_retained_generation_does_not_resolve` unit. The default stable job now
-binds the target to tag commit `3dee5570`, the extracted release binaries, and the
-immutable supervisor index; its final result for the PR SHA remains a merge gate.
+binds the target to tag commit `3dee5570`, the extracted release binaries, and
+the immutable supervisor index; its final result for the PR SHA remains a merge
+gate.
 
 ### v0.0.82 to v0.0.83
 
