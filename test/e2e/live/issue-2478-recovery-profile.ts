@@ -23,9 +23,14 @@ const PROFILE_DEFAULTS: Record<
   },
 };
 
-function positiveInteger(raw: string | undefined, fallback: number): number {
-  const parsed = raw ? Number(raw) : fallback;
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+function positiveInteger(name: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer, got '${raw}'`);
+  }
+  return parsed;
 }
 
 export function resolveIssue2478RecoverySettings(
@@ -41,7 +46,15 @@ export function resolveIssue2478RecoverySettings(
   const defaults = PROFILE_DEFAULTS[rawProfile];
   return {
     profile: rawProfile,
-    crashCycles: positiveInteger(env.NEMOCLAW_E2E_CRASH_CYCLES, defaults.crashCycles),
-    soakSeconds: positiveInteger(env.NEMOCLAW_E2E_SOAK_SECONDS, defaults.soakSeconds),
+    crashCycles: positiveInteger(
+      "NEMOCLAW_E2E_CRASH_CYCLES",
+      env.NEMOCLAW_E2E_CRASH_CYCLES,
+      defaults.crashCycles,
+    ),
+    soakSeconds: positiveInteger(
+      "NEMOCLAW_E2E_SOAK_SECONDS",
+      env.NEMOCLAW_E2E_SOAK_SECONDS,
+      defaults.soakSeconds,
+    ),
   };
 }

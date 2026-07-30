@@ -59,4 +59,15 @@ describe("gateway crash-loop recovery profiles", () => {
       }),
     ).toThrow(/must be 'functional' or 'soak'/);
   });
+
+  it.each([
+    ["NEMOCLAW_E2E_CRASH_CYCLES", "0"],
+    ["NEMOCLAW_E2E_SOAK_SECONDS", "abc"],
+  ] as const)("rejects malformed %s overrides instead of silently using defaults (#7919)", (name, value) => {
+    expect(() =>
+      resolveIssue2478RecoverySettings({
+        [name]: value,
+      }),
+    ).toThrow(`${name} must be a positive integer`);
+  });
 });
