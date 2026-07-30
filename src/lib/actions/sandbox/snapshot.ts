@@ -702,8 +702,13 @@ async function autoCreateSandboxFromSource(
           }
           streamed = await streamCloneCreate();
           if (streamed.status !== 0 && !streamed.forcedReady) {
-            throw new Error(
-              `managed snapshot clone create exited with status ${String(streamed.status)}`,
+            const tail = (streamed.output || "").slice(-600);
+            throw new SnapshotCommandError(
+              [
+                `Failed to create sandbox '${dstName}' (exit ${streamed.status}).`,
+                ...(tail ? [tail] : []),
+              ],
+              1,
             );
           }
           const list = captureText(["sandbox", "list"], { ignoreError: true });

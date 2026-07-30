@@ -156,7 +156,7 @@ function adapterFor(order: string[]): ManagedBootstrapAdapter {
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox: created.sandbox,
         bootstrapIdentity: IDENTITY,
-        outcome: "rolled-back",
+        outcome: "rolled-back" as const,
         restoredRuntimeId: RUNTIME_ID,
         restoredSpecHash: SPEC_HASH,
         heldWorkloadRemoved: false,

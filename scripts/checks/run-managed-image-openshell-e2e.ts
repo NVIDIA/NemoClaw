@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { collectDockerGpuPatchDiagnostics } from "../../src/lib/onboard/docker-gpu-patch.ts";
-import { createDockerGpuSandboxCreatePatch } from "../../src/lib/onboard/docker-gpu-sandbox-create.ts";
-import { resolveDockerStartupCommandPatch } from "../../src/lib/onboard/docker-startup-command-agent.ts";
 import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
@@ -17,7 +14,11 @@ import {
   encodeManagedStartupProfile,
   type ManagedStartupAgent,
 } from "../../src/lib/onboard/managed-startup/profile.ts";
-import { collectSandboxCreateFailureDiagnostics } from "../../src/lib/onboard/sandbox-create-failure.ts";
+import type { SandboxCreateLaunchWithPrebuild } from "../../src/lib/onboard/sandbox-create-launch.ts";
+import {
+  resolveDockerStartupCommandPatch,
+  runSandboxGpuCreateFlow,
+} from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -30,6 +31,7 @@ const MANAGED_AGENTS = new Set<ManagedStartupAgent>([
 ]);
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_PORT = 8080;
+const IMMUTABLE_MANIFEST_REFERENCE_RE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/u;
 const MANAGED_AGENT_BASE_POLICIES: Record<ManagedStartupAgent, readonly string[]> = {
   openclaw: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
   hermes: ["agents", "hermes", "policy-additions.yaml"],
@@ -51,19 +53,10 @@ type OnboardModule = {
 };
 
 type SandboxCreateLaunchModule = {
-  prepareSandboxCreateManagedImageLaunch(input: Record<string, unknown>): {
-    createArgv: string[];
-    prebuild: { createArgs: string[]; imageId: null; imageRef: null };
-    sandboxEnv: Record<string, string>;
-    sandboxStartupCommand: string[];
-    startupRequirement: "sandbox-command" | "trusted-image-init";
-    managedStartupRootApplyRequest: Parameters<
-      typeof createDockerGpuSandboxCreatePatch
-    >[0]["managedStartupRootApplyRequest"];
-  };
+  prepareSandboxCreateManagedImageLaunch(
+    input: Record<string, unknown>,
+  ): SandboxCreateLaunchWithPrebuild;
 };
-
-type ManagedStartupPatch = ReturnType<typeof createDockerGpuSandboxCreatePatch>;
 
 function requiredValue(argv: readonly string[], flag: string): string {
   const index = argv.indexOf(flag);
@@ -86,8 +79,8 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
     throw new Error("--agent must identify a shipped managed-image agent");
   }
   const image = requiredValue(argv, "--image");
-  if (!/^sha256:[0-9a-f]{64}$/u.test(image)) {
-    throw new Error("--image must be an immutable local sha256 image ID");
+  if (!IMMUTABLE_MANIFEST_REFERENCE_RE.test(image)) {
+    throw new Error("--image must be an immutable repository@sha256 manifest reference");
   }
   const sandbox = requiredValue(argv, "--sandbox");
   if (!/^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$/u.test(sandbox)) {
@@ -159,38 +152,6 @@ function stopProcess(pid: number | null): void {
   }
 }
 
-function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const finish = (exited: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.off("close", onClose);
-      child.off("error", onError);
-      resolve(exited);
-    };
-    const onClose = () => finish(true);
-    const onError = () => finish(false);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    child.once("close", onClose);
-    child.once("error", onError);
-  });
-}
-
-async function stopChild(child: ChildProcess | null): Promise<void> {
-  if (!child || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
-    return;
-  }
-  child.kill("SIGTERM");
-  if (await waitForChildExit(child, 5_000)) return;
-  child.kill("SIGKILL");
-  if (!(await waitForChildExit(child, 5_000))) {
-    throw new Error("OpenShell sandbox create child did not exit after SIGKILL");
-  }
-}
-
 async function assertGatewayPortAvailable(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = net.createServer();
@@ -258,71 +219,14 @@ export function managedImageOpenShellCommittedProbe(): string {
   ].join("\n");
 }
 
-function printLogTail(file: string): void {
-  try {
-    const lines = fs.readFileSync(file, "utf8").split("\n");
-    process.stderr.write(`${lines.slice(-160).join("\n")}\n`);
-  } catch {
-    // The create process may fail before opening its log.
-  }
-}
-
-function captureFailureDiagnosticsBeforeRollback(
-  onboard: OnboardModule,
-  input: Inputs,
-  createLog: string,
-  startupPatch: ManagedStartupPatch,
-  error: unknown,
-): void {
-  const diagnosticDirectories: string[] = [];
-  try {
-    const dockerDiagnostics = collectDockerGpuPatchDiagnostics(
-      input.sandbox,
-      {
-        error,
-        selectedMode: startupPatch.selectedMode(),
-      },
-      { runCaptureOpenshell: onboard.runCaptureOpenshell },
-    );
-    if (dockerDiagnostics) diagnosticDirectories.push(dockerDiagnostics.dir);
-  } catch {
-    // Diagnostics must never mask the primary live failure or block rollback.
-  }
-  try {
-    const gatewayDiagnostics = collectSandboxCreateFailureDiagnostics(input.sandbox, {
-      gatewayLogPath: path.join(path.dirname(createLog), "openshell-gateway.log"),
-    });
-    if (gatewayDiagnostics) diagnosticDirectories.push(gatewayDiagnostics.dir);
-  } catch {
-    // The Docker snapshot above remains useful when gateway collection fails.
-  }
-  for (const directory of diagnosticDirectories) {
-    process.stderr.write(`Managed-image OpenShell failure diagnostics staged: ${directory}\n`);
-  }
-}
-
-async function waitForSandboxProbe(
+async function waitForCommittedSandboxProbe(
   onboard: OnboardModule,
   input: Inputs,
   env: NodeJS.ProcessEnv,
-  createChild: ChildProcess,
-  createLog: string,
-  startupPatch: ManagedStartupPatch,
 ): Promise<void> {
   const healthProbe = managedImageOpenShellProbe(input.agent);
   const committedProbe = managedImageOpenShellCommittedProbe();
   const deadline = Date.now() + 240_000;
-  let createSpawnErrorMessage: string | null = null;
-  createChild.once("error", (error) => {
-    createSpawnErrorMessage = error.message;
-  });
-  const applyStartupPatch = () => {
-    startupPatch.maybeApplyDuringCreate();
-    startupPatch.exitOnPatchError();
-    // Reconnect is a reversible precondition. The receipt and any recreation
-    // backup remain available until the exact live health probe passes.
-    startupPatch.waitForSupervisorReconnectIfNeeded();
-  };
   const runProbe = (probe: string, timeoutMs: number) =>
     commandResult(
       onboard.openshellArgv([
@@ -339,55 +243,54 @@ async function waitForSandboxProbe(
       env,
       timeoutMs,
     );
-  try {
-    while (Date.now() < deadline) {
-      applyStartupPatch();
-      const remainingMs = deadline - Date.now();
-      const result = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
-      applyStartupPatch();
-      if (result.status === 0) {
-        startupPatch.commitAfterReady();
-        const committed = runProbe(
-          committedProbe,
-          Math.max(1, Math.min(15_000, deadline - Date.now())),
-        );
-        if (committed.status !== 0) {
-          throw new Error(
-            `managed startup committed, but transaction cleanup was not observable through the exact sandbox: ${commandDetail(committed)}`,
-          );
-        }
-        return;
-      }
-      if (createSpawnErrorMessage) {
-        printLogTail(createLog);
-        throw new Error(`could not spawn OpenShell sandbox create: ${createSpawnErrorMessage}`);
-      }
-      if (createChild.signalCode !== null) {
-        printLogTail(createLog);
+  let lastHealthDetail = "";
+  while (Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    const health = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
+    if (health.status === 0) {
+      const committed = runProbe(
+        committedProbe,
+        Math.max(1, Math.min(15_000, deadline - Date.now())),
+      );
+      if (committed.status !== 0) {
         throw new Error(
-          `OpenShell sandbox create exited on signal ${createChild.signalCode} before the live probe passed: ${commandDetail(result)}`,
+          `managed bootstrap committed, but transaction cleanup was not observable through the exact sandbox: ${commandDetail(committed)}`,
         );
       }
-      if (createChild.exitCode !== null && createChild.exitCode !== 0) {
-        printLogTail(createLog);
-        throw new Error(
-          `OpenShell sandbox create exited ${String(createChild.exitCode)} before the live probe passed: ${commandDetail(result)}`,
-        );
-      }
-      const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
-      if (sleepMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, sleepMs));
-      }
+      return;
     }
-    printLogTail(createLog);
-    throw new Error("OpenShell sandbox did not pass the exact-image startup probe within 240s");
-  } catch (error) {
-    // Capture the recreated container and gateway while they still exist. The
-    // rollback below intentionally destroys that transient failure evidence.
-    captureFailureDiagnosticsBeforeRollback(onboard, input, createLog, startupPatch, error);
-    startupPatch.rollbackManagedStartupAfterCreateFailure();
-    throw error;
+    lastHealthDetail = commandDetail(health);
+    const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
+    if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
+  throw new Error(
+    `OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: ${lastHealthDetail}`,
+  );
+}
+
+function parseImmutableManifestReference(image: string): {
+  repository: string;
+  manifestDigest: `sha256:${string}`;
+} {
+  const match = IMMUTABLE_MANIFEST_REFERENCE_RE.exec(image);
+  if (!match?.[1] || !match[2]) {
+    throw new Error("--image must be an immutable repository@sha256 manifest reference");
+  }
+  return {
+    repository: match[1],
+    manifestDigest: match[2] as `sha256:${string}`,
+  };
+}
+
+function resolveLocalImageContentId(image: string, env: NodeJS.ProcessEnv): string {
+  const inspect = commandResult(["docker", "image", "inspect", "--format", "{{.Id}}", image], env);
+  const contentId = String(inspect.stdout ?? "").trim();
+  if (inspect.status !== 0 || !/^sha256:[a-f0-9]{64}$/u.test(contentId)) {
+    throw new Error(
+      `--image does not resolve to one immutable local image content ID: ${commandDetail(inspect)}`,
+    );
+  }
+  return contentId;
 }
 
 function exactHarnessContainerIds(
@@ -395,6 +298,7 @@ function exactHarnessContainerIds(
   networkName: string,
   env: NodeJS.ProcessEnv,
 ): { candidateCount: number; exactIds: string[] } {
+  const expectedContentId = resolveLocalImageContentId(input.image, env);
   const list = commandResult(
     [
       "docker",
@@ -429,7 +333,7 @@ function exactHarnessContainerIds(
       if (
         record?.Config?.Labels?.["openshell.ai/managed-by"] === "openshell" &&
         record.Config.Labels["openshell.ai/sandbox-name"] === input.sandbox &&
-        record.Image === input.image &&
+        record.Image === expectedContentId &&
         Object.hasOwn(record.NetworkSettings?.Networks ?? {}, networkName)
       ) {
         exactIds.push(candidate);
@@ -458,7 +362,6 @@ function assertExactSandboxImage(
 async function run(input: Inputs): Promise<void> {
   const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
   const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
-  const createLog = path.join(stateDir, "sandbox-create.log");
   const networkName = `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
   process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
@@ -471,19 +374,12 @@ async function run(input: Inputs): Promise<void> {
   process.env.PATH = `${path.join(os.homedir(), ".local", "bin")}:${process.env.PATH ?? ""}`;
 
   let onboard: OnboardModule | null = null;
-  let createChild: ChildProcess | null = null;
-  let createLogFd: number | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   try {
     await assertGatewayPortAvailable();
-    const localImage = commandResult(
-      ["docker", "image", "inspect", "--format", "{{.Id}}", input.image],
-      process.env,
-    );
-    if (localImage.status !== 0 || String(localImage.stdout ?? "").trim() !== input.image) {
-      throw new Error("--image does not resolve to the exact local PR image ID");
-    }
+    const image = parseImmutableManifestReference(input.image);
+    resolveLocalImageContentId(input.image, process.env);
 
     const onboardImport = (await import("../../src/lib/onboard.ts")) as unknown as
       | OnboardModule
@@ -552,54 +448,75 @@ async function run(input: Inputs): Promise<void> {
       { name: input.agent } as Parameters<typeof resolveDockerStartupCommandPatch>[0],
       true,
     );
-    if (!launch.managedStartupRootApplyRequest) {
-      throw new Error("managed-image launch did not retain the bounded root-apply request");
+    if (
+      !launch.managedStartupRootApplyRequest ||
+      !launch.managedBootstrapIdentity ||
+      !launch.intendedSandboxStartupCommand
+    ) {
+      throw new Error("managed-image launch did not retain its identity-bound bootstrap contract");
     }
-    const startupPatch = createDockerGpuSandboxCreatePatch({
-      route: "none",
-      persistStartupCommand: startupPlan.persistStartupCommand,
-      managedStartupRootApplyRequest: launch.managedStartupRootApplyRequest,
-      sandboxName: input.sandbox,
-      openshellSandboxCommand: launch.sandboxStartupCommand,
-      requiredUlimits: startupPlan.requiredUlimits,
-      timeoutSecs: 240,
-      deps: {
+
+    const flow = await runSandboxGpuCreateFlow(
+      {
+        sandboxName: input.sandbox,
+        provider: "nvidia",
+        sandboxGpuConfig: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        gpuRoutePlan: "none",
+        initialGpuRoute: "none",
+        compatibilityPolicyPath: null,
+        dockerDriverGateway: true,
+        gatewayPort: GATEWAY_PORT,
+        sandboxReadyTimeoutSecs: 240,
+        createArgv: launch.createArgv,
+        sandboxEnv: launch.sandboxEnv,
+        sandboxStartupCommand: launch.sandboxStartupCommand,
+        prebuild: launch.prebuild,
+        restoreBackupPath: null,
+        terminalAgent: input.agent === "langchain-deepagents-code",
+        managedBootstrap: {
+          bootstrapIdentity: launch.managedBootstrapIdentity,
+          request: launch.managedStartupRootApplyRequest,
+          image,
+          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+          intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
+          expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+        },
+        ...startupPlan,
+      },
+      {
         runOpenshell: onboard.runOpenshell,
         runCaptureOpenshell: onboard.runCaptureOpenshell,
         sleep: onboard.sleepSeconds,
+        openshellArgv: onboard.openshellArgv,
+        verifyDirectSandboxGpu: () => ({
+          status: "unverified",
+          cudaVerified: false,
+          label: "disabled",
+          detail: null,
+          at: new Date().toISOString(),
+        }),
       },
-    });
-
-    createLogFd = fs.openSync(createLog, "a", 0o600);
-    const [createExecutable, ...renderedCreateArgs] = launch.createArgv;
-    if (!createExecutable) throw new Error("managed-image launch renderer returned empty argv");
-    createChild = spawn(createExecutable, renderedCreateArgs, {
-      env: launch.sandboxEnv,
-      stdio: ["ignore", createLogFd, createLogFd],
-    });
-    fs.closeSync(createLogFd);
-    createLogFd = null;
-
-    await waitForSandboxProbe(
-      onboard,
-      input,
-      launch.sandboxEnv,
-      createChild,
-      createLog,
-      startupPatch,
     );
+    if (flow.route !== "none" || flow.createResult.status !== 0) {
+      throw new Error(
+        `production managed-bootstrap flow did not complete the exact PR image create: route=${flow.route} status=${flow.createResult.status}`,
+      );
+    }
+
+    await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
     ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
     process.stdout.write(
-      `OpenShell launched exact ${input.agent} PR image ${input.image} and applied its managed startup profile.\n`,
+      `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence.\n`,
     );
   } finally {
     const cleanupErrors: string[] = [];
-    if (createLogFd !== null) fs.closeSync(createLogFd);
-    try {
-      await stopChild(createChild);
-    } catch (error) {
-      cleanupErrors.push(error instanceof Error ? error.message : String(error));
-    }
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),

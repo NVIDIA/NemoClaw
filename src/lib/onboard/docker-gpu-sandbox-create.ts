@@ -393,11 +393,29 @@ export function createDockerGpuSandboxCreatePatch(
           try {
             await managedBootstrapCutover.commit();
           } catch (error) {
-            onPatchFailureExit(options.sandboxName, error, {
+            const failure = error instanceof Error ? error : new Error(String(error));
+            let rollbackError: Error | null = null;
+            try {
+              await managedBootstrapCutover.rollback();
+              cutoverFinalized = true;
+              needsSupervisorWait = false;
+            } catch (rollbackFailure) {
+              rollbackError =
+                rollbackFailure instanceof Error
+                  ? rollbackFailure
+                  : new Error(String(rollbackFailure));
+              (
+                failure as Error & { managedBootstrapRollbackError?: unknown }
+              ).managedBootstrapRollbackError = rollbackError;
+            }
+            onPatchFailureExit(options.sandboxName, failure, {
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               dockerCapture: options.deps.dockerCapture,
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
-              context: failureContext(),
+              context: {
+                ...failureContext(),
+                rolledBack: rollbackError === null,
+              },
             });
             return;
           }

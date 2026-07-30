@@ -319,16 +319,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
-  it("does not tunnel managed root apply through the legacy GPU patch", async () => {
+  it("does not expose the removed managed root-apply option to the GPU patch", async () => {
     const input = createInput();
     input.persistStartupCommand = true;
-    input.managedStartupRootApplyRequest = {
-      schemaVersion: 1,
-      agent: "openclaw",
-      encodedProfile: "profile",
-      profileFingerprint: "a".repeat(64),
-      corporateCaB64: null,
-    };
 
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "native",
@@ -338,9 +331,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
     );
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        managedStartupRootApplyRequest: input.managedStartupRootApplyRequest,
-      }),
+      expect.not.objectContaining({ managedStartupRootApplyRequest: expect.anything() }),
     );
   });
 

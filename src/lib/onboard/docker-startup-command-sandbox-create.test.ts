@@ -196,6 +196,61 @@ describe("Docker startup-command sandbox creation", () => {
     await Promise.all([firstCommit, duplicateCommit]);
   });
 
+  it("rolls back a driver-owned cutover before reporting commit failure", async () => {
+    const deps = makeDeps();
+    const events: string[] = [];
+    const commit = vi.fn(async () => {
+      events.push("commit");
+      throw new Error("receipt validation failed");
+    });
+    const rollback = vi.fn(async () => {
+      events.push("rollback");
+    });
+    const onPatchFailureExit = vi.fn(() => {
+      events.push("exit");
+    });
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: { onPatchFailureExit },
+    });
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "startup-command",
+        label: "managed bootstrap",
+        device: "",
+        args: [],
+      },
+      failureContext: {
+        sandboxName: "alpha",
+        oldContainerId: "held-container",
+        newContainerId: "replacement-container",
+      },
+      commit,
+      rollback,
+    });
+
+    await patch.commitAfterReady();
+
+    expect(events).toEqual(["commit", "rollback", "exit"]);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ message: "receipt validation failed" }),
+      expect.objectContaining({
+        context: expect.objectContaining({
+          oldContainerId: "held-container",
+          newContainerId: "replacement-container",
+          rolledBack: true,
+        }),
+      }),
+    );
+    await patch.rollbackManagedStartupAfterCreateFailure();
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
   it("reports startup-command creation failures through the composed patch boundary", async () => {
     const deps = makeDeps();
     const onPatchFailureExit = vi.fn();

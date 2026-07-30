@@ -254,6 +254,51 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
 }
 
 describe("complete managed-image publication workflow", () => {
+  it.each([
+    "linux/amd64",
+    "linux/arm64",
+  ] as const)("accepts the direct managed-image harness on %s", (platform) => {
+    const image = `localhost:5000/nemoclaw-managed-pr/openclaw@sha256:${"a".repeat(64)}`;
+    expect(
+      parseManagedImageDirectE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        image,
+        "--platform",
+        platform,
+      ]),
+    ).toEqual({ agent: "openclaw", image, platform });
+  });
+
+  it("requires the real OpenShell harness to receive an immutable named manifest", () => {
+    const image = `localhost:5000/nemoclaw-managed-pr/hermes@sha256:${"b".repeat(64)}`;
+    expect(
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "hermes",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-pr-hermes",
+      ]),
+    ).toEqual({
+      agent: "hermes",
+      image,
+      sandbox: "nemoclaw-pr-hermes",
+    });
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "hermes",
+        "--image",
+        `sha256:${"b".repeat(64)}`,
+        "--sandbox",
+        "nemoclaw-pr-hermes",
+      ]),
+    ).toThrow("immutable repository@sha256 manifest reference");
+  });
+
   it("starts after exact base contracts with complete main triggers and release-safe concurrency (#7744)", () => {
     const baseWorkflow = readWorkflow("base-image.yaml");
     const managedWorkflow = readWorkflow("managed-images.yaml");
@@ -335,33 +380,62 @@ describe("complete managed-image publication workflow", () => {
     const steps = prBuilder.steps ?? [];
 
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
-    expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
+    expect(prBuilder["runs-on"]).toBe("${{ matrix.runner }}");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "read" });
-    expect(matrix.map(({ agent }) => agent)).toEqual([
-      "openclaw",
-      "hermes",
-      "langchain-deepagents-code",
+    expect(matrix.map(({ agent, platform }) => `${agent}|${platform}`)).toEqual(
+      publicationAgents.flatMap((agent) =>
+        publicationPlatforms.map((platform) => `${agent}|${platform}`),
+      ),
+    );
+    expect(matrix.map(({ runner }) => runner)).toEqual([
+      "ubuntu-24.04",
+      "ubuntu-24.04-arm",
+      "ubuntu-24.04",
+      "ubuntu-24.04-arm",
+      "ubuntu-24.04",
+      "ubuntu-24.04-arm",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
+    expect(
+      matrix.every(({ image }) => image?.startsWith("localhost:5000/nemoclaw-managed-pr/")),
+    ).toBe(true);
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
+    expect(step(prBuilder, "Set up Docker Buildx").with).toMatchObject({
+      "driver-opts": "network=host",
+      "buildkitd-config-inline": expect.stringContaining('[registry."localhost:5000"]'),
+    });
+    expect(step(prBuilder, "Start isolated PR image registry").run).toContain(
+      "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
+    );
+
     const resolveBase = required(
-      step(prBuilder, "Resolve exact linux/amd64 PR base").run,
+      step(prBuilder, "Resolve exact PR base").run,
       "PR base resolution is missing",
     );
-    expect(resolveBase).toContain('.platform.architecture == "amd64"');
+    expect(resolveBase).toContain(".platform.architecture == $architecture");
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    expect(step(prBuilder, "Build PR managed image locally").with).toMatchObject({
-      platforms: "linux/amd64",
-      load: true,
-      push: false,
+    const build = step(prBuilder, "Build and push PR managed image to isolated registry");
+    expect(build.id).toBe("build");
+    expect(build.with).toMatchObject({
+      platforms: "${{ matrix.platform }}",
+      push: true,
     });
+    expect(build.with).not.toHaveProperty("load");
+    const contract = required(
+      step(prBuilder, "Validate exact PR managed image contract").run,
+      "PR image contract validation is missing",
+    );
+    expect(contract).toContain('reference="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"');
+    expect(contract).toContain('imagetools inspect "$reference" --raw');
+    expect(contract).toContain('docker pull --platform "$PLATFORM" "$reference"');
+    expect(contract).toContain("printf 'reference=%s\\n' \"$reference\"");
     expect(step(prBuilder, "Exercise managed startup root stdin and hold").run).toContain(
       "run-managed-image-direct-e2e.ts",
     );
@@ -376,6 +450,7 @@ describe("complete managed-image publication workflow", () => {
         "include-hidden-files"
       ],
     ).toBe(true);
+    expect(step(prBuilder, "Remove isolated PR image registry").if).toBe("always()");
   });
 
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
