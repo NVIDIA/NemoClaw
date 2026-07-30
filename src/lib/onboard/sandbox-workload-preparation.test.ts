@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
@@ -23,6 +23,7 @@ import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
 
 const RELEASE = "v0.0.97";
+const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
 const COHORT = "ghrun-7744-2";
 
@@ -54,7 +55,7 @@ const CATALOG: ManagedImageContractCatalog = Object.fromEntries(
 function runtime(driverName = "docker"): SandboxWorkloadRuntimeCapabilities {
   return {
     driverName,
-    managedImageSelectionPolicy: driverName === "docker" ? "prefer-managed" : "require-managed",
+    managedImageSelectionPolicy: "require-managed",
     legacyDockerfileBuilds: driverName === "docker",
     managedImages: {
       exactDigestReferences: true,
@@ -82,7 +83,10 @@ describe("sandbox workload preparation", () => {
 
     const prepared = await prepareSandboxWorkloadSource(input(agent), { resolveCatalog });
 
-    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({ release: RELEASE });
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: RELEASE,
+      platform: MANAGED_IMAGE_PLATFORM,
+    });
     expect(prepared).toEqual({
       source: {
         kind: "managed-image",
@@ -134,8 +138,14 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("retains Dockerfile fallback for Docker on an unshipped host architecture (#7744)", async () => {
-    const resolveCatalog = vi.fn(async () => CATALOG);
+  it("selects the managed cohort for Docker on arm64 (#7744)", async () => {
+    const arm64Catalog = Object.fromEntries(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [
+        agent,
+        { ...contract(agent, index), platform: MANAGED_IMAGE_PLATFORMS[1] },
+      ]),
+    );
+    const resolveCatalog = vi.fn(async () => arm64Catalog);
     const prepared = await prepareSandboxWorkloadSource(
       {
         ...input("openclaw"),
@@ -148,11 +158,34 @@ describe("sandbox workload preparation", () => {
       { resolveCatalog },
     );
 
-    expect(resolveCatalog).not.toHaveBeenCalled();
-    expect(prepared.source).toMatchObject({
-      kind: "legacy-dockerfile",
-      reason: "runtime-unsupported",
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: RELEASE,
+      platform: MANAGED_IMAGE_PLATFORMS[1],
     });
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      reference: contract("openclaw", 0).reference,
+      contract: { platform: MANAGED_IMAGE_PLATFORMS[1] },
+    });
+  });
+
+  it("fails closed before catalog access for stock Docker on an unsupported architecture (#7744)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          runtime: resolveSandboxWorkloadRuntimeCapabilities(
+            { driverName: "docker" },
+            undefined,
+            "s390x",
+          ),
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("does not advertise managed images");
+    expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -202,11 +235,14 @@ describe("sandbox workload preparation", () => {
     expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
-  it("preserves Dockerfile fallback on an unavailable catalog only when policy allows it (#7744)", async () => {
+  it("uses an unavailable-catalog fallback only under an explicit preferred policy (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => {
       throw new Error("registry offline");
     });
-    const preferred = await prepareSandboxWorkloadSource(input("openclaw"), { resolveCatalog });
+    const preferred = await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), policy: "prefer-managed" },
+      { resolveCatalog },
+    );
 
     expect(preferred.source).toMatchObject({
       kind: "legacy-dockerfile",
@@ -215,10 +251,7 @@ describe("sandbox workload preparation", () => {
     expect(preferred.fallbackDiagnostic).toContain("registry offline");
 
     await expect(
-      prepareSandboxWorkloadSource(
-        { ...input("openclaw"), policy: "require-managed" },
-        { resolveCatalog },
-      ),
+      prepareSandboxWorkloadSource(input("openclaw"), { resolveCatalog }),
     ).rejects.toThrow(SandboxWorkloadPreparationError);
   });
 

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isManagedImagePlatform,
   isShippedManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  type ManagedImagePlatform,
   parseManagedImageContractV1,
 } from "../managed-image/contract";
 
@@ -29,7 +30,7 @@ export interface SandboxWorkloadRuntimeCapabilities {
   readonly legacyDockerfileBuilds: boolean;
   readonly managedImages: {
     readonly exactDigestReferences: boolean;
-    readonly platforms: readonly string[];
+    readonly platforms: readonly ManagedImagePlatform[];
     readonly startupProfileContractVersions: readonly number[];
     readonly capabilityContractVersions: readonly number[];
   } | null;
@@ -122,8 +123,8 @@ export function managedImageRuntimeSupportError(
   if (!capabilities.exactDigestReferences) {
     return `driver '${runtime.driverName}' does not support exact-digest image references`;
   }
-  if (!capabilities.platforms.includes(MANAGED_IMAGE_PLATFORM)) {
-    return `driver '${runtime.driverName}' does not support ${MANAGED_IMAGE_PLATFORM}`;
+  if (capabilities.platforms.length !== 1 || !isManagedImagePlatform(capabilities.platforms[0])) {
+    return `driver '${runtime.driverName}' does not identify exactly one supported host managed-image platform`;
   }
   if (
     !capabilities.startupProfileContractVersions.includes(
@@ -138,6 +139,14 @@ export function managedImageRuntimeSupportError(
     return `driver '${runtime.driverName}' does not support capability contract v${MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION}`;
   }
   return null;
+}
+
+export function managedImageRuntimePlatform(
+  runtime: SandboxWorkloadRuntimeCapabilities,
+): ManagedImagePlatform | null {
+  return managedImageRuntimeSupportError(runtime) === null
+    ? (runtime.managedImages?.platforms[0] ?? null)
+    : null;
 }
 
 export function resolveSandboxWorkloadSource(
@@ -170,7 +179,13 @@ export function resolveSandboxWorkloadSource(
   }
 
   try {
-    const contract = parseManagedImageContractV1(candidate, options.agentName);
+    const expectedPlatform = managedImageRuntimePlatform(options.runtime);
+    if (expectedPlatform === null) {
+      throw new SandboxWorkloadSourceError(
+        `Driver '${options.runtime.driverName}' has no unambiguous managed-image host platform.`,
+      );
+    }
+    const contract = parseManagedImageContractV1(candidate, options.agentName, expectedPlatform);
     return {
       kind: "managed-image",
       reference: contract.reference,

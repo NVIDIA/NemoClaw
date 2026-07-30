@@ -70,6 +70,39 @@ function brokerDiagnostics(child: ChildProcess, output: () => string): string {
   ].join("; ");
 }
 
+function controlRequest(
+  socketPath: string,
+  route: "/credentials/register" | "/credentials/unregister",
+  payload: Record<string, string>,
+): Promise<{ readonly body: string; readonly status: number }> {
+  const body = JSON.stringify(payload);
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        socketPath,
+        path: route,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            body: Buffer.concat(chunks).toString("utf8"),
+            status: response.statusCode ?? 0,
+          }),
+        );
+      },
+    );
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 async function waitForBrokerCondition(
   description: string,
   child: ChildProcess,
@@ -125,6 +158,24 @@ describe("Hermes managed-tool gateway broker", () => {
         hermesToolGateways: ["nous-web"],
       }),
     ).toBe(true);
+    expect(
+      broker.planHermesToolGatewayBrokerRefresh({
+        currentBrokerHealthy: true,
+        hashMatches: false,
+      }),
+    ).toBe("preserve-runtime-mismatch");
+    expect(
+      broker.planHermesToolGatewayBrokerRefresh({
+        currentBrokerHealthy: true,
+        hashMatches: true,
+      }),
+    ).toBe("register-with-current");
+    expect(
+      broker.planHermesToolGatewayBrokerRefresh({
+        currentBrokerHealthy: false,
+        hashMatches: false,
+      }),
+    ).toBe("start-or-restart");
   });
 
   it("refreshes via header, replaces upstream auth, normalizes responses, and rotates OpenShell storage", {
@@ -390,5 +441,172 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(output).not.toContain("access-2");
     expect(output).not.toContain("sandbox-secret");
     expect(output).not.toContain("agent-key-2");
+  });
+
+  it("keeps source and destination credentials live in one broker process and unregisters only the destination", {
+    timeout: BROKER_TEST_TIMEOUT_MS,
+  }, async ({ resources }) => {
+    const tmp = resources.temporaryDirectory("nemoclaw-hermes-tool-broker-coexistence-");
+    const stateDir = path.join(tmp, "state");
+    const binDir = path.join(tmp, "bin");
+    // AF_UNIX paths are short on macOS; the Vitest-owned TMPDIR itself can
+    // exceed that limit before the socket name is appended.
+    const socketDir = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-broker-"));
+    const controlSocket = path.join(socketDir, "control.sock");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(binDir, { recursive: true });
+    const openshellBin = path.join(binDir, "openshell");
+    fs.writeFileSync(openshellBin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const writeState = (sandbox: string, brokerToken: string, refreshToken: string): void => {
+      fs.writeFileSync(
+        path.join(stateDir, `${sandbox}.json`),
+        JSON.stringify(
+          {
+            version: 1,
+            sandbox,
+            provider_name: `${sandbox}-hermes-tool-gateway`,
+            credential_env: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+            broker_token: brokerToken,
+            broker_token_sha256: sha256(brokerToken),
+            refresh_token_sha256: sha256(refreshToken),
+            client_id: "hermes-cli",
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+    };
+    writeState("source", "source-broker-token", "source-refresh-token");
+    writeState("destination", "destination-broker-token", "destination-refresh-token");
+
+    const refreshHeaders: string[] = [];
+    const portal = resources.ownServer(
+      http.createServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          if (req.url === "/api/oauth/agent-key") {
+            res.end(
+              JSON.stringify({
+                api_key: "local-agent-key",
+                expires_in: 1800,
+                inference_base_url: "https://inference-api.nousresearch.com/v1",
+              }),
+            );
+            return;
+          }
+          const refreshToken = String(req.headers["x-nous-refresh-token"] || "");
+          refreshHeaders.push(refreshToken);
+          const identity = refreshToken.startsWith("destination") ? "destination" : "source";
+          res.end(
+            JSON.stringify({
+              access_token: `access-${identity}`,
+              refresh_token: refreshToken,
+              expires_in: 900,
+              token_type: "Bearer",
+            }),
+          );
+        });
+      }),
+    );
+    const portalPort = await listen(portal);
+
+    const upstreamAuthorizations: string[] = [];
+    const upstream = resources.ownServer(
+      http.createServer((req, res) => {
+        upstreamAuthorizations.push(String(req.headers.authorization || ""));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      }),
+    );
+    const upstreamPort = await listen(upstream);
+    const matrixPath = path.join(tmp, "matrix.json");
+    fs.writeFileSync(
+      matrixPath,
+      JSON.stringify({
+        "nous-web": {
+          service: "firecrawl",
+          upstream: `http://127.0.0.1:${upstreamPort}`,
+        },
+      }),
+    );
+    const brokerPort = await freePort();
+    const child = resources.ownChild(
+      spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        env: {
+          ...process.env,
+          HERMES_TOOL_GATEWAY_PORT: String(brokerPort),
+          HERMES_TOOL_GATEWAY_STATE_DIR: stateDir,
+          HERMES_TOOL_GATEWAY_MATRIX_PATH: matrixPath,
+          HERMES_TOOL_GATEWAY_CONTROL_SOCKET: controlSocket,
+          HERMES_INFERENCE_AGENT_KEY_REFRESH_INTERVAL_MS: "3600000",
+          NOUS_PORTAL_BASE_URL: `http://127.0.0.1:${portalPort}`,
+          NEMOCLAW_OPENSHELL_BIN: openshellBin,
+          NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "source-refresh-token",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    await waitForBrokerCondition(
+      "broker and private control socket",
+      child,
+      () => output,
+      async () => {
+        const response = await fetch(`http://127.0.0.1:${brokerPort}/health`, {
+          signal: AbortSignal.timeout(1_000),
+        });
+        return (
+          response.status === 200 &&
+          fs.existsSync(controlSocket) &&
+          (fs.statSync(controlSocket).mode & 0o777) === 0o600
+        );
+      },
+    );
+
+    const proxy = (brokerToken: string) =>
+      fetch(`http://127.0.0.1:${brokerPort}/firecrawl/v1/scrape`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${brokerToken}` },
+        body: "{}",
+      });
+
+    expect((await proxy("source-broker-token")).status).toBe(200);
+    await expect(
+      controlRequest(controlSocket, "/credentials/register", {
+        sandbox: "destination",
+        refresh_token: "destination-refresh-token",
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    expect((await proxy("destination-broker-token")).status).toBe(200);
+
+    await expect(
+      controlRequest(controlSocket, "/credentials/unregister", {
+        sandbox: "destination",
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    expect((await proxy("destination-broker-token")).status).toBe(401);
+    expect((await proxy("source-broker-token")).status).toBe(200);
+
+    expect(upstreamAuthorizations).toEqual([
+      "Bearer access-source",
+      "Bearer access-destination",
+      "Bearer access-source",
+    ]);
+    expect(refreshHeaders).toEqual(
+      expect.arrayContaining(["source-refresh-token", "destination-refresh-token"]),
+    );
+    expect(output).not.toContain("source-refresh-token");
+    expect(output).not.toContain("destination-refresh-token");
   });
 });

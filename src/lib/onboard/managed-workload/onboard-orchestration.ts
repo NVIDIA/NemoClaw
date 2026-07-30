@@ -396,6 +396,7 @@ export function resolveOnboardSandboxWorkloadReceipt(
       schemaVersion: 1,
       kind: "managed-image",
       reference: input.workload.source.reference,
+      platform: input.workload.source.contract.platform,
       release: input.workload.source.contract.source.release,
       sourceRevision: input.workload.source.contract.source.revision,
       sourceCohort: input.workload.source.contract.source.cohort,

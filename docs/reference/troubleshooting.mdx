@@ -2824,6 +2824,23 @@ The `NEMOCLAW_HERMES_AUTH` and `NEMOCLAW_NOUS_AUTH_METHOD` variables are back-co
 If OAuth is selected and onboarding cannot open the host's default browser (a headless host or SSH session), the device-code prompt still prints the verification URL and user code to the terminal.
 Copy them to a browser on any other machine to complete the flow.
 
+### Hermes reports that the managed-tool broker runtime changed
+
+NemoClaw does not replace a healthy Hermes managed-tool broker when its executable hash changes.
+The broker holds each sandbox's raw refresh credential only in process memory, so an automatic restart would simultaneously disconnect every managed-tool Hermes sandbox on the host.
+The existing broker and its already registered sandboxes keep running; a new clone or reauthorization fails closed until the broker is recovered.
+
+Use a planned reauthorization window:
+
+1. Run `$$nemoclaw list --json` to enumerate the Hermes sandboxes, then record each one for which you selected any managed Nous tool during onboarding.
+2. Stop the existing Hermes managed-tool broker through host process or service management. A host restart is the safe fallback when there is no process supervisor.
+3. Run `nemohermes onboard --resume` for the first recorded sandbox and complete a fresh Nous Portal device-code authorization. This starts the current broker runtime.
+4. Run `nemohermes onboard --resume` for every remaining recorded sandbox. Each authorization registers that sandbox's independent refresh credential with the same broker process.
+5. Exercise one selected managed tool in every sandbox before ending the maintenance window.
+
+For non-interactive recovery, export the matching sandbox's fresh `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN` immediately before each `nemohermes onboard --resume --non-interactive` invocation, then unset it before moving to the next sandbox.
+Do not reuse one sandbox's refresh credential for another.
+
 ### API client returns `401 Unauthorized` against port 8642
 
 Hermes uses bearer-token header authentication for client requests, not an OpenClaw-style URL fragment.

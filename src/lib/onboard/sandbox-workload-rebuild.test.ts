@@ -16,7 +16,7 @@ import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
@@ -46,6 +46,7 @@ import {
 import * as workloadRuntime from "./workload/runtime";
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
 
+const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const RUNTIME = {
   driverName: "docker",
   managedImageSelectionPolicy: "prefer-managed",
@@ -55,6 +56,13 @@ const RUNTIME = {
     platforms: [MANAGED_IMAGE_PLATFORM],
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
+  },
+} as const satisfies SandboxWorkloadRuntimeCapabilities;
+const ARM64_RUNTIME = {
+  ...RUNTIME,
+  managedImages: {
+    ...RUNTIME.managedImages,
+    platforms: [MANAGED_IMAGE_PLATFORMS[1]],
   },
 } as const satisfies SandboxWorkloadRuntimeCapabilities;
 
@@ -245,6 +253,21 @@ describe("managed workload rebuild handoff", () => {
       handoff?.replacement.source,
     );
     expect(managedWorkloadRebuildHandoffMatchesEntry(handoff!, oldEntry)).toBe(true);
+  });
+
+  it("interprets a pre-platform receipt as amd64 and rejects it on an arm64-only runtime", async () => {
+    const oldEntry = entry("openclaw");
+    installReplacement("openclaw");
+    const handoff = (await prepareManagedWorkloadRebuildHandoff(oldEntry, {
+      runtime: RUNTIME,
+      version: NEW_RELEASE,
+    }))!;
+
+    expect(handoff.previousReceipt.platform).toBeUndefined();
+    expect(handoff.previousContract.platform).toBe(MANAGED_IMAGE_PLATFORMS[0]);
+    expect(() => prepareSandboxWorkloadSourceFromRebuildHandoff(handoff, ARM64_RUNTIME)).toThrow(
+      "recorded managed workload is not supported by the selected runtime",
+    );
   });
 
   it.each(
@@ -459,6 +482,7 @@ describe("managed workload rebuild handoff", () => {
       schemaVersion: 1,
       kind: "managed-image",
       reference: replacementReference,
+      platform: handoff.replacement.source.contract.platform,
       release: handoff.replacement.source.contract.source.release,
       sourceRevision: handoff.replacement.source.contract.source.revision,
       sourceCohort: handoff.replacement.source.contract.source.cohort,

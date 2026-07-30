@@ -750,8 +750,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
   });
 
-  it("fails before force-delete when Hermes tool gateways need a fresh broker binding", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("recredentials and rebinds Hermes tool gateways for a forced managed clone", async () => {
     const built = buildManagedStartupProfile({
       agent: "hermes",
       inference: {
@@ -832,23 +831,45 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     );
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    vi.stubEnv("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN", "test-only-destination-refresh-token");
+    f.runOpenshellMock.mockImplementation(
+      s.managedProviderCreationRunner({
+        "beta-hermes-tool-gateway": {
+          type: "generic",
+          credential: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+        },
+      }),
+    );
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    await runSandboxSnapshot("alpha", {
+      kind: "restore",
+      to: "beta",
+      force: true,
+      yes: true,
+    });
 
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "fresh Nous OAuth refresh credential and destination broker binding",
+    const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] as readonly string[];
+    const createEnv = f.streamSandboxCreateMock.mock.calls[0]?.[2] as NodeJS.ProcessEnv | undefined;
+    expect(
+      createArgs.some(
+        (argument, index) =>
+          argument === "--provider" && createArgs[index + 1] === "beta-hermes-tool-gateway",
+      ),
+    ).toBe(true);
+    expect(createArgs.join(" ")).not.toContain("test-only-destination-refresh-token");
+    expect(createEnv?.NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN).toBeUndefined();
+    expect(f.bindHermesToolGatewayCloneProviderStateMock).toHaveBeenCalledExactlyOnceWith(
+      "beta",
+      "test-only-destination-refresh-token",
     );
-    expect(f.lifecycleMock.events).not.toContain("delete");
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+    expect(f.runDeviceCodeFlowMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "beta",
+        hermesToolGateways: ["nous-web"],
+      }),
+    );
   });
 
   it("restores the latest snapshot into the source sandbox", async () => {

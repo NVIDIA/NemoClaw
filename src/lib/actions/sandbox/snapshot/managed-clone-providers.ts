@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  getHermesToolGatewayCloneBroker,
+  type HermesToolGatewayCloneBroker,
+} from "../../../hermes-tool-gateway-clone-broker";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
   ensureWebSearchProviderProfiles,
@@ -13,7 +17,9 @@ import {
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
 
-type ManagedCloneProviderSource = "messaging" | "web-search";
+type ManagedCloneProviderSource = "hermes-tool-gateway" | "messaging" | "web-search";
+
+const HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
 
 type ManagedCloneProviderCommandResult = {
   readonly status: number | null;
@@ -36,6 +42,8 @@ export interface PreparedManagedCloneProvider {
   readonly providerType: string;
   readonly providerEnvKey: string;
   readonly source: ManagedCloneProviderSource;
+  /** Destination identity whose host broker state must be rebound after provider creation. */
+  readonly brokerSandboxName?: string;
   /**
    * Only a force-replaced destination authorizes replacement of an existing
    * destination-named provider. Provisioning must still prove that no other
@@ -146,12 +154,58 @@ function addWebSearchProvider(
   });
 }
 
-function assertHermesToolGatewayCloneIsRecredentialable(profile: ManagedStartupProfile): void {
+function addHermesToolGatewayProvider(
+  providers: Map<string, Omit<PreparedManagedCloneProvider, "replaceExistingCredential">>,
+  profile: ManagedStartupProfile,
+  destinationSandboxName: string,
+  broker: HermesToolGatewayCloneBroker,
+): void {
   if (profile.agent !== "hermes" || profile.tools.enabledGateways.length === 0) return;
-  throw new Error(
-    "managed Hermes tool gateways cannot yet be cloned without a fresh Nous OAuth refresh " +
-      "credential and destination broker binding; disable the gateways or re-onboard the clone",
-  );
+  const providerEnvKey = broker.HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV;
+  if (providerEnvKey !== HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV) {
+    throw new Error("Hermes managed-tool gateway credential contract changed");
+  }
+  addProvider(providers, {
+    providerName: broker.getHermesToolGatewayProviderName(destinationSandboxName),
+    providerType: "generic",
+    providerEnvKey,
+    source: "hermes-tool-gateway",
+    brokerSandboxName: destinationSandboxName,
+  });
+}
+
+export async function resolveManagedCloneCredentialEnvironment(input: {
+  readonly profile: ManagedStartupProfile;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly nonInteractive?: boolean;
+  readonly runDeviceCodeFlow?: () => Promise<{ readonly refresh_token: string }>;
+}): Promise<NodeJS.ProcessEnv> {
+  if (input.profile.agent !== "hermes" || input.profile.tools.enabledGateways.length === 0) {
+    return {};
+  }
+  const environment = input.environment ?? process.env;
+  const explicit = environment[HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]
+    ?.replace(/\r/gu, "")
+    .trim();
+  if (explicit) return { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: explicit };
+  if (input.nonInteractive ?? environment.NEMOCLAW_NON_INTERACTIVE === "1") {
+    throw new Error(
+      "managed Hermes tool-gateway clone requires a fresh Nous OAuth refresh credential; " +
+        `export ${HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV} before retrying`,
+    );
+  }
+  const runDeviceCodeFlow =
+    input.runDeviceCodeFlow ??
+    (async () => {
+      const oauth = await import("../../../oauth-device-code");
+      return oauth.runDeviceCodeFlow();
+    });
+  const tokens = await runDeviceCodeFlow();
+  const refreshToken = tokens.refresh_token?.replace(/\r/gu, "").trim();
+  if (!refreshToken) {
+    throw new Error("Nous OAuth returned no refresh credential for the snapshot destination");
+  }
+  return { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: refreshToken };
 }
 
 function ensureRequiredWebSearchProfiles(
@@ -197,15 +251,20 @@ export function prepareManagedCloneProviders(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly root: string;
   readonly runOpenshell: ManagedCloneProviderRunner;
+  readonly hermesToolGatewayBroker?: HermesToolGatewayCloneBroker;
 }): readonly PreparedManagedCloneProvider[] {
-  assertHermesToolGatewayCloneIsRecredentialable(input.profile);
-
   const pending = new Map<
     string,
     Omit<PreparedManagedCloneProvider, "replaceExistingCredential">
   >();
   addMessagingProviders(pending, input.messagingPlan);
   addWebSearchProvider(pending, input.profile, input.destinationSandboxName);
+  addHermesToolGatewayProvider(
+    pending,
+    input.profile,
+    input.destinationSandboxName,
+    input.hermesToolGatewayBroker ?? getHermesToolGatewayCloneBroker(),
+  );
   const environment = input.environment ?? process.env;
   const prepared: PreparedManagedCloneProvider[] = [];
 
@@ -246,7 +305,9 @@ function cleanupCreatedProviders(
   providerNames: readonly string[],
   runOpenshell: ManagedCloneProviderRunner,
   authorizedSandboxName?: string,
+  hermesToolGatewayBroker: HermesToolGatewayCloneBroker = getHermesToolGatewayCloneBroker(),
 ): void {
+  const hermesProviderSuffix = "-hermes-tool-gateway";
   for (const providerName of [...providerNames].reverse()) {
     const result = authorizedSandboxName
       ? deleteProviderWithRecovery(providerName, {
@@ -262,6 +323,15 @@ function cleanupCreatedProviders(
       console.warn(
         `  Warning: could not clean up managed clone provider '${providerName}' after failure.`,
       );
+      continue;
+    }
+    if (providerName.endsWith(hermesProviderSuffix)) {
+      const sandboxName = providerName.slice(0, -hermesProviderSuffix.length);
+      if (!hermesToolGatewayBroker.removeHermesToolGatewayProviderState(sandboxName)) {
+        console.warn(
+          `  Warning: could not clean up Hermes tool-gateway broker state for '${sandboxName}'.`,
+        );
+      }
     }
   }
 }
@@ -276,9 +346,11 @@ export function provisionManagedCloneProviders(
     readonly environment?: NodeJS.ProcessEnv;
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly rollbackSandboxName?: string;
+    readonly hermesToolGatewayBroker?: HermesToolGatewayCloneBroker;
   },
 ): string[] {
   const environment = input.environment ?? process.env;
+  const broker = input.hermesToolGatewayBroker ?? getHermesToolGatewayCloneBroker();
   // A force-replaced destination authorizes deletion and recreation, never a
   // gateway-wide credential update. The bounded delete helper proves that no
   // unrelated sandbox is attached before the new credential is introduced.
@@ -349,10 +421,18 @@ export function provisionManagedCloneProviders(
           `managed clone provider '${provider.providerName}' did not retain its exact binding`,
         );
       }
+      if (provider.source === "hermes-tool-gateway") {
+        if (provider.brokerSandboxName === undefined) {
+          throw new Error(
+            `managed clone provider '${provider.providerName}' has no destination broker identity`,
+          );
+        }
+        broker.bindHermesToolGatewayCloneProviderState(provider.brokerSandboxName, credential);
+      }
     }
     return mutated;
   } catch (error) {
-    cleanupCreatedProviders(mutated, input.runOpenshell, input.rollbackSandboxName);
+    cleanupCreatedProviders(mutated, input.runOpenshell, input.rollbackSandboxName, broker);
     throw error;
   }
 }
@@ -361,6 +441,12 @@ export function cleanupManagedCloneProviders(
   providerNames: readonly string[],
   runOpenshell: ManagedCloneProviderRunner,
   authorizedSandboxName?: string,
+  hermesToolGatewayBroker: HermesToolGatewayCloneBroker = getHermesToolGatewayCloneBroker(),
 ): void {
-  cleanupCreatedProviders(providerNames, runOpenshell, authorizedSandboxName);
+  cleanupCreatedProviders(
+    providerNames,
+    runOpenshell,
+    authorizedSandboxName,
+    hermesToolGatewayBroker,
+  );
 }

@@ -11,6 +11,7 @@ const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 const COHORT_PATTERN = /^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
 const MANAGED_REFERENCE_PATTERN =
   /^ghcr[.]io\/nvidia\/nemoclaw\/(?:openclaw|hermes|langchain-deepagents-code)-sandbox@sha256:[0-9a-f]{64}$/u;
+const MANAGED_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const RELEASE_PATTERN = /^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u;
 const MAX_COHORT_BYTES = 128;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
@@ -78,6 +79,7 @@ export function cloneSandboxWorkloadReceipt(
     value.kind !== "managed-image" ||
     value.shared !== true ||
     !MANAGED_REFERENCE_PATTERN.test(value.reference) ||
+    (value.platform !== undefined && !MANAGED_PLATFORMS.has(value.platform)) ||
     !RELEASE_PATTERN.test(value.release) ||
     !REVISION_PATTERN.test(value.sourceRevision) ||
     typeof value.sourceCohort !== "string" ||
@@ -99,6 +101,7 @@ export function cloneSandboxWorkloadReceipt(
     schemaVersion: 1,
     kind: "managed-image",
     reference: value.reference,
+    ...(value.platform === undefined ? {} : { platform: value.platform }),
     release: value.release,
     sourceRevision: value.sourceRevision,
     sourceCohort: value.sourceCohort,

@@ -22,6 +22,7 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { RuntimeRefreshCredentialStore } = require("./runtime-refresh-credentials.ts");
 
 const PORT = parseInt(process.env.HERMES_TOOL_GATEWAY_PORT || "11436", 10);
 const STATE_DIR = process.env.HERMES_TOOL_GATEWAY_STATE_DIR;
@@ -36,6 +37,7 @@ const OPENSHELL_BIN = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
 const CREDENTIAL_ENV =
   process.env.HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV ||
   "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
+const CONTROL_SOCKET_PATH = process.env.HERMES_TOOL_GATEWAY_CONTROL_SOCKET || "";
 const HERMES_INFERENCE_PROVIDER_NAME =
   process.env.HERMES_INFERENCE_PROVIDER_NAME || "hermes-provider";
 const HERMES_INFERENCE_CREDENTIAL_ENV =
@@ -106,6 +108,8 @@ function sha256(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
+const runtimeRefreshCredentials = new RuntimeRefreshCredentialStore(sha256);
+
 function loadMatrix() {
   try {
     const matrix = JSON.parse(fs.readFileSync(MATRIX_PATH, "utf8"));
@@ -145,6 +149,12 @@ function loadStateFile(file) {
   } catch {
     return null;
   }
+}
+
+function loadStateForSandbox(sandboxName) {
+  const sandbox = String(sandboxName || "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/u.test(sandbox)) return null;
+  return loadStateFile(path.join(STATE_DIR, `${sandbox}.json`));
 }
 
 function findStateByRefreshToken(refreshToken) {
@@ -208,16 +218,23 @@ function extractRefreshToken(req) {
 }
 
 function resolveRuntimeRefreshToken(loaded) {
-  const refreshToken = String(process.env[CREDENTIAL_ENV] || "").trim();
-  if (!refreshToken) {
-    return null;
-  }
-  const expectedHash = String(loaded?.state?.refresh_token_sha256 || "");
-  if (!expectedHash || !timingSafeEqualString(expectedHash, sha256(refreshToken))) {
-    return null;
-  }
-  return refreshToken;
+  return runtimeRefreshCredentials.resolve(loaded?.state);
 }
+
+function registerInitialRuntimeRefreshCredential() {
+  const refreshToken = String(process.env[CREDENTIAL_ENV] || "").trim();
+  if (!refreshToken) return;
+  const digest = sha256(refreshToken);
+  for (const file of stateFiles()) {
+    const loaded = loadStateFile(file);
+    if (loaded && timingSafeEqualString(String(loaded.state.refresh_token_sha256 || ""), digest)) {
+      runtimeRefreshCredentials.register(loaded.state, refreshToken);
+    }
+  }
+  delete process.env[CREDENTIAL_ENV];
+}
+
+registerInitialRuntimeRefreshCredential();
 
 function parseRoute(reqUrl) {
   const url = new URL(reqUrl || "/", "http://broker.local");
@@ -362,8 +379,8 @@ async function refreshAccessToken(refreshToken, loaded) {
     };
     atomicWriteJson(loaded.file, nextState);
     loaded.state = nextState;
+    runtimeRefreshCredentials.rotate(nextState, nextRefreshToken);
   }
-  process.env[CREDENTIAL_ENV] = nextRefreshToken;
 
   return payload.access_token;
 }
@@ -501,6 +518,55 @@ function sendText(res, status, text) {
   res.end(text);
 }
 
+function readControlJson(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 16_384) {
+        reject(new Error("control_request_too_large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        reject(new Error("control_request_invalid"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+async function handleControlRequest(req, res) {
+  if (req.method !== "POST") {
+    sendText(res, 405, "method not allowed");
+    return;
+  }
+  const payload = await readControlJson(req);
+  const sandbox = String(payload?.sandbox || "").trim();
+  if (req.url === "/credentials/register") {
+    const loaded = loadStateForSandbox(sandbox);
+    const refreshToken = String(payload?.refresh_token || "").trim();
+    if (!loaded || !runtimeRefreshCredentials.register(loaded.state, refreshToken)) {
+      sendText(res, 409, "credential does not match destination broker state");
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (req.url === "/credentials/unregister") {
+    runtimeRefreshCredentials.unregister(sandbox);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  sendText(res, 404, "unknown broker control route");
+}
+
 function errorCode(err) {
   return err && typeof err === "object" && typeof err.code === "string" ? err.code : null;
 }
@@ -635,6 +701,26 @@ const server = http.createServer((req, res) => {
     });
 });
 
+let controlServer = null;
+if (CONTROL_SOCKET_PATH) {
+  try {
+    fs.unlinkSync(CONTROL_SOCKET_PATH);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  fs.mkdirSync(path.dirname(CONTROL_SOCKET_PATH), { recursive: true, mode: 0o700 });
+  controlServer = http.createServer((req, res) => {
+    handleControlRequest(req, res).catch((error) => {
+      console.error(`Hermes tool gateway control error: ${error?.message || error}`);
+      if (!res.headersSent) sendText(res, 400, "invalid broker control request");
+      else res.end();
+    });
+  });
+  controlServer.listen(CONTROL_SOCKET_PATH, () => {
+    fs.chmodSync(CONTROL_SOCKET_PATH, 0o600);
+  });
+}
+
 server.listen(PORT, "0.0.0.0", () => {
   console.error(`Hermes managed-tool gateway broker listening on :${PORT}`);
   refreshManagedInferenceForRuntimeCredentials().catch((err) => {
@@ -651,5 +737,20 @@ const refreshTimer = setInterval(() => {
 }, AGENT_KEY_REFRESH_INTERVAL_MS);
 refreshTimer.unref?.();
 
-process.on("SIGTERM", () => server.close(() => process.exit(0)));
-process.on("SIGINT", () => server.close(() => process.exit(0)));
+function closeBroker() {
+  const exit = () => {
+    if (CONTROL_SOCKET_PATH) {
+      try {
+        fs.unlinkSync(CONTROL_SOCKET_PATH);
+      } catch {
+        /* ignore */
+      }
+    }
+    process.exit(0);
+  };
+  if (controlServer) controlServer.close(() => server.close(exit));
+  else server.close(exit);
+}
+
+process.on("SIGTERM", closeBroker);
+process.on("SIGINT", closeBroker);

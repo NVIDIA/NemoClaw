@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const MANAGED_IMAGE_CONTRACT_VERSION = 1 as const;
-export const MANAGED_IMAGE_PLATFORM = "linux/amd64" as const;
+export const MANAGED_IMAGE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 export const MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION = 1 as const;
 export const MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION = 1 as const;
 export const MANAGED_IMAGE_SOURCE_REPOSITORY = "NVIDIA/NemoClaw" as const;
+
+export type ManagedImagePlatform = (typeof MANAGED_IMAGE_PLATFORMS)[number];
 
 export const SHIPPED_MANAGED_IMAGE_AGENTS = [
   "openclaw",
@@ -44,7 +46,7 @@ export interface ManagedImageSourceIdentity {
 export interface ManagedImageContractV1 {
   readonly contractVersion: typeof MANAGED_IMAGE_CONTRACT_VERSION;
   readonly agent: ShippedManagedImageAgent;
-  readonly platform: typeof MANAGED_IMAGE_PLATFORM;
+  readonly platform: ManagedImagePlatform;
   readonly image: PublicManagedImageRepository;
   readonly digest: ManagedImageDigest;
   readonly reference: ManagedImageReference;
@@ -110,9 +112,24 @@ export function isShippedManagedImageAgent(value: string): value is ShippedManag
   return (SHIPPED_MANAGED_IMAGE_AGENTS as readonly string[]).includes(value);
 }
 
+export function isManagedImagePlatform(value: unknown): value is ManagedImagePlatform {
+  return (
+    typeof value === "string" && (MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(value)
+  );
+}
+
+export function managedImagePlatformForNodeArchitecture(
+  nodeArchitecture: string,
+): ManagedImagePlatform | null {
+  if (nodeArchitecture === "x64" || nodeArchitecture === "amd64") return "linux/amd64";
+  if (nodeArchitecture === "arm64") return "linux/arm64";
+  return null;
+}
+
 export function parseManagedImageContractV1(
   value: unknown,
   expectedAgent?: ShippedManagedImageAgent,
+  expectedPlatform?: ManagedImagePlatform,
 ): ManagedImageContractV1 {
   const contract = requireRecord(value, "contract");
   requireExactKeys(
@@ -144,7 +161,17 @@ export function parseManagedImageContractV1(
     throw new ManagedImageContractError(`contract.agent must be ${JSON.stringify(expectedAgent)}`);
   }
 
-  const platform = requireLiteral(contract.platform, MANAGED_IMAGE_PLATFORM, "contract.platform");
+  if (!isManagedImagePlatform(contract.platform)) {
+    throw new ManagedImageContractError(
+      `contract.platform must be one of: ${MANAGED_IMAGE_PLATFORMS.join(", ")}`,
+    );
+  }
+  const platform = contract.platform;
+  if (expectedPlatform !== undefined && platform !== expectedPlatform) {
+    throw new ManagedImageContractError(
+      `contract.platform must be ${JSON.stringify(expectedPlatform)}`,
+    );
+  }
   const image = requireLiteral(contract.image, MANAGED_IMAGE_REPOSITORIES[agent], "contract.image");
   const digest = requirePattern(contract.digest, DIGEST_PATTERN, "contract.digest");
   const reference = requireLiteral(contract.reference, `${image}@${digest}`, "contract.reference");
