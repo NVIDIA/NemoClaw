@@ -381,6 +381,13 @@ export function validateLiveE2ERuntimePolicy(
         : undefined;
     validateEntry(errors, entry, expectedKind, { repoRoot, today });
   }
+  for (const duplicate of duplicates(
+    policy.coverage
+      .map((entry) => entry.uniqueBoundary)
+      .filter((boundary): boundary is string => typeof boundary === "string"),
+  )) {
+    errors.push(`multiple coverage entries share the unique boundary: ${duplicate}`);
+  }
 
   const nightly = policy.coverage.filter(
     (entry) => entry.tier === "pr" || entry.tier === "nightly",

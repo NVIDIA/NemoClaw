@@ -25,7 +25,7 @@ function validate(policy: LiveE2ERuntimePolicy): string[] {
   return validateLiveE2ERuntimePolicy(policy, { today: POLICY_DATE });
 }
 
-describe("live E2E runtime policy", () => {
+describe("live E2E runtime policy (#7922)", () => {
   it("covers the exact retained registry and workflow inventory within planning goals", () => {
     expect(validate(LIVE_E2E_RUNTIME_POLICY)).toEqual([]);
     expect(LIVE_E2E_RUNTIME_POLICY.coverage).toHaveLength(96);
@@ -90,6 +90,15 @@ describe("live E2E runtime policy", () => {
         "cloud-inference required artifacts must declare at least one value",
         "cloud-inference must declare a review, consolidation, or retirement condition",
       ]),
+    );
+  });
+
+  it("rejects a live boundary claimed by more than one coverage entry", () => {
+    const policy = policyFixture();
+    policy.coverage[1]!.uniqueBoundary = policy.coverage[0]!.uniqueBoundary;
+
+    expect(validate(policy)).toContain(
+      `multiple coverage entries share the unique boundary: ${policy.coverage[0]!.uniqueBoundary}`,
     );
   });
 
