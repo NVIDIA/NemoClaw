@@ -75,7 +75,8 @@ ARG HERMES_SEMVER=0.19.0
 ARG HERMES_TARBALL_SHA256=285f3fc134ff466a90065e1517801a68993733b807158ee8f32aa01613786990
 ARG HERMES_NPM_INTEGRITY=sha512-+oVKG3lXbk2kEP+J6BXZjtmSBSaFfczIdOWQ9CUSTdTqq2uyHbk4p+kPyZ6MeGs56JU5qXzMNbqGKRVOQRGC1A==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp"
-ARG UV_VERSION=0.11.8
+ARG NODE_VERSION=24.18.1
+ARG UV_VERSION=0.11.33
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
@@ -220,12 +221,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && test -z "$(dpkg --audit)"
 
+# The current node:24-trixie-slim digest still contains Node.js 24.16.0. Overlay
+# the reviewed Node.js 24.18.1 release from nodejs.org so the Hermes runtime
+# includes the security fixes without waiting for Docker Hub tag rotation.
+# hadolint ignore=DL4006
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) node_asset_arch="x64"; node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca" ;; \
+        arm64) node_asset_arch="arm64"; node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2" ;; \
+        *) echo "Unsupported architecture for Node.js: $arch" >&2; exit 1 ;; \
+    esac \
+    && node_archive="/tmp/node-v${NODE_VERSION}-linux-${node_asset_arch}.tar.gz" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
+        -o "$node_archive" \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_asset_arch}.tar.gz" \
+    && printf '%s  %s\n' "$node_sha256" "$node_archive" | sha256sum -c - \
+    && rm -rf \
+        /usr/local/include/node \
+        /usr/local/lib/node_modules/corepack \
+        /usr/local/lib/node_modules/npm \
+        /usr/local/share/doc/node \
+        /usr/local/share/man/man1/node.1 \
+    && rm -f /usr/local/bin/corepack /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx \
+    && tar --extract --gzip --file "$node_archive" \
+        --directory /usr/local --strip-components=1 --no-same-owner \
+    && rm -f "$node_archive" \
+    && test "$(node --version)" = "v${NODE_VERSION}" \
+    && test "$(npm --version)" = "11.16.0"
+
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
-# npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
+# npm 11.16.0 in Node.js 24.18.1 bundles an affected node-tar copy.
 # Patch that private package after curl is installed and before npm processes
 # the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
@@ -381,7 +411,8 @@ RUN printf '%s\n' \
 # writes under /opt/hermes. If a future Hermes tarball removes the lockfile,
 # skip rather than doing a nondeterministic dependency resolve during image
 # build.
-RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
+RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
+    && test "$(uv --version)" = "uv ${UV_VERSION}"
 # Upstream tests are not part of the production runtime and can contain
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
@@ -444,7 +475,7 @@ RUN set -eu; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'pillow': '12.3.0', 'starlette': '1.3.1'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && npm ci --prefer-offline --no-audit --no-fund \
     && for ui_dir in ui-tui web; do \
         if [ -f "${ui_dir}/package-lock.json" ]; then \

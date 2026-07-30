@@ -188,6 +188,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
       classification.layer === "secret-boundary refusal" ||
       classification.layer === "unsafe config path" ||
       classification.layer === "config hash mismatch" ||
+      classification.layer === "relaunch quarantined" ||
       classification.layer === "health timeout" ||
       recoveryFailureDetail.includes("SUPERVISOR_REBUILD_REQUIRED") ||
       recoveryFailureDetail.includes("SUPERVISOR_UNSAFE_CONTROL_DIR") ||
