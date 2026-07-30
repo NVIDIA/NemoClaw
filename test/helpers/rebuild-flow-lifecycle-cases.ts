@@ -135,6 +135,25 @@ export function registerRebuildFlowLifecycleTests(): void {
       );
     });
 
+    it("keeps the original sandbox when the shared route drifts at the delete edge (#7798)", async () => {
+      const harness = createRebuildFlowHarness({
+        revalidateRebuildRouteBeforeDelete: () => ({
+          ok: false,
+          message: "Shared inference route changed before sandbox deletion.",
+        }),
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Shared inference route changed before sandbox deletion.");
+
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+      expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    });
+
     it("keeps baseline exclusions durable through successful replacement onboarding (#7194)", async () => {
       const harness = createRebuildFlowHarness({
         sandboxEntry: {

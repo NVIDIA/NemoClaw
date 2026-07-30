@@ -101,6 +101,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.openclaw.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.openclaw.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.openclaw.generated.mdx
                     slug: set-up-nvidia-nim
@@ -168,6 +171,9 @@ navigation:
               - page: "Configure Agent Heartbeats"
                 path: configure-agents/configure-agent-heartbeats.mdx
                 slug: configure-agent-heartbeats
+              - page: "Configure Memory Search"
+                path: configure-agents/configure-memory-search.mdx
+                slug: configure-memory-search
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
@@ -363,6 +369,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
+              - page: "Configure Runtime Identity"
+                path: reference/configure-runtime-identity.mdx
+                slug: configure-runtime-identity
               - page: "Extension Taxonomy and SDK Readiness"
                 path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.openclaw.generated.mdx
                 slug: extension-taxonomy-sdk-readiness
@@ -492,6 +501,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.deepagents.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.deepagents.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.deepagents.generated.mdx
                     slug: set-up-nvidia-nim
@@ -808,6 +820,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.hermes.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.hermes.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.hermes.generated.mdx
                     slug: set-up-nvidia-nim
