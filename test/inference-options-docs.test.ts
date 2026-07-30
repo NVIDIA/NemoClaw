@@ -500,6 +500,15 @@ describe("inference setup navigation", () => {
     expect(markdown).toContain('os.environ["NVIDIA_API_KEY"]');
   });
 
+  it("keeps the Omni demo on the current hosted model identifier (#7729)", () => {
+    const markdown = fs.readFileSync(subAgentSetupPath, "utf8");
+
+    expect(markdown).toContain("`nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`");
+    expect(markdown).not.toContain(
+      "`nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`",
+    );
+  });
+
   it("retains self-hosted setup and verification guidance across focused pages", () => {
     const endpoint = fs.readFileSync(compatibleEndpointPath, "utf8");
     const vllm = fs.readFileSync(vllmSetupPath, "utf8");
