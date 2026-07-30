@@ -124,6 +124,35 @@ describe("commitRebuildRoutePreflight", () => {
     expect(state.save).toHaveBeenCalledOnce();
   });
 
+  it("migrates two missing credential identities across sequential shared-route rebuilds (#7615, #7798)", () => {
+    const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+    const alpha = sandbox("alpha", "nvidia-prod");
+    const beta = sandbox("beta", "nvidia-prod");
+    const state = transactionDependencies(registry(alpha, beta));
+
+    const results = [alpha, beta].map((entry) =>
+      commitRebuildRoutePreflight(
+        {
+          sandboxName: entry.name,
+          gatewayName: "nemoclaw",
+          targetUpdate: targetUpdate({ ...entry, credentialEnv }),
+        },
+        state.dependencies,
+      ),
+    );
+
+    expect(results).toMatchObject([
+      { ok: true, receipt: { sandboxName: "alpha", migratedSandboxNames: ["beta"] } },
+      { ok: true, receipt: { sandboxName: "beta", migratedSandboxNames: [] } },
+    ]);
+    expect(
+      [alpha.name, beta.name].map(
+        (sandboxName) => state.persisted().sandboxes[sandboxName]?.credentialEnv,
+      ),
+    ).toEqual([credentialEnv, credentialEnv]);
+    expect(state.save).toHaveBeenCalledTimes(2);
+  });
+
   it.each(
     LOCAL_INFERENCE_PROVIDERS,
   )("keeps credential-free local provider %s compatible (#7798)", (provider) => {
