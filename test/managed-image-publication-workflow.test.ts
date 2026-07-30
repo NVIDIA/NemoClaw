@@ -9,6 +9,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import {
+  MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
+  PROTECTED_MANAGED_IMAGE_AGENTS,
+  parseProtectedManagedImageContracts,
+  resolveManagedImageLocalInferenceRoute,
+} from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
 import {
   managedImageOpenShellBasePolicyPath,
@@ -50,6 +56,7 @@ type MatrixEntry = {
 };
 
 type Job = {
+  env?: Record<string, unknown>;
   if?: string;
   name?: string;
   needs?: string | string[];
@@ -297,6 +304,161 @@ describe("complete managed-image publication workflow", () => {
         "nemoclaw-pr-hermes",
       ]),
     ).toThrow("immutable repository@sha256 manifest reference");
+  });
+
+  it("accepts only bounded protected GPU and rollback harness modes", () => {
+    const image = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"c".repeat(64)}`;
+    expect(
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-managed-openclaw-ollama",
+        "--gpu",
+        "--local-provider",
+        "ollama",
+        "--model",
+        "qwen3.5:9b",
+      ]),
+    ).toEqual({
+      agent: "openclaw",
+      image,
+      sandbox: "nemoclaw-managed-openclaw-ollama",
+      gpu: true,
+      localProvider: "ollama",
+      model: "qwen3.5:9b",
+    });
+    expect(
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-managed-openclaw-rollback",
+        "--inject-bootstrap-completion-failure",
+      ]).failureInjection,
+    ).toBe("bootstrap-completion");
+    expect(() =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        image,
+        "--sandbox",
+        "nemoclaw-managed-openclaw-invalid",
+        "--gpu",
+        "--local-provider",
+        "nim",
+        "--model",
+        "model",
+        "--inject-bootstrap-completion-failure",
+      ]),
+    ).toThrow("cannot be combined");
+  });
+
+  it("keeps Ollama, NIM, and vLLM source contracts explicit without claiming NIM equivalence", () => {
+    expect(MANAGED_IMAGE_LOCAL_INFERENCE_KINDS).toEqual(["ollama", "nim", "vllm"]);
+    expect(resolveManagedImageLocalInferenceRoute("ollama")).toEqual({
+      kind: "ollama",
+      providerName: "ollama-local",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      defaultBaseUrl: "http://host.openshell.internal:11435/v1",
+    });
+    expect(resolveManagedImageLocalInferenceRoute("nim")).toMatchObject({
+      kind: "nim",
+      providerName: "vllm-local",
+      credentialEnv: "NEMOCLAW_VLLM_LOCAL_TOKEN",
+    });
+    expect(resolveManagedImageLocalInferenceRoute("vllm")).toMatchObject({
+      kind: "vllm",
+      providerName: "vllm-local",
+      credentialEnv: "NEMOCLAW_VLLM_LOCAL_TOKEN",
+    });
+  });
+
+  it("requires one unique exact amd64 protected image for every shipped agent", () => {
+    const contracts = PROTECTED_MANAGED_IMAGE_AGENTS.map((agent, index) => ({
+      agent,
+      platform: "linux/amd64",
+      reference: `localhost:5000/nemoclaw-managed-protected/${agent}@sha256:${String(index + 1).repeat(64)}`,
+    }));
+    expect(parseProtectedManagedImageContracts(contracts)).toEqual(contracts);
+    expect(() => parseProtectedManagedImageContracts(contracts.slice(0, 2))).toThrow(
+      "exactly all shipped agents",
+    );
+    expect(() =>
+      parseProtectedManagedImageContracts([contracts[0], contracts[0], contracts[2]]),
+    ).toThrow("one unique image per agent");
+  });
+
+  it("runs protected exact-image GPU and rollback qualification only in the trusted E2E workflow", () => {
+    const protectedWorkflow = readWorkflow("e2e.yaml");
+    const gpu = required(
+      protectedWorkflow.jobs?.["managed-image-gpu-e2e"],
+      "protected E2E workflow is missing managed-image GPU qualification",
+    );
+    const rollback = required(
+      protectedWorkflow.jobs?.["managed-image-bootstrap-rollback"],
+      "protected E2E workflow is missing managed-image rollback qualification",
+    );
+    const publicWorkflowSource = fs.readFileSync(
+      path.join(repoRoot, ".github", "workflows", "managed-images.yaml"),
+      "utf8",
+    );
+
+    expect(gpu["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
+    expect(rollback["runs-on"]).toBe("ubuntu-latest");
+    expect(gpu.env?.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT).toContain("runner.temp");
+    expect(rollback.env?.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT).toContain("runner.temp");
+    for (const job of [gpu, rollback]) {
+      expect(step(job, "Set up protected managed-image Buildx").with).toMatchObject({
+        "driver-opts": "network=host",
+        "buildkitd-config-inline": expect.stringContaining('[registry."localhost:5000"]'),
+      });
+      expect(step(job, "Start isolated protected managed-image registry").run).toContain(
+        "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
+      );
+      expect(step(job, "Build exact all-agent protected managed images").run).toContain(
+        "build-protected-managed-images.sh",
+      );
+      expect(step(job, "Remove isolated protected managed-image registry").if).toBe("always()");
+      expect(step(job, "Remove isolated protected managed-image registry").run).toContain(
+        "registry listener remained after cleanup",
+      );
+    }
+    expect(
+      step(gpu, "Run exact all-agent GPU and host-local inference qualification").run,
+    ).toContain("managed-image-gpu-e2e.test.ts");
+    expect(
+      step(rollback, "Run exact all-agent managed-bootstrap rollback qualification").run,
+    ).toContain("managed-image-bootstrap-rollback.test.ts");
+    expect(publicWorkflowSource).not.toContain("linux-amd64-gpu-rtxpro6000-latest-1");
+    expect(publicWorkflowSource).not.toContain("managed-image-gpu-e2e");
+  });
+
+  it("builds all protected agents by exact digest and pins real vLLM GPU qualification", () => {
+    const buildSource = fs.readFileSync(
+      path.join(repoRoot, "scripts", "checks", "build-protected-managed-images.sh"),
+      "utf8",
+    );
+    const gpuSource = fs.readFileSync(
+      path.join(repoRoot, "test", "e2e", "live", "managed-image-gpu-e2e.test.ts"),
+      "utf8",
+    );
+    for (const agent of PROTECTED_MANAGED_IMAGE_AGENTS) {
+      expect(buildSource).toContain(`  ${agent} \\`);
+    }
+    expect(buildSource).toContain("docker buildx imagetools inspect");
+    expect(buildSource).toContain("docker pull --platform linux/amd64");
+    expect(gpuSource).toContain(
+      "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
+    );
+    expect(gpuSource).toContain("torch.cuda.is_available()");
+    expect(gpuSource).toContain("size_vram");
+    expect(gpuSource).toContain("Actual NIM engine qualification remains outside this target");
   });
 
   it("starts after exact base contracts with complete main triggers and release-safe concurrency (#7744)", () => {

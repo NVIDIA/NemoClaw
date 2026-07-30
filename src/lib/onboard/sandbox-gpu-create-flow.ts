@@ -12,6 +12,7 @@ import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import type { DockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import type {
+  ManagedBootstrapAdapter,
   ManagedBootstrapAgentIdentity,
   ManagedBootstrapImageIdentity,
 } from "./managed-bootstrap/adapter";
@@ -63,6 +64,12 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /**
+   * Protected failure-injection tests wrap the real driver adapter at one
+   * named transaction boundary. Production callers omit this factory and use
+   * the canonical Docker adapter directly.
+   */
+  createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
 
 export interface SandboxGpuCreateFlowResult {

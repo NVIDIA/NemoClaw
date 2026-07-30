@@ -154,11 +154,13 @@ export function createSandboxGpuCreateAttemptRunner(
     let streamedManagedCreateResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let managedSequence: ManagedBootstrapSequenceResult | null = null;
     if (managedBootstrap && managedMode) {
-      const adapter = createDockerManagedBootstrapAdapter({
-        runCaptureOpenshell: deps.runCaptureOpenshell,
-        runOpenshell: deps.runOpenshell,
-        sleep: deps.sleep,
-      });
+      const adapter =
+        deps.createManagedBootstrapAdapter?.() ??
+        createDockerManagedBootstrapAdapter({
+          runCaptureOpenshell: deps.runCaptureOpenshell,
+          runOpenshell: deps.runOpenshell,
+          sleep: deps.sleep,
+        });
       try {
         managedSequence = await runManagedBootstrapSequence(adapter, {
           create: {
