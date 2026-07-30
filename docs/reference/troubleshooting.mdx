@@ -1019,14 +1019,11 @@ The same result is inconclusive during managed settle confirmation and can be pr
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
 It does not retry other status or output combinations.
 `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
-On a supported local Docker-driver sandbox with the legacy keepalive startup, this result can authorize a container-identity-pinned in-place launch.
-The root-owned controller repeats the absence proof and starts the fixed entrypoint under the `sandbox` UID.
-It then proves that OpenShell PID 1 adopted exactly one supervisor.
-NemoClaw still requires managed gateway health, settle, and OpenShell readiness before it re-establishes the primary port forward.
+On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned in-place supervisor launch.
+NemoClaw requires managed gateway health, the settle check, and OpenShell readiness before it re-establishes the primary port forward.
 To bypass that trusted launch while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
 If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
-The sandbox image can predate the current lifecycle contract when the trusted launch cannot proceed after `SUPERVISOR_NOT_RUNNING`.
-The same guidance applies to `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller.
+If the error mentions `SUPERVISOR_NOT_RUNNING` and the trusted launch could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
 An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
 The current recovery action and any managed settle confirmation stop immediately.
 If `recover` reports this result, follow its host-side `gateway restart` guidance.

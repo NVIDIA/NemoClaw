@@ -305,7 +305,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       stdout: "GATEWAY_PID=4242\n",
       stderr: "",
     }));
-    const waitForRecoveredSandboxOpenShellReadyImpl = vi.fn(() => false);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => false);
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
 
     const result = checkAndRecoverSandboxProcesses("unready-box", {
@@ -314,7 +314,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       requestGatewaySupervisorAction,
       requestPinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
-      waitForRecoveredSandboxOpenShellReadyImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
     });
 
     expect(result).toMatchObject({
@@ -325,7 +325,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining("did not become ready in OpenShell"),
     });
-    expect(waitForRecoveredSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
+    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
       "unready-box",
       expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 180 }),
     );
@@ -464,7 +464,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         throw new Error("replacement identity changed");
       })
       .mockReturnValue(acceptedProbe);
-    const waitForRecoveredSandboxOpenShellReadyImpl = vi.fn(
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
       (_name, options) => options.beforeProbe?.(1000) === true,
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
@@ -482,7 +482,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       requestGatewaySupervisorAction,
       requestPinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
-      waitForRecoveredSandboxOpenShellReadyImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
     });
 
     expect(result).toMatchObject({

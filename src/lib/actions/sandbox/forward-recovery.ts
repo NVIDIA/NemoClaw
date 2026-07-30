@@ -277,7 +277,7 @@ function ensureSandboxPortForwardForPortWithRetries(
     }
     let forwardAccepted = true;
     if (options.afterSuccess) {
-      // A newly registered relay can report running and then drop while the
+      // A newly registered port forward can report running and then drop while the
       // pinned managed-health guard executes. Re-prove the authoritative owner
       // and listener after that guard before status reports recovery success.
       sleepMs(guardedSettleMs);

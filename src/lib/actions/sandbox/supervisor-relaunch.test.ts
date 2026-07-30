@@ -97,7 +97,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.runDocker).not.toHaveBeenCalled();
   });
 
-  it("requests a credential-free managed launch in the registered keepalive", () => {
+  it("requests a credential-free managed launch in the registered legacy keepalive container", () => {
     vi.stubEnv("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS", "CUSTOM_PROVIDER_CREDENTIAL");
     vi.stubEnv("CUSTOM_PROVIDER_CREDENTIAL", "s3cr3t-token");
     vi.stubEnv("HTTPS_PROXY", "http://proxyuser:proxypass@proxy.example:8080");

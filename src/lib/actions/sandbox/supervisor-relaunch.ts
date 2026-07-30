@@ -5,11 +5,11 @@ import { randomBytes } from "node:crypto";
 import { dockerCapture, dockerRun } from "../../adapters/docker";
 import * as agentRuntime from "../../agent/runtime";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import { hasZeroDockerExitStatus } from "../../onboard/docker-command-result";
 import {
   type DockerContainerInspect,
   parseDockerInspectJson,
 } from "../../onboard/docker-gpu-patch";
-import { hasZeroDockerExitStatus } from "../../onboard/docker-command-result";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import {
   privilegedSandboxExecArgv,
@@ -25,11 +25,12 @@ import { resolveSandboxDashboardPort } from "./forward-recovery";
  * `scripts/nemoclaw-start.sh` owns the managed workload as a sibling process.
  * Relaunch requires that inspected legacy value, the registered exact container
  * identity, and the managed controller's exact pinned proof that no supervisor
- * is running. The root-owned controller then rechecks absence before launching
- * one sandbox-UID supervisor that is adopted by OpenShell PID 1. Replacing the
- * container while its OpenShell supervisor is registered either publishes
- * terminal phase Error or blocks duplicate supervisor registration. Regression
- * coverage is named in `supervisor-relaunch.test.ts`,
+ * is running. The root-owned controller then rechecks absence, refreshes the
+ * current OpenShell CA, and launches one sandbox-UID supervisor. The caller
+ * accepts it only after the same pinned controller proves managed health.
+ * Replacing the container while its OpenShell supervisor is registered either
+ * publishes terminal phase Error or blocks duplicate supervisor registration.
+ * Regression coverage is named in `supervisor-relaunch.test.ts`,
  * `process-recovery-supervisor-relaunch.test.ts`, and `sandbox-survival.test.ts`.
  * Remove this path after supported upgrades rebuild every legacy keepalive
  * container with `nemoclaw-start` as its persisted startup command.

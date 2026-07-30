@@ -17,9 +17,9 @@ it:
 
 One legacy recovery action is available only when two complete process-table
 scans prove that the supervisor is absent.  It holds the root lifecycle lock,
-launches the fixed entrypoint under the sandbox UID through a short-lived child,
-and proves that OpenShell PID 1 adopted exactly that supervisor.  The normal
-managed health probe must still prove its gateway before host recovery succeeds.
+refreshes the OpenShell trust bundle, and launches the fixed entrypoint under
+the sandbox UID.  The caller then requires the normal identity-pinned managed
+health probe before host recovery succeeds.
 
 The host enters this helper through registry-scoped ``docker exec --user root``.
 The installed copy is root-owned and mode 0500, which is the host request
@@ -58,6 +58,7 @@ import importlib.util
 import os
 import pwd
 import re
+import secrets
 import select
 import signal
 import stat
@@ -124,30 +125,19 @@ SUPERVISOR_LAUNCH_ENV_KEYS = frozenset(
         "no_proxy",
     }
 )
-SUPERVISOR_LAUNCH_STRIPPED_ENV_KEYS = frozenset(
-    {
-        "BASH_ENV",
-        "ENV",
-        "GCONV_PATH",
-        "GLIBC_TUNABLES",
-        "LD_AUDIT",
-        "LD_LIBRARY_PATH",
-        "LD_PRELOAD",
-        "LOCPATH",
-        "NODE_OPTIONS",
-        "PERL5OPT",
-        "PYTHONHOME",
-        "PYTHONINSPECT",
-        "PYTHONPATH",
-        "PYTHONSTARTUP",
-        "PYTHONUSERBASE",
-        "RUBYOPT",
-    }
-)
 MAX_SUPERVISOR_LAUNCH_ENV_BYTES = 64 * 1024
-SUPERVISOR_LAUNCH_HANDSHAKE_SECONDS = 10
-SUPERVISOR_LAUNCH_PROOF_SECONDS = 5.0
 TRUSTED_RUNTIME_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+OPENSHELL_CA_BUNDLE_PATH = "/etc/openshell-tls/ca-bundle.pem"
+CORPORATE_CA_BUNDLE_PATH = "/usr/local/share/nemoclaw/corporate-ca.pem"
+MERGED_CA_BUNDLE_PATH = "/tmp/nemoclaw-ca-bundle.pem"
+MAX_CA_BUNDLE_BYTES = 16 * 1024 * 1024
+CA_ENV_KEYS = (
+    "SSL_CERT_FILE",
+    "CURL_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "GIT_SSL_CAINFO",
+    "NODE_EXTRA_CA_CERTS",
+)
 HERMES_MCP_STATE_RE = re.compile(
     r"# nemoclaw-hermes-mcp-state-v1 "
     r"intended=[0-9a-f]{64} applied=[0-9a-f]{64}\Z"
@@ -1006,7 +996,7 @@ def _supervisor_candidates(
 def _confirm_supervisor_absence(
     reader: ProcReader, pid1: ProcessIdentity, sandbox_uid: int
 ) -> bool:
-    """Prove two complete zero-match scans around one exact OpenShell PID 1."""
+    """Confirm a second zero-match scan while the exact OpenShell PID 1 remains stable."""
 
     between_pid1 = reader.capture(1)
     second_matches, second_inconclusive = _supervisor_candidates(
@@ -1600,18 +1590,11 @@ def _terminate_gateway(reader: ProcReader, identity: ProcessIdentity) -> None:
 
 
 def _supervisor_launch_environment(
-    runtime_environment: dict[str, str],
+    runtime_environment: dict[str, str], ca_bundle: str
 ) -> dict[str, str]:
     """Build the cold-start-compatible environment without loader hooks."""
 
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in SUPERVISOR_LAUNCH_STRIPPED_ENV_KEYS
-        and not key.startswith("NEMOCLAW_TEST_")
-        and not key.startswith("NEMOCLAW_MANAGED_CONTROL_")
-    }
-    environment.update(runtime_environment)
+    environment = dict(runtime_environment)
     environment.update(
         {
             "HOME": "/sandbox",
@@ -1622,173 +1605,159 @@ def _supervisor_launch_environment(
             "USER": "sandbox",
         }
     )
+    environment.update({key: ca_bundle for key in CA_ENV_KEYS})
     return environment
 
 
-def _spawn_supervisor_as_orphan(environment: dict[str, str]) -> tuple[int, int]:
-    """Pin a launched child before its short-lived parent permits adoption."""
+def _read_trusted_ca_bundle(path: str, *, required: bool) -> bytes | None:
+    """Read one trusted-owner CA bundle and reject group or world writes."""
 
-    status_read_fd, status_write_fd = os.pipe()
-    adoption_read_fd, adoption_write_fd = os.pipe()
+    mapped = _system_path(path)
     try:
-        intermediate_pid = os.fork()
-    except OSError as exc:
-        os.close(status_read_fd)
-        os.close(status_write_fd)
-        os.close(adoption_read_fd)
-        os.close(adoption_write_fd)
-        raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+        bundle, metadata = _read_regular(mapped, MAX_CA_BUNDLE_BYTES)
+    except FileNotFoundError:
+        if required:
+            raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+        return None
+    except (ControlError, OSError) as exc:
+        raise ControlError("SUPERVISOR_REBUILD_REQUIRED") from exc
 
-    if intermediate_pid == 0:
-        os.close(status_read_fd)
-        os.close(adoption_write_fd)
-        try:
-            signal.alarm(SUPERVISOR_LAUNCH_HANDSHAKE_SECONDS)
-            account = pwd.getpwnam("sandbox")
-            groups = os.getgrouplist(account.pw_name, account.pw_gid)
-            supervisor = subprocess.Popen(
-                [NEMOCLAW_START_PATH.decode("ascii")],
-                close_fds=True,
-                cwd="/sandbox",
-                env=environment,
-                extra_groups=groups,
-                group=account.pw_gid,
-                start_new_session=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                umask=0o077,
-                user=account.pw_uid,
-            )
-            signal.alarm(0)
-            os.write(status_write_fd, f"{supervisor.pid}\n".encode("ascii"))
-            if os.read(adoption_read_fd, 1) != b"1":
-                # The child is still ours and cannot be PID-reused before it is
-                # reaped, so Popen can stop and reap this exact failed child.
-                supervisor.kill()
-                supervisor.wait()
-                raise ControlError("SUPERVISOR_UNAVAILABLE")
-            os.close(status_write_fd)
-            os.close(adoption_read_fd)
-            os._exit(0)
-        except Exception:
-            try:
-                os.write(status_write_fd, b"SUPERVISOR_LAUNCH_FAILED\n")
-                os.close(status_write_fd)
-                os.close(adoption_read_fd)
-            except OSError:
-                # The parent rejects a failed handshake from the intermediate process.
-                os._exit(1)
-            os._exit(1)
+    trusted_uid, _trusted_gid = _trusted_runtime_owner()
+    if (
+        metadata.st_uid != trusted_uid
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size <= 0
+        or metadata.st_size != len(bundle)
+    ):
+        raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+    return bundle
 
-    os.close(status_write_fd)
-    os.close(adoption_read_fd)
-    payload = b""
+
+def _refresh_supervisor_ca_bundle() -> str:
+    """Refresh the root-owned merged CA before the sandbox UID relaunch."""
+
+    openshell_bundle = _read_trusted_ca_bundle(
+        OPENSHELL_CA_BUNDLE_PATH, required=True
+    )
+    if openshell_bundle is None:
+        raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+    corporate_bundle = _read_trusted_ca_bundle(
+        CORPORATE_CA_BUNDLE_PATH, required=False
+    )
+    if corporate_bundle is None:
+        return OPENSHELL_CA_BUNDLE_PATH
+
+    payload = openshell_bundle.rstrip(b"\n") + b"\n" + corporate_bundle
+    if len(payload) > MAX_CA_BUNDLE_BYTES:
+        raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+    mapped_destination = _system_path(MERGED_CA_BUNDLE_PATH)
+    directory = os.path.dirname(mapped_destination)
+    destination_name = os.path.basename(mapped_destination)
+    directory_fd = _open_directory(directory)
+    temporary_name = f".{destination_name}.{secrets.token_hex(16)}"
+    temporary_fd = -1
+    installed = False
     try:
-        while len(payload) <= 64 and not payload.endswith(b"\n"):
-            chunk = os.read(status_read_fd, 65 - len(payload))
-            if not chunk:
-                break
-            payload += chunk
-    finally:
-        os.close(status_read_fd)
-
-    supervisor_pidfd = -1
-    launch_error: ControlError | None = None
-    if re.fullmatch(rb"[1-9][0-9]*\n", payload):
-        supervisor_pid = int(payload, 10)
-        try:
-            opened_pidfd = _pidfd_open(supervisor_pid)
-            if opened_pidfd is None:
-                raise ControlError("SUPERVISOR_UNAVAILABLE")
-            supervisor_pidfd = opened_pidfd
-        except ControlError as error:
-            launch_error = error
-    else:
-        supervisor_pid = 0
-        launch_error = ControlError("SUPERVISOR_UNAVAILABLE")
-
-    try:
-        os.write(adoption_write_fd, b"1" if launch_error is None else b"0")
-    except OSError:
-        launch_error = launch_error or ControlError("SUPERVISOR_UNAVAILABLE")
-    finally:
-        os.close(adoption_write_fd)
-
-    _completed_pid, status = os.waitpid(intermediate_pid, 0)
-    if launch_error is not None or not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-        if supervisor_pidfd >= 0:
-            os.close(supervisor_pidfd)
-        if launch_error is not None:
-            raise launch_error
-        raise ControlError("SUPERVISOR_UNAVAILABLE")
-    return supervisor_pid, supervisor_pidfd
-
-
-def _wait_for_launched_supervisor(
-    supervisor_pid: int,
-    expected_pid1: ProcessIdentity,
-    sandbox_uid: int,
-) -> ProcessIdentity:
-    """Prove the launched process was adopted into the one managed topology."""
-
-    deadline = time.monotonic() + SUPERVISOR_LAUNCH_PROOF_SECONDS
-    while time.monotonic() < deadline:
-        try:
-            with ProcReader() as reader:
-                current_pid1 = reader.capture(1)
-                if current_pid1.stable_key() != expected_pid1.stable_key():
-                    raise ControlError("SUPERVISOR_UNAVAILABLE")
-                supervisor = reader.capture(supervisor_pid)
-                matches, inconclusive = _supervisor_candidates(
-                    reader, current_pid1, sandbox_uid
-                )
-                if (
-                    not inconclusive
-                    and _is_nemoclaw_start(supervisor, sandbox_uid)
-                    and len(matches) == 1
-                    and matches[0].stable_key() == supervisor.stable_key()
-                ):
-                    return supervisor
-        except (
-            ControlError,
-            FileNotFoundError,
-            ProcessLookupError,
-            PermissionError,
+        directory_metadata = os.fstat(directory_fd)
+        trusted_uid, trusted_gid = _trusted_runtime_owner()
+        directory_mode = stat.S_IMODE(directory_metadata.st_mode)
+        if (
+            not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != trusted_uid
+            or directory_metadata.st_gid != trusted_gid
+            or (directory_mode & 0o002 and not directory_mode & stat.S_ISVTX)
         ):
-            # Process evidence can change until the bounded adoption proof expires.
-            time.sleep(POLL_SECONDS)
-            continue
-        time.sleep(POLL_SECONDS)
-    raise ControlError("SUPERVISOR_UNAVAILABLE")
+            raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        temporary_fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(temporary_fd, payload[offset:])
+            if written <= 0:
+                raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+            offset += written
+        os.fsync(temporary_fd)
+        os.fchmod(temporary_fd, 0o444)
+        installed_metadata = os.fstat(temporary_fd)
+        if (
+            installed_metadata.st_uid != trusted_uid
+            or installed_metadata.st_gid != trusted_gid
+            or installed_metadata.st_nlink != 1
+            or stat.S_IMODE(installed_metadata.st_mode) != 0o444
+            or installed_metadata.st_size != len(payload)
+        ):
+            raise ControlError("SUPERVISOR_REBUILD_REQUIRED")
+        os.close(temporary_fd)
+        temporary_fd = -1
+        os.replace(
+            temporary_name,
+            destination_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        installed = True
+        return MERGED_CA_BUNDLE_PATH
+    except ControlError:
+        raise
+    except OSError as exc:
+        raise ControlError("SUPERVISOR_REBUILD_REQUIRED") from exc
+    finally:
+        if temporary_fd >= 0:
+            os.close(temporary_fd)
+        if not installed:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+        os.close(directory_fd)
+
+
+def _spawn_managed_supervisor(environment: dict[str, str]) -> int:
+    """Start the fixed entrypoint as the sandbox user."""
+
+    try:
+        account = pwd.getpwnam("sandbox")
+        groups = os.getgrouplist(account.pw_name, account.pw_gid)
+        supervisor = subprocess.Popen(
+            [NEMOCLAW_START_PATH.decode("ascii")],
+            close_fds=True,
+            cwd="/sandbox",
+            env=environment,
+            extra_groups=groups,
+            group=account.pw_gid,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            umask=0o077,
+            user=account.pw_uid,
+        )
+    except (KeyError, OSError, subprocess.SubprocessError) as exc:
+        raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+    return supervisor.pid
 
 
 def _launch_managed_supervisor(runtime_environment: dict[str, str]) -> int:
-    """Serialize, re-prove absence, launch, and pin one adopted supervisor."""
+    """Serialize, re-prove absence, refresh trust, and launch one supervisor."""
 
     _detect_agent()
     _validate_trusted_regular(NEMOCLAW_START_PATH.decode("ascii"))
     directory_fd = _open_managed_runtime_directory()
     lock_fd = -1
-    supervisor_pidfd = -1
     try:
         lock_fd = _open_expected_exit_lock(directory_fd)
         with ProcReader() as reader:
-            pid1, sandbox_uid = _prove_supervisor_absent(reader)
-        supervisor_pid, supervisor_pidfd = _spawn_supervisor_as_orphan(
-            _supervisor_launch_environment(runtime_environment)
-        )
-        try:
-            supervisor = _wait_for_launched_supervisor(
-                supervisor_pid, pid1, sandbox_uid
-            )
-        except Exception:
-            _send_pidfd(supervisor_pidfd, signal.SIGKILL)
-            raise
-        return supervisor.pid
+            _prove_supervisor_absent(reader)
+        ca_bundle = _refresh_supervisor_ca_bundle()
+        environment = _supervisor_launch_environment(runtime_environment, ca_bundle)
+        return _spawn_managed_supervisor(environment)
     finally:
-        if supervisor_pidfd >= 0:
-            os.close(supervisor_pidfd)
         if lock_fd >= 0:
             os.close(lock_fd)
         os.close(directory_fd)

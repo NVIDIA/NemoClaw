@@ -80,14 +80,11 @@ Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-
 
 <AgentOnly variant="openclaw,hermes">
 Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
-For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can launch the managed supervisor in the registered container with credential-free host runtime overrides.
+For a local Docker-driver sandbox whose registered container uses the legacy keepalive startup, `recover` can launch the managed supervisor in that container.
 
-The controller repeats the stable supervisor-absence proof under its root-only lifecycle lock and starts the fixed entrypoint under the `sandbox` UID.
-It opens a pidfd before the short-lived parent exits and proves that OpenShell PID 1 adopted exactly one supervisor.
-The launch keeps the registered container in place and does not change its persisted legacy startup command.
-A later full container restart can therefore require `recover` again.
-After the launch, NemoClaw requires the managed gateway health and settle checks.
-It then uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) to prove OpenShell readiness before starting the primary dashboard or API host forward.
+The registered container, its writable layer, its mounts, and its persisted startup command remain unchanged.
+A later full container restart can require `recover` again.
+NemoClaw requires managed gateway health and uses `NEMOCLAW_SANDBOX_READY_TIMEOUT` (180 seconds by default) to prove OpenShell readiness before starting the primary dashboard or API host forward.
 A definitive managed-health failure still stops immediately; if readiness cannot be proved within the budget, the forward stays stopped.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).

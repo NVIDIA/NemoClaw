@@ -11,7 +11,7 @@ export const finalizationHandlerDeps = {
     const processRecovery: typeof import("../actions/sandbox/process-recovery") =
       require("../actions/sandbox/process-recovery");
     const { SANDBOX_READY_TIMEOUT_SECS }: typeof import("./env") = require("./env");
-    return processRecovery.waitForRecoveredSandboxOpenShellReady(name, {
+    return processRecovery.waitForRecreatedSandboxOpenShellReady(name, {
       timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
     });
   },
