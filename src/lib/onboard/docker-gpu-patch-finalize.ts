@@ -8,9 +8,10 @@
 // For legacy supervisor relaunch on OpenShell 0.0.85, the invalid state is
 // "stopping the registered keepalive container lets the Docker watcher publish
 // a terminal Error phase before the replacement supervisor registers". That
-// caller keeps the renamed original container running until pinned managed
-// health confirms the replacement, then force-removes it; failed health rolls
-// back to the still-running original without restarting it.
+// caller keeps the renamed original container running until the pinned managed
+// health check confirms the replacement, then force-removes it; a failed
+// managed health check rolls back to the still-running original without
+// restarting it.
 //
 // The preferred source boundaries are OpenShell's Docker create and watcher:
 // native NVIDIA GPU access would remove GPU recreation, while replacement-aware
@@ -26,9 +27,9 @@
 //     relaunch handoff, successful finalization, and rollback without restart.
 // Removal conditions: delete the GPU callers when OpenShell supports native
 // Docker-driver GPU creation/reconnect. Delete the supervisor handoff branch
-// when the legacy relaunch compatibility path is removed or every supported
-// OpenShell version keeps direct container replacement non-terminal until
-// registration settles. Delete this module when neither caller remains.
+// when the legacy relaunch compatibility path is removed or no supported
+// OpenShell version publishes phase Error before replacement registration
+// settles. Delete this module when neither caller remains.
 
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";

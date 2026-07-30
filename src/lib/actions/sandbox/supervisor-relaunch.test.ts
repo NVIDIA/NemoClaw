@@ -198,7 +198,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("removes the running original only after the handoff is finalized as ready", () => {
+  it("removes the running original container only after supervisor readiness is confirmed", () => {
     const handoff = composedHandoffDeps();
     const deps = baseDeps({
       recreate: (options) =>
@@ -220,7 +220,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(handoff.dockerStart).not.toHaveBeenCalled();
   });
 
-  it("restores the running original without restarting it when the handoff is finalized as not ready", () => {
+  it("rolls back to the running original container without restarting it when supervisor readiness is not confirmed", () => {
     const handoff = composedHandoffDeps();
     const deps = baseDeps({
       recreate: (options) =>
