@@ -238,7 +238,7 @@ describe("managed snapshot clone provider credentials", () => {
               ),
               output: "",
             }
-          : { status: 1, output: "" };
+          : { status: 1, stderr: `provider '${providerName}' not found`, output: "" };
       }
       if (args[1] === "create") created.add(args[3] ?? "");
       if (args[1] === "delete") created.delete(args[2] ?? "");
@@ -281,6 +281,28 @@ describe("managed snapshot clone provider credentials", () => {
     expect(broker.removeHermesToolGatewayProviderState).toHaveBeenCalledExactlyOnceWith("beta");
   });
 
+  it("preserves broker state when either Hermes provider cannot be cleaned up", () => {
+    const broker = fakeBroker();
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runner = vi.fn((args: string[]) => ({
+      status: args[2] === "beta-hermes-inference" ? 1 : 0,
+      stderr: args[2] === "beta-hermes-inference" ? "gateway unavailable" : "",
+      output: "",
+    }));
+
+    cleanupManagedCloneProviders(
+      ["beta-hermes-inference", "beta-hermes-tool-gateway"],
+      runner,
+      undefined,
+      broker,
+    );
+
+    expect(broker.removeHermesToolGatewayProviderState).not.toHaveBeenCalled();
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "preserving Hermes tool-gateway broker state for 'beta'",
+    );
+  });
+
   it("rejects broker runtime incompatibility before inspecting or mutating providers", () => {
     const broker = fakeBroker();
     broker.preflightHermesToolGatewayCloneBinding.mockImplementation(() => {
@@ -304,5 +326,34 @@ describe("managed snapshot clone provider credentials", () => {
       }),
     ).toThrow("synthetic active broker runtime mismatch");
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when provider inspection cannot prove exact NotFound", () => {
+    const broker = fakeBroker();
+    const runner = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "transport unavailable",
+      output: "",
+    }));
+
+    expect(() =>
+      prepareManagedCloneProviders({
+        profile: managedHermesToolProfile(),
+        messagingPlan: null,
+        destinationSandboxName: "beta",
+        destinationWillBeReplaced: true,
+        environment: {
+          [REFRESH_ENV]: "test-only-refresh",
+          OPENAI_API_KEY: "test-only-placeholder",
+        },
+        root: "/repo",
+        runOpenshell: runner,
+        hermesToolGatewayBroker: broker,
+      }),
+    ).toThrow("could not prove whether managed clone provider 'beta-hermes-inference' exists");
+    expect(runner.mock.calls.some(([args]) => args[0] === "provider" && args[1] !== "get")).toBe(
+      false,
+    );
   });
 });

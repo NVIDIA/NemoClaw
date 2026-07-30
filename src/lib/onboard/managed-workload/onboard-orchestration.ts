@@ -78,6 +78,7 @@ export interface ManagedWorkloadOnboardRuntime {
   ensurePreparedProfile(
     workload: PreparedSandboxWorkloadSource,
   ): BuiltManagedStartupOnboardProfile | null;
+  resolveCreateIntent(intent: SandboxCreateIntent): SandboxCreateIntent;
 }
 
 /**
@@ -164,7 +165,19 @@ export function createManagedWorkloadOnboardRuntime(
     return preparedProfile;
   };
 
-  return { ensurePreparedWorkload, ensurePreparedProfile };
+  const resolveCreateIntent = (intent: SandboxCreateIntent): SandboxCreateIntent => {
+    const isolatedProvider = input.managedWorkloadRebuild?.hermesInferenceProvider ?? null;
+    if (!isolatedProvider) return intent;
+    return {
+      ...intent,
+      extraProviders: [...new Set([...intent.extraProviders, isolatedProvider])],
+      staleExtraProviders: intent.staleExtraProviders.filter(
+        (provider) => provider !== isolatedProvider,
+      ),
+    };
+  };
+
+  return { ensurePreparedWorkload, ensurePreparedProfile, resolveCreateIntent };
 }
 
 export interface PrepareOnboardSandboxWorkloadLaunchInput {
@@ -254,8 +267,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
+  const createIntent = input.runtime.resolveCreateIntent(input.plan.intent);
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
-    intent: input.plan.intent,
+    intent: createIntent,
     fromRef,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
@@ -268,8 +282,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       createPlan.initialSandboxPolicy.cleanup,
     );
   }
-  if (input.plan.intent.sandboxGpuLogMessage) {
-    log(input.plan.intent.sandboxGpuLogMessage);
+  if (createIntent.sandboxGpuLogMessage) {
+    log(createIntent.sandboxGpuLogMessage);
   }
   log(
     `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,

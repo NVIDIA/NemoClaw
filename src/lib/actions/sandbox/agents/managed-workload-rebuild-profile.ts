@@ -58,6 +58,10 @@ export function prepareManagedRebuildProfileHandoff(input: {
     resumeConfig.model,
     resumeConfig.preferredInferenceApi,
   );
+  const upstreamProvider =
+    agent === "hermes" && resumeConfig.provider === "hermes-provider"
+      ? (catalogHandoff.hermesInferenceProvider ?? resumeConfig.provider)
+      : resumeConfig.provider;
   const previousDashboard = catalogHandoff.previousProfile.dashboard;
   const currentOpenClawContextWindow =
     agent === "openclaw"
@@ -82,7 +86,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
     {
       inference: {
         routeProvider: inference.providerKey,
-        upstreamProvider: resumeConfig.provider,
+        upstreamProvider,
         model: resumeConfig.model,
         routedBaseUrl: inference.inferenceBaseUrl,
         upstreamEndpointUrl:

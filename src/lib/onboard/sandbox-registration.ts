@@ -63,6 +63,7 @@ export interface CreatedSandboxRegistryEntryInput {
    */
   preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
+  hermesInferenceProvider?: string | null;
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
@@ -168,6 +169,13 @@ export function buildCreatedSandboxRegistryEntry(
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
+  const expectedHermesInferenceProvider = `${input.sandboxName}-hermes-inference`;
+  if (
+    input.hermesInferenceProvider &&
+    input.hermesInferenceProvider !== expectedHermesInferenceProvider
+  ) {
+    throw new Error("Hermes inference provider does not match the sandbox identity.");
+  }
 
   return {
     name: input.sandboxName,
@@ -201,6 +209,9 @@ export function buildCreatedSandboxRegistryEntry(
     mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
+    ...(input.hermesInferenceProvider
+      ? { hermesInferenceProvider: input.hermesInferenceProvider }
+      : {}),
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,

@@ -57,6 +57,8 @@ type ManagedWorkloadReceipt = Extract<SandboxWorkloadReceipt, { kind: "managed-i
 export interface ManagedWorkloadRebuildCatalogHandoff {
   readonly schemaVersion: 1;
   readonly agent: ShippedManagedImageAgent;
+  /** Destination-scoped Hermes inference identity retained independently of the gateway route. */
+  readonly hermesInferenceProvider: string | null;
   /** Pre-delete and rollback authority for the workload that is being replaced. */
   readonly previousReceipt: ManagedWorkloadReceipt;
   readonly previousContract: ManagedImageContractV1;
@@ -150,9 +152,13 @@ function validateCorporateCaTransport(
  * recorded for the sandbox being replaced.
  */
 function readManagedWorkloadRebuildAuthority(
-  entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
+  entry: Pick<
+    SandboxEntry,
+    "agent" | "fromDockerfile" | "hermesInferenceProvider" | "imageTag" | "name" | "workload"
+  >,
 ): {
   agent: ShippedManagedImageAgent;
+  hermesInferenceProvider: string | null;
   receipt: ManagedWorkloadReceipt;
   contract: ManagedImageContractV1;
   profile: ManagedStartupProfile;
@@ -196,10 +202,27 @@ function readManagedWorkloadRebuildAuthority(
       `the recorded startup profile belongs to '${profile.agent}', not '${agent}'`,
     );
   }
+  const expectedHermesInferenceProvider = `${entry.name}-hermes-inference`;
+  const hermesInferenceProvider = entry.hermesInferenceProvider?.trim() || null;
+  const profileUsesIsolatedHermesInference =
+    profile.agent === "hermes" &&
+    profile.tools.enabledGateways.length > 0 &&
+    profile.inference.upstreamProvider === expectedHermesInferenceProvider;
+  if (
+    (hermesInferenceProvider !== null &&
+      hermesInferenceProvider !== expectedHermesInferenceProvider) ||
+    (hermesInferenceProvider === expectedHermesInferenceProvider) !==
+      profileUsesIsolatedHermesInference
+  ) {
+    throw new ManagedWorkloadRebuildError(
+      "the recorded Hermes inference identity does not match the durable startup profile",
+    );
+  }
   const corporateCa = validateCorporateCaTransport(cloned, profile);
 
   return {
     agent,
+    hermesInferenceProvider,
     receipt: cloned,
     contract,
     profile,
@@ -217,7 +240,10 @@ export const managedWorkloadRebuildDependencies = {
  * Dockerfile and never turns an upgrade into reuse of the stale image.
  */
 export async function prepareManagedWorkloadRebuildHandoff(
-  entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
+  entry: Pick<
+    SandboxEntry,
+    "agent" | "fromDockerfile" | "hermesInferenceProvider" | "imageTag" | "name" | "workload"
+  >,
   options: {
     readonly runtime: SandboxWorkloadRuntimeCapabilities;
     readonly version?: string;
@@ -261,6 +287,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
   return Object.freeze({
     schemaVersion: 1 as const,
     agent: authority.agent,
+    hermesInferenceProvider: authority.hermesInferenceProvider,
     previousReceipt: authority.receipt,
     previousContract: authority.contract,
     previousProfile: authority.profile,
@@ -275,7 +302,10 @@ export async function prepareManagedWorkloadRebuildHandoff(
 /** Revalidate the retained handoff against the live registry row. */
 export function managedWorkloadRebuildHandoffMatchesEntry(
   handoff: ManagedWorkloadRebuildCatalogHandoff,
-  entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload"> | null,
+  entry: Pick<
+    SandboxEntry,
+    "agent" | "fromDockerfile" | "hermesInferenceProvider" | "imageTag" | "name" | "workload"
+  > | null,
 ): boolean {
   if (!entry) return false;
   try {
@@ -283,6 +313,7 @@ export function managedWorkloadRebuildHandoffMatchesEntry(
     return (
       current !== null &&
       current.agent === handoff.agent &&
+      current.hermesInferenceProvider === handoff.hermesInferenceProvider &&
       isDeepStrictEqual(current.receipt, handoff.previousReceipt) &&
       isDeepStrictEqual(current.contract, handoff.previousContract) &&
       isDeepStrictEqual(current.profile, handoff.previousProfile)

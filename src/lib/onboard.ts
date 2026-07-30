@@ -2852,6 +2852,7 @@ async function createSandboxWithBaseImageResolution(
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,
+          hermesInferenceProvider: managedWorkloadRebuild?.hermesInferenceProvider,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
           ...recreateRuntime.registrationFields,

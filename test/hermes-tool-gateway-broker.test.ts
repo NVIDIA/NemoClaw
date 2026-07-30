@@ -164,6 +164,36 @@ describe("Hermes managed-tool gateway broker", () => {
       }),
     ).toBe(true);
     expect(
+      broker.matchesHermesToolGatewayProviderState(
+        {
+          name: "clone",
+          agent: "hermes",
+          hermesToolGateways: ["nous-web"],
+          hermesInferenceProvider: "clone-hermes-inference",
+        },
+        {
+          sandbox: "clone",
+          provider_name: "clone-hermes-tool-gateway",
+          inference_provider_name: "clone-hermes-inference",
+        },
+      ),
+    ).toBe(true);
+    expect(
+      broker.matchesHermesToolGatewayProviderState(
+        {
+          name: "clone",
+          agent: "hermes",
+          hermesToolGateways: ["nous-web"],
+          hermesInferenceProvider: "clone-hermes-inference",
+        },
+        {
+          sandbox: "clone",
+          provider_name: "clone-hermes-tool-gateway",
+          inference_provider_name: "hermes-provider",
+        },
+      ),
+    ).toBe(false);
+    expect(
       broker.planHermesToolGatewayBrokerRefresh({
         currentBrokerHealthy: true,
         hashMatches: false,

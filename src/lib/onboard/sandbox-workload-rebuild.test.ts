@@ -10,6 +10,7 @@ import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
 } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { prepareManagedRebuildProfileHandoff } from "../actions/sandbox/agents/managed-workload-rebuild-profile";
 import { loadAgent } from "../agent/defs";
 import type { SandboxMessagingPlan } from "../messaging";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry";
@@ -148,6 +149,28 @@ function entry(
     fromDockerfile: null,
     imageTag: old.reference,
     workload,
+  };
+}
+
+function isolatedHermesEntry(): SandboxEntry {
+  const base = managedStartupE2eProfile("hermes");
+  const profile: ManagedStartupProfile = {
+    ...base,
+    inference: {
+      ...base.inference,
+      upstreamProvider: "alpha-hermes-inference",
+    },
+    tools: {
+      ...base.tools,
+      enabledGateways: ["nous-web"],
+    },
+  };
+  return {
+    ...entry("hermes", { profile }),
+    provider: "hermes-provider",
+    model: profile.inference.model,
+    hermesInferenceProvider: "alpha-hermes-inference",
+    hermesToolGateways: ["nous-web"],
   };
 }
 
@@ -615,6 +638,89 @@ describe("managed workload rebuild handoff", () => {
     expect(handoff.replacementProfile.profile.messaging.plan).not.toBeNull();
     expect(handoff.replacementProfile.encodedProfile).not.toBe(
       catalog.previousReceipt.encodedProfile,
+    );
+  });
+
+  it("retains an isolated Hermes inference identity in the profile and replacement attachment", async () => {
+    const oldEntry = isolatedHermesEntry();
+    installReplacement("hermes");
+    const catalogHandoff = await prepareManagedWorkloadRebuildHandoff(oldEntry, {
+      runtime: RUNTIME,
+      version: NEW_RELEASE,
+    });
+    assert(catalogHandoff);
+
+    const handoff = prepareManagedRebuildProfileHandoff({
+      catalogHandoff,
+      targetConfig: {
+        resumeConfig: {
+          provider: "hermes-provider",
+          model: oldEntry.model,
+          preferredInferenceApi: "openai-completions",
+          endpointUrl: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+        },
+        durableConfig: { webSearchConfig: null },
+        agentDefinition: loadAgent("hermes"),
+        hermesToolGateways: ["nous-web"],
+      } as never,
+      recreateOptions: {
+        controlUiPort: 18_789,
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        observabilityEnabled: false,
+      } as never,
+      messagingPlan: null,
+      environment: {},
+    });
+
+    expect(handoff.hermesInferenceProvider).toBe("alpha-hermes-inference");
+    expect(handoff.replacementProfile.profile.inference).toMatchObject({
+      routeProvider: "inference",
+      upstreamProvider: "alpha-hermes-inference",
+    });
+
+    const runtime = createManagedWorkloadOnboardRuntime(
+      {
+        computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
+        managedWorkloadRebuild: handoff,
+        agentName: "hermes",
+        legacyDockerfilePath: "/forbidden/Dockerfile",
+        customDockerfilePath: null,
+        rootDir: "/repo",
+        model: oldEntry.model,
+        provider: "hermes-provider",
+        preferredInferenceApi: "openai-completions",
+        endpointUrl: null,
+        startupProfile: { ...profileInput("hermes"), environment: {} },
+        note: vi.fn(),
+        fallbackBuildEstimate: vi.fn(() => null),
+      },
+      {
+        resolveAgentInferenceApi: vi.fn(() => "openai-completions"),
+        getSandboxInferenceConfig: vi.fn(),
+      } as never,
+    );
+    const resolvedIntent = runtime.resolveCreateIntent({
+      extraProviders: ["custom-provider"],
+      staleExtraProviders: ["alpha-hermes-inference", "stale-provider"],
+    } as never);
+    expect(resolvedIntent.extraProviders).toEqual(["custom-provider", "alpha-hermes-inference"]);
+    expect(resolvedIntent.staleExtraProviders).toEqual(["stale-provider"]);
+  });
+
+  it("rejects an isolated Hermes profile whose registry identity was dropped", async () => {
+    const oldEntry = isolatedHermesEntry();
+    oldEntry.hermesInferenceProvider = undefined;
+
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(oldEntry, {
+        runtime: RUNTIME,
+        version: NEW_RELEASE,
+      }),
+    ).rejects.toThrow(
+      "the recorded Hermes inference identity does not match the durable startup profile",
     );
   });
 
