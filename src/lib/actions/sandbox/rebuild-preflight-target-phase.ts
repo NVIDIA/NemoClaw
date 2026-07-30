@@ -294,11 +294,6 @@ export async function prepareRebuildTargetPreflights(args: {
         return null;
       }
       Object.assign(sandboxEntry, validatedRegistryUpdate);
-      if (routePreflight.receipt.migratedSandboxNames.length > 0) {
-        console.log(
-          `Migrated legacy shared-gateway credential metadata for: ${routePreflight.receipt.migratedSandboxNames.join(", ")}`,
-        );
-      }
       if (preparedImage) {
         recreateOptions.preparedImageRebuild = {
           buildContext: preparedImage,

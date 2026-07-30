@@ -143,7 +143,6 @@ describe("rebuild resume snapshot repair", () => {
             preferredInferenceApi: null,
             credentialEnv: null,
           },
-          migratedSandboxNames: [],
         },
       }),
       vi

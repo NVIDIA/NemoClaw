@@ -2725,8 +2725,8 @@ Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
 The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values.
-When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration.
-The target update and peer metadata migration use one registry update.
+When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild derives the peer's missing credential environment-variable name for the compatibility check without changing the peer's registry entry.
+Rebuild saves only the target sandbox's metadata.
 Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild.
 Incomplete routes and invalid gateway bindings also stop the rebuild.
 NemoClaw checks the shared route again immediately before deleting the original sandbox.

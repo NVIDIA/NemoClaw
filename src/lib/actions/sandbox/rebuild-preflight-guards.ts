@@ -29,7 +29,6 @@ export interface RebuildRoutePreflightReceipt {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly route: GatewayInferenceRoute;
-  readonly migratedSandboxNames: readonly string[];
 }
 
 export type RebuildRoutePreflightResult =
@@ -92,11 +91,35 @@ function hardRouteConflict(
   return formatGatewayRouteConflict(compatibility);
 }
 
+function projectRebuildRouteCompatibility(
+  sandboxRegistry: SandboxRegistry,
+  sandboxName: string,
+  gatewayName: string,
+  target: SandboxEntry,
+  targetRoute: GatewayInferenceRoute,
+): SandboxEntry[] {
+  return Object.values(sandboxRegistry.sandboxes).map((peer) => {
+    if (peer.name === sandboxName) return target;
+    if (peer.provider !== targetRoute.provider || !missingCredentialIdentity(peer.credentialEnv)) {
+      return peer;
+    }
+    let peerGatewayName: string;
+    try {
+      peerGatewayName = resolveSandboxGatewayName(peer);
+    } catch {
+      return peer;
+    }
+    if (peerGatewayName !== gatewayName) return peer;
+    const credentialEnv = getRebuildCredentialEnvFromRegistry(peer.provider, peer.credentialEnv);
+    return credentialEnv ? { ...peer, credentialEnv } : peer;
+  });
+}
+
 /**
- * Persist the target route and canonical credential identities for compatible
- * legacy peers in one registry transaction. The ordinary compatibility guard
- * remains literal and fail-closed; only this rebuild migration may fill a
- * missing identity from the provider's canonical configuration.
+ * Persist the target route after proving compatibility with same-gateway peers.
+ * The ordinary compatibility guard remains literal and fail-closed; this
+ * rebuild-only projection may fill a missing peer identity from the provider's
+ * canonical configuration without mutating that peer's registry entry.
  */
 export function commitRebuildRoutePreflight(
   input: {
@@ -133,30 +156,12 @@ export function commitRebuildRoutePreflight(
 
     const target = { ...currentTarget, ...input.targetUpdate };
     const targetRoute = normalizedRoute(target);
-    const migratedSandboxNames: string[] = [];
-    for (const peer of Object.values(sandboxRegistry.sandboxes)) {
-      if (
-        peer.name === input.sandboxName ||
-        peer.provider !== targetRoute.provider ||
-        !missingCredentialIdentity(peer.credentialEnv)
-      ) {
-        continue;
-      }
-      let peerGatewayName: string;
-      try {
-        peerGatewayName = resolveSandboxGatewayName(peer);
-      } catch {
-        continue;
-      }
-      if (peerGatewayName !== input.gatewayName) continue;
-      const credentialEnv = getRebuildCredentialEnvFromRegistry(peer.provider, peer.credentialEnv);
-      if (!credentialEnv) continue;
-      peer.credentialEnv = credentialEnv;
-      migratedSandboxNames.push(peer.name);
-    }
-
-    const projectedSandboxes = Object.values(sandboxRegistry.sandboxes).map((entry) =>
-      entry.name === input.sandboxName ? target : entry,
+    const projectedSandboxes = projectRebuildRouteCompatibility(
+      sandboxRegistry,
+      input.sandboxName,
+      input.gatewayName,
+      target,
+      targetRoute,
     );
     const conflict = hardRouteConflict(
       input.gatewayName,
@@ -174,7 +179,6 @@ export function commitRebuildRoutePreflight(
         sandboxName: input.sandboxName,
         gatewayName: input.gatewayName,
         route: targetRoute,
-        migratedSandboxNames: migratedSandboxNames.sort(),
       },
     };
   });
@@ -225,7 +229,13 @@ export function revalidateRebuildRouteBeforeDelete(
     receipt.gatewayName,
     receipt.sandboxName,
     currentRoute,
-    Object.values(sandboxRegistry.sandboxes),
+    projectRebuildRouteCompatibility(
+      sandboxRegistry,
+      receipt.sandboxName,
+      receipt.gatewayName,
+      target,
+      currentRoute,
+    ),
   );
   return conflict ? { ok: false, message: conflict } : { ok: true, receipt };
 }

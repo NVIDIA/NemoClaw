@@ -41,8 +41,8 @@ When the identity differs or required metadata is incomplete, `connect` stops be
 ## Rebuild a Legacy Shared Route
 
 During rebuild, NemoClaw may find same-gateway legacy sandbox records that use the selected supported provider but omit its credential environment-variable name.
-Before deleting the target sandbox, NemoClaw fills only those missing names from the provider's canonical configuration and saves the target and peer metadata together.
-The peer migration does not replace an explicit credential environment-variable name.
+For the compatibility check, NemoClaw derives the peer's missing credential environment-variable name from the provider's canonical configuration without changing the peer's registry entry.
+Rebuild saves only the target sandbox's metadata.
 
 Credential environment-variable name, custom endpoint, or API-family conflicts still stop the rebuild.
 Incomplete routes and invalid gateway bindings also stop the rebuild.

@@ -91,17 +91,18 @@ const remoteProviders = [
 );
 
 describe("commitRebuildRoutePreflight", () => {
-  it("includes a credential-bearing provider in the migration matrix (#7798)", () => {
+  it("includes a credential-bearing provider in the compatibility projection matrix (#7798)", () => {
     expect(remoteProviders.length).toBeGreaterThan(0);
   });
 
   it.each(
     remoteProviders,
-  )("migrates missing shared-gateway credential identity for $providerName (#7798)", (providerConfig) => {
+  )("accepts missing shared-gateway credential identity for $providerName without mutating the peer (#7798)", (providerConfig) => {
     const target = sandbox("target", providerConfig.providerName, {
       credentialEnv: providerConfig.credentialEnv,
     });
     const peer = sandbox("peer", providerConfig.providerName);
+    const originalPeer = structuredClone(peer);
     const state = transactionDependencies(registry(target, peer));
 
     const result = commitRebuildRoutePreflight(
@@ -115,12 +116,10 @@ describe("commitRebuildRoutePreflight", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      receipt: {
-        migratedSandboxNames: ["peer"],
-      },
+      receipt: { sandboxName: "target" },
     });
     expect(state.persisted().sandboxes.target?.credentialEnv).toBe(providerConfig.credentialEnv);
-    expect(state.persisted().sandboxes.peer?.credentialEnv).toBe(providerConfig.credentialEnv);
+    expect(state.persisted().sandboxes.peer).toEqual(originalPeer);
     expect(state.save).toHaveBeenCalledOnce();
   });
 
@@ -142,7 +141,7 @@ describe("commitRebuildRoutePreflight", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      receipt: { migratedSandboxNames: [] },
+      receipt: { sandboxName: "target" },
     });
     expect(state.persisted().sandboxes.peer?.credentialEnv).toBeNull();
   });
@@ -163,7 +162,7 @@ describe("commitRebuildRoutePreflight", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      receipt: { migratedSandboxNames: [] },
+      receipt: { sandboxName: "target" },
     });
   });
 
@@ -188,7 +187,7 @@ describe("commitRebuildRoutePreflight", () => {
     expect(state.save).not.toHaveBeenCalled();
   });
 
-  it("does not migrate peers when the target gateway binding changed (#7798)", () => {
+  it("does not save the target when its gateway binding changed (#7798)", () => {
     const target = sandbox("target", "nvidia-prod", {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       gatewayName: "nemoclaw-19080",
@@ -213,7 +212,7 @@ describe("commitRebuildRoutePreflight", () => {
     expect(state.save).not.toHaveBeenCalled();
   });
 
-  it("does not hide a custom endpoint conflict while migrating credentials (#7798)", () => {
+  it("does not hide a custom endpoint conflict while projecting peer credential identity (#7798)", () => {
     const target = sandbox("target", "compatible-endpoint", {
       credentialEnv: "COMPATIBLE_API_KEY",
     });
@@ -236,7 +235,7 @@ describe("commitRebuildRoutePreflight", () => {
     expect(state.save).not.toHaveBeenCalled();
   });
 
-  it("migrates stopped peers and leaves another gateway untouched (#7798)", () => {
+  it("accepts a stopped legacy peer and leaves every peer row untouched (#7798)", () => {
     const target = sandbox("target", "nvidia-prod", {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
@@ -245,6 +244,8 @@ describe("commitRebuildRoutePreflight", () => {
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
     });
+    const originalStoppedPeer = structuredClone(stoppedPeer);
+    const originalOtherGateway = structuredClone(otherGateway);
     const state = transactionDependencies(registry(target, stoppedPeer, otherGateway));
 
     const result = commitRebuildRoutePreflight(
@@ -258,12 +259,10 @@ describe("commitRebuildRoutePreflight", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      receipt: { migratedSandboxNames: ["stopped-peer"] },
+      receipt: { sandboxName: "target" },
     });
-    expect(state.persisted().sandboxes["stopped-peer"]?.credentialEnv).toBe(
-      "NVIDIA_INFERENCE_API_KEY",
-    );
-    expect(state.persisted().sandboxes["other-gateway"]?.credentialEnv).toBeNull();
+    expect(state.persisted().sandboxes["stopped-peer"]).toEqual(originalStoppedPeer);
+    expect(state.persisted().sandboxes["other-gateway"]).toEqual(originalOtherGateway);
   });
 });
 
@@ -273,11 +272,10 @@ describe("revalidateRebuildRouteBeforeDelete", () => {
       sandboxName: route.name,
       gatewayName: "nemoclaw",
       route: targetUpdate(route),
-      migratedSandboxNames: ["peer"],
     };
   }
 
-  it("accepts the unchanged migrated shared route (#7798)", () => {
+  it("accepts the unchanged shared route (#7798)", () => {
     const target = sandbox("target", "nvidia-prod", {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
@@ -290,6 +288,34 @@ describe("revalidateRebuildRouteBeforeDelete", () => {
         load: () => registry(target, peer),
       }),
     ).toMatchObject({ ok: true });
+  });
+
+  it("accepts the committed target without changing the legacy peer entry (#7798)", () => {
+    const target = sandbox("target", "nvidia-prod", {
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    const peer = sandbox("peer", "nvidia-prod");
+    const originalPeer = structuredClone(peer);
+    const state = transactionDependencies(registry(target, peer));
+
+    const committed = commitRebuildRoutePreflight(
+      {
+        sandboxName: target.name,
+        gatewayName: "nemoclaw",
+        targetUpdate: targetUpdate(target),
+      },
+      state.dependencies,
+    );
+
+    expect(committed).toMatchObject({ ok: true });
+    expect(state.persisted().sandboxes.peer).toEqual(originalPeer);
+    if (!committed.ok) throw new Error(committed.message);
+    expect(
+      revalidateRebuildRouteBeforeDelete(committed.receipt, {
+        load: state.dependencies.load,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(state.persisted().sandboxes.peer).toEqual(originalPeer);
   });
 
   it("blocks deletion when a peer credential identity drifts after preflight (#7798)", () => {

@@ -471,7 +471,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             preferredInferenceApi: input.targetUpdate.preferredInferenceApi ?? null,
             credentialEnv: input.targetUpdate.credentialEnv ?? null,
           },
-          migratedSandboxNames: [],
         },
       };
     },
