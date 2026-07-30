@@ -25,10 +25,13 @@ const MAX_LIST_ITEMS = 128;
 const MAX_JSON_NODES = 4096;
 const MAX_JSON_DEPTH = 32;
 const MAX_TUNING_INTEGER = 1_000_000_000;
+const MIN_HERMES_CONTEXT_WINDOW = 64_000;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f-\u009f]/u;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const RAW_CA_PEM_RE = /-----BEGIN (?:TRUSTED )?CERTIFICATE-----/iu;
+const RAW_CA_PEM_BASE64_RE =
+  /^LS0tLS1CRUdJTi(?:BDRVJUSUZJQ0FURS0tLS0t|BUlVTVEVEIENFUlRJRklDQVRFLS0tLS0)/u;
 const RAW_CA_DER_BASE64_RE = /^MII[A-Za-z0-9+/=\r\n]{253,}$/u;
 const RAW_CA_DATA_URI_RE =
   /data:application\/(?:pkix-cert|x-x509-ca-cert);base64,MII[A-Za-z0-9+/=]{253,}/iu;
@@ -478,6 +481,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
     affordance("CHAT_UI_URL", "dashboard.url"),
+    affordance("NEMOCLAW_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD", "dashboard.mode", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT", "dashboard.internalPort", "runtime-env"),
@@ -883,7 +887,11 @@ function requireEnumList<T extends string>(
   return items as readonly T[];
 }
 
-function cloneJsonValue(value: unknown, where: string): ManagedStartupJsonValue {
+function cloneJsonValue(
+  value: unknown,
+  where: string,
+  options: { readonly nullPrototypeObjects?: boolean } = {},
+): ManagedStartupJsonValue {
   const clone = (current: unknown, depth: number): ManagedStartupJsonValue => {
     if (depth > MAX_JSON_DEPTH) invalid(`${where} exceeds the JSON depth limit`);
     if (current === null || typeof current === "string" || typeof current === "boolean") {
@@ -897,7 +905,9 @@ function cloneJsonValue(value: unknown, where: string): ManagedStartupJsonValue 
       return mapArrayByIndex(current, (item) => clone(item, depth + 1));
     }
     if (!isPlainObject(current)) invalid(`${where} contains a non-JSON value`);
-    const result: ManagedStartupJsonObject = {};
+    const result: ManagedStartupJsonObject = options.nullPrototypeObjects
+      ? (Object.create(null) as ManagedStartupJsonObject)
+      : {};
     const keys = Object.getOwnPropertyNames(current);
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index] as string;
@@ -1053,6 +1063,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       }
       if (
         RAW_CA_PEM_RE.test(current.value) ||
+        RAW_CA_PEM_BASE64_RE.test(current.value) ||
         RAW_CA_DER_BASE64_RE.test(current.value) ||
         RAW_CA_DATA_URI_RE.test(current.value)
       ) {
@@ -1111,6 +1122,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         if (
           valueLooksLikeSecret(key) ||
           RAW_CA_PEM_RE.test(key) ||
+          RAW_CA_PEM_BASE64_RE.test(key) ||
           RAW_CA_DER_BASE64_RE.test(key) ||
           RAW_CA_DATA_URI_RE.test(key) ||
           containsUrlWithCredentialMaterial(key)
@@ -1522,6 +1534,9 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
       invalid("openclaw requires contextWindow, maxTokens, reasoning, and reasoningEffort tuning");
     }
   } else if (agent === "hermes") {
+    if (result.contextWindow !== null && result.contextWindow < MIN_HERMES_CONTEXT_WINDOW) {
+      invalid(`hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`);
+    }
     if (result.maxTokens !== null || result.reasoning !== null || result.reasoningEffort !== null) {
       invalid("hermes supports only contextWindow tuning");
     }
@@ -1543,8 +1558,9 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
  */
 export function validateManagedStartupProfile(value: unknown): ManagedStartupProfile {
   assertPayloadStructureAndCredentialShapes(value);
-  assertPayloadWithinByteLimit(value);
-  const profile = requireRecord(value, "profile");
+  const ownedValue = cloneJsonValue(value, "profile", { nullPrototypeObjects: true });
+  assertPayloadWithinByteLimit(ownedValue);
+  const profile = requireRecord(ownedValue, "profile");
   rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
   if (profile.schemaVersion !== MANAGED_STARTUP_PROFILE_SCHEMA_VERSION) {
     invalid(`schemaVersion must be ${String(MANAGED_STARTUP_PROFILE_SCHEMA_VERSION)}`);

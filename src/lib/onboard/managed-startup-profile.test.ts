@@ -408,6 +408,15 @@ describe("managed startup profile", () => {
     expect(inventory.every(({ profilePath }) => !profilePath.startsWith("env."))).toBe(true);
   });
 
+  it("classifies the shared Hermes dashboard port as runtime startup intent", () => {
+    expect(MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY.hermes).toContainEqual({
+      input: "NEMOCLAW_DASHBOARD_PORT",
+      profilePath: "dashboard.publicPort",
+      source: "runtime-env",
+      representation: "value",
+    });
+  });
+
   it.each(
     VALID_PROFILES,
   )("maps every $agent inventory entry to an explicit profile field", (profile) => {
@@ -785,6 +794,15 @@ describe("managed startup profile", () => {
     ).toThrow(/must match dashboard\.url/);
   });
 
+  it("rejects an explicit Hermes context window below the image contract minimum", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...HERMES_PROFILE,
+        tuning: { ...HERMES_PROFILE.tuning, contextWindow: 63_999 },
+      }),
+    ).toThrow(/contextWindow must be at least 64000 tokens/);
+  });
+
   it.each([
     ["publicPort", 8642],
     ["publicPort", 18_642],
@@ -801,6 +819,10 @@ describe("managed startup profile", () => {
 
   it.each([
     "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
+    Buffer.from(
+      `-----BEGIN CERTIFICATE-----\n${"A".repeat(300)}\n-----END CERTIFICATE-----`,
+      "utf8",
+    ).toString("base64"),
     `MII${"A".repeat(300)}`,
     `data:application/x-x509-ca-cert;base64,MII${"A".repeat(300)}`,
   ])("rejects raw CA material while accepting only its digest", (rawCa) => {
@@ -964,6 +986,46 @@ describe("managed startup profile", () => {
     expect(serializerInvoked).toBe(false);
   });
 
+  it("does not invoke an inherited getter to supply a missing schema field", () => {
+    const corporateCa: Record<string, unknown> = {};
+    let getterInvoked = false;
+    Object.defineProperty(Object.prototype, "bundleSha256", {
+      configurable: true,
+      get() {
+        getterInvoked = true;
+        return null;
+      },
+    });
+
+    let caught: unknown;
+    try {
+      validateManagedStartupProfile({ ...DCODE_PROFILE, corporateCa });
+    } catch (error) {
+      caught = error;
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "bundleSha256");
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(/bundleSha256/);
+    expect(getterInvoked).toBe(false);
+  });
+
+  it("rejects non-enumerable unknown fields instead of silently stripping them", () => {
+    const inference = { ...OPENCLAW_PROFILE.inference };
+    Object.defineProperty(inference, "hiddenExtension", {
+      value: "safe",
+      enumerable: false,
+    });
+
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        inference,
+      }),
+    ).toThrow(/unsupported fields/);
+  });
+
   it("does not invoke polluted Array prototype mapping or sorting methods", () => {
     const mapDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "map");
     const sortDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "sort");
@@ -990,8 +1052,8 @@ describe("managed startup profile", () => {
         },
       });
     } finally {
-      if (mapDescriptor) Object.defineProperty(Array.prototype, "map", mapDescriptor);
-      if (sortDescriptor) Object.defineProperty(Array.prototype, "sort", sortDescriptor);
+      Object.defineProperty(Array.prototype, "map", mapDescriptor as PropertyDescriptor);
+      Object.defineProperty(Array.prototype, "sort", sortDescriptor as PropertyDescriptor);
     }
 
     expect(prototypeMethodInvoked).toBe(false);
