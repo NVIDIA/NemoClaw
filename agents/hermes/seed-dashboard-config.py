@@ -117,6 +117,84 @@ class InvalidDashboardSeedDocumentError(Exception):
     pass
 
 
+def _directory_is_empty_no_follow(path: str) -> bool:
+    """Return whether a directory is empty without following its final path component."""
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    try:
+        return not os.listdir(fd)
+    finally:
+        os.close(fd)
+
+
+def _migrate_legacy_dashboard_profile(dst: str) -> bool:
+    """Move the legacy dashboard home into the canonical profiles directory."""
+
+    dashboard_home = os.path.dirname(dst)
+    profiles_dir = os.path.dirname(dashboard_home)
+    config_dir = os.path.dirname(profiles_dir)
+    if (
+        os.path.basename(dst) != "config.yaml"
+        or os.path.basename(dashboard_home) != "dashboard-home"
+        or os.path.basename(profiles_dir) != "profiles"
+    ):
+        return True
+
+    legacy_home = os.path.join(config_dir, "dashboard-home")
+    try:
+        legacy_stat = os.lstat(legacy_home)
+    except FileNotFoundError:
+        return True
+    if not stat.S_ISDIR(legacy_stat.st_mode):
+        print(
+            f"[SECURITY] Refusing to migrate legacy dashboard profile because {legacy_home} "
+            "is not a safe directory",
+            file=sys.stderr,
+        )
+        return False
+
+    try:
+        current_stat = os.lstat(dashboard_home)
+    except FileNotFoundError:
+        current_stat = None
+    if current_stat is not None:
+        if not stat.S_ISDIR(current_stat.st_mode):
+            print(
+                f"[SECURITY] Refusing to migrate legacy dashboard profile because "
+                f"{dashboard_home} is not a safe directory",
+                file=sys.stderr,
+            )
+            return False
+        try:
+            destination_is_empty = _directory_is_empty_no_follow(dashboard_home)
+        except OSError as exc:
+            print(
+                f"[SECURITY] Refusing to inspect dashboard profile {dashboard_home} ({exc})",
+                file=sys.stderr,
+            )
+            return False
+        if not destination_is_empty:
+            print(
+                "[dashboard] Refusing to merge legacy and current dashboard profiles; "
+                "move the legacy files manually before restarting",
+                file=sys.stderr,
+            )
+            return False
+        os.rmdir(dashboard_home)
+
+    try:
+        os.rename(legacy_home, dashboard_home)
+    except OSError as exc:
+        print(f"[dashboard] failed to migrate legacy dashboard profile ({exc})", file=sys.stderr)
+        return False
+    print(
+        f"[dashboard] migrated legacy dashboard profile to {dashboard_home}",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _lookup_uid(value: str) -> int:
     return int(value) if value.isdigit() else pwd.getpwnam(value).pw_uid
 

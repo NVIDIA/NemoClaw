@@ -9,7 +9,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
 // NEMOCLAW_HERMES_TEST_IMAGE is supplied, starts /usr/local/bin/nemoclaw-start
 // as root, and verifies health, gateway privilege separation, runtime layout,
-// sticky config protection, and legacy gateway.pid symlink migration.
+// sticky config protection, and legacy PID and dashboard-profile migration.
 
 const HEALTH_ATTEMPTS = 90;
 const HEALTH_POLL_MS = 2_000;
@@ -343,6 +343,28 @@ PY
   );
 }
 
+async function assertLegacyDashboardMigration(
+  probe: DockerProbe,
+  container: string,
+): Promise<void> {
+  await expectContainerSh(
+    probe,
+    container,
+    "legacy dashboard profile was not migrated with its state and permissions",
+    String.raw`
+set -eu
+test ! -e /sandbox/.hermes/dashboard-home
+test ! -L /sandbox/.hermes/dashboard-home
+test -f /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
+grep -Fx "legacy dashboard memory" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
+[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home)" = "700" ]
+[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home)" = "sandbox:sandbox" ]
+[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home/MEMORY.md)" = "600" ]
+[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home/MEMORY.md)" = "sandbox:sandbox" ]
+`,
+  );
+}
+
 async function assertGatewayProcess(probe: DockerProbe, container: string): Promise<void> {
   await expectContainerSh(
     probe,
@@ -392,6 +414,10 @@ rm -f /sandbox/.hermes/gateway.pid
 printf "stale pid\n" >/sandbox/.hermes/runtime/gateway.pid
 printf "stale lock\n" >/sandbox/.hermes/runtime/gateway.lock
 ln -s runtime/gateway.pid /sandbox/.hermes/gateway.pid
+install -d -m 700 -o sandbox -g sandbox /sandbox/.hermes/dashboard-home
+printf "legacy dashboard memory\n" >/sandbox/.hermes/dashboard-home/MEMORY.md
+chown sandbox:sandbox /sandbox/.hermes/dashboard-home/MEMORY.md
+chmod 600 /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 750 /sandbox/.hermes
 rm -rf /sandbox/.hermes/hooks /sandbox/.hermes/image_cache /sandbox/.hermes/audio_cache /sandbox/.hermes/logs/curator
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
@@ -406,6 +432,7 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
+  await assertLegacyDashboardMigration(probe, container);
   await expectContainerSh(
     probe,
     container,
@@ -414,13 +441,13 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   );
 }
 
-test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migration", {
+test("hermes root-entrypoint smoke preserves runtime layout and legacy state migration", {
   meta: {
     e2ePhases: [
       "check Docker and Hermes image inputs",
       "build Hermes root-entrypoint image",
       "validate clean root-entrypoint startup",
-      "validate legacy PID migration",
+      "validate legacy state migration",
     ],
   },
 }, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
@@ -453,6 +480,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
       "dashboard-home is sandbox-owned 0700 with 0600 allowlisted config/env",
       "legacy gateway.pid symlink/state shape is repaired and booted",
+      "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
   });
 
@@ -474,7 +502,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
     await buildImageIfNeeded(probe, image, baseImage);
     progress.phase("validate clean root-entrypoint startup");
     await runCleanVariant(probe, image, runId, containers);
-    progress.phase("validate legacy PID migration");
+    progress.phase("validate legacy state migration");
     await runLegacyVariant(probe, image, runId, containers);
   } catch (error) {
     for (const container of containers) {
@@ -495,6 +523,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       bearerAuthVerified: true,
       dashboardHomeVerified: true,
       legacyPidSymlinkMigrationVerified: true,
+      legacyDashboardProfileMigrationVerified: true,
     },
   });
 });

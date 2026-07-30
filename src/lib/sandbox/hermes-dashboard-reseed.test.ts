@@ -23,7 +23,7 @@ const TARGET: AgentConfigTarget = {
 };
 const PYTHON = "/opt/hermes/.venv/bin/python3";
 const SEEDER = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
-const DASHBOARD_CONFIG = "/sandbox/.hermes/dashboard-home/config.yaml";
+const DASHBOARD_CONFIG = "/sandbox/.hermes/profiles/dashboard-home/config.yaml";
 const capture = vi.fn<(binary: string, args: string[], options: unknown) => CaptureResult>();
 const reportFailure = vi.fn<(stage: "python" | "inspection" | "seed", detail: string) => void>();
 
@@ -64,7 +64,9 @@ describe("seedHermesDashboardConfig", () => {
 
   it("passes adversarial paths as discrete argv without invoking a shell (#6893)", () => {
     mockReseedFlow({
-      seed: successfulSeed("/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/config.yaml"),
+      seed: successfulSeed(
+        "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home/config.yaml",
+      ),
     });
     const target: AgentConfigTarget = {
       ...TARGET,
@@ -102,14 +104,16 @@ describe("seedHermesDashboardConfig", () => {
     expect(inspectionCommand[2]).toContain("os.lstat(sys.argv[1])");
     expect(inspectionCommand[2]).toContain("except FileNotFoundError:");
     expect(inspectionCommand[2]).toContain("stat.S_ISDIR(mode)");
-    expect(inspectionCommand.at(-1)).toBe("/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home");
+    expect(inspectionCommand.at(-1)).toBe(
+      "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home",
+    );
     expect(sandboxCommand(capture.mock.calls[2][1])).toEqual([
       PYTHON,
       SEEDER,
       "/sandbox/Hermes config;$(touch source-pwned)/config'quote.yaml",
-      "/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/config.yaml",
+      "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home/config.yaml",
       "/sandbox/Hermes home;$(touch dir-pwned)/.env",
-      "/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/.env",
+      "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home/.env",
     ]);
   });
 
