@@ -410,6 +410,28 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it.each([
+    ["a symbolic link", "ELOOP"],
+    ["a symbolic link rejected as a link count", "EMLINK"],
+  ] as const)("rejects %s Station marker as an unsupported release", (_scenario, code) => {
+    expect(
+      collectPlatformIdentity({
+        productNamePath: "/fixtures/product_name",
+        osReleasePath: "/fixtures/os-release",
+        stationReleasePath: "/fixtures/dgx-release",
+        pciDevicesPath: "/fixtures/pci",
+        readFile: stationFixtureReadFile,
+        readdir: () => ["0000:01:00.0"],
+        openFile: () => {
+          throw Object.assign(new Error("marker is a symbolic link"), { code });
+        },
+        statFileDescriptor: () => trustedMarkerStat(),
+        readFileDescriptor: () => noOtaStationRelease(),
+        closeFileDescriptor: () => undefined,
+      }),
+    ).toMatchObject({ stationProfile: "unsupported-dgx-os" });
+  });
+
   it("collects only bounded identity reads and never invokes host preparation", () => {
     const readFile = vi.fn(stationFixtureReadFile);
     const readdir = vi.fn(() => ["0000:01:00.0"]);
