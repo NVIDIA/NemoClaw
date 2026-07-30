@@ -300,7 +300,7 @@ describe("sandbox workload preparation", () => {
     ).rejects.toThrow("failed closed validation");
   });
 
-  it("rejects a catalog that would support only the selected agent (#7744)", async () => {
+  it("rejects a catalog that contains only the selected agent (#7744)", async () => {
     await expect(
       prepareSandboxWorkloadSource(input("openclaw"), {
         resolveCatalog: async () => ({ openclaw: contract("openclaw", 0) }),
