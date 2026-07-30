@@ -52,6 +52,8 @@ The base-image publisher now builds these image and platform pairs on native run
 All six platform builds run independently.
 Each final publisher creates tags only after both platform digests for its image pass.
 The publisher then verifies that the manifest contains amd64 and arm64.
+Clean committed checkouts resolve an available exact source-SHA image before attempting a local rebuild.
+Dirty base-image inputs still require a local build and cannot consume a published candidate.
 
 ## Runtime proof
 
