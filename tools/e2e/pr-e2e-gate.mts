@@ -3119,8 +3119,8 @@ export async function startPrGate(
         [
           `Review scope: PR #${pull.number}; head repository \`${command.headRepository}\`; head SHA \`${command.headSha}\`; base SHA \`${ciIdentity.baseSha}\`; ${selectionSummary}; deterministic plan \`${plan.planHash}\`.`,
           "No selected E2E job or target ran. No repository credential was exposed to fork code.",
-          `A repository maintainer must review the exact fork code and risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
-          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and exact reviewed inputs before it dispatches this plan.`,
+          `A repository maintainer must review the fork code and risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
+          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and recorded PR and base SHAs before it dispatches this plan.`,
           "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
         ].join("\n\n"),
       );
@@ -3265,7 +3265,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       },
       token,
       executionTitle,
-      `Running the exact reviewed head and base revision. Review reason: ${reason.replace(/`/gu, "'")}`,
+      `Running the reviewed fork PR commit against the recorded base SHA. Review reason: ${reason.replace(/`/gu, "'")}`,
     );
     await dispatchSelectedPrGate({
       repository,

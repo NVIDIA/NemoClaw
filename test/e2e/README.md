@@ -114,11 +114,11 @@ no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
 standard runners even though they use the trusted workflow definition from
 `main`.
 
-Exact-head PR-gate dispatches and direct scheduled or manual `main` runs use a
+PR-gate dispatches and direct scheduled or manual `main` runs use a
 bounded swap fallback for eligible hosted Hermes image-building lanes. The
 fallback does not change runner routing. The trusted workflow provisions the
 fallback as the first job step, before checking out or executing the selected
-revision. Exact-head mode requires a controller-supplied lowercase 40-hex
+revision. PR E2E requires a controller-supplied lowercase 40-hex
 checkout SHA plus matching trusted workflow and dispatch revisions. Direct-main
 mode rejects alternate checkout and workflow revisions and requires the
 workflow source to match the run revision. Both modes require an ephemeral
@@ -151,7 +151,7 @@ Candidate-authored workflow definitions and fork-owned runs cannot reach it.
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
 label; changing the PR checkout cannot safely grant itself that capacity.
-Remove the fallback only after trusted main and exact-head PR runs use
+Remove the fallback only after trusted main and PR E2E runs use
 ephemeral GitHub-hosted runners with at least 32 GB RAM without weakening the
 source guards, and five consecutive runs of every protected lane complete
 without runner loss while runner-pressure telemetry reports less than 1 GiB of
@@ -566,8 +566,8 @@ canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
 Gate initialization, CI coordination, automatic internal dispatch, and fork
 maintainer approval share one non-cancelling FIFO concurrency group for the
-exact repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending
-jobs for that exact identity instead of replacing them, up to GitHub's 100-job
+repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
+that PR/base SHA identity instead of replacing them, up to GitHub's 100-job
 bound.
 Before the controller creates or updates coordination for the current revision,
 it reads the live PR and requires the event's PR SHA and base SHA, including
@@ -745,15 +745,16 @@ A fork revision that selects jobs or typed targets leaves coordination in
 progress with `Maintainer approval required to run fork E2E`. Non-secret PR CI
 remains required. Before approval, the controller does not dispatch the
 credential-bearing work or expose repository secrets. The coordination summary
-links to the same `E2E / PR Gate Controller` run and publishes the exact PR
-number, head repository, head SHA, base SHA, plan, jobs, and targets under
+links to the same `E2E / PR Gate Controller` run and publishes the PR number,
+head repository, head SHA, base SHA, plan, jobs, and targets under
 review.
 
-A repository maintainer or administrator reviews the exact fork repository,
-head SHA, base SHA, selected jobs and targets, and
+A repository maintainer or administrator reviews the fork repository, PR
+commit SHA, base SHA, selected jobs and targets, and
 `pr-e2e-risk-plan-<head-sha>` artifact from the linked controller run. The
 maintainer then chooses **Run workflow** on `main`, selects `approve-e2e`, and
-supplies the exact PR number, head SHA, base SHA, and a specific review reason.
+supplies the PR number, recorded head SHA, recorded base SHA, and a specific
+review reason.
 GitHub supplies the triggering actor; the controller requires that account to
 have current `maintain` or `admin` permission.
 
@@ -763,7 +764,7 @@ controller commit is either still `main` or has only a compatible safe descendan
 described above. Immediately before dispatch, it reads the live PR again and
 requires the same head repository, PR SHA, and base SHA. The trusted workflow
 definition stays on `main`, while each PR-code checkout is pinned to the
-reviewed fork repository and exact PR SHA.
+reviewed fork repository and PR commit SHA.
 
 An ordinary validation failure before fork dispatch restores the maintainer
 approval title and leaves coordination in progress. A maintainer can then

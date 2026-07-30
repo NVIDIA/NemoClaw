@@ -163,7 +163,7 @@ function approvalCommand(workDir: string) {
     "--maintainer",
     "maintainer",
     "--reason",
-    "Reviewed exact credentialed control-plane execution",
+    "Reviewed credentialed fork execution",
     "--gate-run-id",
     String(GATE_RUN_ID),
     "--workflow-run-attempt",
@@ -509,7 +509,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     }
   });
 
-  it("dispatches the exact fork repository and PR SHA after maintainer approval", async () => {
+  it("dispatches the reviewed fork repository and PR commit after maintainer approval", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-approved-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -525,7 +525,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       await expect(
         approvePrE2E({
           ...approvalCommand(workDir),
-          reason: "Reviewed the exact fork PR and selected E2E plan.",
+          reason: "Reviewed the fork PR and selected E2E plan.",
         }),
       ).resolves.toBeUndefined();
 
@@ -550,7 +550,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(authorization?.body).toMatchObject({
         status: "in_progress",
         output: {
-          summary: expect.stringContaining("Reviewed the exact fork PR and selected E2E plan."),
+          summary: expect.stringContaining("Reviewed the fork PR and selected E2E plan."),
         },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("dispatched=true");
@@ -641,7 +641,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     try {
       const attempt = approvePrE2E({
         ...approvalCommand(workDir),
-        reason: "Reviewed exact fork code and risk plan.",
+        reason: "Reviewed fork code and risk plan.",
       });
       const result = expect(attempt).rejects.toThrow(/multiple correlated runs/u);
       await vi.runAllTimersAsync();
