@@ -139,7 +139,7 @@ export function openOnboardRecreateJournal(
     target.sandboxName,
     target.gatewayName,
     sourceEntry,
-    (sandboxName) => observe({ ...target, sandboxName }),
+    (sandboxName, gatewayName) => observe({ ...target, sandboxName, gatewayName }),
     note,
   );
 

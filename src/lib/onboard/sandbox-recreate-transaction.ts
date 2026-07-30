@@ -368,6 +368,7 @@ export type SandboxRecreateSourcePresence = "missing" | "source";
 export interface SandboxRecreateRuntime {
   readonly acceptedTarget: boolean;
   readonly targetGeneration: string | undefined;
+  readonly journaledGatewayName: string | null;
   readonly registrationFields: Pick<
     SandboxEntry,
     "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
@@ -381,6 +382,7 @@ export interface SandboxRecreateRuntime {
 const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
   acceptedTarget: false,
   targetGeneration: undefined,
+  journaledGatewayName: null,
   registrationFields: {},
   advance: () => undefined,
   beginDelete: () => "source",
@@ -394,7 +396,7 @@ export function createSandboxRecreateRuntime(
   sandboxName: string,
   gatewayName: string,
   registryEntry: SandboxEntry | null,
-  observe: (sandboxName: string) => SandboxRecreateObservation,
+  observe: (sandboxName: string, gatewayName: string) => SandboxRecreateObservation,
   note: (message: string) => void,
 ): SandboxRecreateRuntime {
   if (!request) return NO_SANDBOX_RECREATE;
@@ -413,7 +415,11 @@ export function createSandboxRecreateRuntime(
     });
   };
   let targetLiveIdentityFingerprint = transaction.targetLiveIdentityFingerprint;
-  const recovery = planSandboxRecreateRecovery(transaction, observe(sandboxName), registryEntry);
+  const recovery = planSandboxRecreateRecovery(
+    transaction,
+    observe(sandboxName, transaction.gatewayName),
+    registryEntry,
+  );
   if (recovery.action === "reject") {
     throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);
   }
@@ -428,6 +434,7 @@ export function createSandboxRecreateRuntime(
   return {
     acceptedTarget: recovery.action === "accept_target",
     targetGeneration: transaction.targetGeneration,
+    journaledGatewayName: transaction.gatewayName,
     get registrationFields() {
       return {
         lifecycleGeneration: transaction.targetGeneration,
@@ -438,7 +445,7 @@ export function createSandboxRecreateRuntime(
     },
     advance,
     beginDelete: () => {
-      const live = observe(sandboxName);
+      const live = observe(sandboxName, transaction.gatewayName);
       if (live.state !== "missing") {
         if (
           !transaction.sourceLiveIdentityFingerprint ||
@@ -453,7 +460,7 @@ export function createSandboxRecreateRuntime(
       return live.state === "missing" ? "missing" : "source";
     },
     confirmDeleted: () => {
-      if (observe(sandboxName).state !== "missing") {
+      if (observe(sandboxName, transaction.gatewayName).state !== "missing") {
         throw new Error(
           `Cannot continue sandbox '${sandboxName}' recreation: OpenShell still reports the journaled source after delete.`,
         );
@@ -461,7 +468,7 @@ export function createSandboxRecreateRuntime(
       advance("deleted");
     },
     recordCreated: () => {
-      const observation = observe(sandboxName);
+      const observation = observe(sandboxName, transaction.gatewayName);
       sessionStore.updateSession((current) => {
         targetLiveIdentityFingerprint = recordSandboxRecreateTargetCreated(
           current,

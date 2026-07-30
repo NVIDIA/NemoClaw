@@ -566,7 +566,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
       const probedGateway = sourceSandboxGateway(argv, "get");
       const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
-      return probedGateway && probedGateway !== deletedSourceGateway
+      return probedGateway && !deletedSourceGateways.has(probedGateway)
         ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : {
             status: 1,
@@ -575,12 +575,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             stderr: "Error: sandbox alpha not found",
           };
     });
-  let deletedSourceGateway: string | null = null;
+  const deletedSourceGateways = new Set<string>();
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
     const deleteGateway = sourceSandboxGateway(argv, "delete");
     if (deleteGateway) {
-      deletedSourceGateway = deleteGateway;
+      deletedSourceGateways.add(deleteGateway);
       return { status: 0, output: "" };
     }
     if (

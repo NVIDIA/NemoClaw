@@ -290,6 +290,56 @@ describe("sandbox recreate journal", () => {
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
   });
 
+  it("scopes the delete edge to the journaled gateway, not the ambient one", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    const probedGateways: string[] = [];
+    const sessionStore = {
+      loadSession: () => session,
+      updateSession: (mutator: (current: typeof session) => void) => {
+        mutator(session);
+        return session;
+      },
+    };
+    const request = {
+      id: TX_ID,
+      targetGeneration: TARGET_GENERATION,
+      targetIntentFingerprint: TARGET_INTENT,
+    };
+    const observe = (_sandboxName: string, gatewayName: string): SandboxRecreateObservation => {
+      probedGateways.push(gatewayName);
+      return { state: "ready", liveIdentityFingerprint: SOURCE_ID };
+    };
+
+    const runtime = createSandboxRecreateRuntime(
+      sessionStore,
+      request,
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      observe,
+      () => undefined,
+    );
+    runtime.beginDelete();
+
+    expect(runtime.journaledGatewayName).toBe("nemoclaw-31818");
+    expect(new Set(probedGateways)).toEqual(new Set(["nemoclaw-31818"]));
+    expect(() =>
+      createSandboxRecreateRuntime(
+        sessionStore,
+        request,
+        "alpha",
+        "nemoclaw",
+        SOURCE_ENTRY,
+        observe,
+        () => undefined,
+      ),
+    ).toThrow(/does not match the requested replacement/i);
+  });
+
   it("recovers or rejects at every resumed-onboard mutation boundary (#6492)", () => {
     const session = createSession({ sandboxName: "alpha" });
     beginSandboxRecreateTransaction(
