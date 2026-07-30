@@ -115,16 +115,18 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
     env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   }
   // Google Chat only runs on the OpenClaw arm (its sole supported agent). Supply the
-  // bridge service-account JSON plus the pre-derived audience/appPrincipal/allowlist,
-  // and set NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL=1 so the enroll gate accepts the audience
-  // without a live cloudflared tunnel or the Google Cloud Console prompt.
+  // bridge service-account JSON plus the pre-derived audience/appPrincipal/allowlist.
+  // The two E2E flags below are accepted only by the exact channels-stop-start
+  // target and exact test-owned OpenClaw sandbox; the production hook has no
+  // environment-controlled bypass.
   if (GOOGLECHAT_ENABLED) {
     env.GOOGLECHAT_SERVICE_ACCOUNT = tokens.googlechat;
     env.GOOGLECHAT_AUDIENCE =
       process.env.GOOGLECHAT_AUDIENCE ?? "https://e2e-fake.trycloudflare.com/googlechat";
     env.GOOGLECHAT_APP_PRINCIPAL = process.env.GOOGLECHAT_APP_PRINCIPAL ?? "123456789012345678901";
     env.GOOGLECHAT_ALLOWED_USERS = process.env.GOOGLECHAT_ALLOWED_USERS ?? "users/1234567890";
-    env.NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL = "1";
+    env.NEMOCLAW_RUN_LIVE_E2E = "1";
+    env.NEMOCLAW_E2E_ALLOW_GOOGLECHAT_PRESET_AUDIENCE = "1";
   }
   return env;
 }
