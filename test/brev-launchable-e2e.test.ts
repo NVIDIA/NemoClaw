@@ -36,7 +36,6 @@ function fixture(
     repoSha?: string;
     runtimeOverrides?: boolean;
     schemaVersion?: number;
-    settleSeconds?: number;
     sourceRepository?: string;
     sourcePath?: string;
   } = {},
@@ -174,7 +173,6 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "789",
     INSTANCE_NAME: "nclaw-e2e-test-1",
-    LAUNCHABLE_FAMILY_SETTLE_SECONDS: String(options.settleSeconds ?? 0),
     NVIDIA_INFERENCE_API_KEY: "nvapi-test-value",
     POLL_SECONDS: "0",
     RUNNER_TEMP: root,
@@ -189,13 +187,13 @@ function run(env: NodeJS.ProcessEnv) {
 
 describe("focused staging Brev Launchable lane", () => {
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
-    const { calls, env, state, workDir } = fixture({ settleSeconds: 7 });
+    const { calls, env, state, workDir } = fixture();
     const result = run(env);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands.match(/\/dispatches/gu)).toHaveLength(1);
-    expect(commands).toContain("sleep 7");
-    expect(commands.indexOf("sleep 7")).toBeLessThan(
+    expect(commands).toContain("sleep 300");
+    expect(commands.indexOf("sleep 300")).toBeLessThan(
       commands.indexOf("create nclaw-e2e-test-1 --launchable env-staging123"),
     );
     expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");

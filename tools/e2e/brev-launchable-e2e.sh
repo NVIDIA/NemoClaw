@@ -153,13 +153,8 @@ rm -rf "$WORK_DIR/handoff"
 
 # The standing Launchable resolves the staging family. Give that reference time to
 # observe the family update before deploying it.
-family_settle_seconds="${LAUNCHABLE_FAMILY_SETTLE_SECONDS:-300}"
-[[ "$family_settle_seconds" =~ ^[0-9]+$ ]] \
-  || die "LAUNCHABLE_FAMILY_SETTLE_SECONDS must be a non-negative integer"
-if [ "$family_settle_seconds" -gt 0 ]; then
-  log "Waiting ${family_settle_seconds}s for the Launchable image family to settle"
-  sleep "$family_settle_seconds"
-fi
+log "Waiting 300s for the Launchable image family to settle"
+sleep 300
 
 # The guest must boot the exact image and contain the exact clean candidate.
 existing="$(workspace)" || die "Brev workspace inventory failed"
