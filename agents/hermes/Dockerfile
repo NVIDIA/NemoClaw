@@ -139,7 +139,7 @@ RUN set -eu; \
             exit 1; \
         fi; \
     fi; \
-    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp; \
+    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
