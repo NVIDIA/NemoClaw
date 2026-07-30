@@ -19,6 +19,21 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
+function seedExistingStateFixture(hermesDir: string): void {
+  fs.mkdirSync(path.join(hermesDir, "cron"), { recursive: true });
+  fs.mkdirSync(path.join(hermesDir, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(hermesDir, "workspace"), { recursive: true });
+  fs.writeFileSync(path.join(hermesDir, "cron", "jobs.json"), "old cron\n");
+  fs.writeFileSync(path.join(hermesDir, "scripts", "digest.sh"), "old script\n");
+  fs.writeFileSync(path.join(hermesDir, "workspace", "notes.md"), "old workspace\n");
+}
+
+function seedUnrecoveredRollbackFixture(hermesDir: string): void {
+  const rollbackScripts = path.join(hermesDir, ".nemoclaw-restore-rollback", "scripts");
+  fs.mkdirSync(rollbackScripts, { recursive: true });
+  fs.writeFileSync(path.join(rollbackScripts, "digest.sh"), "recoverable script\n");
+}
+
 function runHermesRestore(options: {
   stateDirs: string[];
   movesFail?: boolean;
@@ -49,19 +64,12 @@ function runHermesRestore(options: {
     fs.mkdirSync(binDir, { recursive: true });
     fs.mkdirSync(shimDir, { recursive: true });
     fs.mkdirSync(hermesDir, { recursive: true });
-    if (options.seedExistingState === true) {
-      fs.mkdirSync(path.join(hermesDir, "cron"), { recursive: true });
-      fs.mkdirSync(path.join(hermesDir, "scripts"), { recursive: true });
-      fs.mkdirSync(path.join(hermesDir, "workspace"), { recursive: true });
-      fs.writeFileSync(path.join(hermesDir, "cron", "jobs.json"), "old cron\n");
-      fs.writeFileSync(path.join(hermesDir, "scripts", "digest.sh"), "old script\n");
-      fs.writeFileSync(path.join(hermesDir, "workspace", "notes.md"), "old workspace\n");
-    }
-    if (options.seedUnrecoveredRollback === true) {
-      const rollbackScripts = path.join(hermesDir, ".nemoclaw-restore-rollback", "scripts");
-      fs.mkdirSync(rollbackScripts, { recursive: true });
-      fs.writeFileSync(path.join(rollbackScripts, "digest.sh"), "recoverable script\n");
-    }
+    const existingStateSeeder =
+      options.seedExistingState === true ? seedExistingStateFixture : () => undefined;
+    const rollbackSeeder =
+      options.seedUnrecoveredRollback === true ? seedUnrecoveredRollbackFixture : () => undefined;
+    existingStateSeeder(hermesDir);
+    rollbackSeeder(hermesDir);
 
     for (const stateDir of options.stateDirs) {
       fs.mkdirSync(path.join(backupPath, stateDir), { recursive: true });
