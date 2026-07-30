@@ -248,7 +248,16 @@ describe("PR E2E controller retry history", () => {
 
     try {
       await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
-      expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
+      const dispatches = requests.filter((request) => request.url.endsWith("/dispatches"));
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0]?.body).toMatchObject({
+        inputs: {
+          jobs: "cloud-inference,cloud-onboard,security-posture",
+          targets: "",
+          checkout_sha: HEAD_SHA,
+          base_sha: BASE_SHA,
+        },
+      });
       expect(
         requests.some(
           (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
