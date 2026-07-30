@@ -29,7 +29,7 @@ const COMPLETE_MANAGED_IMAGE_V1_SUPPORT = {
 } as const;
 
 describe("sandbox workload runtime capabilities", () => {
-  it("registers managed-image v1 support for the Docker compute driver (#7744)", () => {
+  it("registers managed-image v1 capabilities for the Docker compute driver (#7744)", () => {
     expect(
       resolveSandboxWorkloadRuntimeCapabilities({ driverName: "docker" }, undefined, "x64"),
     ).toEqual({

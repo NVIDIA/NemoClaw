@@ -22,8 +22,8 @@ export type ManagedImageSelectionPolicy = "prefer-managed" | "require-managed";
 export interface SandboxWorkloadRuntimeCapabilities {
   readonly driverName: string;
   /**
-   * Driver-owned selection policy. Buildless runtimes require a managed image;
-   * Docker-compatible runtimes may explicitly retain the trusted recipe path.
+   * Driver-owned selection policy. A buildless driver requires a managed image.
+   * A Docker-compatible driver may retain the legacy Dockerfile build.
    */
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   /** Whether this driver can consume NemoClaw's legacy local Dockerfile build. */
