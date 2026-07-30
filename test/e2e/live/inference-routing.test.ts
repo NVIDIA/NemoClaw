@@ -374,7 +374,7 @@ async function runRuntimeIdentityE2EScenario(
   });
   cleanup.add("close runtime identity inference prerequisite", async () => {
     try {
-      await artifacts.writeJson("tc-inf-12-inference-requests.json", inference.requests());
+      await artifacts.writeJson(`${artifactPrefix}-inference-requests.json`, inference.requests());
     } finally {
       await inference.close();
     }
@@ -392,11 +392,11 @@ async function runRuntimeIdentityE2EScenario(
       NEMOCLAW_PROVIDER: "custom",
     },
     [inferenceKey],
-    "tc-inf-12-onboard-real-openshell-sandbox",
+    `${artifactPrefix}-onboard-real-openshell-sandbox`,
     progress,
     15 * 60_000,
   );
-  expectOnboardSuccess(onboard, "TC-INF-12 real OpenShell prerequisite onboard");
+  expectOnboardSuccess(onboard, `${scenario.testId} real OpenShell prerequisite onboard`);
   cleanup.add(`strict runtime identity sandbox cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
@@ -404,18 +404,18 @@ async function runRuntimeIdentityE2EScenario(
   // Remove stale fixture-owned objects left by a previously interrupted local
   // run. Both operations are best-effort and target only this E2E namespace.
   await sandbox.openshell(["provider", "delete", providerName], {
-    artifactName: "tc-inf-12-preclean-provider",
+    artifactName: `${artifactPrefix}-preclean-provider`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
   await sandbox.openshell(["provider", "profile", "delete", providerType], {
-    artifactName: "tc-inf-12-preclean-profile",
+    artifactName: `${artifactPrefix}-preclean-profile`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
 
   const settingsBefore = await sandbox.openshell(["settings", "get", "--global", "--json"], {
-    artifactName: "tc-inf-12-provider-policy-setting-before",
+    artifactName: `${artifactPrefix}-provider-policy-setting-before`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
@@ -438,7 +438,7 @@ async function runRuntimeIdentityE2EScenario(
   expect(restoreSettingArgs).toBeDefined();
   cleanup.add("restore OpenShell provider-derived policy setting", async () => {
     const restored = await sandbox.openshell(restoreSettingArgs!, {
-      artifactName: "tc-inf-12-provider-policy-setting-restore",
+      artifactName: `${artifactPrefix}-provider-policy-setting-restore`,
       env: openshellEnv,
       timeoutMs: 30_000,
     });
@@ -447,7 +447,7 @@ async function runRuntimeIdentityE2EScenario(
   const enableProviderPolicy = await sandbox.openshell(
     ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
     {
-      artifactName: "tc-inf-12-provider-policy-setting-enable",
+      artifactName: `${artifactPrefix}-provider-policy-setting-enable`,
       env: openshellEnv,
       timeoutMs: 30_000,
     },
@@ -464,9 +464,12 @@ async function runRuntimeIdentityE2EScenario(
   });
   cleanup.add("close runtime identity OAuth fixture", async () => {
     try {
-      await artifacts.writeJson("tc-inf-12-oauth-token-requests.json", oauth.tokenRequests());
       await artifacts.writeJson(
-        "tc-inf-12-protected-resource-requests.json",
+        `${artifactPrefix}-oauth-token-requests.json`,
+        oauth.tokenRequests(),
+      );
+      await artifacts.writeJson(
+        `${artifactPrefix}-protected-resource-requests.json`,
         oauth.resourceRequests(),
       );
     } finally {
@@ -618,7 +621,7 @@ async function runRuntimeIdentityE2EScenario(
       `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["plan"]);`,
     ],
     {
-      artifactName: "tc-inf-12-runtime-identity-plan",
+      artifactName: `${artifactPrefix}-runtime-identity-plan`,
       artifacts,
       cwd: workdir,
       env: runnerEnv,
@@ -651,7 +654,7 @@ async function runRuntimeIdentityE2EScenario(
       `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["apply"], { runtimeIdentityProfilePolicy: ${JSON.stringify(runtimeIdentityProfilePolicy)} });`,
     ],
     {
-      artifactName: "tc-inf-12-runtime-identity-apply",
+      artifactName: `${artifactPrefix}-runtime-identity-apply`,
       artifacts,
       cwd: workdir,
       env: runnerEnv,
@@ -711,7 +714,7 @@ async function runRuntimeIdentityE2EScenario(
   const refreshStatus = await sandbox.openshell(
     ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
     {
-      artifactName: "tc-inf-12-provider-refresh-status-v1",
+      artifactName: `${artifactPrefix}-provider-refresh-status-v1`,
       env: openshellEnv,
       timeoutMs: 30_000,
     },
@@ -726,7 +729,7 @@ async function runRuntimeIdentityE2EScenario(
     sandboxName,
     model,
     [inferenceKey],
-    "tc-inf-12-inference-after-identity-attach",
+    `${artifactPrefix}-inference-after-identity-attach`,
   );
   expect(inference.requests().slice(inferenceRequestOffset)).toContainEqual(
     expect.objectContaining({
@@ -746,7 +749,7 @@ async function runRuntimeIdentityE2EScenario(
       async () => {
         placeholderProbeAttempt += 1;
         const probe = await sandbox.exec(sandboxName, ["/usr/bin/printenv", credentialKey], {
-          artifactName: `tc-inf-12-placeholder-before-rotation-${placeholderProbeAttempt}`,
+          artifactName: `${artifactPrefix}-placeholder-before-rotation-${placeholderProbeAttempt}`,
           env: openshellEnv,
           timeoutMs: 30_000,
         });
@@ -803,7 +806,7 @@ async function runRuntimeIdentityE2EScenario(
       });
   };
 
-  await expectProtectedResourceVersion(placeholder, 1, "tc-inf-12-protected-resource-v1");
+  await expectProtectedResourceVersion(placeholder, 1, `${artifactPrefix}-protected-resource-v1`);
   expect(oauth.resourceRequests()).toEqual([
     {
       method: "GET",
@@ -839,7 +842,7 @@ async function runRuntimeIdentityE2EScenario(
   const rotate = await sandbox.openshell(
     ["provider", "refresh", "rotate", providerName, "--credential-key", credentialKey],
     {
-      artifactName: "tc-inf-12-provider-refresh-rotate-v2",
+      artifactName: `${artifactPrefix}-provider-refresh-rotate-v2`,
       env: openshellEnv,
       timeoutMs: 60_000,
     },
@@ -866,7 +869,7 @@ async function runRuntimeIdentityE2EScenario(
           sandboxName,
           ["/usr/bin/printenv", credentialKey],
           {
-            artifactName: `tc-inf-12-placeholder-after-rotation-${rotationProbeAttempt}`,
+            artifactName: `${artifactPrefix}-placeholder-after-rotation-${rotationProbeAttempt}`,
             env: openshellEnv,
             timeoutMs: 30_000,
           },
@@ -884,7 +887,7 @@ async function runRuntimeIdentityE2EScenario(
   await expectProtectedResourceVersion(
     placeholderAfterRotation,
     2,
-    "tc-inf-12-protected-resource-v2",
+    `${artifactPrefix}-protected-resource-v2`,
   );
   expect(oauth.resourceRequests()).toEqual([
     {
@@ -911,7 +914,7 @@ async function runRuntimeIdentityE2EScenario(
       `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["status", "--run-id", ${JSON.stringify(runId)}]);`,
     ],
     {
-      artifactName: "tc-inf-12-runtime-identity-status",
+      artifactName: `${artifactPrefix}-runtime-identity-status`,
       artifacts,
       cwd: workdir,
       env: runnerEnv,
@@ -935,7 +938,7 @@ async function runRuntimeIdentityE2EScenario(
       `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["rollback", "--run-id", ${JSON.stringify(runId)}]);`,
     ],
     {
-      artifactName: "tc-inf-12-runtime-identity-rollback",
+      artifactName: `${artifactPrefix}-runtime-identity-rollback`,
       artifacts,
       cwd: workdir,
       env: runnerEnv,
@@ -948,20 +951,20 @@ async function runRuntimeIdentityE2EScenario(
   expect(fs.existsSync(path.join(stateDir, "rolled_back"))).toBe(true);
 
   const providerAfterRollback = await sandbox.openshell(["provider", "get", providerName], {
-    artifactName: "tc-inf-12-provider-after-rollback",
+    artifactName: `${artifactPrefix}-provider-after-rollback`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
   expect(providerAfterRollback.exitCode).not.toBe(0);
   const reusedSandboxAfterRollback = await sandbox.openshell(["sandbox", "get", sandboxName], {
-    artifactName: "tc-inf-12-reused-sandbox-after-rollback",
+    artifactName: `${artifactPrefix}-reused-sandbox-after-rollback`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
   expect(reusedSandboxAfterRollback.exitCode, resultText(reusedSandboxAfterRollback)).toBe(0);
 
   const deleteProfile = await sandbox.openshell(["provider", "profile", "delete", providerType], {
-    artifactName: "tc-inf-12-delete-conformance-profile",
+    artifactName: `${artifactPrefix}-delete-conformance-profile`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });

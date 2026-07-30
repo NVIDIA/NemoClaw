@@ -81,6 +81,25 @@ function generateEphemeralTlsMaterial(): {
   };
 }
 
+function classifyBearer(
+  authorization: string | undefined,
+  accessTokens: readonly string[],
+  currentAccessToken: string | undefined,
+): Pick<RuntimeIdentityResourceRequest, "accessTokenVersion" | "auth"> {
+  const token =
+    typeof authorization === "string" && authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : undefined;
+  const rawAccessTokenVersion = token
+    ? accessTokens.findIndex((candidate) => candidate === token) + 1
+    : null;
+  return {
+    auth: token === currentAccessToken ? "ok" : token ? "invalid" : "missing",
+    accessTokenVersion:
+      rawAccessTokenVersion && rawAccessTokenVersion > 0 ? rawAccessTokenVersion : null,
+  };
+}
+
 /**
  * Standards-shaped OAuth refresh issuer plus protected resource.
  *
@@ -160,22 +179,16 @@ export async function startRuntimeIdentityOAuthServer(options: {
     }
 
     if (req.method === "GET" && requestPath === resourcePath) {
-      const authorization = req.headers.authorization;
-      const token =
-        typeof authorization === "string" && authorization.startsWith("Bearer ")
-          ? authorization.slice("Bearer ".length)
-          : undefined;
-      const accessTokenVersion = token
-        ? accessTokens.findIndex((candidate) => candidate === token) + 1
-        : null;
-      const auth: RuntimeIdentityResourceRequest["auth"] =
-        token === currentAccessToken ? "ok" : token ? "invalid" : "missing";
+      const { accessTokenVersion, auth } = classifyBearer(
+        req.headers.authorization,
+        accessTokens,
+        currentAccessToken,
+      );
       resourceRequests.push({
         method: req.method,
         path: requestPath,
         auth,
-        accessTokenVersion:
-          accessTokenVersion && accessTokenVersion > 0 ? accessTokenVersion : null,
+        accessTokenVersion,
       });
       if (auth !== "ok") {
         writeJsonResponse(res, 401, { error: "invalid bearer credential" });
@@ -188,19 +201,16 @@ export async function startRuntimeIdentityOAuthServer(options: {
       return;
     }
 
-    const authorization = req.headers.authorization;
-    const token =
-      typeof authorization === "string" && authorization.startsWith("Bearer ")
-        ? authorization.slice("Bearer ".length)
-        : undefined;
-    const accessTokenVersion = token
-      ? accessTokens.findIndex((candidate) => candidate === token) + 1
-      : null;
+    const { accessTokenVersion, auth } = classifyBearer(
+      req.headers.authorization,
+      accessTokens,
+      currentAccessToken,
+    );
     resourceRequests.push({
       method: req.method ?? "UNKNOWN",
       path: requestPath,
-      auth: token === currentAccessToken ? "ok" : token ? "invalid" : "missing",
-      accessTokenVersion: accessTokenVersion && accessTokenVersion > 0 ? accessTokenVersion : null,
+      auth,
+      accessTokenVersion,
     });
     writeJsonResponse(res, 404, { error: "not found" });
   });

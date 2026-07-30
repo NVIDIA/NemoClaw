@@ -516,6 +516,7 @@ describe("runtime identity contract", () => {
 
   it.each([
     [
+      "credential-delivery path",
       entraProfileDocument.replace(
         '      - allow: { method: GET, path: "/v1.0/me" }',
         '      - allow: { method: GET, path: "/**" }',
@@ -523,18 +524,21 @@ describe("runtime identity contract", () => {
       /REST GET \/v1\.0\/me credential-delivery policy/,
     ],
     [
+      "credential-delivery host",
       entraProfileDocument.replace("host: graph.microsoft.com", "host: login.microsoftonline.com"),
       /credential delivery host 'login\.microsoftonline\.com' is outside/,
     ],
     [
+      "credential-delivery hostname suffix",
       entraProfileDocument.replace("graph.microsoft.com", "graph.microsoft.com.attacker.example"),
       /outside the trusted destination policy/,
     ],
     [
+      "token-issuer host",
       entraProfileDocument.replace("login.microsoftonline.com", "graph.microsoft.com"),
       /refresh token_url host 'graph\.microsoft\.com' is outside/,
     ],
-  ])("rejects a broadened Entra credential-delivery profile", async (profile, message) => {
+  ])("rejects an Entra profile that changes the reviewed %s", async (_boundary, profile, message) => {
     writeFileSync(join(root, entraConfig.profile_path), profile);
     environment.ENTRA_CLIENT_ID = "entra-client-id";
     environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
