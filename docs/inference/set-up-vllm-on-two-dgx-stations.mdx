@@ -1,0 +1,147 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up vLLM on Two DGX Stations"
+sidebar-title: "Set Up vLLM on Two DGX Stations"
+description: "Qualify a trusted two-Station DGX GB300 pair and use NemoClaw's distributed Nemotron Ultra vLLM recipe."
+description-agent: "Sets up the Deferred two-DGX Station managed vLLM path, including pair qualification, runtime topology, network controls, ownership receipts, and cleanup. Use when configuring NEMOCLAW_DGX_STATION_PEER or distributed Nemotron Ultra."
+keywords: ["nemoclaw dual dgx station", "two dgx station vllm", "distributed nemotron ultra"]
+content:
+  type: "how_to"
+---
+
+Use this workflow to let DGX Station Express select a trusted two-Station GB300 pair for distributed Nemotron Ultra serving.
+The two-Station path is a Deferred evaluation and does not change single-Station support status.
+
+## Prepare the Stations
+
+Prepare both hosts before you start managed vLLM setup.
+
+1. Follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation) on the local host and peer, including its rail and SSH prerequisites.
+2. Refer to [Platform Support](../../reference/platform-support) for the current qualification and direct GPU policy boundaries.
+
+On each Station, preparation binds the preparing non-root account's UID in the root-owned `/etc/nemoclaw/dual-station-controller-uid` file.
+To replace that account, an administrator must remove the file on the affected Station before rerunning preparation as the replacement account.
+
+<Warning>
+The distributed runtime uses unauthenticated Ray, NVIDIA Collective Communications Library (NCCL), and vLLM coordination traffic on the private rails.
+Treat both Stations and every host that can reach either rail as mutually trusted.
+Do not use this path on a shared or routed network without separately reviewed isolation evidence.
+</Warning>
+
+## Select a Trusted Pair
+
+When no peer or model is selected, Station Express selects `nemotron-3-ultra-550b-a55b`.
+It derives one counterpart from each of two configured private `/30` ConnectX-8 rails.
+It consults existing SSH trust only for those two addresses.
+
+At least one derived address must already be trusted.
+If both addresses are trusted, their host keys must identify one SSH host.
+The Stations must pass reciprocal identity, GPU, route, neighbor, MAC, rail, and jumbo-frame checks.
+After qualification, the installer prepares the peer with the same reviewed helper and exports the qualified peer.
+
+No managed-vLLM image or model download starts before the pair qualification or single-Station fallback decision completes.
+If no trusted pair qualifies, Express retains the single-Station Ultra recipe.
+
+Set `NEMOCLAW_DGX_STATION_PEER` to request one exact already-trusted peer.
+The installer stops instead of falling back when that peer does not qualify.
+An explicit `NEMOCLAW_VLLM_MODEL` remains authoritative.
+
+For the first non-interactive setup, pass the managed provider and exact peer to the shell installer.
+The installer qualifies the pair and creates the peer binding that managed vLLM requires.
+Do not set `NEMOCLAW_DGX_STATION_SSH_BINDING` yourself or run `$$nemoclaw onboard` directly for the first pair setup.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+<AgentOnly variant="openclaw">
+  NEMOCLAW_AGENT=openclaw \
+</AgentOnly>
+<AgentOnly variant="hermes">
+  NEMOCLAW_AGENT=hermes \
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  NEMOCLAW_AGENT=langchain-deepagents-code \
+</AgentOnly>
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_DGX_STATION_PEER="<peer-host-or-address>" \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
+  bash
+```
+
+## Review Reboot and Resume Behavior
+
+If the local host requires a reboot during initial preparation, the installer stops with status `10`.
+Its owner-only receipt preserves the printed exact NemoClaw revision and Express selections.
+
+After reciprocal qualification starts, pair state binds the preparation helper, SSH host key, GPU identities, and reciprocal rails.
+The state names the host that must be rebooted manually.
+NemoClaw never reboots either host automatically.
+
+When Express finds a complete running NemoClaw-managed dual-Station head, it defers the workload-rejecting host probe during pair and lifecycle revalidation.
+Incomplete or mismatched workloads remain blocked.
+If the installer also recovers existing sandboxes, it reconciles the accepted Station Express runtime state before it completes.
+
+## Understand the Distributed Runtime
+
+The managed recipe tracks the [NVIDIA dual-Station playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes).
+It uses the ARM64 manifest digest `sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37` under `vllm/vllm-openai:v0.25.1-aarch64`.
+The image has `10.24 GB` of compressed layers.
+
+The recipe pins vLLM `0.25.1` and Ray `2.56.0`.
+It uses one tensor-parallel rank per Station and pipeline parallelism across the pair.
+It serves the `nemotron-ultra` alias with a `262144`-token model limit.
+It retains the Nemotron reasoning and tool-call parsers.
+
+The qualified dual-Station runtime intentionally uses Docker host networking on both containers.
+This topology lets NCCL and remote direct memory access (RDMA) bind the validated direct-attach rails.
+The head binds only the selected rank-0 address on a qualified private `/30` rail.
+It requires the generated bearer key for `/v1`.
+The `/health` endpoint remains unauthenticated for readiness.
+
+The worker joins the Ray cluster and exposes no vLLM API.
+Neither container publishes a Docker port.
+Docker bridge isolation and port-mapping rules do not protect this path.
+
+Both containers apply these controls:
+
+- The probed non-root UID and GID.
+- A read-only root filesystem and model cache.
+- All Linux capabilities dropped.
+- `no-new-privileges`.
+- Only the selected GPU UUID and exact `uverbs` devices.
+
+The worker does not receive the serving key.
+
+## Restrict Network Access
+
+Treat both Stations and their direct rails as one trusted runtime boundary.
+
+- Allow port `8000` from the OpenShell Docker subnet only to the selected rank-0 rail address.
+- Deny port `8000` on management and LAN interfaces.
+- Restrict Ray, NCCL, and serving traffic to the reciprocal addresses on the two qualified private rails.
+- Keep Ray TCP port `6379` and Ray worker ports off untrusted or routed networks.
+
+The single-Station fallback uses the bridge-networked managed-inference topology and publishes port `8000` through Docker.
+Follow [Set Up vLLM](set-up-vllm) for that workflow.
+
+## Preserve Cleanup Ownership
+
+After readiness and container validation pass, NemoClaw writes an owner-only cleanup receipt.
+It also copies the SSH binding under the selected gateway state root.
+A later onboarding run that reuses the validated pair recreates this cleanup ownership before it accepts the endpoint.
+
+The receipt contains no serving API key.
+It records the peer, cluster, and GPU identities needed to revalidate and remove both managed containers.
+Full uninstall uses the receipt to remove the exact pair.
+
+If NemoClaw cannot write the receipt, setup stops and rolls back a newly started pair.
+It does not leave a runtime that full uninstall cannot reach.
+
+## Related Topics
+
+- [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation) for host, rail, and SSH preparation.
+- [Set Up vLLM](set-up-vllm) for existing servers, single-host managed setup, model selection, and non-interactive onboarding.
+- [Uninstall NemoClaw](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for managed-pair cleanup.
+- [Host Files and State](../../reference/host-files-and-state) for the cleanup receipt location.

@@ -186,6 +186,12 @@ def _validate_directory_descriptor(path: str, fd: int) -> tuple[int, int, int, i
                     {
                         (sandbox_uid, sandbox_gid, 0o700),
                         (sandbox_uid, sandbox_gid, 0o3770),
+                        # Shields-up config root: root-owned in the sandbox
+                        # group with set-id/sticky, so Hermes keeps writing its
+                        # top-level runtime state while the sticky bit stops the
+                        # sandbox identity from unlinking the sealed root-owned
+                        # config (#7865). Same shape `/sandbox` uses above.
+                        (0, sandbox_gid, 0o3770),
                     }
                 )
             if (st.st_uid, st.st_gid, mode) not in allowed:

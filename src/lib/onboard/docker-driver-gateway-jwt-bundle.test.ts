@@ -17,6 +17,7 @@ import {
 import { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 
 const CONCURRENT_CALLER_COUNT = 12;
+const TSX_LOADER_DEPRECATION = "DEP0205";
 
 function spawnConcurrentJwtBundleCaller(
   stateDir: string,
@@ -49,7 +50,14 @@ process.stdout.write("RESULT " + JSON.stringify({ kid, signingKeyHash }) + "\n")
 `;
   const child = spawn(
     process.execPath,
-    ["--import", "tsx", "--input-type=module", "--eval", script],
+    [
+      `--disable-warning=${TSX_LOADER_DEPRECATION}`,
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      script,
+    ],
     {
       cwd: path.resolve(import.meta.dirname, "../../.."),
       env: {
