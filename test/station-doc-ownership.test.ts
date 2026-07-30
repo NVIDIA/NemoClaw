@@ -20,6 +20,12 @@ const STATION_PREPARATION = path.join(
 const STATION_QUICKSTART = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
 const PLATFORM_SUPPORT = path.join(REPO_ROOT, "docs", "reference", "platform-support.mdx");
 const VLLM_SETUP = path.join(REPO_ROOT, "docs", "inference", "set-up-vllm.mdx");
+const DUAL_STATION_VLLM_SETUP = path.join(
+  REPO_ROOT,
+  "docs",
+  "inference",
+  "set-up-vllm-on-two-dgx-stations.mdx",
+);
 const WINDOWS_PREPARATION = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
 const DOCS_INDEX = path.join(REPO_ROOT, "docs", "index.yml");
 const FERN_DOCS = path.join(REPO_ROOT, "fern", "docs.yml");
@@ -32,6 +38,7 @@ describe("DGX Station documentation ownership", () => {
     const quickstart = fs.readFileSync(STATION_QUICKSTART, "utf-8");
     const platformSupport = fs.readFileSync(PLATFORM_SUPPORT, "utf-8");
     const vllmSetup = fs.readFileSync(VLLM_SETUP, "utf-8");
+    const dualStationVllmSetup = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
     const pinnedValues = [
       "DRIVER_VERSION",
       "DOCKER_VERSION",
@@ -95,6 +102,15 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
     expect(vllmSetup).toContain("Prepare DGX Station to Install NemoClaw");
     expect(vllmSetup).toContain("[Platform Support](../../reference/platform-support)");
+    expect(vllmSetup).toContain(
+      "[Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations)",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "[Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation)",
+    );
+    expect(dualStationVllmSetup).toContain("[Platform Support](../../reference/platform-support)");
+    expect(dualStationVllmSetup).toContain("NEMOCLAW_DGX_STATION_PEER");
+    expect(vllmSetup).not.toContain("NEMOCLAW_DGX_STATION_PEER");
     expect(vllmSetup).toContain("--station-deepseek");
     expect(vllmSetup).toContain("bash -s -- --station-deepseek");
     expect(vllmSetup).toContain("For a headless DGX Station setup");
@@ -143,6 +159,7 @@ describe("DGX Station documentation ownership", () => {
     ).toHaveLength(3);
     expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
     expect(docsIndex.match(/page: "Additional Setup for Windows Machines"/g)).toHaveLength(3);
+    expect(docsIndex.match(/page: "Set Up vLLM on Two DGX Stations"/g)).toHaveLength(3);
   });
 
   it("keeps the headless Station installer agent-aware in every generated guide", () => {
@@ -164,6 +181,34 @@ describe("DGX Station documentation ownership", () => {
       expect(rendered).toContain(stationDeepseekCommand);
       expect(rendered).toContain(`NEMOCLAW_AGENT=${agent} \\`);
       expect(rendered).toContain("NEMOCLAW_PROVIDER=install-vllm");
+      expect(rendered).not.toContain("<AgentOnly");
+    }
+  });
+
+  it("keeps first-run dual-Station pair qualification inside the shell installer", () => {
+    const source = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
+    const variants = [
+      ["openclaw", "openclaw"],
+      ["hermes", "hermes"],
+      ["deepagents", "langchain-deepagents-code"],
+    ] as const;
+
+    for (const [variant, agent] of variants) {
+      const rendered = renderAgentVariantPage(source, variant);
+      const pairCommand = [
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
+        `  NEMOCLAW_AGENT=${agent} \\`,
+        "  NEMOCLAW_NON_INTERACTIVE=1 \\",
+        "  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \\",
+        "  NEMOCLAW_PROVIDER=install-vllm \\",
+        '  NEMOCLAW_DGX_STATION_PEER="<peer-host-or-address>" \\',
+        "  NEMOCLAW_SANDBOX_NAME=my-assistant \\",
+        "  bash",
+      ].join("\n");
+
+      expect(rendered).toContain(pairCommand);
+      expect(rendered).toContain("The installer qualifies the pair");
+      expect(rendered).not.toContain("nemoclaw onboard --non-interactive");
       expect(rendered).not.toContain("<AgentOnly");
     }
   });
