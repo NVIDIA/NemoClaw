@@ -7,9 +7,7 @@ import * as coreVersion from "../core/version";
 import * as sandboxList from "../openshell-sandbox-list";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
-import type { SandboxRegistry } from "../state/registry/types";
 import * as sandboxState from "../state/sandbox";
-import { commitRebuildRoutePreflight } from "./sandbox/rebuild-preflight-guards";
 import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";
 
 type UpgradeSandboxes = typeof upgradeSandboxes;
@@ -308,74 +306,23 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
-  it("migrates missing credential identities for two sandboxes on a shared route during upgrade-sandboxes --auto (#7615, #7798)", async () => {
+  it("forwards two stale shared-route sandboxes through upgrade-sandboxes --auto (#7615, #7798)", async () => {
     const names = ["alpha", "beta"];
-    const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
-    let persisted: SandboxRegistry = {
-      defaultSandbox: names[0],
-      sandboxes: Object.fromEntries(
-        names.map((name) => [
-          name,
-          {
-            name,
-            agent: "openclaw",
-            agentVersion: "2026.5.27",
-            credentialEnv: null,
-            gatewayName: "nemoclaw",
-            gatewayPort: 8080,
-            model: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-            nemoclawVersion: "0.0.71",
-            provider: "nvidia-prod",
-          },
-        ]),
-      ),
-    };
     const harness = createRecoveryHarness(names, {
       liveOutput: names.map((name) => `${name} Ready`).join("\n"),
       staleNames: names,
     });
-    vi.mocked(registry.listSandboxes).mockImplementation(() => {
-      const snapshot = structuredClone(persisted);
-      return {
-        defaultSandbox: snapshot.defaultSandbox,
-        sandboxes: Object.values(snapshot.sandboxes),
-      };
-    });
-    const routeResults: ReturnType<typeof commitRebuildRoutePreflight>[] = [];
-    harness.rebuildSpy.mockImplementation(async (sandboxName: string) => {
-      routeResults.push(
-        commitRebuildRoutePreflight(
-          {
-            sandboxName,
-            gatewayName: "nemoclaw",
-            targetUpdate: {
-              credentialEnv,
-              model: persisted.sandboxes[sandboxName]?.model,
-              provider: persisted.sandboxes[sandboxName]?.provider,
-            },
-          },
-          {
-            withLock: <T>(fn: () => T): T => fn(),
-            load: () => structuredClone(persisted),
-            save: (next) => {
-              persisted = structuredClone(next);
-            },
-          },
-        ),
-      );
-    });
 
     await expect(harness.upgradeSandboxes(["--auto"])).resolves.toBeUndefined();
 
-    expect(harness.rebuildSpy.mock.calls.map((call) => call[0])).toEqual(names);
-    expect(routeResults).toMatchObject([
-      { ok: true, receipt: { sandboxName: "alpha", migratedSandboxNames: ["beta"] } },
-      { ok: true, receipt: { sandboxName: "beta", migratedSandboxNames: [] } },
-    ]);
-    expect(names.map((name) => persisted.sandboxes[name]?.credentialEnv)).toEqual([
-      credentialEnv,
-      credentialEnv,
-    ]);
+    expect(harness.rebuildSpy).toHaveBeenNthCalledWith(1, "alpha", ["--yes"], {
+      recoveryManifest: undefined,
+      throwOnError: true,
+    });
+    expect(harness.rebuildSpy).toHaveBeenNthCalledWith(2, "beta", ["--yes"], {
+      recoveryManifest: undefined,
+      throwOnError: true,
+    });
   });
 
   it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {

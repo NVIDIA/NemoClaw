@@ -132,6 +132,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     tests: [
       {
         files: [
+          "src/lib/actions/sandbox/rebuild-route-preflight.test.ts",
           "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
           "src/lib/sandbox/version.test.ts",
         ],
