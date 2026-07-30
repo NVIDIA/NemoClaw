@@ -131,7 +131,10 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
     tests: [
       {
-        files: ["src/lib/sandbox/version.test.ts"],
+        files: [
+          "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
+          "src/lib/sandbox/version.test.ts",
+        ],
         project: "cli",
       },
       {
