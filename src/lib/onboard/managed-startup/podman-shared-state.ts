@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { PodmanManagedSandboxRecreateTransaction } from "../compute/podman/sandbox-recreate";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import type { PodmanManagedStartupTransaction } from "./podman-root-apply";
@@ -37,6 +38,51 @@ export interface PodmanManagedStartupSharedStateOutcome {
 }
 
 export type PodmanManagedStartupSharedStateDeps = PodmanManagedStartupRuntimeDeps;
+
+function sameSocketAuthority(
+  left: PodmanManagedStartupTransaction["runtime"]["socketAuthority"],
+  right: PodmanManagedSandboxRecreateTransaction["socketAuthority"],
+): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.ownerUid === right.ownerUid &&
+    left.socketPath === right.socketPath &&
+    left.directoryChain.length === right.directoryChain.length &&
+    left.directoryChain.every((component, index) => {
+      const candidate = right.directoryChain[index];
+      return (
+        candidate?.device === component.device &&
+        candidate.inode === component.inode &&
+        candidate.mode === component.mode &&
+        candidate.ownerUid === component.ownerUid &&
+        candidate.path === component.path
+      );
+    })
+  );
+}
+
+function hasMatchingContainerRollbackAuthority(
+  transaction: PodmanManagedStartupTransaction,
+  authority: PodmanManagedSandboxRecreateTransaction | null | undefined,
+): boolean {
+  if (!authority) return false;
+  const transactionImage = transaction.image.replace(/^sha256:/u, "");
+  const authorityImage = authority.immutableImage.replace(/^sha256:/u, "");
+  if (
+    authority.driverName !== "podman" ||
+    authority.applied !== true ||
+    authority.socketPath !== transaction.runtime.socketPath ||
+    !sameSocketAuthority(transaction.runtime.socketAuthority, authority.socketAuthority) ||
+    authority.newContainerId !== transaction.containerId ||
+    authorityImage !== transactionImage
+  ) {
+    throw new Error(
+      "Podman managed-startup rollback authority does not match the exact runtime, image, and replacement container.",
+    );
+  }
+  return true;
+}
 
 function cleanupReceiptBestEffort(receiptPath: string): void {
   try {
@@ -228,13 +274,14 @@ function removeFailedUnbackedContainer(
 /**
  * Finalize the shared-state half of a Podman managed-container cutover.
  *
- * `containerRollbackArmed` is true only when the caller still owns a verified
- * runtime-level recreation transaction. Without that rollback authority this
+ * `containerRollbackAuthority` is the exact runtime-level recreation
+ * transaction retained by the caller. It is cross-checked against the
+ * managed-startup transaction before any mutation. Without that authority this
  * layer removes a failed replacement after shared state is restored.
  */
 export function finalizePodmanManagedStartupSharedState(
   input: {
-    readonly containerRollbackArmed?: boolean;
+    readonly containerRollbackAuthority?: PodmanManagedSandboxRecreateTransaction | null;
     readonly supervisorReady: boolean;
     readonly transaction: PodmanManagedStartupTransaction | null;
   },
@@ -244,6 +291,11 @@ export function finalizePodmanManagedStartupSharedState(
   if (!transaction) {
     return { failure: null, supervisorReady: input.supervisorReady };
   }
+  deps = { ...deps, socketAuthority: transaction.runtime.socketAuthority };
+  const containerRollbackArmed = hasMatchingContainerRollbackAuthority(
+    transaction,
+    input.containerRollbackAuthority,
+  );
   assertPinnedContainer(transaction, deps, input.supervisorReady);
   if (input.supervisorReady) {
     let receiptPath: string;
@@ -305,7 +357,7 @@ export function finalizePodmanManagedStartupSharedState(
     }
     quiesceManagedStartupContainer(transaction, deps);
     rollbackManagedStartupSharedState(transaction, receiptPath, deps);
-    if (input.containerRollbackArmed !== true) {
+    if (!containerRollbackArmed) {
       removeFailedUnbackedContainer(transaction, deps);
     }
     return { failure, supervisorReady: false };
@@ -314,7 +366,7 @@ export function finalizePodmanManagedStartupSharedState(
   quiesceManagedStartupContainer(transaction, deps);
   const receiptPath = copyManagedStartupReceipt(transaction, deps);
   rollbackManagedStartupSharedState(transaction, receiptPath, deps);
-  if (input.containerRollbackArmed !== true) {
+  if (!containerRollbackArmed) {
     removeFailedUnbackedContainer(transaction, deps);
   }
   return { failure: null, supervisorReady: false };

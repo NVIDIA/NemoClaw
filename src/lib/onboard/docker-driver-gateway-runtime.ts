@@ -66,6 +66,7 @@ export interface DockerDriverGatewayRuntimeDeps {
   runCapture: RunCapture;
   runCaptureEx?: RunCaptureEx;
   shouldUseOpenshellDevChannel(): boolean;
+  stateDir?: string;
   supportedOpenshellFallbackVersion: string;
 }
 
@@ -147,6 +148,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
 
   function getDockerDriverGatewayStateDir(): string {
+    if (deps.stateDir?.trim()) return path.resolve(deps.stateDir.trim());
     const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
     if (configured && configured.trim()) return path.resolve(configured.trim());
     const dir = gatewayBinding.resolveGatewayStateDirName(currentGatewayPort());

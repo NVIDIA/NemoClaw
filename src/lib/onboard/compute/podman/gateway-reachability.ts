@@ -3,6 +3,7 @@
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import path from "node:path";
+import { assertPodmanSocketAuthority, type PodmanSocketAuthority } from "./socket-authority";
 
 const DEFAULT_PROBE_IMAGE =
   "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
@@ -25,9 +26,11 @@ type SpawnSyncLike = (
 ) => PodmanProbeResult;
 
 export interface PodmanGatewayReachabilityOptions {
+  readonly assertSocketAuthority?: (expected: PodmanSocketAuthority) => void;
   readonly exitProcess?: (code: number) => never;
   readonly networkName?: string;
   readonly podmanBin?: string;
+  readonly socketAuthority: PodmanSocketAuthority;
   readonly podmanSocketPath?: string;
   readonly port: number;
   readonly probeImage?: string;
@@ -112,7 +115,15 @@ export async function verifyPodmanSandboxGatewayReachableOrExit(
     return;
   }
   const podmanSocketPath =
-    options.podmanSocketPath ?? process.env.OPENSHELL_PODMAN_SOCKET?.trim() ?? "";
+    options.podmanSocketPath ??
+    process.env.OPENSHELL_PODMAN_SOCKET?.trim() ??
+    options.socketAuthority.socketPath;
+  if (options.socketAuthority.socketPath !== podmanSocketPath) {
+    throw new Error(
+      "Podman gateway reachability socket authority does not match the requested socket.",
+    );
+  }
+  const proveSocketAuthority = options.assertSocketAuthority ?? assertPodmanSocketAuthority;
   const port = options.port;
   const timeoutSeconds = Math.max(1, options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS);
   const probeName =
@@ -120,6 +131,7 @@ export async function verifyPodmanSandboxGatewayReachableOrExit(
   const podmanBin = options.podmanBin ?? process.env.NEMOCLAW_PODMAN_BIN?.trim() ?? "podman";
   const spawn = options.spawnSyncImpl ?? spawnSync;
   const socketUrl = podmanSocketUrl(podmanSocketPath);
+  proveSocketAuthority(options.socketAuthority);
   const result = spawn(
     podmanBin,
     buildPodmanGatewayProbeArgs({
@@ -136,8 +148,10 @@ export async function verifyPodmanSandboxGatewayReachableOrExit(
       timeout: timeoutSeconds * 1000 + PROBE_OVERHEAD_MS,
     },
   );
+  proveSocketAuthority(options.socketAuthority);
   if (result.status === 0) return;
 
+  proveSocketAuthority(options.socketAuthority);
   spawn(podmanBin, ["--url", socketUrl, "rm", "--force", probeName], {
     encoding: "utf-8",
     stdio: "ignore",

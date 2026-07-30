@@ -8,6 +8,10 @@ import path from "node:path";
 
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
+import {
+  captureHostProcessIdentity,
+  type HostProcessIdentity,
+} from "./compute/host-process-identity";
 import { envInt } from "./env";
 import {
   createGatewayHealthWaitOptions,
@@ -32,6 +36,7 @@ export interface OpenShellGatewayUserServiceOptions {
   platform?: NodeJS.Platform;
   preparePortForServiceStart?: () => void;
   prepareServiceEnv?: () => void;
+  readProcessIdentity?: (pid: number) => OpenShellGatewayProcessIdentity | null;
   readFileSync?: (filePath: string, encoding: BufferEncoding) => string;
   rmSync?: typeof fs.rmSync;
   spawnSyncImpl?: SpawnSyncLike;
@@ -60,6 +65,8 @@ export type SpawnSyncLike = (
   args: string[],
   options?: SpawnSyncOptions,
 ) => SpawnSyncLikeResult;
+
+export type OpenShellGatewayProcessIdentity = HostProcessIdentity;
 
 export interface PackageManagedDriverGatewayOptions {
   clearDockerDriverGatewayRuntimeFiles: () => void;
@@ -105,6 +112,8 @@ const TRUSTED_GATEWAY_SERVICE_IDENTITY = Symbol("trusted-openshell-gateway-servi
 interface TrustedOpenShellGatewayUserServiceIdentityBase {
   readonly [TRUSTED_GATEWAY_SERVICE_IDENTITY]: true;
   readonly pid: number;
+  readonly processArgv: readonly string[];
+  readonly processStartIdentity: string;
   readonly serviceName: string;
 }
 
@@ -118,7 +127,9 @@ export interface TrustedHomebrewOpenShellGatewayUserServiceIdentity
 
 export interface TrustedSystemdOpenShellGatewayUserServiceIdentity
   extends TrustedOpenShellGatewayUserServiceIdentityBase {
+  readonly execStart: string;
   readonly execStartPath: string;
+  readonly invocationId: string;
   readonly manager: "systemd";
   readonly unitPath: string;
 }
@@ -392,6 +403,10 @@ function extractSystemdExecStartPath(execStart: string): string | null {
   return candidate && path.isAbsolute(candidate) ? path.normalize(candidate) : null;
 }
 
+function isSystemdInvocationId(value: string): boolean {
+  return /^[0-9a-f]{32}$/i.test(value);
+}
+
 function validateSystemdServiceIdentity(
   service: OpenShellGatewayUserServiceTarget,
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
@@ -428,13 +443,16 @@ function validateSystemdServiceIdentityFromProperties(
 interface TrustedServiceContext {
   commandExists: (command: string) => boolean;
   env: NodeJS.ProcessEnv;
+  readProcessIdentity: (pid: number) => OpenShellGatewayProcessIdentity | null;
   service: OpenShellGatewayUserServiceTarget;
   spawnSyncImpl: SpawnSyncLike;
 }
 
 interface SystemdServiceState {
   activeState: string;
+  execStart: string;
   execStartPath: string;
+  invocationId: string;
   mainPid: number;
   unitPath: string;
 }
@@ -446,6 +464,25 @@ interface HomebrewServiceState {
   serviceIdentity: string;
 }
 
+function freezeProcessIdentity(
+  identity: OpenShellGatewayProcessIdentity | null,
+): OpenShellGatewayProcessIdentity | null {
+  if (identity === null) return null;
+  if (
+    !Array.isArray(identity.argv) ||
+    identity.argv.length === 0 ||
+    identity.argv.some((value) => typeof value !== "string") ||
+    typeof identity.startIdentity !== "string" ||
+    !identity.startIdentity.trim()
+  ) {
+    throw new Error("OpenShell gateway process identity is incomplete");
+  }
+  return Object.freeze({
+    argv: Object.freeze([...identity.argv]),
+    startIdentity: identity.startIdentity,
+  });
+}
+
 function trustedServiceContext(opts: OpenShellGatewayUserServiceOptions): TrustedServiceContext {
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux" && platform !== "darwin") {
@@ -455,6 +492,14 @@ function trustedServiceContext(opts: OpenShellGatewayUserServiceOptions): Truste
   const home = effectiveHome(opts.home, opts.env);
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  const readProcessIdentity =
+    opts.readProcessIdentity ??
+    ((pid: number) =>
+      captureHostProcessIdentity(pid, {
+        env,
+        platform,
+        run: spawnSyncImpl,
+      }));
   const service = resolveOpenShellGatewayUserService({ ...opts, env, home });
   if (!service) {
     throw new Error("No trusted package-managed OpenShell gateway service is installed");
@@ -463,7 +508,7 @@ function trustedServiceContext(opts: OpenShellGatewayUserServiceOptions): Truste
   if (!commandExists(command)) {
     throw new Error(`${command} is unavailable for the trusted OpenShell gateway service`);
   }
-  return { commandExists, env, service, spawnSyncImpl };
+  return { commandExists, env, readProcessIdentity, service, spawnSyncImpl };
 }
 
 function queryTrustedSystemdServiceState(context: TrustedServiceContext): SystemdServiceState {
@@ -474,6 +519,7 @@ function queryTrustedSystemdServiceState(context: TrustedServiceContext): System
       "--property=FragmentPath",
       "--property=ExecStart",
       "--property=ActiveState",
+      "--property=InvocationID",
       "--property=MainPID",
     ],
     context,
@@ -489,9 +535,12 @@ function queryTrustedSystemdServiceState(context: TrustedServiceContext): System
     throw new Error(identity.reason ?? "OpenShell gateway systemd service identity is invalid");
   }
   const unitPath = path.normalize(properties.FragmentPath ?? "");
-  const execStartPath = extractSystemdExecStartPath(properties.ExecStart ?? "");
+  const execStart = (properties.ExecStart ?? "").trim();
+  const execStartPath = extractSystemdExecStartPath(execStart);
+  const invocationId = (properties.InvocationID ?? "").trim();
   const mainPid = Number(properties.MainPID);
   if (
+    !execStart ||
     execStartPath === null ||
     !Number.isSafeInteger(mainPid) ||
     mainPid < 0 ||
@@ -501,7 +550,9 @@ function queryTrustedSystemdServiceState(context: TrustedServiceContext): System
   }
   return {
     activeState: properties.ActiveState,
+    execStart,
     execStartPath,
+    invocationId,
     mainPid,
     unitPath,
   };
@@ -572,6 +623,47 @@ function requireTrustedIdentityReceipt(
   }
 }
 
+function sameArgv(expected: readonly string[], actual: readonly string[]): boolean {
+  return (
+    actual.length === expected.length && actual.every((value, index) => value === expected[index])
+  );
+}
+
+function sameProcessIdentity(
+  expected: Pick<
+    TrustedActiveOpenShellGatewayUserServiceIdentity,
+    "processArgv" | "processStartIdentity"
+  >,
+  actual: OpenShellGatewayProcessIdentity | null,
+): boolean {
+  return (
+    actual !== null &&
+    actual.startIdentity === expected.processStartIdentity &&
+    sameArgv(expected.processArgv, actual.argv)
+  );
+}
+
+function requireActiveProcessIdentity(
+  context: TrustedServiceContext,
+  pid: number,
+): OpenShellGatewayProcessIdentity {
+  const identity = freezeProcessIdentity(context.readProcessIdentity(pid));
+  if (!identity) {
+    throw new Error("Trusted OpenShell gateway process identity is unavailable or incomplete");
+  }
+  return identity;
+}
+
+function assertCapturedProcessInactive(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  context: TrustedServiceContext,
+): void {
+  const current = freezeProcessIdentity(context.readProcessIdentity(identity.pid));
+  if (sameProcessIdentity(identity, current)) {
+    throw new Error("Trusted OpenShell gateway captured process is still active");
+  }
+}
+
 function assertMatchingServiceTarget(
   identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
   context: TrustedServiceContext,
@@ -589,7 +681,11 @@ function requireMatchingSystemdState(
   context: TrustedServiceContext,
 ): SystemdServiceState {
   const state = queryTrustedSystemdServiceState(context);
-  if (state.unitPath !== identity.unitPath || state.execStartPath !== identity.execStartPath) {
+  if (
+    state.unitPath !== identity.unitPath ||
+    state.execStart !== identity.execStart ||
+    state.execStartPath !== identity.execStartPath
+  ) {
     throw new Error("Trusted OpenShell gateway systemd unit identity drifted");
   }
   return state;
@@ -617,14 +713,23 @@ function trustedActiveIdentity(
 ): TrustedActiveOpenShellGatewayUserServiceIdentity {
   if (context.service.manager === "systemd") {
     const state = queryTrustedSystemdServiceState(context);
-    if (state.activeState !== "active" || state.mainPid <= 0) {
+    if (
+      state.activeState !== "active" ||
+      state.mainPid <= 0 ||
+      !isSystemdInvocationId(state.invocationId)
+    ) {
       throw new Error("Trusted OpenShell gateway systemd service is not active");
     }
+    const process = requireActiveProcessIdentity(context, state.mainPid);
     return Object.freeze({
       [TRUSTED_GATEWAY_SERVICE_IDENTITY]: true as const,
+      execStart: state.execStart,
       execStartPath: state.execStartPath,
+      invocationId: state.invocationId,
       manager: "systemd",
       pid: state.mainPid,
+      processArgv: process.argv,
+      processStartIdentity: process.startIdentity,
       serviceName: context.service.serviceName,
       unitPath: state.unitPath,
     });
@@ -633,12 +738,15 @@ function trustedActiveIdentity(
   if (state.loaded !== true || state.running !== true || state.pid === null || state.pid <= 0) {
     throw new Error("Trusted OpenShell gateway Homebrew service is not active");
   }
+  const process = requireActiveProcessIdentity(context, state.pid);
   return Object.freeze({
     [TRUSTED_GATEWAY_SERVICE_IDENTITY]: true as const,
     formulaName: OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
     formulaTap: OPENSHELL_GATEWAY_HOMEBREW_TAP,
     manager: "homebrew",
     pid: state.pid,
+    processArgv: process.argv,
+    processStartIdentity: process.startIdentity,
     serviceIdentity: state.serviceIdentity,
     serviceName: context.service.serviceName,
   });
@@ -654,6 +762,35 @@ export function captureTrustedActiveOpenShellGatewayUserService(
   opts: OpenShellGatewayUserServiceOptions = {},
 ): TrustedActiveOpenShellGatewayUserServiceIdentity {
   return trustedActiveIdentity(trustedServiceContext(opts));
+}
+
+/**
+ * Distinguish an exactly inactive installed service from the active lifecycle
+ * owner. Transitional, malformed, foreign, or unavailable manager state still
+ * fails closed; only a fully proven inactive service returns null.
+ */
+export function captureTrustedOpenShellGatewayUserServiceIfActive(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+  const context = trustedServiceContext(opts);
+  if (context.service.manager === "systemd") {
+    const state = queryTrustedSystemdServiceState(context);
+    if (state.activeState === "inactive" && state.mainPid === 0) return null;
+    if (
+      state.activeState !== "active" ||
+      state.mainPid <= 0 ||
+      !isSystemdInvocationId(state.invocationId)
+    ) {
+      throw new Error("Trusted OpenShell gateway systemd service state is transitional");
+    }
+  } else {
+    const state = queryTrustedHomebrewServiceState(context);
+    if (!state.loaded && !state.running && (state.pid === null || state.pid === 0)) return null;
+    if (!state.loaded || !state.running || state.pid === null || state.pid <= 0) {
+      throw new Error("Trusted OpenShell gateway Homebrew service state is transitional");
+    }
+  }
+  return trustedActiveIdentity(context);
 }
 
 function requireInactiveServiceContext(
@@ -674,6 +811,7 @@ function requireInactiveServiceContext(
       throw new Error("Trusted OpenShell gateway Homebrew service is not proven inactive");
     }
   }
+  assertCapturedProcessInactive(identity, context);
   return context;
 }
 
@@ -696,12 +834,29 @@ function requireExactActiveServiceContext(
   assertMatchingServiceTarget(identity, context);
   if (identity.manager === "systemd") {
     const state = requireMatchingSystemdState(identity, context);
-    if (state.activeState !== "active" || state.mainPid !== identity.pid) {
+    const process =
+      state.mainPid > 0 ? freezeProcessIdentity(context.readProcessIdentity(state.mainPid)) : null;
+    if (
+      state.activeState !== "active" ||
+      state.mainPid !== identity.pid ||
+      state.invocationId !== identity.invocationId ||
+      !sameProcessIdentity(identity, process)
+    ) {
       throw new Error("Trusted OpenShell gateway systemd process identity drifted");
     }
   } else {
     const state = requireMatchingHomebrewState(identity, context);
-    if (!state.loaded || !state.running || state.pid === null || state.pid !== identity.pid) {
+    const process =
+      state.pid !== null && state.pid > 0
+        ? freezeProcessIdentity(context.readProcessIdentity(state.pid))
+        : null;
+    if (
+      !state.loaded ||
+      !state.running ||
+      state.pid === null ||
+      state.pid !== identity.pid ||
+      !sameProcessIdentity(identity, process)
+    ) {
       throw new Error("Trusted OpenShell gateway Homebrew process identity drifted");
     }
   }
@@ -759,12 +914,18 @@ export function resumeTrustedOpenShellGatewayUserServiceAndProveActive(
     (identity.manager === "systemd" &&
       (resumed.manager !== "systemd" ||
         resumed.unitPath !== identity.unitPath ||
-        resumed.execStartPath !== identity.execStartPath)) ||
+        resumed.execStart !== identity.execStart ||
+        resumed.execStartPath !== identity.execStartPath ||
+        resumed.invocationId === identity.invocationId ||
+        !sameArgv(identity.processArgv, resumed.processArgv) ||
+        resumed.processStartIdentity === identity.processStartIdentity)) ||
     (identity.manager === "homebrew" &&
       (resumed.manager !== "homebrew" ||
         resumed.formulaName !== identity.formulaName ||
         resumed.formulaTap !== identity.formulaTap ||
-        resumed.serviceIdentity !== identity.serviceIdentity))
+        resumed.serviceIdentity !== identity.serviceIdentity ||
+        !sameArgv(identity.processArgv, resumed.processArgv) ||
+        resumed.processStartIdentity === identity.processStartIdentity))
   ) {
     throw new Error("Resumed OpenShell gateway service identity drifted or reused its prior PID");
   }

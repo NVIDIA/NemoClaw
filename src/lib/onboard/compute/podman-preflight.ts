@@ -5,6 +5,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  type PodmanSocketAuthority,
+} from "./podman/socket-authority";
 
 export const MINIMUM_NATIVE_PODMAN_VERSION = "5.0.0";
 
@@ -12,6 +17,7 @@ export interface NativePodmanPreflightReceipt {
   readonly driverName: "podman";
   readonly version: string;
   readonly socketPath: string;
+  readonly socketAuthority: PodmanSocketAuthority;
   readonly rootless: true;
   readonly cgroupVersion: "v2";
   readonly os: "linux";
@@ -32,6 +38,7 @@ export interface NativePodmanPreflightDeps {
   readonly uid?: number;
   readonly home?: string;
   readonly lstatSync?: typeof fs.lstatSync;
+  readonly assertSocketAuthority?: (expected: PodmanSocketAuthority) => void;
   readonly run?: (command: string, args: readonly string[]) => CommandResult;
 }
 
@@ -137,15 +144,11 @@ function assertAbsoluteSocketPath(socketPath: string, explicit: boolean): void {
   }
 }
 
-function isSocket(socketPath: string, lstatSync: typeof fs.lstatSync): boolean {
-  try {
-    return lstatSync(socketPath).isSocket();
-  } catch {
-    return false;
-  }
-}
-
-function parsePodmanInfo(output: string, socketPath: string): NativePodmanPreflightReceipt {
+function parsePodmanInfo(
+  output: string,
+  socketAuthority: PodmanSocketAuthority,
+): NativePodmanPreflightReceipt {
+  const socketPath = socketAuthority.socketPath;
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -193,6 +196,7 @@ function parsePodmanInfo(output: string, socketPath: string): NativePodmanPrefli
     driverName: "podman",
     version: "",
     socketPath,
+    socketAuthority,
     rootless: true,
     cgroupVersion: "v2",
     os: "linux",
@@ -230,10 +234,24 @@ export function assessNativePodman(
   const env = deps.env ?? process.env;
   const run = deps.run ?? defaultRun;
   const lstatSync = deps.lstatSync ?? fs.lstatSync;
+  const proveSocketAuthority =
+    deps.assertSocketAuthority ??
+    ((expected: PodmanSocketAuthority) =>
+      assertPodmanSocketAuthority(expected, {
+        lstat: (filePath) => lstatSync(filePath),
+        uid: deps.uid,
+      }));
 
   if (platform !== "linux" || architecture !== "x64") {
     throw new NativePodmanPreflightError(
       `Native Podman support currently requires Linux x86_64; detected ${platform} ${architecture}.`,
+    );
+  }
+
+  const listenerInspector = run("lsof", ["-v"]);
+  if (listenerInspector.status !== 0) {
+    throw new NativePodmanPreflightError(
+      "Native Podman support requires lsof for complete gateway listener ownership proof. Install lsof and retry.",
     );
   }
 
@@ -254,16 +272,24 @@ export function assessNativePodman(
   let lastDiagnostic = "";
   for (const socketPath of candidates) {
     assertAbsoluteSocketPath(socketPath, explicitSocket);
-    if (!isSocket(socketPath, lstatSync)) {
-      lastDiagnostic = `not a Unix socket: ${socketPath}`;
+    let socketAuthority: PodmanSocketAuthority;
+    try {
+      socketAuthority = capturePodmanSocketAuthority(socketPath, {
+        lstat: (filePath) => lstatSync(filePath),
+        uid: deps.uid,
+      });
+    } catch (error) {
+      lastDiagnostic = error instanceof Error ? error.message : String(error);
       continue;
     }
+    proveSocketAuthority(socketAuthority);
     const info = run("podman", ["--url", `unix://${socketPath}`, "info", "--format", "json"]);
+    proveSocketAuthority(socketAuthority);
     if (info.status !== 0) {
       lastDiagnostic = info.stderr.trim() || `Podman API probe failed for ${socketPath}`;
       continue;
     }
-    const receipt = parsePodmanInfo(info.stdout, socketPath);
+    const receipt = parsePodmanInfo(info.stdout, socketAuthority);
     assertSubordinateIds(run);
     return { ...receipt, version };
   }

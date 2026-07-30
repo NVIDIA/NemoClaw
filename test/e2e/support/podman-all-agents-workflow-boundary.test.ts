@@ -61,7 +61,7 @@ describe("native Podman all-agent workflow boundary", () => {
     expect(job).toMatchObject({
       needs: "generate-matrix",
       "runs-on": "ubuntu-26.04",
-      "timeout-minutes": 60,
+      "timeout-minutes": 90,
       strategy: {
         matrix: {
           agent: ["openclaw", "hermes", "langchain-deepagents-code"],
@@ -77,6 +77,7 @@ describe("native Podman all-agent workflow boundary", () => {
     expect(job?.if).toContain("inputs.jobs");
     expect(job?.if).toContain("inputs.targets");
     expect(job?.if).toContain("podman-all-agents");
+    expect(liveTestSource()).toContain("timeout: 75 * 60_000");
 
     const start = namedStep(job!, "Start exact rootless Podman API socket").run ?? "";
     expect(start).toContain('socket_path="$runtime_dir/podman/podman.sock"');
@@ -164,6 +165,16 @@ describe("native Podman all-agent workflow boundary", () => {
     expect(source).toContain("expect(imageName).toBe(options.catalog.reference)");
     expect(source).toContain("expect(imageDigest).toBe(options.catalog.digest)");
     expect(source).toContain("expect(imageRepoDigests).toContain(options.catalog.reference)");
+    expect(source).toContain("OPENSHELL_SANDBOX_COMMAND=");
+    expect(source).toContain("/usr/local/bin/nemoclaw-managed-startup-hold");
+    expect(source).toContain("managed-startup-complete.json");
+    expect(source).toContain("profileFingerprint: options.profileFingerprint");
+    expect(source).toContain('expect(limits.get("nproc")).toEqual({ hard: 512, soft: 512 })');
+    expect(source).toContain(
+      'expect(limits.get("nofile")).toEqual({ hard: 65_536, soft: 65_536 })',
+    );
+    expect(source).toContain('"512:512:65536:65536"');
+    expect(source).toContain("nemoclaw-backup-");
     expect(source).toContain('"io.nvidia.nemoclaw.managed-image.cohort"');
     expect(source).toContain("runtimeBindingBeforeRecovery");
     expect(source).toContain("socket_path: socketPath");
@@ -177,6 +188,11 @@ describe("native Podman all-agent workflow boundary", () => {
     expect(source).toContain("host.expectStatus(sandboxName");
     expect(source).not.toMatch(/"--resume"[\s\S]{0,180}"--compute-driver"[\s\S]{0,40}"podman"/u);
     expect(source).toContain("rebuild must replace the managed Podman sandbox container");
+    expect(source).toContain('"snapshot", "create", "--name", "podman-runtime"');
+    expect(source).toContain("snapshotCloneRestored: true");
+    expect(source).toContain(
+      "snapshot clone cutover must resume a new exact standalone gateway process",
+    );
     expect(source).toContain('"network", "exists", networkName');
     expect(source).toContain("networkAfterCleanup.exitCode");
   });

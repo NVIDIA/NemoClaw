@@ -20,6 +20,24 @@ import {
 
 const runtimeBindingDirectories: string[] = [];
 
+function podmanSocketAuthority(socketPath: string) {
+  return {
+    directoryChain: [
+      {
+        device: "8",
+        inode: "7000",
+        mode: "448",
+        ownerUid: "1000",
+        path: path.dirname(socketPath),
+      },
+    ],
+    device: "8",
+    inode: "9001",
+    ownerUid: "1000",
+    socketPath,
+  } as const;
+}
+
 function createPersistedPodmanBinding(socketPath: string): string {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-podman-binding-"));
   runtimeBindingDirectories.push(stateDir);
@@ -173,14 +191,17 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       stdout: '[{"Id":"podman-container"}]\n',
       stderr: "",
     }));
+    const authority = podmanSocketAuthority(socketPath);
 
     const snapshot = collectLiveSandboxProbeSnapshot({
+      assertPodmanSocketAuthority: vi.fn(),
       captureOpenshell: () => ({
         status: 0,
         output:
           "NAME              CREATED              PHASE\nnpmtest           now                  Error\n",
       }),
       captureHostCommand,
+      capturePodmanSocketAuthority: vi.fn(() => authority),
       dockerCapture,
       environment: {
         OPENSHELL_PODMAN_SOCKET: socketPath,
@@ -222,14 +243,17 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       stdout: "[]\n",
       stderr: "",
     }));
+    const authority = podmanSocketAuthority(socketPath);
 
     const snapshot = collectLiveSandboxProbeSnapshot({
+      assertPodmanSocketAuthority: vi.fn(),
       captureOpenshell: () => ({
         status: 0,
         output:
           "NAME              CREATED              PHASE\nnpmtest           now                  Error\n",
       }),
       captureHostCommand,
+      capturePodmanSocketAuthority: vi.fn(() => authority),
       dockerCapture,
       environment: {},
       gatewayStateDir: stateDir,
@@ -255,6 +279,42 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       1_000,
     );
     expect(hasNoLiveSandboxes(snapshot)).toBe(true);
+  });
+
+  it("preserves the shared gateway when Podman socket authority changes before its probe", () => {
+    const socketPath = "/run/user/1000/podman/persisted.sock";
+    const stateDir = createPersistedPodmanBinding(socketPath);
+    const captureHostCommand = vi.fn();
+    const assertPodmanSocketAuthority = vi
+      .fn()
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error("Podman socket authority changed after it was qualified.");
+      });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const snapshot = collectLiveSandboxProbeSnapshot({
+      assertPodmanSocketAuthority,
+      captureOpenshell: () => ({
+        status: 0,
+        output:
+          "NAME              CREATED              PHASE\nnpmtest           now                  Error\n",
+      }),
+      captureHostCommand,
+      capturePodmanSocketAuthority: vi.fn(() => podmanSocketAuthority(socketPath)),
+      environment: {},
+      gatewayStateDir: stateDir,
+      openshellDriver: "podman",
+      timeoutMs: 1_000,
+    });
+
+    expect(captureHostCommand).not.toHaveBeenCalled();
+    expect(hasNoLiveSandboxes(snapshot)).toBe(false);
+    expect(snapshot.runtimeContainersBySandboxName.get("npmtest")).toEqual({
+      present: false,
+      probeFailed: true,
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("socket authority changed"));
   });
 
   it.each([

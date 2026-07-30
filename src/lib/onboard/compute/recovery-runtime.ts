@@ -7,6 +7,7 @@ import {
   type ManagedGatewayRuntimeBinding,
   readManagedGatewayRuntimeBinding,
 } from "../docker-driver-gateway-config";
+import { assessNativePodman } from "./podman-preflight";
 
 export interface ManagedGatewayRecoveryRuntime {
   readonly driverName: string;
@@ -15,6 +16,7 @@ export interface ManagedGatewayRecoveryRuntime {
 
 export interface ManagedGatewayRecoveryAdapter {
   readonly driverName: string;
+  qualifyEnvironment(environment: Readonly<Record<string, string>>): unknown;
   resolveEnvironment(binding: ManagedGatewayRuntimeBinding): Readonly<Record<string, string>>;
 }
 
@@ -36,6 +38,15 @@ function requiredString(
 
 const PODMAN_RECOVERY_ADAPTER: ManagedGatewayRecoveryAdapter = {
   driverName: "podman",
+  qualifyEnvironment(environment) {
+    const receipt = assessNativePodman({
+      env: { ...process.env, ...environment },
+    });
+    if (receipt.socketPath !== environment.OPENSHELL_PODMAN_SOCKET) {
+      throw new Error("Qualified Podman socket does not match the managed recovery runtime.");
+    }
+    return receipt;
+  },
   resolveEnvironment(binding) {
     const socketPath = requiredString(binding, "socket_path", "socket_path");
     if (!path.isAbsolute(socketPath)) {
@@ -61,6 +72,41 @@ export const CURRENT_MANAGED_GATEWAY_RECOVERY_ADAPTERS = {
   podman: PODMAN_RECOVERY_ADAPTER,
 } as const satisfies ManagedGatewayRecoveryAdapterRegistry;
 
+function resolveManagedGatewayRecoveryAdapter(
+  driverName: string,
+  adapters: ManagedGatewayRecoveryAdapterRegistry,
+): ManagedGatewayRecoveryAdapter | null {
+  const adapter = Object.hasOwn(adapters, driverName) ? adapters[driverName] : undefined;
+  if (!adapter) return null;
+  if (adapter.driverName !== driverName) {
+    throw new Error(`Managed recovery runtime adapter '${driverName}' has mismatched identity.`);
+  }
+  if (typeof adapter.qualifyEnvironment !== "function") {
+    throw new Error(
+      `Managed recovery runtime adapter '${driverName}' does not implement environment qualification.`,
+    );
+  }
+  return adapter;
+}
+
+export function supportsManagedGatewayRecoveryRuntime(
+  driverName: string,
+  adapters: ManagedGatewayRecoveryAdapterRegistry = CURRENT_MANAGED_GATEWAY_RECOVERY_ADAPTERS,
+): boolean {
+  return resolveManagedGatewayRecoveryAdapter(driverName, adapters) !== null;
+}
+
+export function qualifyManagedGatewayRecoveryRuntime(
+  runtime: ManagedGatewayRecoveryRuntime,
+  adapters: ManagedGatewayRecoveryAdapterRegistry = CURRENT_MANAGED_GATEWAY_RECOVERY_ADAPTERS,
+): unknown {
+  const adapter = resolveManagedGatewayRecoveryAdapter(runtime.driverName, adapters);
+  if (!adapter) {
+    throw new Error(`Managed recovery runtime adapter '${runtime.driverName}' is not registered.`);
+  }
+  return adapter.qualifyEnvironment(runtime.environment);
+}
+
 export function resolveManagedGatewayRecoveryRuntime(
   options: {
     readonly driverName: string;
@@ -81,10 +127,8 @@ export function resolveManagedGatewayRecoveryRuntime(
       `Managed runtime binding driver '${binding.driverName}' does not match requested recovery driver '${options.driverName}'.`,
     );
   }
-  const adapter = Object.hasOwn(adapters, options.driverName)
-    ? adapters[options.driverName]
-    : undefined;
-  if (!adapter || adapter.driverName !== options.driverName) {
+  const adapter = resolveManagedGatewayRecoveryAdapter(options.driverName, adapters);
+  if (!adapter) {
     throw new Error(`Managed recovery runtime adapter '${options.driverName}' is not registered.`);
   }
   const environment = adapter.resolveEnvironment(binding);

@@ -20,6 +20,7 @@ import {
   podmanImageMountSources,
   podmanWatcherInvisibleBackupLabels,
 } from "./sandbox-recreate-spec";
+import { assertPodmanSocketAuthority, type PodmanSocketAuthority } from "./socket-authority";
 
 const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_CONTAINER_NAME_LENGTH = 253;
@@ -40,8 +41,10 @@ export type RunQualifiedPodmanCommand = (
 ) => PodmanCommandResult;
 
 export interface PodmanManagedSandboxRecreateDeps {
+  readonly assertSocketAuthority?: (expected: PodmanSocketAuthority) => void;
   readonly now?: () => Date;
   readonly run?: RunQualifiedPodmanCommand;
+  readonly socketAuthority?: PodmanSocketAuthority;
 }
 
 export interface PodmanManagedSandboxRecreateTransaction {
@@ -60,6 +63,7 @@ export interface PodmanManagedSandboxRecreateTransaction {
   readonly requiredUlimits: readonly PodmanUlimit[];
   readonly sandboxName: string;
   readonly semanticDigest: string;
+  readonly socketAuthority: PodmanSocketAuthority;
   readonly socketPath: string;
 }
 
@@ -202,9 +206,10 @@ function defaultRun(
   return spawnSync(command, [...args], options);
 }
 
-function commandDeps(
-  deps: PodmanManagedSandboxRecreateDeps,
-): Required<PodmanManagedSandboxRecreateDeps> {
+function commandDeps(deps: PodmanManagedSandboxRecreateDeps): {
+  readonly now: () => Date;
+  readonly run: RunQualifiedPodmanCommand;
+} {
   return {
     now: deps.now ?? (() => new Date()),
     run: deps.run ?? defaultRun,
@@ -252,6 +257,14 @@ function runPodman(
   options: { readonly input?: string } = {},
 ): PodmanCommandResult {
   try {
+    if (deps.socketAuthority) {
+      if (deps.socketAuthority.socketPath !== socketPath) {
+        throw new PodmanManagedSandboxRecreateError(
+          "Podman socket authority does not match the requested managed-sandbox socket.",
+        );
+      }
+      (deps.assertSocketAuthority ?? assertPodmanSocketAuthority)(deps.socketAuthority);
+    }
     return commandDeps(deps).run("podman", ["--url", socketUrl(socketPath), ...args], {
       encoding: "utf-8",
       input: options.input,
@@ -264,6 +277,28 @@ function runPodman(
       status: null,
     };
   }
+}
+
+function bindSocketAuthority(
+  socketPath: string,
+  socketAuthority: PodmanSocketAuthority,
+  deps: PodmanManagedSandboxRecreateDeps,
+): PodmanManagedSandboxRecreateDeps {
+  if (socketAuthority.socketPath !== socketPath) {
+    throw new PodmanManagedSandboxRecreateError(
+      "Podman socket authority does not match the requested managed-sandbox socket.",
+    );
+  }
+  try {
+    (deps.assertSocketAuthority ?? assertPodmanSocketAuthority)(socketAuthority);
+  } catch (error) {
+    throw new PodmanManagedSandboxRecreateError(
+      `Podman socket authority could not be revalidated: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return { ...deps, socketAuthority };
 }
 
 function requireZero(result: PodmanCommandResult, action: string): void {
@@ -356,35 +391,32 @@ function sandboxContainerName(sandboxName: string): string {
   return `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`;
 }
 
-function parseDiscovery(outputValue: string, expectedName: string): string {
+function parseDiscovery(outputValue: string, expectedName: string): string[] {
   const lines = outputValue
     .trim()
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (lines.length !== 1) {
-    throw new PodmanManagedSandboxRecreateError(
-      `Podman discovery must identify exactly one '${expectedName}' managed container.`,
-    );
-  }
-  const fields = lines[0]?.split("\t") ?? [];
-  if (
-    fields.length !== 2 ||
-    fields[1] !== expectedName ||
-    !FULL_CONTAINER_ID.test(fields[0] ?? "")
-  ) {
-    throw new PodmanManagedSandboxRecreateError(
-      "Podman discovery did not return an exact name and full immutable container ID.",
-    );
-  }
-  return fields[0] as string;
+  return lines.map((line) => {
+    const fields = line.split("\t");
+    if (
+      fields.length !== 2 ||
+      fields[1] !== expectedName ||
+      !FULL_CONTAINER_ID.test(fields[0] ?? "")
+    ) {
+      throw new PodmanManagedSandboxRecreateError(
+        "Podman discovery did not return an exact name and full immutable container ID.",
+      );
+    }
+    return fields[0] as string;
+  });
 }
 
-function discoverManagedSandbox(
+export function findPodmanManagedSandboxContainerIds(
   socketPath: string,
   sandboxName: string,
-  deps: PodmanManagedSandboxRecreateDeps,
-): string {
+  deps: PodmanManagedSandboxRecreateDeps = {},
+): string[] {
   const name = sandboxContainerName(sandboxName);
   const result = runPodman(
     socketPath,
@@ -405,6 +437,22 @@ function discoverManagedSandbox(
   );
   requireZero(result, "Podman managed sandbox discovery");
   return parseDiscovery(output(result.stdout), name);
+}
+
+function discoverManagedSandbox(
+  socketPath: string,
+  sandboxName: string,
+  deps: PodmanManagedSandboxRecreateDeps,
+): string {
+  const ids = findPodmanManagedSandboxContainerIds(socketPath, sandboxName, deps);
+  if (ids.length !== 1) {
+    throw new PodmanManagedSandboxRecreateError(
+      `Podman discovery must identify exactly one '${sandboxContainerName(
+        sandboxName,
+      )}' managed container.`,
+    );
+  }
+  return ids[0] as string;
 }
 
 interface ExpectedManagedContainer {
@@ -697,6 +745,7 @@ type PodmanRestoreIdentity = Pick<
   | "originalName"
   | "originalSemanticDigest"
   | "sandboxName"
+  | "socketAuthority"
   | "socketPath"
 >;
 
@@ -901,6 +950,7 @@ export function recreatePodmanManagedSandbox(
     readonly command: readonly string[];
     readonly requiredUlimits?: readonly PodmanUlimit[];
     readonly sandboxName: string;
+    readonly socketAuthority: PodmanSocketAuthority;
     readonly socketPath: string;
     readonly watcherController: PodmanOpenShellWatcherController;
   },
@@ -910,6 +960,7 @@ export function recreatePodmanManagedSandbox(
   const originalName = sandboxContainerName(options.sandboxName);
   const socketPath = options.socketPath.trim();
   socketUrl(socketPath);
+  deps = bindSocketAuthority(socketPath, options.socketAuthority, deps);
   const oldContainerId = discoverManagedSandbox(socketPath, options.sandboxName, deps);
   const original = inspectContainer(
     socketPath,
@@ -997,6 +1048,7 @@ export function recreatePodmanManagedSandbox(
     requiredUlimits,
     sandboxName: options.sandboxName,
     semanticDigest,
+    socketAuthority: options.socketAuthority,
     socketPath,
   };
   const backup = inspectWatcherInvisibleBackup(baseTransaction, deps);
@@ -1299,6 +1351,11 @@ export function rollbackPodmanManagedSandbox(
   deps: PodmanManagedSandboxRecreateDeps = {},
 ): PodmanManagedSandboxRollbackOutcome {
   const watcherController = requireWatcherController(options.watcherController);
+  deps = bindSocketAuthority(
+    options.transaction.socketPath,
+    options.transaction.socketAuthority,
+    deps,
+  );
   const lease = requireWatcherLease(watcherController.quiesceAndProve());
   const attempt = rollbackAndResumeWatcher(options.transaction, lease, deps);
   if (attempt.rollbackError !== null) {
@@ -1338,6 +1395,11 @@ export function finalizePodmanManagedSandbox(
       },
   deps: PodmanManagedSandboxRecreateDeps = {},
 ): PodmanManagedSandboxFinalizeOutcome {
+  deps = bindSocketAuthority(
+    options.transaction.socketPath,
+    options.transaction.socketAuthority,
+    deps,
+  );
   if (!options.replacementReady) {
     const rollback = rollbackPodmanManagedSandbox(
       {

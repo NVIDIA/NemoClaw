@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { PodmanSocketAuthority } from "../compute/podman/socket-authority";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   assertPodmanManagedStartupRuntime,
@@ -64,11 +65,13 @@ export function applyPodmanManagedStartupRootRequest(
   input: {
     readonly containerId: string;
     readonly request: ManagedStartupRootApplyRequest;
+    readonly socketAuthority: PodmanSocketAuthority;
     readonly socketPath: string;
   },
   deps: PodmanManagedStartupRootApplyDeps = {},
 ): PodmanManagedStartupTransaction | null {
-  const runtime = pinPodmanManagedStartupRuntime(input.socketPath, deps);
+  deps = { ...deps, socketAuthority: input.socketAuthority };
+  const runtime = pinPodmanManagedStartupRuntime(input.socketPath, input.socketAuthority, deps);
   const pinned = inspectExactPodmanManagedStartupContainer(
     runtime,
     { containerId: input.containerId, requireRunning: true },

@@ -7,6 +7,7 @@ import { createVirtualClock } from "./__test-helpers__/virtual-clock";
 import {
   assertTrustedOpenShellGatewayUserServiceInactive,
   captureTrustedActiveOpenShellGatewayUserService,
+  captureTrustedOpenShellGatewayUserServiceIfActive,
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
@@ -36,6 +37,10 @@ Gateway: nemoclaw
 Gateway endpoint: https://127.0.0.1:8080/
 `;
 
+const SYSTEMD_INVOCATION_A = "11111111111111111111111111111111";
+const SYSTEMD_INVOCATION_B = "22222222222222222222222222222222";
+const GATEWAY_ARGV = ["/usr/bin/openshell-gateway", "--port", "8080"] as const;
+
 function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
   return { status, stderr, stdout };
 }
@@ -43,11 +48,21 @@ function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult 
 function trustedShowOutput(
   fragmentPath = "/lib/systemd/user/openshell-gateway.service",
   execPath = "/usr/bin/openshell-gateway",
+  execArgv = `${execPath} --port 8080`,
+  invocationId = SYSTEMD_INVOCATION_A,
 ): string {
   return [
     `FragmentPath=${fragmentPath}`,
-    `ExecStart={ path=${execPath} ; argv[]=${execPath} ; }`,
+    `ExecStart={ path=${execPath} ; argv[]=${execArgv} ; }`,
+    `InvocationID=${invocationId}`,
   ].join("\n");
+}
+
+function processIdentity(
+  startIdentity = "process-start-a",
+  argv: readonly string[] = GATEWAY_ARGV,
+) {
+  return { argv, startIdentity };
 }
 
 function officialFormulaInfo(): SpawnSyncLikeResult {
@@ -372,6 +387,10 @@ describe("docker-driver-gateway-service", () => {
       existsSync: (candidate: string) =>
         candidate === "/lib/systemd/user/openshell-gateway.service",
       platform: "linux" as const,
+      readProcessIdentity: (candidate: number) =>
+        active && candidate === pid
+          ? processIdentity(pid === 4242 ? "process-start-a" : "process-start-b")
+          : null,
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         const operation = args.slice(1).join(" ");
         events.push(operation);
@@ -380,7 +399,12 @@ describe("docker-driver-gateway-service", () => {
             0,
             "",
             [
-              trustedShowOutput(),
+              trustedShowOutput(
+                undefined,
+                undefined,
+                undefined,
+                pid === 4242 ? SYSTEMD_INVOCATION_A : SYSTEMD_INVOCATION_B,
+              ),
               `ActiveState=${active ? "active" : "inactive"}`,
               `MainPID=${active ? String(pid) : "0"}`,
             ].join("\n"),
@@ -401,9 +425,14 @@ describe("docker-driver-gateway-service", () => {
 
     const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
     expect(captured).toMatchObject({
+      execStart:
+        "{ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway --port 8080 ; }",
       execStartPath: "/usr/bin/openshell-gateway",
+      invocationId: SYSTEMD_INVOCATION_A,
       manager: "systemd",
       pid: 4242,
+      processArgv: GATEWAY_ARGV,
+      processStartIdentity: "process-start-a",
       serviceName: "openshell-gateway",
       unitPath: "/lib/systemd/user/openshell-gateway.service",
     });
@@ -415,38 +444,78 @@ describe("docker-driver-gateway-service", () => {
 
     expect(resumed).toMatchObject({
       execStartPath: "/usr/bin/openshell-gateway",
+      invocationId: SYSTEMD_INVOCATION_B,
       manager: "systemd",
       pid: 5252,
+      processArgv: GATEWAY_ARGV,
+      processStartIdentity: "process-start-b",
       serviceName: "openshell-gateway",
       unitPath: "/lib/systemd/user/openshell-gateway.service",
     });
     expect(events).toEqual([
-      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
-      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=InvocationID --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=InvocationID --property=MainPID",
       "stop openshell-gateway",
-      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
-      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
-      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=InvocationID --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=InvocationID --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=InvocationID --property=MainPID",
       "start openshell-gateway",
-      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=InvocationID --property=MainPID",
     ]);
   });
 
-  it("refuses systemd unit drift before stopping the captured service", () => {
-    let execPath = "/usr/bin/openshell-gateway";
+  it("distinguishes a proven inactive installed systemd service from its active owner", () => {
+    const base = {
+      commandExists: (command: string) => command === "systemctl",
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+    };
+    const show = (activeState: string, mainPid: number) =>
+      vi.fn(() =>
+        spawnResult(
+          0,
+          "",
+          [trustedShowOutput(), `ActiveState=${activeState}`, `MainPID=${String(mainPid)}`].join(
+            "\n",
+          ),
+        ),
+      );
+
+    expect(
+      captureTrustedOpenShellGatewayUserServiceIfActive({
+        ...base,
+        spawnSyncImpl: show("inactive", 0),
+      }),
+    ).toBeNull();
+    expect(() =>
+      captureTrustedOpenShellGatewayUserServiceIfActive({
+        ...base,
+        spawnSyncImpl: show("activating", 4242),
+      }),
+    ).toThrow("state is transitional");
+  });
+
+  it("refuses full systemd ExecStart drift before stopping the captured service", () => {
+    let execArgv = "/usr/bin/openshell-gateway --port 8080";
     const stop = vi.fn();
     const opts = {
       commandExists: () => true,
       existsSync: (candidate: string) =>
         candidate === "/lib/systemd/user/openshell-gateway.service",
       platform: "linux" as const,
+      readProcessIdentity: () => processIdentity(),
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         if (args.includes("show")) {
           return spawnResult(
             0,
             "",
             [
-              trustedShowOutput("/lib/systemd/user/openshell-gateway.service", execPath),
+              trustedShowOutput(
+                "/lib/systemd/user/openshell-gateway.service",
+                "/usr/bin/openshell-gateway",
+                execArgv,
+              ),
               "ActiveState=active",
               "MainPID=4242",
             ].join("\n"),
@@ -457,10 +526,60 @@ describe("docker-driver-gateway-service", () => {
       }),
     };
     const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
-    execPath = "/usr/local/bin/openshell-gateway";
+    execArgv = "/usr/bin/openshell-gateway --port 9090";
 
     expect(() => stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts)).toThrow(
       "unit identity drifted",
+    );
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      case: "InvocationID drift",
+      invocationId: SYSTEMD_INVOCATION_B,
+      process: processIdentity(),
+    },
+    {
+      case: "PID reuse with a different process start",
+      invocationId: SYSTEMD_INVOCATION_A,
+      process: processIdentity("process-start-reused"),
+    },
+  ])("refuses systemd $case before mutation", ({ invocationId, process }) => {
+    let drifted = false;
+    const stop = vi.fn();
+    const opts = {
+      commandExists: () => true,
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+      readProcessIdentity: () => (drifted ? process : processIdentity()),
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args.includes("show")) {
+          return spawnResult(
+            0,
+            "",
+            [
+              trustedShowOutput(
+                undefined,
+                undefined,
+                undefined,
+                drifted ? invocationId : SYSTEMD_INVOCATION_A,
+              ),
+              "ActiveState=active",
+              "MainPID=4242",
+            ].join("\n"),
+          );
+        }
+        stop();
+        return spawnResult();
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+    drifted = true;
+
+    expect(() => stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts)).toThrow(
+      "process identity drifted",
     );
     expect(stop).not.toHaveBeenCalled();
   });
@@ -472,6 +591,7 @@ describe("docker-driver-gateway-service", () => {
       existsSync: (candidate: string) =>
         candidate === "/lib/systemd/user/openshell-gateway.service",
       platform: "linux" as const,
+      readProcessIdentity: () => processIdentity(),
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         if (args.includes("show")) {
           return spawnResult(
@@ -500,6 +620,7 @@ describe("docker-driver-gateway-service", () => {
       existsSync: (candidate: string) =>
         candidate === "/lib/systemd/user/openshell-gateway.service",
       platform: "linux" as const,
+      readProcessIdentity: () => processIdentity(),
       spawnSyncImpl: () =>
         spawnResult(0, "", [trustedShowOutput(), "ActiveState=active", "MainPID=4242"].join("\n")),
     };
@@ -518,25 +639,36 @@ describe("docker-driver-gateway-service", () => {
 
   it("rejects a resumed systemd service that reuses the captured PID", () => {
     let active = true;
+    let resumed = false;
     const opts = {
       commandExists: () => true,
       existsSync: (candidate: string) =>
         candidate === "/lib/systemd/user/openshell-gateway.service",
       platform: "linux" as const,
+      readProcessIdentity: () =>
+        active ? processIdentity(resumed ? "process-start-b" : "process-start-a") : null,
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         if (args.includes("show")) {
           return spawnResult(
             0,
             "",
             [
-              trustedShowOutput(),
+              trustedShowOutput(
+                undefined,
+                undefined,
+                undefined,
+                resumed ? SYSTEMD_INVOCATION_B : SYSTEMD_INVOCATION_A,
+              ),
               `ActiveState=${active ? "active" : "inactive"}`,
               `MainPID=${active ? "4242" : "0"}`,
             ].join("\n"),
           );
         }
         if (args.includes("stop")) active = false;
-        if (args.includes("start")) active = true;
+        if (args.includes("start")) {
+          active = true;
+          resumed = true;
+        }
         return spawnResult();
       }),
     };
@@ -555,6 +687,10 @@ describe("docker-driver-gateway-service", () => {
     const opts = {
       commandExists: (command: string) => command === "brew",
       platform: "darwin" as const,
+      readProcessIdentity: (candidate: number) =>
+        active && candidate === pid
+          ? processIdentity(pid === 4242 ? "process-start-a" : "process-start-b")
+          : null,
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         events.push(args.join(" "));
         if (args[0] === "list") return spawnResult();
@@ -585,6 +721,8 @@ describe("docker-driver-gateway-service", () => {
       formulaTap: "nvidia/openshell",
       manager: "homebrew",
       pid: 4242,
+      processArgv: GATEWAY_ARGV,
+      processStartIdentity: "process-start-a",
       serviceIdentity: "homebrew.mxcl.openshell",
       serviceName: "openshell",
     });
@@ -598,6 +736,8 @@ describe("docker-driver-gateway-service", () => {
       formulaTap: "nvidia/openshell",
       manager: "homebrew",
       pid: 5252,
+      processArgv: GATEWAY_ARGV,
+      processStartIdentity: "process-start-b",
       serviceIdentity: "homebrew.mxcl.openshell",
     });
     expect(events.filter((event) => event === "info --json=v2 openshell")).toHaveLength(6);
@@ -609,6 +749,7 @@ describe("docker-driver-gateway-service", () => {
     const captureOpts = {
       commandExists: () => true,
       platform: "darwin" as const,
+      readProcessIdentity: () => processIdentity(),
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         if (args[0] === "info") return officialFormulaInfo();
         if (args[0] === "services") return officialRunningServiceInfo();
@@ -637,11 +778,40 @@ describe("docker-driver-gateway-service", () => {
     expect(stop).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["argv drift", processIdentity("process-start-a", [...GATEWAY_ARGV, "--foreign"])],
+    ["PID reuse with a different process start", processIdentity("process-start-reused")],
+  ])("refuses Homebrew %s before mutation", (_case, driftedProcess) => {
+    let drifted = false;
+    const stop = vi.fn();
+    const opts = {
+      commandExists: () => true,
+      platform: "darwin" as const,
+      readProcessIdentity: () => (drifted ? driftedProcess : processIdentity()),
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args[0] === "info") return officialFormulaInfo();
+        if (args[0] === "services" && args[1] === "info") {
+          return officialRunningServiceInfo();
+        }
+        if (args[0] === "services" && args[1] === "stop") stop();
+        return spawnResult();
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+    drifted = true;
+
+    expect(() => stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts)).toThrow(
+      "process identity drifted",
+    );
+    expect(stop).not.toHaveBeenCalled();
+  });
+
   it("fails closed when Homebrew reports a foreign service after stopping", () => {
     let stopped = false;
     const opts = {
       commandExists: () => true,
       platform: "darwin" as const,
+      readProcessIdentity: () => processIdentity(),
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         if (args[0] === "info") return officialFormulaInfo();
         if (args[0] === "services" && args[1] === "info") {

@@ -8,6 +8,7 @@ import { resolveManagedGatewayStateDirectory } from "../../../src/lib/onboard/ga
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/index.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
@@ -37,8 +38,8 @@ const ONBOARDING_PROFILES: Readonly<Record<Agent, string>> = {
 const PHASES = [
   "verify the native Podman lane contract",
   "onboard the selected agent without Docker",
-  "verify the expected sandbox state",
-  "verify the managed-image and agent runtime receipt",
+  "verify the expected sandbox, managed image, and agent runtime receipt",
+  "snapshot and restore the selected agent into a native Podman clone",
   "verify Podman doctor and exact-socket ownership",
   "stop and start the exact managed sandbox",
   "reject a conflicting shared-gateway Docker request",
@@ -74,6 +75,21 @@ interface PodmanManagedContainerEvidence {
   imageName: string;
   imageDigest: string;
   imageRepoDigests: string[];
+  startupCommand: string[];
+  startupEntrypoint: string[];
+}
+
+interface ManagedStartupCompletionEvidence {
+  agent: Agent;
+  corporateCaMerged: boolean;
+  profileFingerprint: string;
+  runtimeEnvironmentSha256: string;
+  schemaVersion: 1;
+}
+
+interface GatewayProcessReceipt {
+  pid: number;
+  startTicks: string;
 }
 
 function requiredEnvironment(name: string): string {
@@ -101,6 +117,21 @@ function requireStringField(record: Record<string, unknown>, key: string, label:
   const value = record[key];
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function requireStringArrayField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string[] {
+  const value = record[key];
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry): entry is string => typeof entry === "string")
+  ) {
+    throw new Error(`${label} must be a string array.`);
   }
   return value;
 }
@@ -135,8 +166,9 @@ function readCatalogEvidence(file: string, agent: Agent): ManagedImageEvidence {
 function assertManagedWorkloadReceipt(
   entry: Record<string, unknown>,
   catalog: ManagedImageEvidence,
-): void {
+): string {
   expect(entry.openshellDriver).toBe("podman");
+  expect(entry.pendingRouteReservation).not.toBe(true);
   const workload = requireRecord(entry.workload, "registry workload");
   expect(workload).toMatchObject({
     schemaVersion: 1,
@@ -153,8 +185,14 @@ function assertManagedWorkloadReceipt(
   expect(workload.reference).toMatch(
     /^ghcr[.]io\/nvidia\/nemoclaw\/[a-z0-9-]+-sandbox@sha256:[0-9a-f]{64}$/u,
   );
-  expect(workload.startupProfileSha256).toMatch(/^[0-9a-f]{64}$/u);
+  const startupProfileSha256 = requireStringField(
+    workload,
+    "startupProfileSha256",
+    "registry workload startupProfileSha256",
+  );
+  expect(startupProfileSha256).toMatch(/^[0-9a-f]{64}$/u);
   expect(workload.encodedProfile).toMatch(/^[A-Za-z0-9_-]+$/u);
+  return startupProfileSha256;
 }
 
 function assertDockerGuardClean(file: string): void {
@@ -223,6 +261,96 @@ function assertHealthyPodmanDoctor(stdout: string, sandboxName: string): void {
   }
 }
 
+function managedStartupCommand(
+  config: Record<string, unknown>,
+  agent: Agent,
+  profileFingerprint: string,
+): void {
+  const env = requireStringArrayField(config, "Env", "Podman container Config.Env");
+  const commandEntries = env.filter((entry) => entry.startsWith("OPENSHELL_SANDBOX_COMMAND="));
+  if (commandEntries.length !== 1) {
+    throw new Error("managed Podman container must persist one sandbox startup command");
+  }
+  const command = commandEntries[0]?.slice("OPENSHELL_SANDBOX_COMMAND=".length) ?? "";
+  const exactImageOwnedSuffix =
+    `/usr/local/bin/nemoclaw-managed-startup-hold --agent ${agent} ` +
+    `--profile-fingerprint ${profileFingerprint}`;
+  if (
+    !command.startsWith("env ") ||
+    !command.endsWith(exactImageOwnedSuffix) ||
+    /(?:^|\s)sleep\s+infinity(?:\s|$)/u.test(command)
+  ) {
+    throw new Error(
+      "managed Podman container did not persist the exact image-owned startup command",
+    );
+  }
+}
+
+function normalizedPodmanUlimits(
+  hostConfig: Record<string, unknown>,
+): Map<string, { hard: number; soft: number }> {
+  const raw = hostConfig.Ulimits;
+  if (!Array.isArray(raw)) throw new Error("Podman HostConfig.Ulimits must be an array.");
+  const limits = new Map<string, { hard: number; soft: number }>();
+  for (const [index, entry] of raw.entries()) {
+    const limit = requireRecord(entry, `Podman HostConfig.Ulimits[${String(index)}]`);
+    const name = requireStringField(
+      limit,
+      "Name",
+      `Podman HostConfig.Ulimits[${String(index)}].Name`,
+    )
+      .replace(/^RLIMIT_/iu, "")
+      .toLowerCase();
+    const soft = limit.Soft;
+    const hard = limit.Hard;
+    if (!Number.isSafeInteger(soft) || !Number.isSafeInteger(hard) || limits.has(name)) {
+      throw new Error(`Podman HostConfig.Ulimits contains invalid or repeated '${name}'.`);
+    }
+    limits.set(name, { hard: hard as number, soft: soft as number });
+  }
+  return limits;
+}
+
+function assertDcodeContainerUlimits(agent: Agent, hostConfig: Record<string, unknown>): void {
+  if (agent !== "langchain-deepagents-code") return;
+  const limits = normalizedPodmanUlimits(hostConfig);
+  expect(limits.get("nproc")).toEqual({ hard: 512, soft: 512 });
+  expect(limits.get("nofile")).toEqual({ hard: 65_536, soft: 65_536 });
+}
+
+function readGatewayProcessReceipt(pidFile: string): GatewayProcessReceipt {
+  const firstPidText = fs.readFileSync(pidFile, "utf8").trim();
+  if (!/^[1-9][0-9]*$/u.test(firstPidText)) {
+    throw new Error("managed Podman gateway PID receipt is malformed");
+  }
+  const pid = Number(firstPidText);
+  const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+  const commandEnd = stat.lastIndexOf(")");
+  const fields =
+    commandEnd >= 0
+      ? stat
+          .slice(commandEnd + 2)
+          .trim()
+          .split(/\s+/u)
+      : [];
+  const startTicks = fields[19];
+  if (!startTicks || !/^[1-9][0-9]*$/u.test(startTicks)) {
+    throw new Error("managed Podman gateway process start identity is unavailable");
+  }
+  const argv = fs
+    .readFileSync(`/proc/${String(pid)}/cmdline`)
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean);
+  if (argv.length === 0 || !argv.join(" ").includes("openshell-gateway")) {
+    throw new Error("managed Podman gateway PID does not identify the OpenShell gateway");
+  }
+  if (fs.readFileSync(pidFile, "utf8").trim() !== firstPidText) {
+    throw new Error("managed Podman gateway PID receipt changed during inspection");
+  }
+  return { pid, startTicks };
+}
+
 async function findPodmanContainerIds(
   host: HostCliClient,
   socketPath: string,
@@ -261,12 +389,37 @@ async function findPodmanContainerIds(
   ];
 }
 
+async function assertNoPodmanRecreateArtifacts(
+  host: HostCliClient,
+  socketPath: string,
+  sandboxName: string,
+  artifactName: string,
+): Promise<void> {
+  const result = await host.command(
+    "podman",
+    ["--url", `unix://${socketPath}`, "ps", "--all", "--no-trunc", "--format", "{{.Names}}"],
+    {
+      artifactName,
+      env: podmanNativeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(result, `inspect Podman recreate artifacts for ${sandboxName}`);
+  const backupPrefix = `openshell-sandbox-${sandboxName}-nemoclaw-backup-`;
+  const backups = result.stdout
+    .split(/\r?\n/gu)
+    .map((value) => value.trim())
+    .filter((value) => value.startsWith(backupPrefix));
+  expect(backups, `Podman recreate backup remained for ${sandboxName}`).toEqual([]);
+}
+
 async function inspectPodmanManagedContainer(
   host: HostCliClient,
   options: {
     artifactPrefix: string;
     catalog: ManagedImageEvidence;
     expectedRunning?: boolean;
+    profileFingerprint: string;
     sandboxName: string;
     socketPath: string;
   },
@@ -304,6 +457,7 @@ async function inspectPodmanManagedContainer(
     `Podman container ${options.sandboxName}`,
   );
   const containerConfig = requireRecord(container.Config, "Podman container Config");
+  const containerHostConfig = requireRecord(container.HostConfig, "Podman container HostConfig");
   const containerLabels = requireRecord(containerConfig.Labels, "Podman container labels");
   const containerState = requireRecord(container.State, "Podman container State");
   const containerId = requireStringField(container, "Id", "Podman container Id");
@@ -316,6 +470,8 @@ async function inspectPodmanManagedContainer(
   expect(containerLabels["openshell.sandbox-name"]).toBe(options.sandboxName);
   expect(containerLabels["openshell.managed"]).toBe("true");
   expect(containerState.Running).toBe(options.expectedRunning ?? true);
+  managedStartupCommand(containerConfig, options.catalog.agent, options.profileFingerprint);
+  assertDcodeContainerUlimits(options.catalog.agent, containerHostConfig);
 
   const imageResult = await host.command(
     "podman",
@@ -338,6 +494,24 @@ async function inspectPodmanManagedContainer(
   const image = requireRecord(JSON.parse(imageResult.stdout), "Podman managed image");
   const imageConfig = requireRecord(image.Config, "Podman managed image Config");
   const imageLabels = requireRecord(imageConfig.Labels, "Podman managed image labels");
+  const startupEntrypoint = requireStringArrayField(
+    imageConfig,
+    "Entrypoint",
+    "Podman managed image Config.Entrypoint",
+  );
+  const startupCommand = requireStringArrayField(
+    imageConfig,
+    "Cmd",
+    "Podman managed image Config.Cmd",
+  );
+  expect(
+    requireStringArrayField(containerConfig, "Entrypoint", "Podman container Config.Entrypoint"),
+  ).toContain("/opt/openshell/bin/openshell-sandbox");
+  expect(
+    requireStringArrayField(containerConfig, "Cmd", "Podman container Config.Cmd"),
+  ).not.toEqual(["sleep", "infinity"]);
+  expect(startupEntrypoint).toContain("/usr/local/bin/nemoclaw-start");
+  expect(startupCommand).not.toEqual(["sleep", "infinity"]);
   const imageDigest = image.Digest;
   const imageRepoDigests = image.RepoDigests;
   const inspectedImageId = requireStringField(image, "Id", "Podman managed image Id");
@@ -371,15 +545,87 @@ async function inspectPodmanManagedContainer(
     imageName,
     imageDigest,
     imageRepoDigests,
+    startupCommand,
+    startupEntrypoint,
   };
+}
+
+async function inspectManagedStartupCompletion(
+  sandbox: SandboxClient,
+  options: {
+    agent: Agent;
+    artifactName: string;
+    profileFingerprint: string;
+    sandboxName: string;
+  },
+): Promise<ManagedStartupCompletionEvidence> {
+  const result = await sandbox.exec(
+    options.sandboxName,
+    ["cat", "/run/nemoclaw/managed-startup-complete.json"],
+    {
+      artifactName: options.artifactName,
+      env: freshPodmanEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(result, `${options.agent} managed-startup completion marker`);
+  const marker = requireRecord(JSON.parse(result.stdout), "managed-startup completion marker");
+  const evidence = {
+    agent: marker.agent,
+    corporateCaMerged: marker.corporateCaMerged,
+    profileFingerprint: marker.profileFingerprint,
+    runtimeEnvironmentSha256: marker.runtimeEnvironmentSha256,
+    schemaVersion: marker.schemaVersion,
+  };
+  expect(evidence).toMatchObject({
+    agent: options.agent,
+    profileFingerprint: options.profileFingerprint,
+    runtimeEnvironmentSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    schemaVersion: 1,
+  });
+  expect(typeof evidence.corporateCaMerged).toBe("boolean");
+  return evidence as ManagedStartupCompletionEvidence;
+}
+
+async function assertDcodeLiveUlimits(
+  sandbox: SandboxClient,
+  agent: Agent,
+  sandboxName: string,
+  artifactName: string,
+): Promise<void> {
+  if (agent !== "langchain-deepagents-code") return;
+  const result = await sandbox.exec(
+    sandboxName,
+    [
+      "bash",
+      "-lc",
+      'printf "%s:%s:%s:%s\\n" "$(ulimit -Su)" "$(ulimit -Hu)" "$(ulimit -Sn)" "$(ulimit -Hn)"',
+    ],
+    {
+      artifactName,
+      env: freshPodmanEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(result, "DCode live nproc/nofile contract");
+  expect(result.stdout.trim()).toBe("512:512:65536:65536");
 }
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 test("native Podman: all supported agents use managed OCI images without Docker", {
-  timeout: 50 * 60_000,
+  timeout: 75 * 60_000,
   meta: { e2ePhases: PHASES },
-}, async ({ artifacts, environment, host, onboard, progress, sandbox, stateValidation }) => {
+}, async ({
+  artifacts,
+  cleanup,
+  environment,
+  host,
+  onboard,
+  progress,
+  sandbox,
+  stateValidation,
+}) => {
   const agent = selectedAgent();
   const apiKey = requiredEnvironment("NVIDIA_INFERENCE_API_KEY");
   const release = requiredEnvironment("E2E_PODMAN_MANAGED_IMAGE_RELEASE");
@@ -388,6 +634,7 @@ test("native Podman: all supported agents use managed OCI images without Docker"
   const catalogEvidencePath = requiredEnvironment("E2E_PODMAN_CATALOG_EVIDENCE");
   const dockerGuardLog = requiredEnvironment("E2E_DOCKER_GUARD_LOG");
   const sandboxName = `e2e-podman-${agent.replaceAll(/[^a-z0-9]/gu, "-")}`;
+  const snapshotCloneName = `${sandboxName}-snapshot`;
   const catalog = readCatalogEvidence(catalogEvidencePath, agent);
 
   expect(fs.existsSync(CLI_DIST_ENTRYPOINT), "run `npm run build:cli` before live targets").toBe(
@@ -406,6 +653,7 @@ test("native Podman: all supported agents use managed OCI images without Docker"
     contracts: [
       "the CLI selects the native Podman compute driver through an exact rootless API socket",
       "OpenClaw, Hermes, and DCode consume immutable managed OCI images",
+      "managed startup, snapshot clone, and rebuild preserve the agent-specific Podman contract",
       "the native Podman lane never invokes Docker or uses DOCKER_HOST",
     ],
   });
@@ -421,12 +669,11 @@ test("native Podman: all supported agents use managed OCI images without Docker"
   progress.phase("onboard the selected agent without Docker");
   const instance = await onboard.from(ready, { sandboxName });
 
-  progress.phase("verify the expected sandbox state");
+  progress.phase("verify the expected sandbox, managed image, and agent runtime receipt");
   const state = await stateValidation.from(EXPECTED_STATES[agent], instance);
 
-  progress.phase("verify the managed-image and agent runtime receipt");
   const registryEntry = readRegistrySandboxEntry(sandboxName);
-  assertManagedWorkloadReceipt(registryEntry, catalog);
+  const initialProfileFingerprint = assertManagedWorkloadReceipt(registryEntry, catalog);
   const runtimeGatewayName = gatewayName(registryEntry);
   const gatewayStateDir = resolveManagedGatewayStateDirectory(runtimeGatewayName, {
     env: podmanNativeEnv(),
@@ -437,9 +684,24 @@ test("native Podman: all supported agents use managed OCI images without Docker"
   const initialContainer = await inspectPodmanManagedContainer(host, {
     artifactPrefix: `podman-${agent}-initial`,
     catalog,
+    profileFingerprint: initialProfileFingerprint,
     sandboxName,
     socketPath,
   });
+  const initialCompletion = await inspectManagedStartupCompletion(sandbox, {
+    agent,
+    artifactName: `podman-${agent}-managed-startup-completion`,
+    profileFingerprint: initialProfileFingerprint,
+    sandboxName,
+  });
+  await assertDcodeLiveUlimits(sandbox, agent, sandboxName, `podman-${agent}-live-ulimits`);
+  await assertNoPodmanRecreateArtifacts(
+    host,
+    socketPath,
+    sandboxName,
+    `podman-${agent}-recreate-artifacts-initial`,
+  );
+  const initialGatewayProcess = readGatewayProcessReceipt(gatewayPidFile);
   const version = await sandbox.exec(sandboxName, [AGENT_BINARIES[agent], "--version"], {
     artifactName: `podman-${agent}-version`,
     env: podmanNativeEnv(),
@@ -447,6 +709,104 @@ test("native Podman: all supported agents use managed OCI images without Docker"
   });
   assertExitZero(version, `${agent} managed-image binary`);
   expect(resultText(version).trim()).not.toBe("");
+  assertDockerGuardClean(dockerGuardLog);
+
+  progress.phase("snapshot and restore the selected agent into a native Podman clone");
+  const snapshotCreate = await host.nemoclaw(
+    [sandboxName, "snapshot", "create", "--name", "podman-runtime"],
+    {
+      artifactName: `podman-${agent}-snapshot-create`,
+      env: freshPodmanEnv(),
+      timeoutMs: 180_000,
+    },
+  );
+  assertExitZero(snapshotCreate, `create Podman snapshot for ${sandboxName}`);
+  expect(resultText(snapshotCreate)).toMatch(/Snapshot v\d+.*created/u);
+
+  let snapshotCloneDestroyed = false;
+  cleanup.trackDisposable(`destroy Podman snapshot clone ${snapshotCloneName}`, async () => {
+    if (snapshotCloneDestroyed) return;
+    await host.nemoclaw([snapshotCloneName, "destroy", "--yes"], {
+      artifactName: `podman-${agent}-snapshot-clone-cleanup`,
+      env: freshPodmanEnv(),
+      timeoutMs: 180_000,
+    });
+  });
+  const snapshotRestore = await host.nemoclaw(
+    [sandboxName, "snapshot", "restore", "podman-runtime", "--to", snapshotCloneName, "--yes"],
+    {
+      artifactName: `podman-${agent}-snapshot-restore-clone`,
+      env: freshPodmanEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
+      redactionValues: [apiKey],
+      timeoutMs: 10 * 60_000,
+    },
+  );
+  assertExitZero(snapshotRestore, `restore Podman snapshot into ${snapshotCloneName}`);
+  const snapshotCloneEntry = readRegistrySandboxEntry(snapshotCloneName);
+  const snapshotCloneProfileFingerprint = assertManagedWorkloadReceipt(snapshotCloneEntry, catalog);
+  const snapshotCloneContainer = await inspectPodmanManagedContainer(host, {
+    artifactPrefix: `podman-${agent}-snapshot-clone`,
+    catalog,
+    profileFingerprint: snapshotCloneProfileFingerprint,
+    sandboxName: snapshotCloneName,
+    socketPath,
+  });
+  expect(snapshotCloneContainer.containerId).not.toBe(initialContainer.containerId);
+  const snapshotCloneCompletion = await inspectManagedStartupCompletion(sandbox, {
+    agent,
+    artifactName: `podman-${agent}-snapshot-clone-completion`,
+    profileFingerprint: snapshotCloneProfileFingerprint,
+    sandboxName: snapshotCloneName,
+  });
+  await assertDcodeLiveUlimits(
+    sandbox,
+    agent,
+    snapshotCloneName,
+    `podman-${agent}-snapshot-clone-live-ulimits`,
+  );
+  await assertNoPodmanRecreateArtifacts(
+    host,
+    socketPath,
+    snapshotCloneName,
+    `podman-${agent}-snapshot-clone-recreate-artifacts`,
+  );
+  const snapshotCloneVersion = await sandbox.exec(
+    snapshotCloneName,
+    [AGENT_BINARIES[agent], "--version"],
+    {
+      artifactName: `podman-${agent}-snapshot-clone-version`,
+      env: freshPodmanEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(snapshotCloneVersion, `${agent} managed-image binary in snapshot clone`);
+  expect(resultText(snapshotCloneVersion).trim()).not.toBe("");
+  const destroySnapshotClone = await host.nemoclaw([snapshotCloneName, "destroy", "--yes"], {
+    artifactName: `podman-${agent}-snapshot-clone-destroy`,
+    env: freshPodmanEnv(),
+    timeoutMs: 180_000,
+  });
+  assertExitZero(destroySnapshotClone, `destroy Podman snapshot clone ${snapshotCloneName}`);
+  snapshotCloneDestroyed = true;
+  expect(
+    await findPodmanContainerIds(
+      host,
+      socketPath,
+      snapshotCloneName,
+      `podman-${agent}-snapshot-clone-after-destroy`,
+    ),
+  ).toHaveLength(0);
+  await assertNoPodmanRecreateArtifacts(
+    host,
+    socketPath,
+    snapshotCloneName,
+    `podman-${agent}-snapshot-clone-artifacts-after-destroy`,
+  );
+  const snapshotGatewayProcess = readGatewayProcessReceipt(gatewayPidFile);
+  expect(
+    `${snapshotGatewayProcess.pid}:${snapshotGatewayProcess.startTicks}`,
+    "snapshot clone cutover must resume a new exact standalone gateway process",
+  ).not.toBe(`${initialGatewayProcess.pid}:${initialGatewayProcess.startTicks}`);
   assertDockerGuardClean(dockerGuardLog);
 
   progress.phase("verify Podman doctor and exact-socket ownership");
@@ -472,6 +832,7 @@ test("native Podman: all supported agents use managed OCI images without Docker"
     artifactPrefix: `podman-${agent}-after-stop`,
     catalog,
     expectedRunning: false,
+    profileFingerprint: initialProfileFingerprint,
     sandboxName,
     socketPath,
   });
@@ -493,6 +854,7 @@ test("native Podman: all supported agents use managed OCI images without Docker"
   const restartedContainer = await inspectPodmanManagedContainer(host, {
     artifactPrefix: `podman-${agent}-after-start`,
     catalog,
+    profileFingerprint: initialProfileFingerprint,
     sandboxName,
     socketPath,
   });
@@ -548,6 +910,7 @@ test("native Podman: all supported agents use managed OCI images without Docker"
   const afterConflictContainer = await inspectPodmanManagedContainer(host, {
     artifactPrefix: `podman-${agent}-after-conflict`,
     catalog,
+    profileFingerprint: initialProfileFingerprint,
     sandboxName,
     socketPath,
   });
@@ -607,6 +970,11 @@ exit 1
   });
   assertExitZero(recoveredDoctor, `doctor recovered Podman sandbox ${sandboxName}`);
   assertHealthyPodmanDoctor(recoveredDoctor.stdout, sandboxName);
+  const recoveredGatewayProcess = readGatewayProcessReceipt(gatewayPidFile);
+  expect(
+    `${recoveredGatewayProcess.pid}:${recoveredGatewayProcess.startTicks}`,
+    "fresh-shell recovery must replace the exact standalone gateway process",
+  ).not.toBe(`${snapshotGatewayProcess.pid}:${snapshotGatewayProcess.startTicks}`);
   assertDockerGuardClean(dockerGuardLog);
 
   progress.phase("resume and rebuild the selected agent from a fresh shell");
@@ -639,10 +1007,11 @@ exit 1
   });
   assertExitZero(rebuilt, `rebuild Podman sandbox ${sandboxName}`);
   const rebuiltRegistryEntry = readRegistrySandboxEntry(sandboxName);
-  assertManagedWorkloadReceipt(rebuiltRegistryEntry, catalog);
+  const rebuiltProfileFingerprint = assertManagedWorkloadReceipt(rebuiltRegistryEntry, catalog);
   const rebuiltContainer = await inspectPodmanManagedContainer(host, {
     artifactPrefix: `podman-${agent}-after-rebuild`,
     catalog,
+    profileFingerprint: rebuiltProfileFingerprint,
     sandboxName,
     socketPath,
   });
@@ -653,6 +1022,29 @@ exit 1
   const runtimeBindingAfterRebuild = managedRuntimeBinding(gatewayStateDir);
   assertPodmanRuntimeBinding(runtimeBindingAfterRebuild, socketPath, networkName);
   expect(runtimeBindingAfterRebuild).toEqual(runtimeBindingBeforeRecovery);
+  const rebuiltCompletion = await inspectManagedStartupCompletion(sandbox, {
+    agent,
+    artifactName: `podman-${agent}-managed-startup-completion-after-rebuild`,
+    profileFingerprint: rebuiltProfileFingerprint,
+    sandboxName,
+  });
+  await assertDcodeLiveUlimits(
+    sandbox,
+    agent,
+    sandboxName,
+    `podman-${agent}-live-ulimits-after-rebuild`,
+  );
+  await assertNoPodmanRecreateArtifacts(
+    host,
+    socketPath,
+    sandboxName,
+    `podman-${agent}-recreate-artifacts-after-rebuild`,
+  );
+  const rebuiltGatewayProcess = readGatewayProcessReceipt(gatewayPidFile);
+  expect(
+    `${rebuiltGatewayProcess.pid}:${rebuiltGatewayProcess.startTicks}`,
+    "rebuild cutover must resume a new exact standalone gateway process",
+  ).not.toBe(`${recoveredGatewayProcess.pid}:${recoveredGatewayProcess.startTicks}`);
   const rebuiltVersion = await sandbox.exec(sandboxName, [AGENT_BINARIES[agent], "--version"], {
     artifactName: `podman-${agent}-version-after-rebuild`,
     env: freshPodmanEnv(),
@@ -680,6 +1072,12 @@ exit 1
       `podman-${agent}-container-after-final-destroy`,
     ),
   ).toHaveLength(0);
+  await assertNoPodmanRecreateArtifacts(
+    host,
+    socketPath,
+    sandboxName,
+    `podman-${agent}-recreate-artifacts-after-final-destroy`,
+  );
   const podmanAfterCleanup = await host.command(
     "podman",
     ["--url", `unix://${socketPath}`, "info", "--format", "json"],
@@ -730,9 +1128,36 @@ exit 1
     gatewayName: runtimeGatewayName,
     gatewayStateDir,
     initialContainer,
+    initialCompletion,
+    snapshotClone: {
+      container: snapshotCloneContainer,
+      completion: snapshotCloneCompletion,
+      destroyed: true,
+      sandboxName: snapshotCloneName,
+    },
     restartedContainer,
     rebuiltContainer,
+    rebuiltCompletion,
+    gatewayProcessIdentities: {
+      initial: {
+        pid: initialGatewayProcess.pid,
+        startTicks: initialGatewayProcess.startTicks,
+      },
+      recovered: {
+        pid: recoveredGatewayProcess.pid,
+        startTicks: recoveredGatewayProcess.startTicks,
+      },
+      snapshotClone: {
+        pid: snapshotGatewayProcess.pid,
+        startTicks: snapshotGatewayProcess.startTicks,
+      },
+      rebuilt: {
+        pid: rebuiltGatewayProcess.pid,
+        startTicks: rebuiltGatewayProcess.startTicks,
+      },
+    },
     recoveredFromProtectedBinding: true,
+    snapshotCloneRestored: true,
     stoppedAndStarted: true,
     rebuilt: true,
     finalGatewayCleanup: true,

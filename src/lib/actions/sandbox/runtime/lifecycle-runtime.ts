@@ -9,6 +9,11 @@ import {
   parsePodmanManagedSandboxInspect,
 } from "../../../onboard/compute/podman/sandbox-recreate-spec";
 import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  type PodmanSocketAuthority,
+} from "../../../onboard/compute/podman/socket-authority";
+import {
   findLabeledSandboxContainers,
   recoverDockerDriverSandbox,
 } from "../../../onboard/docker-driver-sandbox-recovery";
@@ -61,6 +66,8 @@ export type SandboxLifecycleStopOutcome = SandboxLifecycleResult & {
 
 export interface SandboxLifecycleRuntimeDependencies {
   readonly captureHostCommand: typeof captureHostCommand;
+  readonly assertPodmanSocketAuthority: typeof assertPodmanSocketAuthority;
+  readonly capturePodmanSocketAuthority: typeof capturePodmanSocketAuthority;
   readonly dockerStop: DockerStopFn;
   readonly dockerUnpause: DockerUnpauseFn;
   readonly findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
@@ -99,7 +106,11 @@ export function resolveSandboxLifecycleRuntimeDependencies(
   overrides: Partial<SandboxLifecycleRuntimeDependencies> = {},
 ): SandboxLifecycleRuntimeDependencies {
   return {
+    assertPodmanSocketAuthority:
+      overrides.assertPodmanSocketAuthority ?? assertPodmanSocketAuthority,
     captureHostCommand: overrides.captureHostCommand ?? captureHostCommand,
+    capturePodmanSocketAuthority:
+      overrides.capturePodmanSocketAuthority ?? capturePodmanSocketAuthority,
     dockerStop: overrides.dockerStop ?? ((name, options) => loadDockerStop()(name, options)),
     dockerUnpause:
       overrides.dockerUnpause ?? ((name, options) => loadDockerUnpause()(name, options)),
@@ -215,6 +226,7 @@ type PodmanManagedContainer = {
   readonly name: string;
   readonly paused: boolean;
   readonly running: boolean;
+  readonly socketAuthority: PodmanSocketAuthority;
   readonly socketPath: string;
   readonly status: string;
 };
@@ -261,16 +273,39 @@ function requirePodmanContainerState(
 function podmanRuntimeIdentity(
   input: SandboxLifecycleRuntimeInput,
   deps: SandboxLifecycleRuntimeDependencies,
-): { bin: string; socketPath: string } {
+): { bin: string; socketAuthority: PodmanSocketAuthority; socketPath: string } {
   const stateDir = deps.resolveSandboxManagedGatewayStateDirectory(
     input.sandbox,
     input.environment,
   );
   const socketPath = deps.resolvePodmanRuntimeSocket(stateDir, input.environment);
+  const socketAuthority = deps.capturePodmanSocketAuthority(socketPath);
+  if (socketAuthority.socketPath !== socketPath) {
+    throw new Error(
+      "Managed Podman lifecycle socket authority does not match its runtime binding.",
+    );
+  }
+  deps.assertPodmanSocketAuthority(socketAuthority);
   return {
     bin: input.environment.NEMOCLAW_PODMAN_BIN?.trim() || "podman",
+    socketAuthority,
     socketPath,
   };
+}
+
+function captureAuthorizedPodmanCommand(
+  deps: SandboxLifecycleRuntimeDependencies,
+  runtime: Pick<PodmanManagedContainer, "bin" | "socketAuthority" | "socketPath">,
+  args: string[],
+  timeoutMs: number,
+): CommandCapture {
+  if (runtime.socketAuthority.socketPath !== runtime.socketPath) {
+    throw new Error("Managed Podman lifecycle authority changed its socket path.");
+  }
+  deps.assertPodmanSocketAuthority(runtime.socketAuthority);
+  const result = deps.captureHostCommand(runtime.bin, args, timeoutMs);
+  deps.assertPodmanSocketAuthority(runtime.socketAuthority);
+  return result;
 }
 
 function inspectPodmanManagedSandbox(
@@ -290,23 +325,34 @@ function inspectPodmanManagedSandbox(
   }
 
   const socketUrl = `unix://${runtime.socketPath}`;
-  const lookup = deps.captureHostCommand(
-    runtime.bin,
-    [
-      "--url",
-      socketUrl,
-      "ps",
-      "--all",
-      "--no-trunc",
-      "--filter",
-      `label=${PODMAN_MANAGED_LABEL}=true`,
-      "--filter",
-      `label=${PODMAN_SANDBOX_NAME_LABEL}=${input.sandboxName}`,
-      "--format",
-      "{{.ID}}\t{{.Names}}",
-    ],
-    PODMAN_PROBE_TIMEOUT_MS,
-  );
+  let lookup: CommandCapture;
+  try {
+    lookup = captureAuthorizedPodmanCommand(
+      deps,
+      runtime,
+      [
+        "--url",
+        socketUrl,
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `label=${PODMAN_MANAGED_LABEL}=true`,
+        "--filter",
+        `label=${PODMAN_SANDBOX_NAME_LABEL}=${input.sandboxName}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      PODMAN_PROBE_TIMEOUT_MS,
+    );
+  } catch (error) {
+    return {
+      exitCode: 1,
+      message: `  Refusing Podman lifecycle mutation: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   if (lookup.status !== 0) return podmanFailure("container lookup", lookup);
 
   let candidates: Array<{ containerId: string; name: string }>;
@@ -359,11 +405,22 @@ function inspectPodmanManagedSandbox(
       message: `  Refusing Podman lifecycle mutation: sandbox '${input.sandboxName}' has an unexpected container identity.`,
     };
   }
-  const inspect = deps.captureHostCommand(
-    runtime.bin,
-    ["--url", socketUrl, "container", "inspect", candidate.containerId],
-    PODMAN_PROBE_TIMEOUT_MS,
-  );
+  let inspect: CommandCapture;
+  try {
+    inspect = captureAuthorizedPodmanCommand(
+      deps,
+      runtime,
+      ["--url", socketUrl, "container", "inspect", candidate.containerId],
+      PODMAN_PROBE_TIMEOUT_MS,
+    );
+  } catch (error) {
+    return {
+      exitCode: 1,
+      message: `  Refusing Podman lifecycle mutation: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   if (inspect.status !== 0) return podmanFailure("container inspect", inspect);
 
   try {
@@ -379,6 +436,7 @@ function inspectPodmanManagedSandbox(
       name: parsed.name,
       paused: state.paused,
       running: parsed.running,
+      socketAuthority: runtime.socketAuthority,
       socketPath: runtime.socketPath,
       status: state.status,
     };
@@ -400,7 +458,7 @@ function isLifecycleFailure(
 
 function runPodmanContainerMutation(
   deps: SandboxLifecycleRuntimeDependencies,
-  runtime: Pick<PodmanManagedContainer, "bin" | "socketPath">,
+  runtime: Pick<PodmanManagedContainer, "bin" | "socketAuthority" | "socketPath">,
   operation: "start" | "stop" | "unpause",
   containerId: string,
 ): SandboxLifecycleResult {
@@ -411,7 +469,17 @@ function runPodmanContainerMutation(
     ...(operation === "stop" ? ["--time", String(PODMAN_STOP_GRACE_SECONDS)] : []),
     containerId,
   ];
-  const result = deps.captureHostCommand(runtime.bin, args, PODMAN_OPERATION_TIMEOUT_MS);
+  let result: CommandCapture;
+  try {
+    result = captureAuthorizedPodmanCommand(deps, runtime, args, PODMAN_OPERATION_TIMEOUT_MS);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      message: `  Refusing Podman ${operation}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   return result.status === 0 ? { exitCode: 0 } : podmanFailure(operation, result);
 }
 

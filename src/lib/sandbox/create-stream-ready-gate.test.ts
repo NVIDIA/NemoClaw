@@ -4,11 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamSandboxCreate } from "./create-stream";
-import { dockerEnv, FakeChild, makePollingOptions, vmEnv } from "./create-stream-test-fixtures";
 import {
   getReadyCheckOutputPatterns,
   getReadyCheckOutputPatternsForAgent,
 } from "./create-stream-ready-gate";
+import { dockerEnv, FakeChild, makePollingOptions, vmEnv } from "./create-stream-test-fixtures";
 
 describe("sandbox-create-stream ready gate", () => {
   afterEach(() => {
@@ -106,7 +106,7 @@ describe("sandbox-create-stream ready gate", () => {
         makePollingOptions(new FakeChild(), { readyCheck: () => false, onPoll: () => {} }),
       ),
     ).toThrow(
-      "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
+      "streamSandboxCreate onPoll requires failureCheck (e.g., runtimePatch.createFailureMessage)",
     );
   });
 

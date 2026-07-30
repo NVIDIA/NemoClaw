@@ -5,7 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildPodmanDriverGatewayEnv, PODMAN_DRIVER_GATEWAY_RUNTIME_ENV_KEYS } from "./gateway-env";
+import {
+  buildPersistedPodmanDriverGatewayEnv,
+  buildPodmanDriverGatewayEnv,
+  PODMAN_DRIVER_GATEWAY_RUNTIME_ENV_KEYS,
+} from "./gateway-env";
 
 const dirs: string[] = [];
 
@@ -66,5 +70,84 @@ describe("Podman-driver gateway environment", () => {
     });
 
     expect(firstFingerprint).not.toBe(second.NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256);
+  });
+
+  it("reconstructs persisted runtime identity without rewriting gateway config", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-recovery-"));
+    dirs.push(stateDir);
+    const configPath = path.join(stateDir, "openshell-gateway.toml");
+    const initial = buildPodmanDriverGatewayEnv({
+      gatewayPort: 8443,
+      podmanSocketPath: "/run/user/1001/podman/podman.sock",
+      stateDir,
+      supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+    });
+    const initialConfig = fs.readFileSync(configPath);
+    const initialConfigStat = fs.statSync(configPath);
+    const env = buildPersistedPodmanDriverGatewayEnv({
+      configSha256: initial.NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256,
+      gatewayPort: 8443,
+      podmanSocketPath: "/run/user/1001/podman/podman.sock",
+      stateDir,
+      supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+    });
+
+    expect(env).toMatchObject({
+      NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256: initial.NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256,
+      OPENSHELL_GATEWAY_CONFIG: configPath,
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      OPENSHELL_SERVER_PORT: "8443",
+      OPENSHELL_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+    });
+    expect(fs.readFileSync(configPath)).toEqual(initialConfig);
+    expect(fs.statSync(configPath).mtimeMs).toBe(initialConfigStat.mtimeMs);
+  });
+
+  it("rejects persisted config whose content no longer matches the protected binding", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-tamper-"));
+    dirs.push(stateDir);
+    const initial = buildPodmanDriverGatewayEnv({
+      gatewayPort: 8443,
+      podmanSocketPath: "/run/user/1001/podman/podman.sock",
+      stateDir,
+      supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+    });
+    fs.appendFileSync(path.join(stateDir, "openshell-gateway.toml"), "\n# tampered\n");
+
+    expect(() =>
+      buildPersistedPodmanDriverGatewayEnv({
+        configSha256: initial.NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256,
+        gatewayPort: 8443,
+        podmanSocketPath: "/run/user/1001/podman/podman.sock",
+        stateDir,
+        supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+      }),
+    ).toThrow("does not match its protected fingerprint");
+  });
+
+  it("rejects a symlinked persisted gateway config before reading it", () => {
+    const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-source-"));
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-symlink-"));
+    dirs.push(sourceDir, stateDir);
+    const initial = buildPodmanDriverGatewayEnv({
+      gatewayPort: 8443,
+      podmanSocketPath: "/run/user/1001/podman/podman.sock",
+      stateDir: sourceDir,
+      supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+    });
+    fs.symlinkSync(
+      path.join(sourceDir, "openshell-gateway.toml"),
+      path.join(stateDir, "openshell-gateway.toml"),
+    );
+
+    expect(() =>
+      buildPersistedPodmanDriverGatewayEnv({
+        configSha256: initial.NEMOCLAW_MANAGED_GATEWAY_CONFIG_SHA256,
+        gatewayPort: 8443,
+        podmanSocketPath: "/run/user/1001/podman/podman.sock",
+        stateDir,
+        supervisorImage: "ghcr.io/nvidia/openshell/supervisor@sha256:def",
+      }),
+    ).toThrow("unavailable or unsafe");
   });
 });
