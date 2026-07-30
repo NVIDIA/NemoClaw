@@ -9,10 +9,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DockerGpuPatchResult } from "../docker-gpu-patch-types";
 import type { DockerManagedStartupTransaction } from "./docker-root-apply";
 import {
+  clearDockerManagedStartupSharedStateCommitReceipt,
+  DockerManagedStartupSharedStateCommitIndeterminateError,
   finalizeDockerManagedStartupSharedState,
   probeDockerManagedStartupSharedState,
 } from "./docker-shared-state";
-import { MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY } from "./shared-state-transaction";
+import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+} from "./shared-state-transaction";
 
 const IMMUTABLE_IMAGE = `sha256:${"a".repeat(64)}`;
 const BOOTSTRAP_IDENTITY = "b".repeat(64);
@@ -50,41 +55,91 @@ function removeReceiptParents(...receiptPaths: readonly string[]): void {
   }
 }
 
+function exactMissingReceipt(sourcePath: string) {
+  return {
+    status: 1,
+    stderr: `Error response from daemon: Could not find the file ${sourcePath} in container new`,
+  };
+}
+
+function fakeSharedStateDocker(
+  initialStatus: "committed" | "none" | "pending",
+  options: {
+    readonly clearLostAcknowledgement?: boolean;
+    readonly commitLostAcknowledgement?: boolean;
+    readonly commitWithoutDurableState?: boolean;
+    readonly failCommittedProbe?: boolean;
+  } = {},
+) {
+  let status = initialStatus;
+  const receiptPaths: string[] = [];
+  const events: string[] = [];
+  const dockerRun = vi.fn((args: readonly string[]) => {
+    if (args[0] === "cp") {
+      const source = String(args[2] ?? "");
+      const destination = String(args[3] ?? "");
+      if (source.endsWith(`:${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY}`)) {
+        events.push("copy-commit");
+        if (status !== "committed") {
+          return exactMissingReceipt(MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY);
+        }
+        receiptPaths.push(destination);
+        return { status: 0 };
+      }
+      if (source.endsWith(`:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`)) {
+        events.push("copy-pending");
+        if (status !== "pending") {
+          return exactMissingReceipt(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY);
+        }
+        receiptPaths.push(destination);
+        return { status: 0 };
+      }
+    }
+    if (args[0] === "run" && args.includes("--shared-state-transaction-status")) {
+      events.push(`probe-${status}`);
+      if (status === "committed" && options.failCommittedProbe) {
+        return { status: 1, stderr: "injected immutable committed-status probe failure" };
+      }
+      return { status: 0, stdout: `${status}\n` };
+    }
+    if (args[0] === "exec" && args.includes("--commit-shared-state-transaction")) {
+      events.push("commit");
+      if (!options.commitWithoutDurableState) status = "committed";
+      return options.commitLostAcknowledgement
+        ? { status: 1, stderr: "daemon acknowledgement lost" }
+        : { status: 0 };
+    }
+    if (args[0] === "exec" && args.includes("--clear-shared-state-commit-receipt")) {
+      events.push("clear");
+      status = "none";
+      return options.clearLostAcknowledgement
+        ? { status: 1, stderr: "daemon acknowledgement lost" }
+        : { status: 0 };
+    }
+    if (args[0] === "run" && args.includes("--rollback-shared-state-transaction")) {
+      events.push("rollback");
+      status = "none";
+      return { status: 0 };
+    }
+    throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
+  });
+  return {
+    dockerRun,
+    events,
+    receiptPaths,
+    get status() {
+      return status;
+    },
+  };
+}
+
 describe("Docker managed-startup shared-state finalization", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("probes pending state through an explicit copied receipt without writable-layer access", () => {
-    let receiptPath = "";
-    const dockerRun = vi
-      .fn()
-      .mockImplementationOnce((args: readonly string[]) => {
-        expect(args.slice(0, 3)).toEqual([
-          "cp",
-          "-a",
-          `new:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`,
-        ]);
-        receiptPath = String(args[3]);
-        return { status: 0, stdout: "pending\n" };
-      })
-      .mockImplementationOnce((args: readonly string[]) => {
-        expect(args).not.toContain("--volumes-from");
-        expect(args).toEqual(
-          expect.arrayContaining([
-            "--mount",
-            expect.stringMatching(
-              /^type=bind,src=.+\/managed-startup-shared-state-transaction-v1,dst=\/var\/lib\/nemoclaw\/managed-startup-shared-state-transaction-v1,readonly$/u,
-            ),
-            "--shared-state-transaction-status",
-            "--profile-fingerprint",
-            "c".repeat(64),
-            "--bootstrap-identity",
-            BOOTSTRAP_IDENTITY,
-          ]),
-        );
-        return { status: 0, stdout: "pending\n" };
-      });
+    const fake = fakeSharedStateDocker("pending");
 
     expect(
       probeDockerManagedStartupSharedState(
@@ -92,143 +147,183 @@ describe("Docker managed-startup shared-state finalization", () => {
           transaction: transaction(),
           profileFingerprint: "c".repeat(64),
         },
-        { dockerRun },
+        { dockerRun: fake.dockerRun },
       ),
     ).toBe("pending");
-    expect(fs.existsSync(path.dirname(receiptPath))).toBe(false);
+    expect(fake.events).toEqual(["copy-commit", "copy-pending", "probe-pending"]);
+    const probe = fake.dockerRun.mock.calls.find(
+      ([args]) => args[0] === "run" && args.includes("--shared-state-transaction-status"),
+    )?.[0];
+    expect(probe).not.toContain("--volumes-from");
+    expect(probe).toEqual(
+      expect.arrayContaining([
+        "--mount",
+        expect.stringMatching(
+          /^type=bind,src=.+\/managed-startup-shared-state-transaction-v1,dst=\/var\/lib\/nemoclaw\/managed-startup-shared-state-transaction-v1,readonly$/u,
+        ),
+        "--profile-fingerprint",
+        "c".repeat(64),
+        "--bootstrap-identity",
+        BOOTSTRAP_IDENTITY,
+      ]),
+    );
+    expect(
+      fake.receiptPaths.every((receiptPath) => !fs.existsSync(path.dirname(receiptPath))),
+    ).toBe(true);
+  });
+
+  it("probes committed state only through the exact immutable image-owned receipt", () => {
+    const fake = fakeSharedStateDocker("committed");
+
+    expect(
+      probeDockerManagedStartupSharedState(
+        {
+          transaction: transaction(),
+          profileFingerprint: "c".repeat(64),
+        },
+        { dockerRun: fake.dockerRun },
+      ),
+    ).toBe("committed");
+    expect(fake.events).toEqual(["copy-commit", "probe-committed"]);
+    const probe = fake.dockerRun.mock.calls.find(
+      ([args]) => args[0] === "run" && args.includes("--shared-state-transaction-status"),
+    )?.[0];
+    expect(probe).toEqual(
+      expect.arrayContaining([
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--mount",
+        expect.stringMatching(
+          /^type=bind,src=.+\/managed-startup-shared-state-commit-v1,dst=\/var\/lib\/nemoclaw\/managed-startup-shared-state-commit-v1,readonly$/u,
+        ),
+        IMMUTABLE_IMAGE,
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "c".repeat(64),
+        "--bootstrap-identity",
+        BOOTSTRAP_IDENTITY,
+      ]),
+    );
+    expect(
+      fake.receiptPaths.every((receiptPath) => !fs.existsSync(path.dirname(receiptPath))),
+    ).toBe(true);
   });
 
   it("copies the bounded receipt before commit and removes the host copy on success", () => {
-    const calls: string[] = [];
-    let receiptPath = "";
-    const dockerRun = vi
-      .fn()
-      .mockImplementationOnce((args: readonly string[]) => {
-        calls.push("copy");
-        receiptPath = String(args[3]);
-        expect(args.slice(0, 3)).toEqual([
-          "cp",
-          "-a",
-          `new:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`,
-        ]);
-        return { status: 0 };
-      })
-      .mockImplementationOnce((args: readonly string[]) => {
-        calls.push("commit");
-        expect(args[0]).toBe("run");
-        expect(args).not.toContain("--volumes-from");
-        expect(args).not.toContain("--commit-shared-state-transaction");
-        expect(args).toEqual(
-          expect.arrayContaining([
-            "--mount",
-            expect.stringMatching(
-              /^type=bind,src=.+\/managed-startup-shared-state-transaction-v1,dst=\/var\/lib\/nemoclaw\/managed-startup-shared-state-transaction-v1,readonly$/u,
-            ),
-            IMMUTABLE_IMAGE,
-            "--shared-state-transaction-status",
-            "--agent",
-            "openclaw",
-            "--profile-fingerprint",
-            "c".repeat(64),
-            "--bootstrap-identity",
-            BOOTSTRAP_IDENTITY,
-          ]),
-        );
-        return { status: 0, stdout: "pending\n" };
-      });
+    const fake = fakeSharedStateDocker("pending");
     const dockerStop = vi.fn();
 
     expect(
       finalizeDockerManagedStartupSharedState(
         { transaction: transaction(), patchResult: result(), supervisorReady: true },
-        { dockerRun, dockerStop },
+        { dockerRun: fake.dockerRun, dockerStop },
       ),
     ).toEqual({ supervisorReady: true, failure: null });
-    expect(calls).toEqual(["copy", "commit"]);
+    expect(fake.events).toEqual([
+      "copy-pending",
+      "probe-pending",
+      "commit",
+      "copy-commit",
+      "probe-committed",
+    ]);
     expect(dockerStop).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.dirname(receiptPath))).toBe(false);
+    expect(
+      fake.receiptPaths.every((receiptPath) => !fs.existsSync(path.dirname(receiptPath))),
+    ).toBe(true);
   });
 
-  it("uses the preserved pre-commit receipt after a lost commit acknowledgement", () => {
-    const calls: string[] = [];
-    let receiptPath = "";
-    const dockerRun = vi
-      .fn()
-      .mockImplementationOnce((args: readonly string[]) => {
-        calls.push("copy");
-        receiptPath = String(args[3]);
-        return { status: 0 };
-      })
-      .mockImplementationOnce(() => {
-        calls.push("commit-lost-ack");
-        return { status: 1, stderr: "daemon acknowledgement lost" };
-      })
-      .mockImplementationOnce((args: readonly string[]) => {
-        calls.push("rollback-helper");
-        expect(args).toEqual(
-          expect.arrayContaining([
-            "--volumes-from",
-            "new",
-            "--mount",
-            expect.stringMatching(
-              /^type=bind,src=.+,dst=\/run\/nemoclaw\/managed-startup-shared-rollback-receipt-v1,readonly$/u,
-            ),
-            IMMUTABLE_IMAGE,
-            "--rollback-shared-state-transaction",
-            "--bootstrap-identity",
-            BOOTSTRAP_IDENTITY,
-            "--read-only-receipt",
-          ]),
-        );
-        return { status: 0 };
-      });
-    const dockerStop = vi.fn(() => {
-      calls.push("stop");
-      return { status: 0 };
+  it("accepts a lost commit acknowledgement only after immutable committed proof", () => {
+    const fake = fakeSharedStateDocker("pending", {
+      commitLostAcknowledgement: true,
     });
+    const dockerStop = vi.fn();
 
     const outcome = finalizeDockerManagedStartupSharedState(
       { transaction: transaction(), patchResult: result(), supervisorReady: true },
-      { dockerRun, dockerStop },
+      { dockerRun: fake.dockerRun, dockerStop },
+    );
+    expect(outcome).toEqual({ supervisorReady: true, failure: null });
+    expect(fake.status).toBe("committed");
+    expect(fake.events).toEqual([
+      "copy-pending",
+      "probe-pending",
+      "commit",
+      "copy-commit",
+      "probe-committed",
+    ]);
+    expect(dockerStop).not.toHaveBeenCalled();
+  });
+
+  it("forbids rollback when commit succeeds but immutable committed proof is unavailable", () => {
+    const fake = fakeSharedStateDocker("pending", {
+      failCommittedProbe: true,
+    });
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+
+    try {
+      expect(() =>
+        finalizeDockerManagedStartupSharedState(
+          { transaction: transaction(), patchResult: result(), supervisorReady: true },
+          { dockerRun: fake.dockerRun, dockerStop },
+        ),
+      ).toThrow(DockerManagedStartupSharedStateCommitIndeterminateError);
+      expect(fake.status).toBe("committed");
+      expect(fake.events).toEqual([
+        "copy-pending",
+        "probe-pending",
+        "commit",
+        "copy-commit",
+        "probe-committed",
+      ]);
+      expect(fake.events).not.toContain("rollback");
+      expect(dockerStop).not.toHaveBeenCalled();
+    } finally {
+      removeReceiptParents(...fake.receiptPaths);
+    }
+  });
+
+  it("uses the preserved pre-commit receipt when a lost acknowledgement has no durable proof", () => {
+    const fake = fakeSharedStateDocker("pending", {
+      commitLostAcknowledgement: true,
+      commitWithoutDurableState: true,
+    });
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+
+    const outcome = finalizeDockerManagedStartupSharedState(
+      { transaction: transaction(), patchResult: result(), supervisorReady: true },
+      { dockerRun: fake.dockerRun, dockerStop },
     );
     expect(outcome.supervisorReady).toBe(false);
     expect(outcome.failure?.message).toContain("logical commit validation failed");
-    expect(calls).toEqual(["copy", "commit-lost-ack", "stop", "rollback-helper"]);
-    expect(fs.existsSync(path.dirname(receiptPath))).toBe(false);
+    expect(fake.events).toEqual([
+      "copy-pending",
+      "probe-pending",
+      "commit",
+      "copy-commit",
+      "copy-pending",
+      "probe-pending",
+      "rollback",
+    ]);
+    expect(dockerStop).toHaveBeenCalledOnce();
+    expect(fake.status).toBe("none");
   });
 
-  it("uses unique receipt paths and treats already-completed cleanup idempotently", () => {
-    const receiptPaths: string[] = [];
-    const copyReceipt = (args: readonly string[]) => {
-      expect(args[0]).toBe("cp");
-      const receiptPath = String(args[3]);
-      receiptPaths.push(receiptPath);
-      return { status: 0 };
-    };
-    const completeCommit = (args: readonly string[]) => {
-      expect(args[0]).toBe("run");
-      removeReceiptParents(receiptPaths.at(-1)!);
-      return { status: 0, stdout: "pending\n" };
-    };
-    const dockerRun = vi
-      .fn()
-      .mockImplementationOnce(copyReceipt)
-      .mockImplementationOnce(completeCommit)
-      .mockImplementationOnce(copyReceipt)
-      .mockImplementationOnce(completeCommit);
+  it("retires the durable receipt after exact backup cleanup and accepts only proven lost clear acknowledgement", () => {
+    const fake = fakeSharedStateDocker("committed", {
+      clearLostAcknowledgement: true,
+    });
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      expect(
-        finalizeDockerManagedStartupSharedState(
-          { transaction: transaction(), patchResult: result(), supervisorReady: true },
-          { dockerRun },
-        ),
-      ).toEqual({ supervisorReady: true, failure: null });
-    }
-    expect(new Set(receiptPaths).size).toBe(2);
-    expect(receiptPaths.every((receiptPath) => !fs.existsSync(path.dirname(receiptPath)))).toBe(
-      true,
-    );
+    expect(() =>
+      clearDockerManagedStartupSharedStateCommitReceipt(transaction(), {
+        dockerRun: fake.dockerRun,
+      }),
+    ).not.toThrow();
+    expect(fake.events).toEqual(["clear", "copy-commit", "copy-pending"]);
+    expect(fake.status).toBe("none");
   });
 
   it("quiesces a failed supervisor before copying and replaying the receipt", () => {

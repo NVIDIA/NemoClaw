@@ -171,6 +171,52 @@ export interface ManagedBootstrapFinalizationReceipt {
   readonly finalizedAt: string;
 }
 
+/**
+ * The managed shared-state transaction is already committed and therefore
+ * cannot be rolled back, but an exact runtime backup still needs removal.
+ * Callers may retry commit finalization; they must not attempt rollback.
+ */
+export class ManagedBootstrapDurableCommitCleanupPendingError extends Error {
+  readonly bootstrapIdentity: string;
+  readonly cleanupRuntimeId: string;
+
+  constructor(input: {
+    readonly bootstrapIdentity: string;
+    readonly cleanupRuntimeId: string;
+    readonly detail: string;
+  }) {
+    super(
+      `Managed bootstrap shared state is durably committed, but finalization cleanup is pending for runtime ${input.cleanupRuntimeId}: ${input.detail}`,
+    );
+    this.name = "ManagedBootstrapDurableCommitCleanupPendingError";
+    this.bootstrapIdentity = input.bootstrapIdentity;
+    this.cleanupRuntimeId = input.cleanupRuntimeId;
+  }
+}
+
+/**
+ * The runtime may have durably committed shared state, but its immutable
+ * status probe was unavailable. Rollback is forbidden until commit state can
+ * be re-probed; callers must not equate this with either pending or committed.
+ */
+export class ManagedBootstrapCommitStateIndeterminateError extends Error {
+  readonly bootstrapIdentity: string;
+  readonly runtimeId: string;
+
+  constructor(input: {
+    readonly bootstrapIdentity: string;
+    readonly runtimeId: string;
+    readonly detail: string;
+  }) {
+    super(
+      `Managed bootstrap commit state is indeterminate for runtime ${input.runtimeId}; rollback is unsafe until immutable status is recovered: ${input.detail}`,
+    );
+    this.name = "ManagedBootstrapCommitStateIndeterminateError";
+    this.bootstrapIdentity = input.bootstrapIdentity;
+    this.runtimeId = input.runtimeId;
+  }
+}
+
 export interface ManagedBootstrapAdapter {
   /**
    * Launch OpenShell with a bounded hold and return only after OpenShell

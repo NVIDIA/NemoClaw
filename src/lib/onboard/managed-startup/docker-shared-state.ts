@@ -18,6 +18,7 @@ import { cleanupTempDir, secureTempFile } from "../temp-files";
 import type { DockerManagedStartupTransaction } from "./docker-root-apply";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./shared-state-transaction";
@@ -54,22 +55,62 @@ export interface DockerManagedStartupSharedStateOutcome {
   readonly failure: Error | null;
 }
 
+export class DockerManagedStartupSharedStateCommitIndeterminateError extends Error {
+  constructor(detail: string, options?: ErrorOptions) {
+    super(
+      `Managed-startup shared-state commit may have completed, but immutable status is unavailable: ${detail}`,
+      options,
+    );
+    this.name = "DockerManagedStartupSharedStateCommitIndeterminateError";
+  }
+}
+
 export function probeDockerManagedStartupSharedState(
   input: {
     readonly transaction: DockerManagedStartupTransaction;
     readonly profileFingerprint: string;
   },
   deps: DockerGpuPatchDeps = {},
-): "none" | "pending" {
+): "committed" | "none" | "pending" {
   const transaction = input.transaction;
   if (!transaction.bootstrapIdentity) {
     throw new Error("Managed bootstrap shared-state status identity is missing.");
+  }
+  const committedReceiptPath = copyManagedStartupReceiptAt(
+    transaction,
+    MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+    deps,
+    true,
+  );
+  if (committedReceiptPath) {
+    let verified = false;
+    try {
+      verifyCopiedManagedStartupReceipt(
+        transaction,
+        input.profileFingerprint,
+        committedReceiptPath,
+        MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+        "committed",
+        deps,
+      );
+      verified = true;
+      return "committed";
+    } finally {
+      if (verified) cleanupReceiptBestEffort(committedReceiptPath);
+    }
   }
   const receiptPath = copyManagedStartupReceipt(transaction, deps, true);
   if (!receiptPath) return "none";
   let verified = false;
   try {
-    verifyCopiedManagedStartupReceipt(transaction, input.profileFingerprint, receiptPath, deps);
+    verifyCopiedManagedStartupReceipt(
+      transaction,
+      input.profileFingerprint,
+      receiptPath,
+      MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+      "pending",
+      deps,
+    );
     verified = true;
     return "pending";
   } finally {
@@ -81,6 +122,8 @@ function verifyCopiedManagedStartupReceipt(
   transaction: DockerManagedStartupTransaction,
   profileFingerprint: string,
   receiptPath: string,
+  receiptDirectory: string,
+  expectedStatus: "committed" | "pending",
   deps: DockerGpuPatchDeps,
 ): void {
   if (!transaction.bootstrapIdentity || !/^[a-f0-9]{64}$/u.test(profileFingerprint)) {
@@ -104,7 +147,7 @@ function verifyCopiedManagedStartupReceipt(
       "ALL",
       ...NEUTRALIZED_PROCESS_INJECTION_ENV,
       "--mount",
-      transactionReceiptMount(receiptPath),
+      transactionReceiptMount(receiptPath, receiptDirectory),
       "--entrypoint",
       "/usr/local/bin/node",
       transaction.image,
@@ -125,7 +168,7 @@ function verifyCopiedManagedStartupReceipt(
         `Protected receipt retained at ${receiptPath}`,
     );
   }
-  if (String(result.stdout ?? "").trim() !== "pending") {
+  if (String(result.stdout ?? "").trim() !== expectedStatus) {
     throw new Error(
       `Immutable managed-startup helper returned an invalid copied transaction status. Protected receipt retained at ${receiptPath}`,
     );
@@ -157,7 +200,7 @@ function cleanupReceiptBestEffort(receiptPath: string): void {
 }
 
 function transactionCommand(
-  action: "rollback",
+  action: "clear-shared-state-commit-receipt" | "commit" | "rollback",
   transaction: DockerManagedStartupTransaction,
 ): string[] {
   if (!transaction.bootstrapIdentity) {
@@ -165,12 +208,130 @@ function transactionCommand(
   }
   return [
     MANAGED_STARTUP_RUNTIME_EXECUTABLE,
-    `--${action}-shared-state-transaction`,
+    action === "clear-shared-state-commit-receipt"
+      ? "--clear-shared-state-commit-receipt"
+      : `--${action}-shared-state-transaction`,
     "--agent",
     transaction.agent,
     "--bootstrap-identity",
     transaction.bootstrapIdentity,
   ];
+}
+
+export function clearDockerManagedStartupSharedStateCommitReceipt(
+  transaction: DockerManagedStartupTransaction,
+  deps: DockerGpuPatchDeps = {},
+): void {
+  const dockerRun = deps.dockerRun ?? defaultDockerRun;
+  const cleared = dockerRun(
+    [
+      "exec",
+      "--user",
+      "0:0",
+      "--workdir",
+      "/",
+      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      transaction.containerId,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "LANG=C.UTF-8",
+      "LC_ALL=C.UTF-8",
+      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "/usr/local/bin/node",
+      ...transactionCommand("clear-shared-state-commit-receipt", transaction),
+    ],
+    DOCKER_MUTATION_OPTIONS,
+  );
+  if (!transaction.profileFingerprint) {
+    throw new Error("Managed bootstrap transaction profile fingerprint is missing.");
+  }
+  // Accept a lost Docker acknowledgement only when both exact image-owned
+  // receipt paths are independently proven absent by the immutable helper.
+  let status: "committed" | "none" | "pending";
+  try {
+    status = probeDockerManagedStartupSharedState(
+      {
+        transaction,
+        profileFingerprint: transaction.profileFingerprint,
+      },
+      deps,
+    );
+  } catch (error) {
+    throw new DockerManagedStartupSharedStateCommitIndeterminateError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+  if (status === "none") return;
+  if (!hasZeroDockerExitStatus(cleared)) {
+    throw new Error(
+      `Managed-startup durable commit receipt cleanup failed and exact absence was not proven (status=${status}): ${commandDetail(cleared)}`,
+    );
+  }
+  throw new Error(
+    `Managed-startup durable commit receipt cleanup returned success, but exact absence was not proven (status=${status}).`,
+  );
+}
+
+function commitManagedStartupSharedState(
+  transaction: DockerManagedStartupTransaction,
+  deps: DockerGpuPatchDeps,
+): void {
+  const dockerRun = deps.dockerRun ?? defaultDockerRun;
+  const commit = dockerRun(
+    [
+      "exec",
+      "--user",
+      "0:0",
+      "--workdir",
+      "/",
+      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      transaction.containerId,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "LANG=C.UTF-8",
+      "LC_ALL=C.UTF-8",
+      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "/usr/local/bin/node",
+      ...transactionCommand("commit", transaction),
+    ],
+    DOCKER_MUTATION_OPTIONS,
+  );
+  if (!transaction.profileFingerprint) {
+    throw new Error("Managed bootstrap transaction profile fingerprint is missing.");
+  }
+  // The commit helper atomically renames the rollback receipt into a compact
+  // identity-bound commit receipt before Docker returns. Always probe it
+  // afterward so a lost daemon acknowledgement is accepted only when durable
+  // commit state is independently proven.
+  let status: "committed" | "none" | "pending";
+  try {
+    status = probeDockerManagedStartupSharedState(
+      {
+        transaction,
+        profileFingerprint: transaction.profileFingerprint,
+      },
+      deps,
+    );
+  } catch (error) {
+    throw new DockerManagedStartupSharedStateCommitIndeterminateError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+  if (status === "committed") return;
+  if (!hasZeroDockerExitStatus(commit)) {
+    throw new Error(
+      `Managed-startup shared-state commit helper failed and durable commit was not proven (status=${status}): ${commandDetail(commit)}`,
+    );
+  }
+  throw new Error(
+    `Managed-startup shared-state commit helper returned success, but durable commit was not proven (status=${status}).`,
+  );
 }
 
 const DOCKER_MUTATION_OPTIONS = {
@@ -197,6 +358,7 @@ function quiesceManagedStartupContainer(
 
 function isExactMissingReceiptCopy(
   transaction: DockerManagedStartupTransaction,
+  sourcePath: string,
   result: {
     readonly stderr?: string | Buffer | null;
     readonly stdout?: string | Buffer | null;
@@ -204,10 +366,7 @@ function isExactMissingReceiptCopy(
   },
 ): boolean {
   const detail = commandDetail(result);
-  const escapedPath = MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY.replace(
-    /[.*+?^${}()|[\]\\]/gu,
-    "\\$&",
-  );
+  const escapedPath = sourcePath.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const escapedContainer = transaction.containerId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return [
     new RegExp(
@@ -218,33 +377,26 @@ function isExactMissingReceiptCopy(
   ].some((pattern) => pattern.test(detail));
 }
 
-function transactionReceiptMount(receiptPath: string): string {
-  return `type=bind,src=${receiptPath},dst=${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY},readonly`;
+function transactionReceiptMount(receiptPath: string, receiptDirectory: string): string {
+  return `type=bind,src=${receiptPath},dst=${receiptDirectory},readonly`;
 }
 
-function copyManagedStartupReceipt(
+function copyManagedStartupReceiptAt(
   transaction: DockerManagedStartupTransaction,
+  sourcePath: string,
   deps: DockerGpuPatchDeps,
   allowAbsent = false,
 ): string | null {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
   const tempSeed = secureTempFile(RECEIPT_TEMP_PREFIX);
-  const receiptPath = path.join(
-    path.dirname(tempSeed),
-    path.basename(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY),
-  );
+  const receiptPath = path.join(path.dirname(tempSeed), path.basename(sourcePath));
   try {
     const copy = dockerRun(
-      [
-        "cp",
-        "-a",
-        `${transaction.containerId}:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`,
-        receiptPath,
-      ],
+      ["cp", "-a", `${transaction.containerId}:${sourcePath}`, receiptPath],
       DOCKER_MUTATION_OPTIONS,
     );
     if (!hasZeroDockerExitStatus(copy)) {
-      if (allowAbsent && isExactMissingReceiptCopy(transaction, copy)) {
+      if (allowAbsent && isExactMissingReceiptCopy(transaction, sourcePath, copy)) {
         cleanupReceiptBestEffort(receiptPath);
         return null;
       }
@@ -260,6 +412,19 @@ function copyManagedStartupReceipt(
     cleanupReceiptBestEffort(receiptPath);
     throw error;
   }
+}
+
+function copyManagedStartupReceipt(
+  transaction: DockerManagedStartupTransaction,
+  deps: DockerGpuPatchDeps,
+  allowAbsent = false,
+): string | null {
+  return copyManagedStartupReceiptAt(
+    transaction,
+    MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+    deps,
+    allowAbsent,
+  );
 }
 
 function rollbackManagedStartupSharedState(
@@ -383,11 +548,17 @@ export function finalizeDockerManagedStartupSharedState(
         transaction,
         transaction.profileFingerprint,
         receiptPath,
+        MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+        "pending",
         deps,
       );
+      commitManagedStartupSharedState(transaction, deps);
       cleanupReceiptBestEffort(receiptPath);
       return { supervisorReady: true, failure: null };
     } catch (error) {
+      if (error instanceof DockerManagedStartupSharedStateCommitIndeterminateError) {
+        throw error;
+      }
       commitFailure = error instanceof Error ? error : new Error(String(error));
     }
     const failure = new Error(
