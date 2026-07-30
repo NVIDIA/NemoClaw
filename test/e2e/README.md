@@ -103,14 +103,31 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
-## Retired selector transition
+## Retired selector compatibility
 
-When a candidate no longer contains `test/e2e/live/sandbox-rebuild.test.ts` or
-`test/e2e/live/upgrade-stale-sandbox.test.ts`, PR gate requests for the
-corresponding job or target selector run focused replacement tests through the
-compatibility controller. While the file remains, the selector runs its
-dedicated live E2E test. `rebuild-openclaw` is the canonical live rebuild and
-upgrade target.
+PR gate requests using the retired `sandbox-rebuild` and
+`upgrade-stale-sandbox` job or target selectors run focused replacement tests
+through the compatibility controller. `rebuild-openclaw` is the canonical live
+rebuild and upgrade target.
+
+## Current OpenClaw plugin EXDEV lifecycle
+
+The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+
+1. Onboard the custom weather plugin as v1.
+2. Restart the gateway and verify v1.
+3. Recreate the sandbox with the plugin changed to v2.
+4. Run the cross-device runtime-dependency replacement probe.
+
+The recreation remains the replacement boundary. It verifies the v2 plugin
+with runtime inspection, `tools.catalog`, and `tools.invoke`, and it preserves
+the workspace marker. The job also keeps the test-only tmpfs mount, unchanged
+stock policy-source bytes, and the distinct-device and source-side `EXDEV`
+checks. The duplicate v3 rebuild is removed from this job. The
+`rebuild-openclaw` job remains the canonical live rebuild coverage.
+
+The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
+Scheduled-run timing for the reduced lifecycle has not yet been measured.
 
 ## Larger-runner routing
 
@@ -572,9 +589,16 @@ and advisor concurrency groups include that eligibility, so an ignored
 metadata-edit run cannot cancel an eligible run for the same PR. The trusted
 controller reads all changed files after eligible PR CI completes and builds
 the deterministic risk plan.
-Runtime families and changes to workflow-wired live tests select
-canonical selectors from the trusted `e2e.yaml` inventory independently of
-advisor output. Ordinary internal changes execute those focused selections.
+Runtime families and changes to workflow-wired live tests or their owning
+helpers select canonical jobs from the trusted `e2e.yaml` inventory
+independently of advisor output. A workflow-wired live test or owning helper
+selects one to three focused E2E journeys. A gateway-migration live test or
+owning helper selects `openshell-gateway-upgrade`.
+
+Changes only under `test/e2e/support/` select no credentialed live E2E job.
+The `e2e-support` Vitest project runs those support tests in PR CI. A new or
+renamed live test that does not match the trusted workflow inventory keeps the
+conservative control-plane floor until its canonical job mapping is added.
 Gate initialization, CI coordination, automatic internal dispatch, and fork
 maintainer approval share one non-cancelling FIFO concurrency group for the
 repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
@@ -595,9 +619,10 @@ GitHub consequently returns no head-repository object.
 Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
 `cloud-inference`, and `security-posture`. The `e2e-control-plane`
-family is a conservative path boundary that includes non-documentation files
-under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
-policy, dependency and test configuration, and preparation and upload actions.
+family remains the conservative boundary for shared E2E tools, workflow and
+security files, unknown live test paths, risk policy, dependency and test
+configuration, and preparation and upload actions. These cross-cutting changes
+keep the broad three-job floor.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.

@@ -3350,85 +3350,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  sandbox-rebuild:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "sandbox-rebuild"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-rebuild
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - id: selector_compatibility
-        name: Classify sandbox-rebuild candidate selector
-        env:
-          LEGACY_TEST_FILE: test/e2e/live/sandbox-rebuild.test.ts
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f "$LEGACY_TEST_FILE" ]]; then
-            retired=false
-          else
-            retired=true
-          fi
-          printf 'retired=%s\n' "$retired" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Install OpenShell
-        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run sandbox rebuild live test
-        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-rebuild.test.ts
-
-      - name: Upload sandbox rebuild artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-
   sandbox-rlimits-connect:
     needs: generate-matrix
     if: ${{ contains(format(',{0},', inputs.jobs), ',sandbox-rlimits-connect,') || contains(format(',{0},', inputs.targets), ',sandbox-rlimits-connect,') }}
@@ -3600,85 +3521,6 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
-
-  upgrade-stale-sandbox:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 85
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "upgrade-stale-sandbox"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/upgrade-stale-sandbox
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - id: selector_compatibility
-        name: Classify upgrade-stale-sandbox candidate selector
-        env:
-          LEGACY_TEST_FILE: test/e2e/live/upgrade-stale-sandbox.test.ts
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f "$LEGACY_TEST_FILE" ]]; then
-            retired=false
-          else
-            retired=true
-          fi
-          printf 'retired=%s\n' "$retired" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Install OpenShell CLI
-        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
-            bash scripts/install-openshell.sh
-
-      - name: Run upgrade stale sandbox live Vitest test
-        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/upgrade-stale-sandbox.test.ts
-
-      - name: Upload upgrade stale sandbox artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
 
   double-onboard:
     needs: generate-matrix
@@ -5960,11 +5802,9 @@ jobs:
         rebuild-openclaw,
         rebuild-hermes,
         rebuild-hermes-stale-base,
-        sandbox-rebuild,
         sandbox-rlimits-connect,
         overlayfs-autofix,
         state-backup-restore,
-        upgrade-stale-sandbox,
         openshell-gateway-upgrade,
         token-rotation,
         messaging-compatible-endpoint,
