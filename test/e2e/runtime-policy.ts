@@ -361,21 +361,22 @@ const POLICY_EXCEPTIONS: Partial<Record<keyof typeof WORKFLOW_RUNTIME, LiveE2EPo
 
 const DEFAULT_TELEMETRY: LiveE2ETelemetry[] = ["semantic-phase-progress", "job-runtime"];
 const DEFAULT_ARTIFACTS: LiveE2EArtifact[] = ["target-evidence", "runtime-summary"];
+const REGISTRY_TARGETS = listTargets();
+const WORKFLOW_INVENTORY = readFreeStandingJobsInventory();
 
 function reviewCondition(tier: LiveE2ERuntimeTier): string {
   return `Review after five ${tier} samples; consolidate or retire this item if another check proves the same live boundary.`;
 }
 
 function registryOwningFiles(id: string): string[] {
-  const target = listTargets().find((candidate) => candidate.id === id);
+  const target = REGISTRY_TARGETS.find((candidate) => candidate.id === id);
   if (!target?.manifestPath) return ["test/e2e/registry/definitions/baseline.ts"];
   return ["test/e2e/registry/definitions/baseline.ts", target.manifestPath];
 }
 
 function workflowOwningFiles(id: string): string[] {
   if (id === "staging-brev-launchable") return ["tools/e2e/brev-launchable-e2e.sh"];
-  const inventory = readFreeStandingJobsInventory();
-  return [...inventory.liveTestToJobs]
+  return [...WORKFLOW_INVENTORY.liveTestToJobs]
     .filter(([, targetIds]) => targetIds.includes(id))
     .map(([file]) => file);
 }
