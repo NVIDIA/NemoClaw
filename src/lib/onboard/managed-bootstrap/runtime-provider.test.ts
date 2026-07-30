@@ -29,7 +29,7 @@ describe("managed bootstrap runtime providers", () => {
   it("routes Docker through the registered adapter and option translator", () => {
     const provider = resolveCurrentManagedBootstrapRuntimeProvider("docker");
 
-    expect(Object.keys(CURRENT_MANAGED_BOOTSTRAP_RUNTIME_PROVIDERS)).toEqual(["docker"]);
+    expect(Object.keys(CURRENT_MANAGED_BOOTSTRAP_RUNTIME_PROVIDERS)).toEqual(["docker", "podman"]);
     expect(provider.driverId).toBe("docker");
     expect(Object.keys(provider.createAdapter()).sort()).toEqual([
       "awaitBootstrap",
@@ -52,14 +52,23 @@ describe("managed bootstrap runtime providers", () => {
     });
   });
 
-  it.each([
-    "podman",
-    "mxc",
-    "future-runtime",
-  ])("fails closed for unregistered driver '%s'", (driverName) => {
+  it.each(["mxc", "future-runtime"])("fails closed for unregistered driver '%s'", (driverName) => {
     expect(() => resolveCurrentManagedBootstrapRuntimeProvider(driverName)).toThrow(
       `driver '${driverName}' is not registered`,
     );
+  });
+
+  it("registers Podman behind the same provider contract", () => {
+    const provider = resolveCurrentManagedBootstrapRuntimeProvider("podman");
+    expect(provider.driverId).toBe("podman");
+    expect(() => provider.createAdapter()).toThrow("requires an exact runtime authority");
+    expect(provider.createReplacementOptions(REPLACEMENT_INTENT)).toEqual({
+      values: {
+        gpuDevice: "nvidia.com/gpu=all",
+        gpuEnabled: true,
+        requiredUlimits: ["nofile:1024:2048"],
+      },
+    });
   });
 
   it("canonicalizes legacy persisted Docker identities without registering new drivers", () => {
@@ -67,9 +76,7 @@ describe("managed bootstrap runtime providers", () => {
     expect(resolvePersistedManagedBootstrapRuntimeProvider("docker").driverId).toBe("docker");
     expect(resolvePersistedManagedBootstrapRuntimeProvider(undefined).driverId).toBe("docker");
     expect(resolvePersistedManagedBootstrapRuntimeProvider(null).driverId).toBe("docker");
-    expect(() => resolvePersistedManagedBootstrapRuntimeProvider("podman")).toThrow(
-      "driver 'podman' is not registered",
-    );
+    expect(resolvePersistedManagedBootstrapRuntimeProvider("podman").driverId).toBe("podman");
     expect(() => resolvePersistedManagedBootstrapRuntimeProvider("mxc")).toThrow(
       "driver 'mxc' is not registered",
     );

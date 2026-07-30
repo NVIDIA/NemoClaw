@@ -20,6 +20,7 @@ export * from "./plan";
 export * from "./podman/active-watcher";
 export * from "./podman/gateway-env";
 export * from "./podman/gateway-reachability";
+export * from "./podman/gpu-attachment";
 export * from "./podman/sandbox-create-authority";
 export * from "./podman/socket-authority";
 export * from "./podman-preflight";

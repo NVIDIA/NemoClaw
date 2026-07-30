@@ -2072,6 +2072,10 @@ const MANAGED_GATEWAY_RUNTIME_ADAPTERS = {
       if (!podmanSocketPath) {
         throw new Error("Qualified Podman runtime did not provide OPENSHELL_PODMAN_SOCKET");
       }
+      const qualifiedPodman = computeRuntime.assessNativePodman({ env: process.env });
+      if (qualifiedPodman.socketPath !== podmanSocketPath) {
+        throw new Error("Qualified Podman socket does not match the managed gateway runtime.");
+      }
       computeRuntime.ensureManagedGatewayLocalTlsBundle({
         additionalServerDnsSans: ["host.containers.internal"],
         gatewayBin,
@@ -2107,11 +2111,81 @@ const MANAGED_GATEWAY_RUNTIME_ADAPTERS = {
             podmanSocketPath,
             port: GATEWAY_PORT,
             redact,
+            socketAuthority: qualifiedPodman.socketAuthority,
           }),
       };
     },
   },
 } as const satisfies Record<string, ManagedGatewayRuntimeAdapter>;
+
+function createActivePodmanSandboxRuntimeAuthority() {
+  const profile = getActiveManagedGatewayProfile();
+  if (!profile || profile.driverName !== "podman") {
+    throw new Error("Podman sandbox mutation requires a NemoClaw-managed Podman gateway.");
+  }
+  const gatewayBin = resolveOpenShellGatewayBinary();
+  if (!gatewayBin) {
+    throw new Error("Podman sandbox mutation could not resolve the gateway binary.");
+  }
+  const stateDir = getDockerDriverGatewayStateDir();
+  const qualified = computeRuntime.assessNativePodman({ env: process.env });
+  const runtime = computeRuntime
+    .resolveManagedGatewayRuntimeAdapter(profile, MANAGED_GATEWAY_RUNTIME_ADAPTERS)
+    .build({
+      gatewayBin,
+      openshellVersionOutput: runCaptureOpenshell(["--version"], { ignoreError: true }),
+      profile,
+      stateDir,
+    });
+  const socketPath = runtime.gatewayEnv.OPENSHELL_PODMAN_SOCKET?.trim();
+  if (!socketPath || socketPath !== qualified.socketPath) {
+    throw new Error("Qualified Podman socket does not match the active managed gateway.");
+  }
+  return computeRuntime.createPodmanSandboxCreateRuntimeAuthority({
+    cdiDevices: qualified.cdiDevices,
+    driverLabel: profile.displayName,
+    gatewayBin,
+    gatewayName: GATEWAY_NAME,
+    gatewayPort: GATEWAY_PORT,
+    getRememberedGatewayPid: getDockerDriverGatewayPid,
+    getRuntimeDrift: (pid, desiredEnv, driftGatewayBin, trustedServicePid) =>
+      getGatewayReuseDrift(pid, { ...desiredEnv }, driftGatewayBin, trustedServicePid),
+    isGatewayHealthy: () =>
+      isGatewayHealthy(
+        runCaptureOpenshell(["status"], { ignoreError: true }),
+        runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true }),
+        runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+      ),
+    isPidAlive,
+    rememberGatewayPid: rememberDockerDriverGatewayPid,
+    runtimeIdentity: runtime.runtimeIdentity,
+    socketAuthority: qualified.socketAuthority,
+    socketPath,
+    stateDir,
+  });
+}
+
+const ACTIVE_SANDBOX_RUNTIME_AUTHORITY_ADAPTERS = {
+  docker: { driverName: "docker", resolve: () => null },
+  kubernetes: { driverName: "kubernetes", resolve: () => null },
+  podman: {
+    driverName: "podman",
+    resolve: createActivePodmanSandboxRuntimeAuthority,
+    revalidate: (authority: unknown) => {
+      const podman = authority as Partial<
+        import("./onboard/compute/podman/sandbox-create-authority").PodmanSandboxCreateRuntimeAuthority
+      > | null;
+      if (
+        !podman?.socketAuthority ||
+        typeof podman.socketPath !== "string" ||
+        podman.socketAuthority.socketPath !== podman.socketPath
+      ) {
+        throw new Error("Podman sandbox mutation requires its exact socket authority.");
+      }
+      computeRuntime.assertPodmanSocketAuthority(podman.socketAuthority);
+    },
+  },
+} as const satisfies import("./onboard/compute/runtime-authority").SandboxRuntimeAuthorityAdapterRegistry<void>;
 
 /**
  * Reconcile or create a NemoClaw-managed host gateway. The public onboard()
@@ -2640,6 +2714,7 @@ async function createSandboxWithBaseImageResolution(
     note,
   });
   let pendingStateRestoreBackupPath = recreateProtection.selectPreUpgradeBackup(liveExists);
+  let sandboxRuntimeAuthority: unknown = null;
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -2883,6 +2958,11 @@ async function createSandboxWithBaseImageResolution(
     if (replacementWorkload.source.kind === "managed-image") {
       sandboxGpuCreateFlow.resolveCurrentManagedBootstrapRuntimeProvider(computePlan.driverName);
     }
+    sandboxRuntimeAuthority = computeRuntime.resolveSandboxRuntimeAuthority(
+      computePlan.driverName,
+      undefined,
+      ACTIVE_SANDBOX_RUNTIME_AUTHORITY_ADAPTERS,
+    );
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2901,9 +2981,19 @@ async function createSandboxWithBaseImageResolution(
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
     recreateRuntime.advance("deleting");
-    runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
-    runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-    recreateRuntime.confirmDeleted();
+    computeRuntime.runAuthorizedSandboxRecreateDeletion(
+      computePlan.driverName,
+      undefined,
+      ACTIVE_SANDBOX_RUNTIME_AUTHORITY_ADAPTERS,
+      {
+        beforeDelete: () =>
+          runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }),
+        deleteSandbox: () => {
+          runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+        },
+        afterDelete: () => recreateRuntime.confirmDeleted(),
+      },
+    );
     const replacementReusesPreviousImage =
       replacementWorkload.source.kind === "managed-image" &&
       previousEntry?.imageTag === replacementWorkload.source.reference;
@@ -2927,6 +3017,11 @@ async function createSandboxWithBaseImageResolution(
     preparedSandboxWorkload.source.kind === "managed-image"
       ? sandboxGpuCreateFlow.resolveCurrentManagedBootstrapRuntimeProvider(computePlan.driverName)
       : null;
+  sandboxRuntimeAuthority ??= computeRuntime.resolveSandboxRuntimeAuthority(
+    computePlan.driverName,
+    undefined,
+    ACTIVE_SANDBOX_RUNTIME_AUTHORITY_ADAPTERS,
+  );
 
   applyExtraProviderReconciliation({
     extraProviders: resolvedCreateIntent.extraProviders,
@@ -2978,6 +3073,7 @@ async function createSandboxWithBaseImageResolution(
     managedBootstrapRuntimeProvider
       ? {
           bootstrapIdentity: managedBootstrapIdentity,
+          runtimeAuthority: sandboxRuntimeAuthority,
           runtimeProvider: managedBootstrapRuntimeProvider,
           request: managedStartupRootApplyRequest,
           image: {
@@ -4393,14 +4489,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       persistedDriver: lockedPersistedComputeDriver,
       autoPlan: autoComputePlan,
     });
-    if (
-      onboardingComputePlan.driverName === "podman" &&
-      (opts.gpu === true || opts.sandboxGpu === "enable")
-    ) {
-      throw new computeRuntime.OpenShellComputeSelectionError(
-        "Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.",
-      );
-    }
   } catch (error) {
     releaseOnboardLock();
     throw error;
@@ -4642,19 +4730,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resolveSandboxGpuConfig: (gpu, configOptions) =>
           resolveSandboxGpuConfig(gpu, {
             ...configOptions,
-            flag:
-              onboardingComputePlan.driverName === "podman" && configOptions.flag === null
-                ? "disable"
-                : configOptions.flag,
+            flag: configOptions.flag,
           }),
         validateSandboxGpuPreflight: (config) => {
-          if (onboardingComputePlan.driverName === "podman" && config.sandboxGpuEnabled) {
-            console.error(
-              "  Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.",
+          if (onboardingComputePlan.driverName === "podman") {
+            sandboxGpuPreflight.exitOnSandboxGpuConfigErrors(config);
+            const attachment = computeRuntime.resolvePodmanGpuAttachment(
+              config.sandboxGpuEnabled,
+              config.sandboxGpuDevice,
             );
-            process.exit(1);
-          }
-          validateSandboxGpuPreflight(config);
+            if (attachment) {
+              const qualified = computeRuntime.assessNativePodman({ env: process.env });
+              computeRuntime.assertPodmanGpuAttachmentQualified(qualified.cdiDevices, attachment);
+            }
+          } else validateSandboxGpuPreflight(config);
         },
         skippedStepMessage,
         recordStateSkipped,
@@ -4712,10 +4801,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (!initialContext.sandboxGpuConfig) {
       throw new Error("Preflight did not produce a sandbox GPU configuration.");
     }
-    restoreHostLocalInferenceRuntime =
-      computeRuntime.activateHostLocalInferenceRuntime(onboardingComputePlan, {
+    restoreHostLocalInferenceRuntime = computeRuntime.activateHostLocalInferenceRuntime(
+      onboardingComputePlan,
+      {
         environment: process.env,
-      });
+      },
+    );
     session = initialFlowResult.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
     const { gpuPassthrough } = initialContext;

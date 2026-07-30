@@ -21,6 +21,7 @@ import {
   runManagedBootstrapSequence,
 } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
+import { PODMAN_MANAGED_BOOTSTRAP_RUNTIME_PROVIDER } from "./podman-provider";
 import {
   type ManagedBootstrapRuntimeCompatibilityLaunchInput,
   type ManagedBootstrapRuntimeCreateLaunchResult,
@@ -312,6 +313,7 @@ export const DOCKER_MANAGED_BOOTSTRAP_RUNTIME_PROVIDER = Object.freeze({
 
 export const CURRENT_MANAGED_BOOTSTRAP_RUNTIME_PROVIDERS = Object.freeze({
   docker: DOCKER_MANAGED_BOOTSTRAP_RUNTIME_PROVIDER,
+  podman: PODMAN_MANAGED_BOOTSTRAP_RUNTIME_PROVIDER,
 } satisfies ManagedBootstrapRuntimeProviderRegistry);
 
 export function resolveCurrentManagedBootstrapRuntimeProvider(

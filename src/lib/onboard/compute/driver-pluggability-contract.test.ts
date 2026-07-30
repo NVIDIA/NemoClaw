@@ -12,28 +12,28 @@ import {
   type SandboxLifecycleRuntimeAdapter,
   type SandboxLifecycleRuntimeAdapterRegistry,
 } from "../../actions/sandbox/runtime/lifecycle-runtime";
-import { resolveManagedSnapshotRuntimeAuthority } from "../../actions/sandbox/snapshot/runtime-authority";
 import {
-  createManagedSnapshotRuntimePatch,
-  type ManagedSnapshotRuntimePatchContext,
-} from "../../actions/sandbox/snapshot/runtime-patch";
+  resolveManagedSnapshotRuntimeAuthority,
+  type ManagedSnapshotRuntimeAuthorityContext,
+} from "../../actions/sandbox/snapshot/runtime-authority";
 import type { SandboxEntry } from "../../state/registry";
 import type { ManagedGatewayRuntimeBinding } from "../docker-driver-gateway-config";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractV1,
 } from "../managed-image/contract";
-import {
-  createSandboxCreateRuntimePatch,
-  type SandboxCreateRuntimePatchAdapterRegistry,
-  type SandboxCreateRuntimePatchRequest,
-} from "../sandbox-create-runtime/registry";
-import type { SandboxCreateRuntimePatch } from "../sandbox-create-runtime/types";
+import type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimeCreateLifecycleInput,
+  ManagedBootstrapRuntimeProvider,
+  ManagedBootstrapRuntimeProviderRegistry,
+} from "../managed-bootstrap/runtime-provider";
+import { resolveManagedBootstrapRuntimeProvider } from "../managed-bootstrap/runtime-provider";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import { resolveSandboxWorkloadSource, SandboxWorkloadSourceError } from "../workload/source";
 import {
@@ -65,6 +65,7 @@ import {
   type SandboxRuntimeAuthorityAdapterRegistry,
 } from "./runtime-authority";
 
+const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const MXC_DRIVER = "mxc";
 const MXC_ENDPOINT = "unix:///run/user/1000/mxc/control.sock";
 
@@ -288,7 +289,7 @@ describe("OpenShell compute-driver pluggability contract", () => {
     ).toThrow(SandboxWorkloadSourceError);
   });
 
-  it("injects MXC authority and mutation adapters without coordinator-owned runtime branches (#7744)", () => {
+  it("injects MXC authority and a managed-bootstrap provider without coordinator-owned runtime branches (#7744)", () => {
     const runtimeAuthority = {
       driverName: MXC_DRIVER,
       endpoint: MXC_ENDPOINT,
@@ -311,44 +312,29 @@ describe("OpenShell compute-driver pluggability contract", () => {
     );
     expect(resolveAuthority).toHaveBeenCalledExactlyOnceWith(authorityContext);
 
-    const selectedPatch = {
-      commitAfterReady: vi.fn(),
-      createFailureMessage: vi.fn(() => null),
-      ensureApplied: vi.fn(),
-      exitOnPatchError: vi.fn(),
-      maybeApplyDuringCreate: vi.fn(),
-      revalidateBeforeMutation: vi.fn(),
-      rollbackManagedStartupAfterCreateFailure: vi.fn(),
-      waitForSupervisorReconnectIfNeeded: vi.fn(),
-    } satisfies SandboxCreateRuntimePatch;
-    const createPatch = vi.fn(() => selectedPatch);
-    const patchAdapters: SandboxCreateRuntimePatchAdapterRegistry = {
-      mxc: {
-        driverName: MXC_DRIVER,
-        create: createPatch,
-      },
+    const selectedLifecycle = {} as ManagedBootstrapRuntimeCreateLifecycle;
+    const createCreateLifecycle = vi.fn(() => selectedLifecycle);
+    const mxcProvider = {
+      driverId: MXC_DRIVER,
+      createAdapter: vi.fn(),
+      createReplacementOptions: vi.fn(),
+      createCreateLifecycle,
+      createOnboardRouting: vi.fn(),
+    } satisfies ManagedBootstrapRuntimeProvider;
+    const providers: ManagedBootstrapRuntimeProviderRegistry = {
+      mxc: mxcProvider,
     };
-    const patchInput: SandboxCreateRuntimePatchRequest = {
-      driverName: MXC_DRIVER,
-      lifecycle: {
-        deps: {
-          runCaptureOpenshell: vi.fn(() => ""),
-          runOpenshell: vi.fn(() => ({ status: 0 })),
-          sleep: vi.fn(),
-        },
-        openshellSandboxCommand: ["nemoclaw-start"],
-        persistStartupCommand: false,
-        requiredUlimits: null,
-        sandboxGpuEnabled: false,
-        sandboxName: "beta",
-        timeoutSecs: 30,
-      },
-      runtimeAuthority,
-    };
+    const lifecycleInput = {
+      dependencies: { runtimeAuthority },
+    } as ManagedBootstrapRuntimeCreateLifecycleInput;
+    const resolvedProvider = resolveManagedBootstrapRuntimeProvider(MXC_DRIVER, providers);
 
-    expect(createSandboxCreateRuntimePatch(patchInput, patchAdapters)).toBe(selectedPatch);
-    expect(createPatch).toHaveBeenCalledExactlyOnceWith(patchInput);
-    expect(patchInput).not.toHaveProperty("docker");
+    expect(resolvedProvider).toBe(mxcProvider);
+    expect(resolvedProvider.createCreateLifecycle(lifecycleInput)).toBe(selectedLifecycle);
+    expect(createCreateLifecycle).toHaveBeenCalledExactlyOnceWith(lifecycleInput);
+    expect(lifecycleInput.dependencies.runtimeAuthority).toBe(runtimeAuthority);
+    expect(lifecycleInput).not.toHaveProperty("docker");
+    expect(lifecycleInput).not.toHaveProperty("podman");
 
     const resolveRequirements = vi.fn(() => ({
       persistStartupCommand: true,
@@ -383,75 +369,25 @@ describe("OpenShell compute-driver pluggability contract", () => {
       name: "alpha",
       openshellDriver: MXC_DRIVER,
     } as SandboxEntry;
-    const snapshotContext: ManagedSnapshotRuntimePatchContext = {
+    const snapshotContext: ManagedSnapshotRuntimeAuthorityContext = {
       destinationSandboxName: "beta",
       sourceEntry,
     };
-    const snapshotAuthorityAdapters: SandboxRuntimeAuthorityAdapterRegistry<ManagedSnapshotRuntimePatchContext> =
+    const snapshotAuthorityAdapters: SandboxRuntimeAuthorityAdapterRegistry<ManagedSnapshotRuntimeAuthorityContext> =
       {
         mxc: {
           driverName: MXC_DRIVER,
           resolve: vi.fn(() => runtimeAuthority),
         },
       };
-    const resolveSnapshotAuthority = vi.fn(
-      (driverName: string, context: ManagedSnapshotRuntimePatchContext) =>
-        resolveManagedSnapshotRuntimeAuthority(driverName, context, snapshotAuthorityAdapters),
-    );
-    const resolveSnapshotRequirements = vi.fn(
-      (
-        driverName: string,
-        context: ManagedSnapshotRuntimePatchContext,
-        requirementsContext: { readonly managedGatewayOwned: boolean },
-      ) =>
-        resolveManagedStartupRuntimeRequirements(
-          context.sourceEntry.agent ? { name: context.sourceEntry.agent } : null,
-          driverName,
-          requirementsContext,
-          requirementAdapters,
-        ),
-    );
-    const createSnapshotPatch = vi.fn((input: SandboxCreateRuntimePatchRequest) =>
-      createSandboxCreateRuntimePatch(input, patchAdapters),
-    );
 
     expect(
-      createManagedSnapshotRuntimePatch(
-        {
-          ...snapshotContext,
-          lifecycle: {
-            deps: patchInput.lifecycle.deps,
-            openshellSandboxCommand: patchInput.lifecycle.openshellSandboxCommand,
-            sandboxName: patchInput.lifecycle.sandboxName,
-            timeoutSecs: patchInput.lifecycle.timeoutSecs,
-          },
-        },
-        {
-          createRuntimePatch: createSnapshotPatch,
-          resolveRuntimeAuthority: resolveSnapshotAuthority,
-          resolveRuntimeRequirements: resolveSnapshotRequirements,
-        },
+      resolveManagedSnapshotRuntimeAuthority(
+        MXC_DRIVER,
+        snapshotContext,
+        snapshotAuthorityAdapters,
       ),
-    ).toBe(selectedPatch);
-    expect(resolveSnapshotAuthority).toHaveBeenCalledExactlyOnceWith(MXC_DRIVER, snapshotContext);
-    expect(resolveSnapshotRequirements).toHaveBeenCalledExactlyOnceWith(
-      MXC_DRIVER,
-      snapshotContext,
-      { managedGatewayOwned: true },
-    );
-    expect(createSnapshotPatch).toHaveBeenCalledExactlyOnceWith({
-      driverName: MXC_DRIVER,
-      lifecycle: {
-        deps: patchInput.lifecycle.deps,
-        openshellSandboxCommand: patchInput.lifecycle.openshellSandboxCommand,
-        persistStartupCommand: true,
-        requiredUlimits: [{ name: "nofile", soft: 8192, hard: 8192 }],
-        sandboxGpuEnabled: false,
-        sandboxName: patchInput.lifecycle.sandboxName,
-        timeoutSecs: patchInput.lifecycle.timeoutSecs,
-      },
-      runtimeAuthority,
-    });
+    ).toBe(runtimeAuthority);
   });
 
   it("fails runtime qualification before delete or driver-native mutation can run", () => {

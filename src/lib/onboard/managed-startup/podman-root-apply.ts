@@ -29,8 +29,10 @@ const FIXED_ROOT_ENV = [
 
 export interface PodmanManagedStartupTransaction {
   readonly agent: ManagedStartupRootApplyRequest["agent"];
+  readonly bootstrapIdentity?: string | null;
   readonly containerId: string;
   readonly image: string;
+  readonly profileFingerprint?: string | null;
   readonly runtime: PodmanManagedStartupRuntimeIdentity;
 }
 
@@ -63,6 +65,7 @@ function failureWithTransaction(
 
 export function applyPodmanManagedStartupRootRequest(
   input: {
+    readonly bootstrapIdentity?: string | null;
     readonly containerId: string;
     readonly request: ManagedStartupRootApplyRequest;
     readonly socketAuthority: PodmanSocketAuthority;
@@ -79,8 +82,10 @@ export function applyPodmanManagedStartupRootRequest(
   );
   const transaction = Object.freeze({
     agent: input.request.agent,
+    bootstrapIdentity: input.bootstrapIdentity ?? null,
     containerId: pinned.containerId,
     image: pinned.image,
+    profileFingerprint: input.request.profileFingerprint,
     runtime,
   }) satisfies PodmanManagedStartupTransaction;
   const payload = serializeManagedStartupRootApplyRequest(input.request);

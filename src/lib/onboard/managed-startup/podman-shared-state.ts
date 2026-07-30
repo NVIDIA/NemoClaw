@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type { PodmanManagedSandboxRecreateTransaction } from "../compute/podman/sandbox-recreate";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
+import { MANAGED_STARTUP_AGENTS } from "./profile";
 import type { PodmanManagedStartupTransaction } from "./podman-root-apply";
 import {
   assertPodmanManagedStartupRuntime,
@@ -13,6 +16,7 @@ import {
   runManagedStartupPodman,
 } from "./podman-runtime";
 import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./shared-state-transaction";
@@ -21,6 +25,8 @@ const RECEIPT_TEMP_PREFIX = "nemoclaw-managed-startup-podman-receipt";
 const MUTATION_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 90_000;
 const STOP_GRACE_SECONDS = "30";
+const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
+const DURABLE_IDENTITY_RE = /^[a-f0-9]{64}$/u;
 const NEUTRALIZED_PROCESS_INJECTION_ENV = [
   "--env",
   "NODE_OPTIONS=",
@@ -30,6 +36,16 @@ const NEUTRALIZED_PROCESS_INJECTION_ENV = [
   "BASH_ENV=",
   "--env",
   "ENV=",
+  "--env",
+  "LD_PRELOAD=",
+  "--env",
+  "LD_AUDIT=",
+  "--env",
+  "LD_LIBRARY_PATH=",
+  "--env",
+  "SHELLOPTS=",
+  "--env",
+  "PS4=",
 ] as const;
 
 export interface PodmanManagedStartupSharedStateOutcome {
@@ -38,6 +54,16 @@ export interface PodmanManagedStartupSharedStateOutcome {
 }
 
 export type PodmanManagedStartupSharedStateDeps = PodmanManagedStartupRuntimeDeps;
+
+export class PodmanManagedStartupSharedStateCommitIndeterminateError extends Error {
+  constructor(detail: string, options?: ErrorOptions) {
+    super(
+      `Managed-startup Podman shared-state commit may have completed, but immutable status is unavailable: ${detail}`,
+      options,
+    );
+    this.name = "PodmanManagedStartupSharedStateCommitIndeterminateError";
+  }
+}
 
 function sameSocketAuthority(
   left: PodmanManagedStartupTransaction["runtime"]["socketAuthority"],
@@ -96,6 +122,43 @@ function cleanupReceiptBestEffort(receiptPath: string): void {
   }
 }
 
+function assertValidManagedStartupTransaction(
+  transaction: PodmanManagedStartupTransaction,
+): asserts transaction is PodmanManagedStartupTransaction & {
+  readonly bootstrapIdentity: string;
+  readonly profileFingerprint: string;
+} {
+  if (!(MANAGED_STARTUP_AGENTS as readonly string[]).includes(transaction.agent)) {
+    throw new Error("Managed bootstrap Podman shared-state transaction agent is invalid.");
+  }
+  if (!FULL_CONTAINER_ID_RE.test(transaction.containerId)) {
+    throw new Error(
+      "Managed bootstrap Podman shared-state transaction container identity is invalid.",
+    );
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(transaction.image)) {
+    throw new Error(
+      "Managed bootstrap Podman shared-state transaction image identity is not immutable.",
+    );
+  }
+  if (
+    !transaction.bootstrapIdentity ||
+    !DURABLE_IDENTITY_RE.test(transaction.bootstrapIdentity)
+  ) {
+    throw new Error(
+      "Managed bootstrap Podman shared-state transaction identity is missing or invalid.",
+    );
+  }
+  if (
+    !transaction.profileFingerprint ||
+    !DURABLE_IDENTITY_RE.test(transaction.profileFingerprint)
+  ) {
+    throw new Error(
+      "Managed bootstrap Podman shared-state transaction profile fingerprint is missing or invalid.",
+    );
+  }
+}
+
 function requireZero(result: ReturnType<typeof runManagedStartupPodman>, action: string): void {
   if (result.status === 0) return;
   const detail = podmanManagedStartupCommandDetail(result, 800);
@@ -146,26 +209,54 @@ function quiesceManagedStartupContainer(
   }
 }
 
-function copyManagedStartupReceipt(
+function isExactMissingReceiptCopy(
   transaction: PodmanManagedStartupTransaction,
+  sourcePath: string,
+  result: ReturnType<typeof runManagedStartupPodman>,
+): boolean {
+  const detail = podmanManagedStartupCommandDetail(result, 1200);
+  const escapedPath = sourcePath.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const escapedContainer = transaction.containerId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return [
+    new RegExp(
+      `^(?:Error: )?(?:stat|lstat) ${escapedPath}: no such file or directory$`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?:Error: )?.*${escapedContainer}:${escapedPath}.*(?:no such file or directory|does not exist)$`,
+      "iu",
+    ),
+  ].some((pattern) => pattern.test(detail));
+}
+
+function copyManagedStartupReceiptAt(
+  transaction: PodmanManagedStartupTransaction,
+  sourcePath: string,
   deps: PodmanManagedStartupSharedStateDeps,
-): string {
+  allowAbsent = false,
+): string | null {
   assertPinnedContainer(transaction, deps, false);
-  const receiptPath = secureTempFile(RECEIPT_TEMP_PREFIX);
+  const tempSeed = secureTempFile(RECEIPT_TEMP_PREFIX);
+  const receiptPath = path.join(path.dirname(tempSeed), path.basename(sourcePath));
   try {
-    requireZero(
-      runManagedStartupPodman(
-        transaction.runtime.socketPath,
-        [
-          "cp",
-          `${transaction.containerId}:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`,
-          receiptPath,
-        ],
-        { timeout: MUTATION_TIMEOUT_MS },
-        deps,
-      ),
-      "Could not copy the managed-startup rollback receipt from the Podman container",
+    const copied = runManagedStartupPodman(
+      transaction.runtime.socketPath,
+      ["cp", `${transaction.containerId}:${sourcePath}`, receiptPath],
+      { timeout: MUTATION_TIMEOUT_MS },
+      deps,
     );
+    if (copied.status !== 0) {
+      if (allowAbsent && isExactMissingReceiptCopy(transaction, sourcePath, copied)) {
+        cleanupReceiptBestEffort(receiptPath);
+        return null;
+      }
+      const detail = podmanManagedStartupCommandDetail(copied, 800);
+      throw new Error(
+        `Could not copy the managed-startup receipt from the Podman container${
+          detail ? `: ${detail}` : ""
+        }`,
+      );
+    }
     if (receiptPath.includes(",") || /[\0\r\n]/u.test(receiptPath)) {
       throw new Error("Managed-startup rollback receipt path is unsafe for a Podman bind mount.");
     }
@@ -176,13 +267,148 @@ function copyManagedStartupReceipt(
   }
 }
 
-function transactionCommand(action: "commit" | "rollback", agent: string): string[] {
+function copyManagedStartupReceipt(
+  transaction: PodmanManagedStartupTransaction,
+  deps: PodmanManagedStartupSharedStateDeps,
+  allowAbsent = false,
+): string | null {
+  return copyManagedStartupReceiptAt(
+    transaction,
+    MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+    deps,
+    allowAbsent,
+  );
+}
+
+function transactionCommand(
+  action: "clear-shared-state-commit-receipt" | "commit" | "rollback",
+  transaction: PodmanManagedStartupTransaction,
+): string[] {
+  assertValidManagedStartupTransaction(transaction);
   return [
     MANAGED_STARTUP_RUNTIME_EXECUTABLE,
-    `--${action}-shared-state-transaction`,
+    action === "clear-shared-state-commit-receipt"
+      ? "--clear-shared-state-commit-receipt"
+      : `--${action}-shared-state-transaction`,
     "--agent",
-    agent,
+    transaction.agent,
+    "--bootstrap-identity",
+    transaction.bootstrapIdentity,
   ];
+}
+
+function transactionReceiptMount(receiptPath: string, receiptDirectory: string): string {
+  return `type=bind,src=${receiptPath},dst=${receiptDirectory},readonly`;
+}
+
+function verifyCopiedManagedStartupReceipt(
+  transaction: PodmanManagedStartupTransaction,
+  profileFingerprint: string,
+  receiptPath: string,
+  receiptDirectory: string,
+  expectedStatus: "committed" | "pending",
+  deps: PodmanManagedStartupSharedStateDeps,
+): void {
+  assertValidManagedStartupTransaction(transaction);
+  const verified = runManagedStartupPodman(
+    transaction.runtime.socketPath,
+    [
+      "run",
+      "--rm",
+      "--pull",
+      "never",
+      "--network",
+      "none",
+      "--read-only",
+      "--user",
+      "0:0",
+      "--security-opt",
+      "no-new-privileges",
+      "--cap-drop",
+      "ALL",
+      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      "--mount",
+      transactionReceiptMount(receiptPath, receiptDirectory),
+      "--entrypoint",
+      "/usr/local/bin/node",
+      transaction.image,
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--shared-state-transaction-status",
+      "--agent",
+      transaction.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      transaction.bootstrapIdentity,
+    ],
+    { timeout: MUTATION_TIMEOUT_MS },
+    deps,
+  );
+  if (verified.status !== 0) {
+    throw new Error(
+      `Immutable Podman managed-startup helper could not verify shared-state status. Protected receipt retained at ${receiptPath}`,
+    );
+  }
+  if (String(verified.stdout ?? "").trim() !== expectedStatus) {
+    throw new Error(
+      `Immutable Podman managed-startup helper returned an invalid copied transaction status. Protected receipt retained at ${receiptPath}`,
+    );
+  }
+}
+
+export function probePodmanManagedStartupSharedState(
+  input: {
+    readonly transaction: PodmanManagedStartupTransaction;
+    readonly profileFingerprint: string;
+  },
+  deps: PodmanManagedStartupSharedStateDeps = {},
+): "committed" | "none" | "pending" {
+  const { transaction } = input;
+  assertValidManagedStartupTransaction(transaction);
+  if (input.profileFingerprint !== transaction.profileFingerprint) {
+    throw new Error("Managed bootstrap Podman shared-state status fingerprint does not match.");
+  }
+  deps = { ...deps, socketAuthority: transaction.runtime.socketAuthority };
+  const committedReceiptPath = copyManagedStartupReceiptAt(
+    transaction,
+    MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+    deps,
+    true,
+  );
+  if (committedReceiptPath) {
+    let verified = false;
+    try {
+      verifyCopiedManagedStartupReceipt(
+        transaction,
+        input.profileFingerprint,
+        committedReceiptPath,
+        MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+        "committed",
+        deps,
+      );
+      verified = true;
+      return "committed";
+    } finally {
+      if (verified) cleanupReceiptBestEffort(committedReceiptPath);
+    }
+  }
+  const pendingReceiptPath = copyManagedStartupReceipt(transaction, deps, true);
+  if (!pendingReceiptPath) return "none";
+  let verified = false;
+  try {
+    verifyCopiedManagedStartupReceipt(
+      transaction,
+      input.profileFingerprint,
+      pendingReceiptPath,
+      MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+      "pending",
+      deps,
+    );
+    verified = true;
+    return "pending";
+  } finally {
+    if (verified) cleanupReceiptBestEffort(pendingReceiptPath);
+  }
 }
 
 function rollbackManagedStartupSharedState(
@@ -224,7 +450,7 @@ function rollbackManagedStartupSharedState(
           "--entrypoint",
           "/usr/local/bin/node",
           transaction.image,
-          ...transactionCommand("rollback", transaction.agent),
+          ...transactionCommand("rollback", transaction),
           "--read-only-receipt",
         ],
         { timeout: MUTATION_TIMEOUT_MS },
@@ -271,6 +497,115 @@ function removeFailedUnbackedContainer(
   }
 }
 
+function commitManagedStartupSharedState(
+  transaction: PodmanManagedStartupTransaction,
+  deps: PodmanManagedStartupSharedStateDeps,
+): void {
+  assertValidManagedStartupTransaction(transaction);
+  const committed = runManagedStartupPodman(
+    transaction.runtime.socketPath,
+    [
+      "exec",
+      "--user",
+      "0:0",
+      "--workdir",
+      "/",
+      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      transaction.containerId,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "LANG=C.UTF-8",
+      "LC_ALL=C.UTF-8",
+      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "/usr/local/bin/node",
+      ...transactionCommand("commit", transaction),
+    ],
+    { timeout: MUTATION_TIMEOUT_MS },
+    deps,
+  );
+  let status: "committed" | "none" | "pending";
+  try {
+    status = probePodmanManagedStartupSharedState(
+      { transaction, profileFingerprint: transaction.profileFingerprint },
+      deps,
+    );
+  } catch (error) {
+    throw new PodmanManagedStartupSharedStateCommitIndeterminateError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+  if (status === "committed") return;
+  const detail = podmanManagedStartupCommandDetail(committed, 800);
+  if (committed.status !== 0) {
+    throw new Error(
+      `Managed-startup Podman shared-state commit helper failed and durable commit was not proven (status=${status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    );
+  }
+  throw new Error(
+    `Managed-startup Podman shared-state commit helper returned success, but durable commit was not proven (status=${status}).`,
+  );
+}
+
+export function clearPodmanManagedStartupSharedStateCommitReceipt(
+  transaction: PodmanManagedStartupTransaction,
+  deps: PodmanManagedStartupSharedStateDeps = {},
+): void {
+  assertValidManagedStartupTransaction(transaction);
+  deps = { ...deps, socketAuthority: transaction.runtime.socketAuthority };
+  const cleared = runManagedStartupPodman(
+    transaction.runtime.socketPath,
+    [
+      "exec",
+      "--user",
+      "0:0",
+      "--workdir",
+      "/",
+      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      transaction.containerId,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "LANG=C.UTF-8",
+      "LC_ALL=C.UTF-8",
+      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "/usr/local/bin/node",
+      ...transactionCommand("clear-shared-state-commit-receipt", transaction),
+    ],
+    { timeout: MUTATION_TIMEOUT_MS },
+    deps,
+  );
+  let status: "committed" | "none" | "pending";
+  try {
+    status = probePodmanManagedStartupSharedState(
+      { transaction, profileFingerprint: transaction.profileFingerprint },
+      deps,
+    );
+  } catch (error) {
+    throw new PodmanManagedStartupSharedStateCommitIndeterminateError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+  if (status === "none") return;
+  const detail = podmanManagedStartupCommandDetail(cleared, 800);
+  if (cleared.status !== 0) {
+    throw new Error(
+      `Managed-startup Podman durable commit receipt cleanup failed and exact absence was not proven (status=${status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    );
+  }
+  throw new Error(
+    `Managed-startup Podman durable commit receipt cleanup returned success, but exact absence was not proven (status=${status}).`,
+  );
+}
+
 /**
  * Finalize the shared-state half of a Podman managed-container cutover.
  *
@@ -291,6 +626,7 @@ export function finalizePodmanManagedStartupSharedState(
   if (!transaction) {
     return { failure: null, supervisorReady: input.supervisorReady };
   }
+  assertValidManagedStartupTransaction(transaction);
   deps = { ...deps, socketAuthority: transaction.runtime.socketAuthority };
   const containerRollbackArmed = hasMatchingContainerRollbackAuthority(
     transaction,
@@ -300,7 +636,11 @@ export function finalizePodmanManagedStartupSharedState(
   if (input.supervisorReady) {
     let receiptPath: string;
     try {
-      receiptPath = copyManagedStartupReceipt(transaction, deps);
+      const copiedReceipt = copyManagedStartupReceipt(transaction, deps);
+      if (!copiedReceipt) {
+        throw new Error("Managed-startup Podman pending receipt disappeared before commit.");
+      }
+      receiptPath = copiedReceipt;
     } catch (error) {
       try {
         quiesceManagedStartupContainer(transaction, deps);
@@ -313,48 +653,28 @@ export function finalizePodmanManagedStartupSharedState(
       }
       throw error;
     }
-    assertPodmanManagedStartupRuntime(transaction.runtime, deps);
-    const commit = runManagedStartupPodman(
-      transaction.runtime.socketPath,
-      [
-        "exec",
-        "--user",
-        "0:0",
-        ...NEUTRALIZED_PROCESS_INJECTION_ENV,
-        transaction.containerId,
-        "/usr/bin/env",
-        "-i",
-        "HOME=/root",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "/usr/local/bin/node",
-        ...transactionCommand("commit", transaction.agent),
-      ],
-      { timeout: MUTATION_TIMEOUT_MS },
-      deps,
-    );
-    let failure: Error | null = null;
-    if (commit.status === 0) {
-      try {
-        assertPinnedContainer(transaction, deps, true);
-      } catch (error) {
-        failure = new Error(
-          `Podman managed shared-state commit returned success, but exact runtime and container identity could not be revalidated: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-      if (!failure) {
-        cleanupReceiptBestEffort(receiptPath);
-        return { failure: null, supervisorReady: true };
-      }
-    } else {
-      failure = new Error(
-        `OpenShell supervisor reconnected, but Podman managed shared-state commit failed: ${podmanManagedStartupCommandDetail(
-          commit,
-          800,
-        )}`,
+    let commitFailure: Error | null = null;
+    try {
+      verifyCopiedManagedStartupReceipt(
+        transaction,
+        transaction.profileFingerprint,
+        receiptPath,
+        MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+        "pending",
+        deps,
       );
+      commitManagedStartupSharedState(transaction, deps);
+      cleanupReceiptBestEffort(receiptPath);
+      return { failure: null, supervisorReady: true };
+    } catch (error) {
+      if (error instanceof PodmanManagedStartupSharedStateCommitIndeterminateError) {
+        throw error;
+      }
+      commitFailure = error instanceof Error ? error : new Error(String(error));
     }
+    const failure = new Error(
+      `OpenShell supervisor reconnected, but Podman managed shared-state logical commit validation failed: ${commitFailure.message}`,
+    );
     quiesceManagedStartupContainer(transaction, deps);
     rollbackManagedStartupSharedState(transaction, receiptPath, deps);
     if (!containerRollbackArmed) {
@@ -364,7 +684,11 @@ export function finalizePodmanManagedStartupSharedState(
   }
 
   quiesceManagedStartupContainer(transaction, deps);
-  const receiptPath = copyManagedStartupReceipt(transaction, deps);
+  const receiptPath = copyManagedStartupReceipt(transaction, deps, true);
+  if (!receiptPath) {
+    if (!containerRollbackArmed) removeFailedUnbackedContainer(transaction, deps);
+    return { failure: null, supervisorReady: false };
+  }
   rollbackManagedStartupSharedState(transaction, receiptPath, deps);
   if (!containerRollbackArmed) {
     removeFailedUnbackedContainer(transaction, deps);

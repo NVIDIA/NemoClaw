@@ -17,10 +17,10 @@ import {
   createPodmanManagedSnapshotRuntimeAuthority,
   currentManagedSnapshotRuntimeAuthorityAdapters,
   resolveManagedSnapshotRuntimeAuthority,
+  type ManagedSnapshotRuntimeAuthorityContext,
 } from "./runtime-authority";
-import type { ManagedSnapshotRuntimePatchContext } from "./runtime-patch";
 
-function context(driverName: string): ManagedSnapshotRuntimePatchContext {
+function context(driverName: string): ManagedSnapshotRuntimeAuthorityContext {
   return {
     destinationSandboxName: "beta",
     sourceEntry: {
@@ -35,6 +35,7 @@ function context(driverName: string): ManagedSnapshotRuntimePatchContext {
 describe("managed snapshot runtime authority", () => {
   it("routes exact source context to the Podman authority adapter", () => {
     const authority = {
+      cdiDevices: [],
       socketAuthority: {
         directoryChain: [],
         device: "8",
@@ -74,7 +75,7 @@ describe("managed snapshot runtime authority", () => {
 
   it("accepts an independently registered MXC authority adapter", () => {
     const authority = { endpoint: "unix:///run/mxc/runtime.sock" };
-    const adapters: SandboxRuntimeAuthorityAdapterRegistry<ManagedSnapshotRuntimePatchContext> = {
+    const adapters: SandboxRuntimeAuthorityAdapterRegistry<ManagedSnapshotRuntimeAuthorityContext> = {
       mxc: { driverName: "mxc", resolve: vi.fn(() => authority) },
     };
 

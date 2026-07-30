@@ -117,6 +117,9 @@ export function createSandboxGpuCreateAttemptRunner(
             gatewayPort: input.gatewayPort,
           },
           dependencies: {
+            ...(managedBootstrap.runtimeAuthority === undefined
+              ? {}
+              : { runtimeAuthority: managedBootstrap.runtimeAuthority }),
             runCaptureOpenshell: deps.runCaptureOpenshell,
             runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,

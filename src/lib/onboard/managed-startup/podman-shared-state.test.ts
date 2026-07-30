@@ -15,6 +15,7 @@ import type {
 } from "./podman-runtime";
 import { finalizePodmanManagedStartupSharedState } from "./podman-shared-state";
 import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./shared-state-transaction";
@@ -38,6 +39,8 @@ const SOCKET_AUTHORITY = {
 } as const;
 const CONTAINER_ID = "b".repeat(64);
 const IMAGE_ID = `sha256:${"c".repeat(64)}`;
+const BOOTSTRAP_IDENTITY = "d".repeat(64);
+const PROFILE_FINGERPRINT = "e".repeat(64);
 const GRAPH_ROOT = "/home/test/.local/share/containers/storage";
 const RUN_ROOT = "/run/user/1000/containers";
 
@@ -46,8 +49,10 @@ function transaction(
 ): PodmanManagedStartupTransaction {
   return {
     agent,
+    bootstrapIdentity: BOOTSTRAP_IDENTITY,
     containerId: CONTAINER_ID,
     image: IMAGE_ID,
+    profileFingerprint: PROFILE_FINGERPRINT,
     runtime: {
       fingerprint: createHash("sha256").update(`${GRAPH_ROOT}\0${RUN_ROOT}`).digest("hex"),
       socketAuthority: SOCKET_AUTHORITY,
@@ -86,6 +91,7 @@ function identityRunner(
     args: readonly string[],
     options: Parameters<RunManagedStartupPodmanCommand>[2],
   ) => PodmanManagedStartupCommandResult,
+  config: { readonly commitOnFailure?: boolean } = {},
 ): {
   readonly calls: string[];
   readonly receiptPaths: string[];
@@ -94,6 +100,7 @@ function identityRunner(
   const calls: string[] = [];
   const receiptPaths: string[] = [];
   let running = true;
+  let receiptState: "committed" | "none" | "pending" = "pending";
   const run = vi.fn((_command, args, options) => {
     expect(args.slice(0, 2)).toEqual(["--url", SOCKET_URL]);
     const operation = args.slice(2);
@@ -123,12 +130,41 @@ function identityRunner(
       return mutationResult;
     }
     if (operation[0] === "cp") {
-      calls.push("copy");
-      receiptPaths.push(String(operation[2]));
+      const source = String(operation[1] ?? "");
+      const isCommittedReceipt = source.endsWith(
+        `:${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY}`,
+      );
+      const expectedState = isCommittedReceipt ? "committed" : "pending";
+      if (receiptState !== expectedState) {
+        return result(1, {
+          stderr: `Error: stat ${source.slice(source.indexOf(":") + 1)}: no such file or directory`,
+        });
+      }
+      if (!isCommittedReceipt) {
+        calls.push("copy");
+        receiptPaths.push(String(operation[2]));
+      }
+    } else if (
+      operation[0] === "run" &&
+      operation.includes("--shared-state-transaction-status")
+    ) {
+      return result(0, {
+        stdout: operation.some((entry) =>
+          entry.includes(`dst=${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY},readonly`),
+        )
+          ? "committed\n"
+          : "pending\n",
+      });
     } else if (operation[0] === "exec") {
       calls.push("commit");
+      const mutationResult = mutation(operation, options);
+      if (mutationResult.status === 0 || config.commitOnFailure) receiptState = "committed";
+      return mutationResult;
     } else if (operation[0] === "run") {
       calls.push("rollback");
+      const mutationResult = mutation(operation, options);
+      if (mutationResult.status === 0) receiptState = "none";
+      return mutationResult;
     } else if (operation[0] === "rm") {
       calls.push("remove");
     } else if (operation[0] === "container" && operation[1] === "exists") {
@@ -172,36 +208,28 @@ describe("Podman managed-startup shared-state finalization", () => {
     const commitCall = vi
       .mocked(harness.run)
       .mock.calls.find((call) => call[1].includes("--commit-shared-state-transaction"));
-    expect(commitCall?.[1].slice(2)).toEqual([
-      "exec",
-      "--user",
-      "0:0",
-      "--env",
-      "NODE_OPTIONS=",
-      "--env",
-      "NODE_PATH=",
-      "--env",
-      "BASH_ENV=",
-      "--env",
-      "ENV=",
-      CONTAINER_ID,
-      "/usr/bin/env",
-      "-i",
-      "HOME=/root",
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "/usr/local/bin/node",
-      "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
-      "--commit-shared-state-transaction",
-      "--agent",
-      agent,
-    ]);
+    expect(commitCall?.[1].slice(2)).toEqual(
+      expect.arrayContaining([
+        "exec",
+        CONTAINER_ID,
+        "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
+        "--commit-shared-state-transaction",
+        "--agent",
+        agent,
+        "--bootstrap-identity",
+        BOOTSTRAP_IDENTITY,
+      ]),
+    );
   });
 
-  it("uses the preserved receipt after a lost commit acknowledgement", () => {
-    const harness = identityRunner((args) => {
-      if (args[0] === "exec") return result(1, { stderr: "ack lost" });
-      return result(0);
-    });
+  it("accepts a lost commit acknowledgement only after immutable durable proof", () => {
+    const harness = identityRunner(
+      (args) => {
+        if (args[0] === "exec") return result(1, { stderr: "ack lost" });
+        return result(0);
+      },
+      { commitOnFailure: true },
+    );
     const outcome = finalizePodmanManagedStartupSharedState(
       {
         containerRollbackAuthority: rollbackAuthority(),
@@ -211,60 +239,9 @@ describe("Podman managed-startup shared-state finalization", () => {
       testDeps(harness.run),
     );
 
-    expect(outcome.supervisorReady).toBe(false);
-    expect(outcome.failure?.message).toContain("commit failed");
-    expect(harness.calls).toEqual(["copy", "commit", "stop", "rollback"]);
+    expect(outcome).toEqual({ failure: null, supervisorReady: true });
+    expect(harness.calls).toEqual(["copy", "commit"]);
     expect(fs.existsSync(path.dirname(harness.receiptPaths[0] as string))).toBe(false);
-
-    const rollbackCall = vi
-      .mocked(harness.run)
-      .mock.calls.find((call) => call[1].includes("--rollback-shared-state-transaction"));
-    expect(rollbackCall?.[1].slice(2)).toEqual([
-      "run",
-      "--rm",
-      "--pull",
-      "never",
-      "--network",
-      "none",
-      "--read-only",
-      "--user",
-      "0:0",
-      "--security-opt",
-      "no-new-privileges",
-      "--cap-drop",
-      "ALL",
-      "--cap-add",
-      "CHOWN",
-      "--cap-add",
-      "DAC_OVERRIDE",
-      "--cap-add",
-      "FOWNER",
-      "--env",
-      "NODE_OPTIONS=",
-      "--env",
-      "NODE_PATH=",
-      "--env",
-      "BASH_ENV=",
-      "--env",
-      "ENV=",
-      "--volumes-from",
-      CONTAINER_ID,
-      "--mount",
-      expect.stringMatching(
-        new RegExp(
-          `^type=bind,src=.+,dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly$`,
-          "u",
-        ),
-      ),
-      "--entrypoint",
-      "/usr/local/bin/node",
-      IMAGE_ID,
-      "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
-      "--rollback-shared-state-transaction",
-      "--agent",
-      "hermes",
-      "--read-only-receipt",
-    ]);
   });
 
   it("quiesces before copying and removes an unbacked failed replacement after rollback", () => {

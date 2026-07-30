@@ -56,6 +56,8 @@ import {
   cleanupHermesSandboxProviders,
   createManagedBootstrapIdentity,
   createManagedStartupRootApplyRequest,
+  createPodmanManagedSnapshotRuntimeAuthority,
+  currentManagedSnapshotRuntimeAuthorityAdapters,
   dockerCapture,
   findAvailableDashboardPort,
   formatSnapshotBaselineExclusionSummary,
@@ -81,13 +83,18 @@ import {
   persistedHostContainerRuntimeActivation,
   printHermesGatewayRestoreHint,
   renderManagedBootstrapHeldCommand,
+  resolveGatewayPortFromName,
   resolveHermesDashboardOnboardState,
+  resolveManagedGatewayStateDirectory,
+  resolveManagedSnapshotRuntimeAuthority,
   resolveOpenShellSandboxId,
   resolvePersistedManagedBootstrapRuntimeProvider,
   resolveSandboxGatewayName,
+  runCapture,
   runOpenshell,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
+  sleepSeconds,
   streamSandboxCreate,
   withDashboardPortReservationLock,
 } from "./snapshot/dependencies";
@@ -628,6 +635,24 @@ function createManagedSnapshotLifecycle(
   }
   const captureText = (args: string[], options?: Record<string, unknown>) =>
     captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
+  const sourceEntry = launch.sourceEntry as SandboxEntry;
+  const runtimeAuthority = resolveManagedSnapshotRuntimeAuthority(
+    runtimeProvider.driverId,
+    {
+      destinationSandboxName: dstName,
+      sourceEntry,
+    },
+    currentManagedSnapshotRuntimeAuthorityAdapters((context) =>
+      createPodmanManagedSnapshotRuntimeAuthority(context, {
+        captureOpenshell: (args, options) => captureOpenshell(args, options),
+        getOpenshellBinary,
+        resolveGatewayPortFromName,
+        resolveManagedGatewayStateDirectory,
+        resolveSandboxGatewayName,
+        runCapture,
+      }),
+    ),
+  );
   return runtimeProvider.createCreateLifecycle({
     bootstrapIdentity,
     request: managedClone.rootApplyRequest,
@@ -662,8 +687,10 @@ function createManagedSnapshotLifecycle(
       gatewayPort: 0,
     },
     dependencies: {
+      runtimeAuthority,
       runOpenshell,
       runCaptureOpenshell: captureText,
+      sleep: sleepSeconds,
     },
   });
 }

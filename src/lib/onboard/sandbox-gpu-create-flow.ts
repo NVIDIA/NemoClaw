@@ -53,6 +53,7 @@ export interface SandboxGpuCreateFlowInput {
   persistStartupCommand?: boolean;
   managedBootstrap?: {
     readonly bootstrapIdentity: string;
+    readonly runtimeAuthority?: unknown;
     readonly runtimeProvider: ManagedBootstrapRuntimeProvider;
     readonly request: ManagedStartupRootApplyRequest;
     readonly image: ManagedBootstrapImageIdentity;

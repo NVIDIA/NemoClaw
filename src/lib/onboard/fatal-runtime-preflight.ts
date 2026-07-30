@@ -9,6 +9,10 @@ import {
   usesManagedDockerGateway,
 } from "./compute/plan";
 import {
+  assertPodmanGpuAttachmentQualified,
+  resolvePodmanGpuAttachment,
+} from "./compute/podman/gpu-attachment";
+import {
   assessNativePodman,
   type NativePodmanPreflightDeps,
   NativePodmanPreflightError,
@@ -25,6 +29,7 @@ import { printDockerNotReachableError, printUnsupportedRuntimeError } from "./pr
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
+  exitOnSandboxGpuConfigErrors,
   resolveSandboxGpuFlagFromOptions,
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
@@ -54,9 +59,6 @@ export interface FatalRuntimePreflightResult {
 }
 
 const exitProcessByDefault = (code: number): never => process.exit(code);
-const PODMAN_SANDBOX_GPU_UNSUPPORTED_MESSAGE =
-  "Native Podman support currently covers CPU sandboxes with hosted inference; GPU passthrough is not yet supported.";
-
 export interface FatalRuntimePreflightDriverAdapterInput {
   readonly options: FatalRuntimePreflightOptions;
   readonly nonInteractive: boolean;
@@ -179,15 +181,23 @@ function runNativePodmanFatalRuntimePreflight(
   const host = { ...assessedHost, runtime: "podman" as const, isUnsupportedRuntime: false };
   warnIfHostProxyMissesLoopback();
   const gpu = detectGpu();
-  if (input.options.gpu === true || input.options.sandboxGpu === "enable") {
-    console.error(`  ${PODMAN_SANDBOX_GPU_UNSUPPORTED_MESSAGE}`);
-    input.exitProcess(1);
-  }
   const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: "disable",
-    device: null,
+    flag: resolveSandboxGpuFlagFromOptions(input.options),
+    device: input.options.sandboxGpuDevice ?? null,
   });
-  validateSandboxGpuPreflight(sandboxGpuConfig, {}, input.exitProcess);
+  const attachment = resolvePodmanGpuAttachment(
+    sandboxGpuConfig.sandboxGpuEnabled,
+    sandboxGpuConfig.sandboxGpuDevice,
+  );
+  if (attachment) {
+    try {
+      assertPodmanGpuAttachmentQualified(nativePodman.cdiDevices, attachment);
+    } catch (error) {
+      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      input.exitProcess(1);
+    }
+  }
+  exitOnSandboxGpuConfigErrors(sandboxGpuConfig, input.exitProcess);
   console.log(
     `  ✓ Rootless Podman ${nativePodman.version} is reachable at ${nativePodman.socketPath}`,
   );
@@ -223,8 +233,8 @@ export const CURRENT_FATAL_RUNTIME_PREFLIGHT_DRIVER_ADAPTERS = {
     behavior: {
       checkContainerRuntimeResources: false,
       checkDockerBridgeDns: false,
-      defaultSandboxGpuFlag: "disable",
-      sandboxGpuUnsupportedMessage: PODMAN_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
+      defaultSandboxGpuFlag: null,
+      sandboxGpuUnsupportedMessage: null,
       skipDockerProbe: true,
     },
     assertReady: assertNativePodmanRuntimeReady,

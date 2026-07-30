@@ -15,6 +15,7 @@ export {
   runOpenshell,
 } from "../../../adapters/openshell/runtime";
 export { resolveOpenShellSandboxId } from "../../../adapters/openshell/sandbox-identity";
+export { sleepSeconds } from "../../../core/wait";
 export {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -36,7 +37,11 @@ export {
   createDockerGpuSandboxCreatePatch,
   type DockerGpuSandboxCreatePatch,
 } from "../../../onboard/docker-gpu-sandbox-create";
-export { resolveSandboxGatewayName } from "../../../onboard/gateway-binding";
+export {
+  resolveGatewayPortFromName,
+  resolveManagedGatewayStateDirectory,
+  resolveSandboxGatewayName,
+} from "../../../onboard/gateway-binding";
 export { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
 export {
   createManagedBootstrapIdentity,
@@ -69,8 +74,14 @@ export {
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../../onboard/sandbox-provider-cleanup";
+export { runCapture } from "../../../runner";
 export { streamSandboxCreate } from "../../../sandbox/create-stream";
 export { persistedHostContainerRuntimeActivation } from "../gateway-target";
 export { formatSnapshotBaselineExclusionSummary } from "../snapshot-baseline-exclusion-summary";
 export { printHermesGatewayRestoreHint } from "../snapshot-hermes-gateway-hint";
 export type { PreparedManagedCloneProvider } from "./managed-clone-providers";
+export {
+  createPodmanManagedSnapshotRuntimeAuthority,
+  currentManagedSnapshotRuntimeAuthorityAdapters,
+  resolveManagedSnapshotRuntimeAuthority,
+} from "./runtime-authority";

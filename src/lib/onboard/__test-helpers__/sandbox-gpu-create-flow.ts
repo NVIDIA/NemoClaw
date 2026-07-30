@@ -20,7 +20,6 @@ export const GPU_IMAGE_ID = `sha256:${"a".repeat(64)}`;
 
 export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
   return {
-    computeDriver: "docker",
     sandboxName: "alpha",
     provider: "nim",
     sandboxGpuConfig: {

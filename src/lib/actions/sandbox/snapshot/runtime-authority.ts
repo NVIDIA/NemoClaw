@@ -32,10 +32,14 @@ import {
 } from "../../../onboard/openshell-version";
 import { isGatewayHealthy } from "../../../state/gateway";
 import type { SandboxEntry } from "../../../state/registry";
-import type { ManagedSnapshotRuntimePatchContext } from "./runtime-patch";
+
+export interface ManagedSnapshotRuntimeAuthorityContext {
+  readonly destinationSandboxName: string;
+  readonly sourceEntry: SandboxEntry;
+}
 
 type SnapshotAuthorityRegistry =
-  SandboxRuntimeAuthorityAdapterRegistry<ManagedSnapshotRuntimePatchContext>;
+  SandboxRuntimeAuthorityAdapterRegistry<ManagedSnapshotRuntimeAuthorityContext>;
 
 export interface PodmanManagedSnapshotRuntimeAuthorityDependencies {
   captureOpenshell(
@@ -89,7 +93,7 @@ function requireQualifiedPodmanSocketAuthority(
 }
 
 export function createPodmanManagedSnapshotRuntimeAuthority(
-  context: ManagedSnapshotRuntimePatchContext,
+  context: ManagedSnapshotRuntimeAuthorityContext,
   deps: PodmanManagedSnapshotRuntimeAuthorityDependencies,
 ): PodmanSandboxCreateRuntimeAuthority {
   const sourceEntry = context.sourceEntry as SandboxEntry;
@@ -181,7 +185,7 @@ export function createPodmanManagedSnapshotRuntimeAuthority(
 
 export function currentManagedSnapshotRuntimeAuthorityAdapters(
   createPodman: (
-    context: ManagedSnapshotRuntimePatchContext,
+    context: ManagedSnapshotRuntimeAuthorityContext,
   ) => PodmanSandboxCreateRuntimeAuthority,
 ): SnapshotAuthorityRegistry {
   return {
@@ -193,7 +197,7 @@ export function currentManagedSnapshotRuntimeAuthorityAdapters(
 
 export function resolveManagedSnapshotRuntimeAuthority(
   driverName: string,
-  context: ManagedSnapshotRuntimePatchContext,
+  context: ManagedSnapshotRuntimeAuthorityContext,
   adapters: SnapshotAuthorityRegistry,
 ): unknown {
   return resolveSandboxRuntimeAuthority(driverName, context, adapters);

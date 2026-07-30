@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { openshellSandboxCommandEnvValue } from "../../docker-startup-command-env";
+import type { PodmanGpuAttachment } from "./gpu-attachment";
 
 // Exact OpenShell v0.0.85 Podman identity contract. Later driver schemas must
 // register a new adapter; discovery deliberately fails closed on label or name
@@ -677,7 +678,10 @@ function resourceArguments(hostConfig: JsonRecord): string[] {
   return args;
 }
 
-function capabilityAndSecurityArguments(hostConfig: JsonRecord): string[] {
+function capabilityAndSecurityArguments(
+  hostConfig: JsonRecord,
+  gpuAttachment: PodmanGpuAttachment | null,
+): string[] {
   if (boolean(hostConfig.Privileged, "Podman HostConfig.Privileged")) {
     throw new Error("Privileged OpenShell containers are not eligible for managed recreation.");
   }
@@ -695,13 +699,46 @@ function capabilityAndSecurityArguments(hostConfig: JsonRecord): string[] {
       args.push(flag, capability);
     }
   }
-  for (const option of stringArray(hostConfig.SecurityOpt, "Podman HostConfig.SecurityOpt")) {
+  const securityOptions = stringArray(hostConfig.SecurityOpt, "Podman HostConfig.SecurityOpt");
+  for (const option of securityOptions) {
     args.push("--security-opt", option);
+  }
+  if (gpuAttachment && !securityOptions.includes("label=disable")) {
+    args.push("--security-opt", "label=disable");
   }
   if (boolean(hostConfig.ReadonlyRootfs, "Podman HostConfig.ReadonlyRootfs")) {
     args.push("--read-only");
   }
   return args;
+}
+
+function gpuDeviceArguments(
+  hostConfig: JsonRecord,
+  gpuAttachment: PodmanGpuAttachment | null,
+): string[] {
+  if (!gpuAttachment) {
+    assertEmpty(hostConfig.Devices, "Podman devices");
+    return [];
+  }
+  const devices = array(hostConfig.Devices ?? [], "Podman inspect HostConfig.Devices");
+  for (const [index, value] of devices.entries()) {
+    const device = record(value, `Podman inspect HostConfig.Devices[${index}]`);
+    for (const [fieldName, fieldValue] of [
+      ["PathOnHost", device.PathOnHost],
+      ["PathInContainer", device.PathInContainer],
+    ] as const) {
+      const devicePath = absoluteContainerPath(
+        fieldValue,
+        `Podman inspect HostConfig.Devices[${index}].${fieldName}`,
+      );
+      if (!devicePath.startsWith("/dev/")) {
+        throw new Error(
+          `Podman CDI recreation refuses device '${devicePath}' outside the container device tree.`,
+        );
+      }
+    }
+  }
+  return ["--device", gpuAttachment.device];
 }
 
 function networkAndPortArguments(raw: JsonRecord, hostConfig: JsonRecord): string[] {
@@ -816,14 +853,18 @@ function hostArguments(config: JsonRecord, hostConfig: JsonRecord): string[] {
   return args;
 }
 
-function assertSupportedShape(raw: JsonRecord, config: JsonRecord, hostConfig: JsonRecord): void {
+function assertSupportedShape(
+  raw: JsonRecord,
+  config: JsonRecord,
+  hostConfig: JsonRecord,
+  gpuAttachment: PodmanGpuAttachment | null,
+): void {
   assertEmpty(raw.Pod, "Podman pod membership");
   assertEmpty(raw.Dependencies, "Podman container dependencies");
   if (boolean(raw.IsInfra, "Podman IsInfra") || boolean(raw.IsService, "Podman IsService")) {
     throw new Error("Podman infra and service containers are not eligible for recreation.");
   }
   for (const [field, label] of [
-    ["Devices", "devices"],
     ["VolumesFrom", "volumes-from"],
     ["CgroupConf", "cgroup v2 settings"],
     ["BlkioWeight", "block IO weight"],
@@ -838,6 +879,7 @@ function assertSupportedShape(raw: JsonRecord, config: JsonRecord, hostConfig: J
   ] as const) {
     assertEmpty(hostConfig[field], `Podman ${label}`);
   }
+  gpuDeviceArguments(hostConfig, gpuAttachment);
   if (
     boolean(hostConfig.AutoRemove, "Podman AutoRemove") ||
     boolean(hostConfig.AutoRemoveImage, "Podman AutoRemoveImage") ||
@@ -869,17 +911,22 @@ function assertSupportedShape(raw: JsonRecord, config: JsonRecord, hostConfig: J
 export function buildPodmanManagedSandboxCreatePlan(options: {
   /** Null preserves the canonical command already present in inspect. */
   readonly command: readonly string[] | null;
+  /** Optional image-owned bootstrap process boundary. */
+  readonly containerCommand?: readonly string[];
+  readonly containerEntrypoint?: readonly string[];
   readonly imagePins: Readonly<Record<string, string>>;
   readonly inspect: PodmanManagedSandboxInspect;
   readonly labels?: Readonly<Record<string, string>>;
   readonly name?: string;
   readonly requireCommandEnvironment?: boolean;
   readonly requiredUlimits?: readonly PodmanUlimit[];
+  readonly gpuAttachment?: PodmanGpuAttachment | null;
 }): PodmanManagedSandboxCreatePlan {
   const raw = options.inspect.raw;
   const config = record(raw.Config, "Podman inspect Config");
   const hostConfig = record(raw.HostConfig, "Podman inspect HostConfig");
-  assertSupportedShape(raw, config, hostConfig);
+  const gpuAttachment = options.gpuAttachment ?? null;
+  assertSupportedShape(raw, config, hostConfig, gpuAttachment);
   const env = environment(config, options.command, options.requireCommandEnvironment === true);
   const mounts = array(raw.Mounts, "Podman inspect Mounts").map((entry, index) =>
     record(entry, `Podman inspect Mounts[${index}]`),
@@ -912,7 +959,8 @@ export function buildPodmanManagedSandboxCreatePlan(options: {
   }
   args.push(
     ...hostArguments(config, hostConfig),
-    ...capabilityAndSecurityArguments(hostConfig),
+    ...capabilityAndSecurityArguments(hostConfig, gpuAttachment),
+    ...gpuDeviceArguments(hostConfig, gpuAttachment),
     ...resourceArguments(hostConfig),
     ...ulimitArguments(hostConfig, options.requiredUlimits ?? []),
     ...networkAndPortArguments(raw, hostConfig),
@@ -923,10 +971,17 @@ export function buildPodmanManagedSandboxCreatePlan(options: {
   for (const [index, mount] of mounts.entries()) {
     args.push("--mount", mountValue(mount, options.imagePins, index));
   }
-  const entrypoint = stringArray(config.Entrypoint, "Podman inspect Config.Entrypoint");
+  const entrypoint =
+    options.containerEntrypoint === undefined
+      ? stringArray(config.Entrypoint, "Podman inspect Config.Entrypoint")
+      : [...options.containerEntrypoint];
   if (entrypoint.length > 0) args.push("--entrypoint", JSON.stringify(entrypoint));
   args.push(options.inspect.immutableImage);
-  args.push(...stringArray(config.Cmd, "Podman inspect Config.Cmd"));
+  args.push(
+    ...(options.containerCommand === undefined
+      ? stringArray(config.Cmd, "Podman inspect Config.Cmd")
+      : [...options.containerCommand]),
+  );
   return {
     args,
     environmentInput: environmentFileInput(env),

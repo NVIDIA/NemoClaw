@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NAME_VALID_PATTERN } from "../../../name-validation";
+import type { PodmanGpuAttachment } from "./gpu-attachment";
 import {
   buildPodmanManagedSandboxCreatePlan,
   PODMAN_MANAGED_LABEL,
@@ -53,8 +54,12 @@ export interface PodmanManagedSandboxRecreateTransaction {
   readonly backupContainerName: string;
   readonly backupSemanticDigest: string;
   readonly command: readonly string[];
+  readonly containerCommand?: readonly string[];
+  readonly containerEntrypoint?: readonly string[];
   readonly driverName: "podman";
   readonly immutableImage: string;
+  readonly gpuAttachment?: PodmanGpuAttachment | null;
+  readonly originalGpuAttachment?: PodmanGpuAttachment | null;
   readonly newContainerId: string;
   readonly oldContainerId: string;
   readonly originalLabels: Readonly<Record<string, string>>;
@@ -65,6 +70,7 @@ export interface PodmanManagedSandboxRecreateTransaction {
   readonly semanticDigest: string;
   readonly socketAuthority: PodmanSocketAuthority;
   readonly socketPath: string;
+  readonly transactionIdentity?: string;
 }
 
 export interface PodmanManagedSandboxRollbackOutcome {
@@ -508,6 +514,41 @@ function containerExists(
   return null;
 }
 
+/**
+ * Quiesce only one exact identity-bound Podman workload.
+ *
+ * OpenShell deletion is mutable-name only, so managed bootstrap retains the
+ * stopped workload for operator-coordinated cleanup.
+ */
+export function quiesceExactPodmanManagedSandbox(
+  options: {
+    readonly containerId: string;
+    readonly sandboxId: string;
+    readonly sandboxName: string;
+    readonly socketAuthority: PodmanSocketAuthority;
+    readonly socketPath: string;
+  },
+  deps: PodmanManagedSandboxRecreateDeps = {},
+): void {
+  const qualifiedDeps = bindSocketAuthority(options.socketPath, options.socketAuthority, deps);
+  const expected = {
+    containerId: options.containerId,
+    name: sandboxContainerName(options.sandboxName),
+    sandboxId: options.sandboxId,
+    sandboxName: options.sandboxName,
+  } as const;
+  inspectContainer(options.socketPath, expected, qualifiedDeps);
+  requireZero(
+    runPodman(options.socketPath, ["stop", options.containerId], qualifiedDeps),
+    "Podman managed-bootstrap workload quiesce",
+  );
+  if (inspectContainer(options.socketPath, expected, qualifiedDeps).running) {
+    throw new PodmanManagedSandboxRecreateError(
+      "Podman managed-bootstrap workload remained running after exact quiesce.",
+    );
+  }
+}
+
 function pinImageMounts(
   socketPath: string,
   inspect: PodmanManagedSandboxInspect,
@@ -533,21 +574,27 @@ function buildPinnedCreatePlan(
   inspect: PodmanManagedSandboxInspect,
   options: {
     readonly command: readonly string[] | null;
+    readonly containerCommand?: readonly string[];
+    readonly containerEntrypoint?: readonly string[];
     readonly labels?: Readonly<Record<string, string>>;
     readonly name?: string;
     readonly requireCommandEnvironment?: boolean;
     readonly requiredUlimits?: readonly PodmanUlimit[];
+    readonly gpuAttachment?: PodmanGpuAttachment | null;
   },
   deps: PodmanManagedSandboxRecreateDeps,
 ): PodmanManagedSandboxCreatePlan {
   return buildPodmanManagedSandboxCreatePlan({
     command: options.command,
+    ...(options.containerCommand ? { containerCommand: options.containerCommand } : {}),
+    ...(options.containerEntrypoint ? { containerEntrypoint: options.containerEntrypoint } : {}),
     imagePins: pinImageMounts(socketPath, inspect, deps),
     inspect,
     labels: options.labels,
     name: options.name,
     requireCommandEnvironment: options.requireCommandEnvironment,
     requiredUlimits: options.requiredUlimits,
+    gpuAttachment: options.gpuAttachment,
   });
 }
 
@@ -561,6 +608,81 @@ function createPlanSemanticDigest(plan: PodmanManagedSandboxCreatePlan): string 
       }),
     )
     .digest("hex");
+}
+
+export interface PodmanManagedSandboxLaunchSnapshot {
+  readonly canonicalJson: string;
+  readonly hash: string;
+  readonly inspect: PodmanManagedSandboxInspect;
+}
+
+/**
+ * Capture one exact, normalized Podman launch shape for managed bootstrap.
+ */
+export function capturePodmanManagedSandboxLaunchSnapshot(
+  options: {
+    readonly containerId: string;
+    readonly gpuAttachment?: PodmanGpuAttachment | null;
+    readonly requireRunning?: boolean;
+    readonly sandboxId: string;
+    readonly sandboxName: string;
+    readonly socketAuthority: PodmanSocketAuthority;
+    readonly socketPath: string;
+  },
+  deps: PodmanManagedSandboxRecreateDeps = {},
+): PodmanManagedSandboxLaunchSnapshot {
+  const qualifiedDeps = bindSocketAuthority(options.socketPath, options.socketAuthority, deps);
+  const inspect = inspectContainer(
+    options.socketPath,
+    {
+      containerId: options.containerId,
+      name: sandboxContainerName(options.sandboxName),
+      requireRunning: options.requireRunning ?? true,
+      sandboxId: options.sandboxId,
+      sandboxName: options.sandboxName,
+    },
+    qualifiedDeps,
+  );
+  const plan = buildPinnedCreatePlan(
+    options.socketPath,
+    inspect,
+    { command: null, gpuAttachment: options.gpuAttachment },
+    qualifiedDeps,
+  );
+  return Object.freeze({
+    canonicalJson: JSON.stringify(plan),
+    hash: createPlanSemanticDigest(plan),
+    inspect,
+  });
+}
+
+/**
+ * Inspect one exact managed Podman workload without exposing the qualified
+ * command runner to higher-level runtime providers.
+ */
+export function inspectExactPodmanManagedSandbox(
+  options: {
+    readonly containerId: string;
+    readonly requireRunning?: boolean;
+    readonly sandboxId?: string;
+    readonly sandboxName: string;
+    readonly socketAuthority: PodmanSocketAuthority;
+    readonly socketPath: string;
+  },
+  deps: PodmanManagedSandboxRecreateDeps = {},
+): PodmanManagedSandboxInspect {
+  const qualifiedDeps = bindSocketAuthority(options.socketPath, options.socketAuthority, deps);
+  return inspectContainer(
+    options.socketPath,
+    {
+      containerId: options.containerId,
+      name: sandboxContainerName(options.sandboxName),
+      requireRunning: options.requireRunning,
+      sandboxId: options.sandboxId,
+      sandboxName: options.sandboxName,
+    },
+    qualifiedDeps,
+  );
 }
 
 function requireEquivalentCreatePlan(
@@ -741,6 +863,8 @@ type PodmanRestoreIdentity = Pick<
   | "backupContainerId"
   | "backupContainerName"
   | "backupSemanticDigest"
+  | "gpuAttachment"
+  | "originalGpuAttachment"
   | "originalLabels"
   | "originalName"
   | "originalSemanticDigest"
@@ -759,6 +883,7 @@ function buildVerifiedRestorePlan(
     backup,
     {
       command: null,
+      gpuAttachment: transaction.originalGpuAttachment,
       labels: podmanWatcherInvisibleBackupLabels(backup),
       name: transaction.backupContainerName,
     },
@@ -770,6 +895,7 @@ function buildVerifiedRestorePlan(
     backup,
     {
       command: null,
+      gpuAttachment: transaction.originalGpuAttachment,
       labels: transaction.originalLabels,
       name: transaction.originalName,
     },
@@ -828,7 +954,12 @@ function restoreManagedFromBackup(
   );
   requireEquivalentCreatePlan(
     transaction.originalSemanticDigest,
-    buildPinnedCreatePlan(transaction.socketPath, runningOriginal, { command: null }, deps),
+    buildPinnedCreatePlan(
+      transaction.socketPath,
+      runningOriginal,
+      { command: null, gpuAttachment: transaction.originalGpuAttachment },
+      deps,
+    ),
   );
   return { originalRecreated: true, originalStarted: true };
 }
@@ -948,15 +1079,31 @@ function rollbackAndResumeWatcher(
 export function recreatePodmanManagedSandbox(
   options: {
     readonly command: readonly string[];
+    readonly containerCommand?: readonly string[];
+    readonly containerEntrypoint?: readonly string[];
+    readonly gpuAttachment?: PodmanGpuAttachment | null;
     readonly requiredUlimits?: readonly PodmanUlimit[];
     readonly sandboxName: string;
     readonly socketAuthority: PodmanSocketAuthority;
     readonly socketPath: string;
+    readonly stagedFile?: {
+      readonly containerPath: string;
+      readonly hostPath: string;
+    };
+    readonly transactionIdentity?: string;
     readonly watcherController: PodmanOpenShellWatcherController;
   },
   deps: PodmanManagedSandboxRecreateDeps = {},
 ): PodmanManagedSandboxRecreateTransaction {
   const watcherController = requireWatcherController(options.watcherController);
+  if (
+    options.transactionIdentity !== undefined &&
+    !/^[a-f0-9]{64}$/u.test(options.transactionIdentity)
+  ) {
+    throw new PodmanManagedSandboxRecreateError(
+      "Podman managed sandbox transaction identity is invalid.",
+    );
+  }
   const originalName = sandboxContainerName(options.sandboxName);
   const socketPath = options.socketPath.trim();
   socketUrl(socketPath);
@@ -973,10 +1120,41 @@ export function recreatePodmanManagedSandbox(
     deps,
   );
   const command = [...options.command];
+  const containerCommand = options.containerCommand
+    ? Object.freeze([...options.containerCommand])
+    : undefined;
+  const containerEntrypoint = options.containerEntrypoint
+    ? Object.freeze([...options.containerEntrypoint])
+    : undefined;
+  const gpuAttachment = options.gpuAttachment ?? null;
+  const rawHostConfig =
+    typeof original.raw.HostConfig === "object" &&
+    original.raw.HostConfig !== null &&
+    !Array.isArray(original.raw.HostConfig)
+      ? (original.raw.HostConfig as Record<string, unknown>)
+      : {};
+  const originalDevices = Array.isArray(rawHostConfig.Devices) ? rawHostConfig.Devices : [];
+  const originalGpuAttachment = originalDevices.length > 0 ? gpuAttachment : null;
   const requiredUlimits = (options.requiredUlimits ?? []).map((limit) => ({ ...limit }));
-  const plan = buildPinnedCreatePlan(socketPath, original, { command, requiredUlimits }, deps);
+  const plan = buildPinnedCreatePlan(
+    socketPath,
+    original,
+    {
+      command,
+      ...(containerCommand ? { containerCommand } : {}),
+      ...(containerEntrypoint ? { containerEntrypoint } : {}),
+      gpuAttachment,
+      requiredUlimits,
+    },
+    deps,
+  );
   const semanticDigest = createPlanSemanticDigest(plan);
-  const originalPlan = buildPinnedCreatePlan(socketPath, original, { command: null }, deps);
+  const originalPlan = buildPinnedCreatePlan(
+    socketPath,
+    original,
+    { command: null, gpuAttachment: originalGpuAttachment },
+    deps,
+  );
   const originalSemanticDigest = createPlanSemanticDigest(originalPlan);
   const originalLabels = { ...original.labels };
   const pinnedAgain = discoverManagedSandbox(socketPath, options.sandboxName, deps);
@@ -997,19 +1175,30 @@ export function recreatePodmanManagedSandbox(
   );
   requireEquivalentCreatePlan(
     semanticDigest,
-    buildPinnedCreatePlan(socketPath, current, { command, requiredUlimits }, deps),
+    buildPinnedCreatePlan(socketPath, current, { command, gpuAttachment, requiredUlimits }, deps),
   );
   requireEquivalentCreatePlan(
     originalSemanticDigest,
-    buildPinnedCreatePlan(socketPath, current, { command: null }, deps),
+    buildPinnedCreatePlan(
+      socketPath,
+      current,
+      { command: null, gpuAttachment: originalGpuAttachment },
+      deps,
+    ),
   );
   const backupContainerName = backupName(originalName, commandDeps(deps).now());
-  const backupLabels = podmanWatcherInvisibleBackupLabels(original);
+  const backupLabels = {
+    ...podmanWatcherInvisibleBackupLabels(original),
+    ...(options.transactionIdentity
+      ? { "io.nvidia.nemoclaw.managed-bootstrap": options.transactionIdentity }
+      : {}),
+  };
   const backupPlan = buildPinnedCreatePlan(
     socketPath,
     original,
     {
       command: null,
+      gpuAttachment: originalGpuAttachment,
       labels: backupLabels,
       name: backupContainerName,
     },
@@ -1040,6 +1229,10 @@ export function recreatePodmanManagedSandbox(
     backupContainerName,
     backupSemanticDigest,
     command,
+    ...(containerCommand ? { containerCommand } : {}),
+    ...(containerEntrypoint ? { containerEntrypoint } : {}),
+    gpuAttachment,
+    originalGpuAttachment,
     immutableImage: plan.immutableImage,
     oldContainerId,
     originalLabels,
@@ -1050,6 +1243,9 @@ export function recreatePodmanManagedSandbox(
     semanticDigest,
     socketAuthority: options.socketAuthority,
     socketPath,
+    ...(options.transactionIdentity
+      ? { transactionIdentity: options.transactionIdentity }
+      : {}),
   };
   const backup = inspectWatcherInvisibleBackup(baseTransaction, deps);
   if (backup.running) {
@@ -1064,7 +1260,12 @@ export function recreatePodmanManagedSandbox(
     buildPinnedCreatePlan(
       socketPath,
       backup,
-      { command: null, labels: backupLabels, name: backupContainerName },
+      {
+        command: null,
+        gpuAttachment: originalGpuAttachment,
+        labels: backupLabels,
+        name: backupContainerName,
+      },
       deps,
     ),
   );
@@ -1237,10 +1438,33 @@ export function recreatePodmanManagedSandbox(
       buildPinnedCreatePlan(
         socketPath,
         createdReplacement,
-        { command, requireCommandEnvironment: true },
+        {
+          command,
+          ...(containerCommand ? { containerCommand } : {}),
+          ...(containerEntrypoint ? { containerEntrypoint } : {}),
+          gpuAttachment,
+          requireCommandEnvironment: true,
+        },
         deps,
       ),
     );
+    if (options.stagedFile) {
+      const { containerPath, hostPath } = options.stagedFile;
+      if (
+        !path.isAbsolute(hostPath) ||
+        !path.isAbsolute(containerPath) ||
+        /[\0\r\n]/u.test(hostPath) ||
+        /[\0\r\n]/u.test(containerPath)
+      ) {
+        throw new PodmanManagedSandboxRecreateError(
+          "Podman managed sandbox staged file paths are invalid.",
+        );
+      }
+      requireZero(
+        runPodman(socketPath, ["cp", hostPath, `${newContainerId}:${containerPath}`], deps),
+        "Podman managed-bootstrap protected request staging",
+      );
+    }
     proveWatcherStoppedWithPodman(watcherLease, socketPath, podmanFingerprint, deps);
     if (
       !startAndVerifyContainer(
@@ -1272,7 +1496,13 @@ export function recreatePodmanManagedSandbox(
       buildPinnedCreatePlan(
         socketPath,
         replacement,
-        { command, requireCommandEnvironment: true },
+        {
+          command,
+          ...(containerCommand ? { containerCommand } : {}),
+          ...(containerEntrypoint ? { containerEntrypoint } : {}),
+          gpuAttachment,
+          requireCommandEnvironment: true,
+        },
         deps,
       ),
     );
@@ -1287,7 +1517,12 @@ export function recreatePodmanManagedSandbox(
       buildPinnedCreatePlan(
         socketPath,
         verifiedBackup,
-        { command: null, labels: backupLabels, name: backupContainerName },
+        {
+          command: null,
+          gpuAttachment: originalGpuAttachment,
+          labels: backupLabels,
+          name: backupContainerName,
+        },
         deps,
       ),
     );
@@ -1427,6 +1662,13 @@ export function finalizePodmanManagedSandbox(
       replacement,
       {
         command: options.transaction.command,
+        ...(options.transaction.containerCommand
+          ? { containerCommand: options.transaction.containerCommand }
+          : {}),
+        ...(options.transaction.containerEntrypoint
+          ? { containerEntrypoint: options.transaction.containerEntrypoint }
+          : {}),
+        gpuAttachment: options.transaction.gpuAttachment,
         requireCommandEnvironment: true,
       },
       deps,
@@ -1445,6 +1687,7 @@ export function finalizePodmanManagedSandbox(
       backup,
       {
         command: null,
+        gpuAttachment: options.transaction.originalGpuAttachment,
         labels: podmanWatcherInvisibleBackupLabels(backup),
         name: options.transaction.backupContainerName,
       },

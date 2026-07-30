@@ -20,6 +20,11 @@ export interface ManagedBootstrapRuntimeCommandResult {
 }
 
 export interface ManagedBootstrapRuntimeDependencies {
+  /**
+   * Opaque, driver-qualified mutation authority. Runtime providers validate
+   * their own authority shape before issuing any host-runtime command.
+   */
+  readonly runtimeAuthority?: unknown;
   readonly runCaptureOpenshell?: (args: string[], options?: Record<string, unknown>) => string;
   readonly runOpenshell?: (
     args: string[],
