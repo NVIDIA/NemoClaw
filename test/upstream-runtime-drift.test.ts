@@ -251,6 +251,28 @@ describe("nightly upstream runtime drift report", () => {
     expect(markdown).not.toContain("No open public GitHub issues");
   });
 
+  it("marks candidate compatibility evidence unknown when its issue is unavailable", () => {
+    const responses: UpstreamResponses = {
+      ...currentResponses(),
+      nemoclawCompatibilityIssue: { error: "HTTP 503" },
+    };
+    const report = createRuntimeDriftReport({
+      generatedAt: NOW,
+      nemoclawSha: NEMOCLAW_SHA,
+      pins: PINS,
+      responses,
+    });
+    const markdown = renderMarkdownReport(report);
+
+    expect(report.compatibilityEvidence).toMatchObject({ issue: 6691, state: "unknown" });
+    expect(report.evidenceNotes).toContain(
+      "Candidate compatibility status was unavailable: Candidate compatibility issue: HTTP 503",
+    );
+    expect(markdown).toContain(
+      "could not be verified. Do not treat drift as compatibility evidence.",
+    );
+  });
+
   it("renders the requested inventory columns and a brief Slack summary", () => {
     const responses: UpstreamResponses = {
       ...currentResponses(),
