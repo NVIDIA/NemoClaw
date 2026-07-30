@@ -3134,38 +3134,6 @@ export async function startPrGate(
       );
       return;
     }
-    const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
-    if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
-      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW}`;
-      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
-      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
-      await markCheckInProgress(
-        {
-          repository,
-          checkRunId,
-          prNumber: ciIdentity.prNumber,
-          headSha: command.headSha,
-          baseSha: ciIdentity.baseSha,
-        },
-        token,
-        CONTROL_PLANE_AUTHORIZATION_TITLE,
-        [
-          `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
-          "No selected E2E job or target ran and no repository secret was exposed.",
-          `A repository maintainer must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\` and the risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
-          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and exact reviewed inputs before it dispatches this plan.`,
-          "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
-          `Deterministic plan: \`${plan.planHash}\`.`,
-        ].join("\n\n"),
-      );
-      appendOutput("dispatched", "false");
-      appendOutput("finalized", "true");
-      finalized = true;
-      console.log(
-        `Control-plane authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
-      );
-      return;
-    }
     if (selections.length === 0) {
       await completeCheck({ repository, checkRunId }, token, {
         conclusion: "success",
