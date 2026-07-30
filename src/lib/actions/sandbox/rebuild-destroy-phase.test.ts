@@ -77,9 +77,11 @@ function stubRecreateJournal(): RebuildRecreateJournal {
   return {
     id: "journal-1",
     acceptedTarget: false,
+    sourceConfirmedAbsent: false,
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
     markDeleting: vi.fn(),
+    observeSourceForDelete: vi.fn(() => "source" as const),
     confirmDeleted: vi.fn(),
     completeAcceptedTarget: vi.fn(),
   };

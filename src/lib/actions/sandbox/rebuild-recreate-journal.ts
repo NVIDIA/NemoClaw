@@ -27,12 +27,16 @@ export type RebuildRecreateJournalTarget = SandboxRecreateTarget;
 
 export type RebuildSandboxObserver = SandboxRecreateObserver;
 
+export type RebuildRecreateSourcePresence = "missing" | "source";
+
 export interface RebuildRecreateJournal {
   readonly id: string;
   readonly acceptedTarget: boolean;
+  readonly sourceConfirmedAbsent: boolean;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
   markDeleting(): void;
+  observeSourceForDelete(): RebuildRecreateSourcePresence;
   confirmDeleted(): void;
   completeAcceptedTarget(): void;
 }
@@ -147,11 +151,25 @@ export function openRebuildRecreateJournal(
   return {
     id: transaction.id,
     acceptedTarget,
+    sourceConfirmedAbsent: recovery.action === "continue_create",
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,
     markDeleting: () => {
       if (sandboxRecreatePhaseReached(phase, "deleted")) return;
       advance("deleting");
+    },
+    observeSourceForDelete: () => {
+      const current = observe(target);
+      if (current.state === "missing") return "missing";
+      if (
+        !transaction.sourceLiveIdentityFingerprint ||
+        current.liveIdentityFingerprint !== transaction.sourceLiveIdentityFingerprint
+      ) {
+        throw new Error(
+          `Cannot delete sandbox '${target.sandboxName}': the live same-name sandbox is not the journaled source.`,
+        );
+      }
+      return "source";
     },
     confirmDeleted: () => {
       if (observe(target).state !== "missing") {

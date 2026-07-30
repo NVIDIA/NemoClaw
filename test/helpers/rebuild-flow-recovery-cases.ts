@@ -390,7 +390,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       LIVE_SOURCE_PHASES,
     )("deletes the journaled source when a rebuild restarts from '%s' (#7734)", async (phase) => {
       const restarted = restartFromJournaledSource(
-        [SOURCE_PROBE, null],
+        [SOURCE_PROBE, SOURCE_PROBE, null],
         await interruptBeforeCreate(phase),
       );
 
@@ -405,18 +405,29 @@ export function registerRebuildFlowRecoveryTests(): void {
 
     it.each(
       PRE_CREATE_PHASES,
-    )("creates the replacement without widening the delete target when a rebuild restarts from '%s' with the source already absent (#7734)", async (phase) => {
+    )("creates the replacement without a second delete when a rebuild restarts from '%s' with the source already absent (#7734)", async (phase) => {
       const restarted = restartFromJournaledSource([null], await interruptBeforeCreate(phase));
 
       await restarted.rebuildSandbox("alpha", ["--yes"]);
 
-      const deleteCalls = restarted.runOpenshellSpy.mock.calls.filter(
-        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
-      );
-      expect(deleteCalls.map(([args]) => args)).toEqual(
-        deleteCalls.map(() => ["sandbox", "delete", "-g", "nemoclaw", "alpha"]),
-      );
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
       expect(restarted.onboardSpy).toHaveBeenCalled();
+    });
+
+    it.each(
+      LIVE_SOURCE_PHASES,
+    )("stops before deletion when a same-name sandbox appears after a '%s' restart probe (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [null, FOREIGN_PROBE],
+        await interruptBeforeCreate(phase),
+      );
+
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/the live same-name sandbox is not the journaled source/);
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
     });
 
     it.each(

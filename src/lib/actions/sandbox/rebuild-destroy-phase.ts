@@ -23,7 +23,10 @@ import {
   reattachMcpAfterDeleteFailure,
 } from "./rebuild-mcp-phase";
 import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
-import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
+import type {
+  RebuildRecreateJournal,
+  RebuildRecreateSourcePresence,
+} from "./rebuild-recreate-journal";
 
 export type RebuildDeleteValidationResult =
   | { ok: true }
@@ -359,7 +362,9 @@ export async function runRebuildDestroyPhase(
   // MCP adapter entries are already detached and scrubbed here. A journal write
   // that fails must reattach them before the rebuild gives up, or the still
   // running sandbox is left without its MCP wiring.
+  let sourcePresence: RebuildRecreateSourcePresence;
   try {
+    sourcePresence = recreateJournal.observeSourceForDelete();
     recreateJournal.markDeleting();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
@@ -376,15 +381,22 @@ export async function runRebuildDestroyPhase(
     );
     return null;
   }
-  log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
-  const deleteResult = runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-  log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
+  if (sourcePresence === "missing") {
+    log(`Skipping delete: gateway ${gatewayName} reports '${sandboxName}' already absent`);
+  } else {
+    log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
+  }
+  const deleteResult =
+    sourcePresence === "missing"
+      ? null
+      : runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+  const alreadyGone = deleteResult === null || getSandboxDeleteOutcome(deleteResult).alreadyGone;
+  if (deleteResult) log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
   let deletionConfirmed = alreadyGone;
-  if (deleteResult.status !== 0) {
+  if (deleteResult && deleteResult.status !== 0) {
     const reconciledDelete = reconcileFailedSandboxDelete(sandboxName, input.sandboxEntry, log);
     if (reconciledDelete.state === "deleted") {
       log("Delete returned nonzero, but exact post-delete state confirms sandbox removal.");

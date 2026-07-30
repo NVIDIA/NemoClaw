@@ -387,12 +387,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           failedFiles: [],
         })),
     );
+  let defaultSourceDeleted = false;
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
       const overrideResult = overrides.runOpenshell?.(argv);
       if (overrideResult) return overrideResult;
+      if (argv[0] === "sandbox" && argv[1] === "delete") defaultSourceDeleted = true;
       if (
         argv.join(" ") === "sandbox get alpha" ||
         argv.join(" ") === "sandbox get -g nemoclaw alpha"
@@ -410,8 +412,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      return overrides.captureOpenshell
-        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+      if (overrides.captureOpenshell) {
+        return overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined);
+      }
+      const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+      return argv[0] === "sandbox" && argv[1] === "get" && !defaultSourceDeleted
+        ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
   const defaultRemovalReceipt = {
