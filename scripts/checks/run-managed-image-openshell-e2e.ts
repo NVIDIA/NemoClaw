@@ -97,7 +97,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
 }
 
 export function managedImageOpenShellBasePolicyPath(agent: ManagedStartupAgent): string {
-  return path.resolve(import.meta.dirname, "..", "..", ...MANAGED_AGENT_BASE_POLICIES[agent]);
+  return path.resolve(__dirname, "..", "..", ...MANAGED_AGENT_BASE_POLICIES[agent]);
 }
 
 function commandResult(argv: readonly string[], env: NodeJS.ProcessEnv, timeout = 20_000) {
