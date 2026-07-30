@@ -384,7 +384,8 @@ A maintainer-run tenant acceptance must establish all of the following criteria:
 - Rollback removes the owned attachment and provider while preserving any reused sandbox.
 
 Do not save the Graph response, refresh token, access token, or client secret in a terminal transcript or CI artifact.
-The protected-resource acceptance request is:
+Run the protected-resource acceptance request from a newly launched sandbox child, where `ENTRA_ACCESS_TOKEN` is the child-scoped OpenShell placeholder.
+Do not run this request from the host shell; the child request must traverse the OpenShell proxy so its bearer delivery and Graph path restrictions are exercised:
 
 ```bash
 curl -fsS \
