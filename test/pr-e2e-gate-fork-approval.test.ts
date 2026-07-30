@@ -1089,7 +1089,6 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         output: { title: "unexpected remote title" },
       },
       expected: /coordination is malformed or unknown.*do not retry/u,
-      hidden: "unexpected remote title",
     },
     {
       name: "the coordination title is missing",
@@ -1100,7 +1099,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       },
       expected: /coordination is malformed or unknown.*do not retry/u,
     },
-  ])("rejects control-plane authorization when $name", async ({ check, expected, hidden }) => {
+  ])("rejects control-plane authorization when $name", async ({ check, expected }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
@@ -1134,7 +1133,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toMatch(expected);
       expect((error as Error).message).toContain("Maintainer approval required to run E2E");
-      if (hidden !== undefined) expect((error as Error).message).not.toContain(hidden);
+      expect((error as Error).message).not.toContain("unexpected remote title");
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
