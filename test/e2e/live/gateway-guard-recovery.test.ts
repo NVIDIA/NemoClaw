@@ -287,8 +287,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   // Fresh non-GPU OpenClaw containers on this OpenShell floor still carry the
   // legacy keepalive. Restarting the container therefore kills the initial
   // OpenShell workload session and deterministically leaves no managed
-  // supervisor. Recovery must upgrade that container through the host-side
-  // transaction and commit only after managed control accepts the new tree.
+  // supervisor. Recovery must launch the supervisor in the registered
+  // container and prove managed health without replacing that container.
   const originalContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
   expect(
     await inspectStartupCommand(host, originalContainerId, "legacy-restart-command-before"),
@@ -321,13 +321,13 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   expect(resultText(trustedRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
 
   const recoveredContainerId = await findSandboxContainer(host, "legacy-restart-container-after");
-  expect(recoveredContainerId).not.toBe(originalContainerId);
+  expect(recoveredContainerId).toBe(originalContainerId);
   const recoveredStartupCommand = await inspectStartupCommand(
     host,
     recoveredContainerId,
     "legacy-restart-command-after",
   );
-  expect(recoveredStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
+  expect(recoveredStartupCommand).toBe("sleep infinity");
   expect(recoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
   expect(recoveredStartupCommand).not.toContain(credentialCanary);
 

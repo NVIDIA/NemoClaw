@@ -85,7 +85,7 @@ test(
         "install and register the OpenClaw sandbox",
         "prove baseline sandbox access and inference",
         "write persistent OpenClaw markers",
-        "restart the gateway and reconnect the sandbox",
+        "restart the gateway and recover the sandbox",
         "recheck state and inference after restart",
         "destroy the sandbox and confirm registry removal",
       ],
@@ -303,7 +303,7 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
-    progress.phase("restart the gateway and reconnect the sandbox");
+    progress.phase("restart the gateway and recover the sandbox");
     await lifecycle.restartGatewayRuntime({
       delayMs: 5_000,
       sandboxName: SANDBOX_NAME,
@@ -312,6 +312,12 @@ test(
       attempts: 60,
       intervalMs: 5_000,
     });
+    const recovery = await host.nemoclaw([SANDBOX_NAME, "recover"], {
+      artifactName: "post-restart-nemoclaw-recover",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 240_000,
+    });
+    assertExitZero(recovery, `recover sandbox ${SANDBOX_NAME}`);
 
     progress.phase("recheck state and inference after restart");
     await sandbox.expectListed(SANDBOX_NAME, {
