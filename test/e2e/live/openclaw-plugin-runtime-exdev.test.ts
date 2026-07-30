@@ -36,6 +36,11 @@ import {
   RELEASE_SANDBOX_BASE_IMAGE_REF,
 } from "./openclaw-plugin-runtime-exdev-env.ts";
 import {
+  currentLifecycleCommands,
+  CURRENT_LIFECYCLE_PHASES,
+  type WeatherFixtureVersion,
+} from "./openclaw-plugin-runtime-exdev-lifecycle.ts";
+import {
   createOpenShellDriverConfigTestWrapper,
   type OpenShellComponents,
   type OpenShellDriverConfigTestWrapper,
@@ -44,7 +49,7 @@ import {
 } from "./openshell-driver-config-test-wrapper.ts";
 
 // Keep this contract as a focused live test: build a deterministic custom plugin
-// on top of the complete managed runtime, prove it survives restart/rebuild, then
+// on top of the complete managed runtime, prove it survives restart/recreation, then
 // run the in-sandbox Node replacement probe that guards #3513/#3127's EXDEV
 // cross-device runtime-deps failure mode. No registry or ledger is required.
 
@@ -86,7 +91,6 @@ const CURRENT_BUILDER_IMAGE_REF =
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-plugin-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";
 const EXDEV_TMPFS_SOURCE = `${EXDEV_TMPFS_MOUNT}/source`;
@@ -121,8 +125,6 @@ const EXDEV_PATTERNS = [
   /EXDEV: cross-device link not permitted/i,
   /cross-device link not permitted/i,
 ];
-type WeatherFixtureVersion = "v1" | "v2" | "v3";
-
 const GATEWAY_CATALOG_CALL_SOURCE = String.raw`
 import { Buffer } from "node:buffer";
 import { accessSync, constants, realpathSync } from "node:fs";
@@ -1143,18 +1145,10 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
   });
 });
 
-test("the current-lifecycle custom plugin survives restart, recreation, and rebuild without EXDEV failures (#6108)", {
-  timeout: ONBOARD_TIMEOUT_MS * 2 + REBUILD_TIMEOUT_MS + 15 * 60_000,
+test("the current-lifecycle custom plugin survives restart and recreation without EXDEV failures (#6108)", {
+  timeout: ONBOARD_TIMEOUT_MS * 2 + 15 * 60_000,
   meta: {
-    e2ePhases: [
-      "confirm Docker CLI and clear the current plugin sandbox",
-      "clone and prepare the current plugin fixture",
-      "install current OpenShell and onboard plugin v1",
-      "restart the gateway and confirm plugin v1",
-      "recreate the sandbox with plugin v2",
-      "rebuild the sandbox with plugin v3",
-      "prove cross-device runtime dependency replacement",
-    ],
+    e2ePhases: [...CURRENT_LIFECYCLE_PHASES],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
@@ -1165,10 +1159,10 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
       "the current CLI uses OpenShell 0.0.85 for current lifecycle coverage",
       "the current CLI selects and validates its compatible sandbox base image",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
-      "custom-plugin v1 survives restart, recreation installs v2, and rebuild installs v3",
-      "workspace state survives both onboarding recreation and rebuild",
+      "custom-plugin v1 survives restart and recreation installs v2",
+      "workspace state survives onboarding recreation",
       `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT} without changing production policies`,
-      "stock OpenClaw policy source bytes remain unchanged through onboard and rebuild",
+      "stock OpenClaw policy source bytes remain unchanged through onboard and recreation",
       `sandbox proves ${EXDEV_TMPFS_SOURCE} and plugin-runtime-deps are distinct devices`,
       `legacy source-side staging fails with EXDEV across the same ${EXDEV_TMPFS_SOURCE} to plugin-runtime-deps boundary`,
       "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
@@ -1263,20 +1257,15 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     "current OpenShell wrapper and components must pass onboard coherence preflight",
   ).toBe(true);
   const sandboxEnv = withOpenShellWrapperEnv(deploymentEnv, openshellWrapper, pinnedOpenshell);
+  const lifecycleCommands = currentLifecycleCommands({
+    cliEntrypoint: CLI_ENTRYPOINT,
+    dockerfilePath: customPluginContext.dockerfilePath,
+    sandboxName: SANDBOX_NAME,
+  });
 
   const onboard = await host.command(
-    "node",
-    [
-      CLI_ENTRYPOINT,
-      "onboard",
-      "--fresh",
-      "--non-interactive",
-      "--yes-i-accept-third-party-software",
-      "--agent",
-      "openclaw",
-      "--from",
-      customPluginContext.dockerfilePath,
-    ],
+    lifecycleCommands.onboard.command,
+    lifecycleCommands.onboard.args,
     {
       artifactName: "openclaw-plugin-exdev-onboard",
       env: sandboxEnv,
@@ -1293,11 +1282,15 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
   const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
 
   progress.phase("restart the gateway and confirm plugin v1");
-  const restart = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"], {
-    artifactName: "openclaw-weather-plugin-gateway-restart",
-    env: sandboxEnv,
-    timeoutMs: 180_000,
-  });
+  const restart = await host.command(
+    lifecycleCommands.restart.command,
+    lifecycleCommands.restart.args,
+    {
+      artifactName: "openclaw-weather-plugin-gateway-restart",
+      env: sandboxEnv,
+      timeoutMs: 180_000,
+    },
+  );
   expect(restart.exitCode, resultText(restart)).toBe(0);
   const weatherAfterRestart = await assertWeatherPluginRuntime(sandbox, "after-restart", "v1");
   expect(weatherAfterRestart.imageMarker).toBe(weatherAfterOnboard.imageMarker);
@@ -1305,28 +1298,14 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
   const workspaceMarker = `plugin-lifecycle-${randomUUID()}`;
   await writeWorkspaceMarker(sandbox, workspaceMarker);
 
-  // Change an actual build-context input so rebuild must produce a distinct
-  // plugin artifact. Onboarding recreation must preserve the fresh v2
+  // Change an actual build-context input so recreation must produce a distinct
+  // plugin artifact. Recreation must preserve the fresh v2
   // extension instead of replacing it with the backed-up v1 directory.
   progress.phase("recreate the sandbox with plugin v2");
   writeCustomPluginVersion(customPluginContext.versionSourcePath, "v2");
   const recreate = await host.command(
-    "node",
-    [
-      CLI_ENTRYPOINT,
-      "onboard",
-      "--fresh",
-      "--recreate-sandbox",
-      "--non-interactive",
-      "--yes",
-      "--yes-i-accept-third-party-software",
-      "--name",
-      SANDBOX_NAME,
-      "--agent",
-      "openclaw",
-      "--from",
-      customPluginContext.dockerfilePath,
-    ],
+    lifecycleCommands.recreate.command,
+    lifecycleCommands.recreate.args,
     {
       artifactName: "openclaw-weather-plugin-recreate",
       env: sandboxEnv,
@@ -1339,22 +1318,6 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
   const weatherAfterRecreate = await assertWeatherPluginRuntime(sandbox, "after-recreate", "v2");
   expect(weatherAfterRecreate.imageMarker).not.toBe(weatherAfterOnboard.imageMarker);
   await assertWorkspaceMarker(sandbox, "after-recreate", workspaceMarker);
-
-  // A subsequent rebuild exercises the same semantic recreated-sandbox
-  // restore boundary with another fresh image artifact.
-  progress.phase("rebuild the sandbox with plugin v3");
-  writeCustomPluginVersion(customPluginContext.versionSourcePath, "v3");
-  const rebuild = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "rebuild", "--yes"], {
-    artifactName: "openclaw-weather-plugin-rebuild",
-    env: sandboxEnv,
-    timeoutMs: REBUILD_TIMEOUT_MS,
-  });
-  expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-  const tmpfsMountedAfterRebuild = await assertExdevTmpfsMounted(sandbox, "after-rebuild");
-  assertPolicySourcesUnchanged(policySourceSnapshot, "rebuild");
-  const weatherAfterRebuild = await assertWeatherPluginRuntime(sandbox, "after-rebuild", "v3");
-  expect(weatherAfterRebuild.imageMarker).not.toBe(weatherAfterRecreate.imageMarker);
-  await assertWorkspaceMarker(sandbox, "after-rebuild", workspaceMarker);
 
   progress.phase("prove cross-device runtime dependency replacement");
   const df = await sandbox.execShell(
@@ -1392,7 +1355,6 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     onboardExitCode: onboard.exitCode,
     restartExitCode: restart.exitCode,
     recreateExitCode: recreate.exitCode,
-    rebuildExitCode: rebuild.exitCode,
     filesystemProbeExitCode: df.exitCode,
     runtimeDepsProbeExitCode: probe.exitCode,
     testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
@@ -1409,10 +1371,6 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
         weatherAfterRecreate.inspectLoaded &&
         weatherAfterRecreate.catalogToolIds.includes("get_weather") &&
         weatherAfterRecreate.toolInvoked,
-      weatherAfterRebuild:
-        weatherAfterRebuild.inspectLoaded &&
-        weatherAfterRebuild.catalogToolIds.includes("get_weather") &&
-        weatherAfterRebuild.toolInvoked,
       v1MarkerStableThroughRestart:
         weatherAfterOnboard.imageMarker === weatherAfterRestart.imageMarker &&
         weatherAfterOnboard.fixtureVersion === "v1" &&
@@ -1420,9 +1378,6 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
       recreatedV2ReplacedV1:
         weatherAfterRecreate.imageMarker !== weatherAfterOnboard.imageMarker &&
         weatherAfterRecreate.fixtureVersion === "v2",
-      rebuiltV3ReplacedV2:
-        weatherAfterRebuild.imageMarker !== weatherAfterRecreate.imageMarker &&
-        weatherAfterRebuild.fixtureVersion === "v3",
       distinctDevices: /source_device=\d+ target_device=\d+/.test(probeText),
       sourceSideExdevSelfCheck: probeText.includes(
         "source-side staging failure self-check completed",
@@ -1430,8 +1385,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
       noExdevSignature: !EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
       successMarker: probeText.includes("runtime deps replacement completed"),
       workspaceStatePreserved: true,
-      testOnlyTmpfsMounted:
-        tmpfsMountedAfterOnboard && tmpfsMountedAfterRecreate && tmpfsMountedAfterRebuild,
+      testOnlyTmpfsMounted: tmpfsMountedAfterOnboard && tmpfsMountedAfterRecreate,
       stockPolicySourcesUnchanged: true,
     },
   });

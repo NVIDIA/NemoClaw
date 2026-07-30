@@ -6,7 +6,8 @@ run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.p
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * 1-6"
+    - cron: "0 0 * * 0"
   workflow_dispatch:
     inputs:
       targets:
@@ -15,7 +16,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, openshell-gateway-upgrade-compatibility, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -4129,45 +4130,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: v0.0.36-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-36-x86-64
-            nemoclaw_ref: v0.0.36
-            nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
-            installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
-            openshell_version: 0.0.36
-            openclaw_version: 2026.4.24
-          - id: v0.0.55-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-55-x86-64
-            nemoclaw_ref: v0.0.55
-            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
-            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
-            openshell_version: 0.0.44
-            openclaw_version: 2026.5.22
-          - id: v0.0.55-aarch64
-            runner: ubuntu-24.04-arm
-            shard: v0-0-55-aarch64
-            nemoclaw_ref: v0.0.55
-            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
-            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
-            openshell_version: 0.0.44
-            openclaw_version: 2026.5.22
-          - id: v0.0.74-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-74-x86-64
-            nemoclaw_ref: v0.0.74
-            nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
-            installer_sha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
-            openshell_version: 0.0.72
-            openclaw_version: 2026.5.27
           - id: v0.0.89-x86_64
             runner: ubuntu-latest
             shard: v0-0-89-x86-64
+            tier: nightly
+            boundary: current OpenClaw state migration
             nemoclaw_ref: v0.0.89
             nemoclaw_commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e"
             installer_sha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2"
@@ -4195,7 +4162,7 @@ jobs:
       NEMOCLAW_CURRENT_OPENCLAW_VERSION: ${{ matrix.current_openclaw_version }}
       NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: ${{ matrix.openclaw_state_upgrade }}
       OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
+    steps: &openshell-gateway-upgrade-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -4208,11 +4175,8 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenShell gateway upgrade live Vitest test
-        # Keep the original v0.0.36 fixture on x86_64 and validate the exact
-        # v0.0.55/OpenShell 0.0.44 regression shape on x86_64 and arm64, plus
-        # the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump. The
-        # v0.0.89 row proves OpenClaw 2026.6.10 state survives the 2026.7.1
-        # migration without crossing the OpenShell secret boundary.
+        # Each matrix row keeps one migration boundary. The workflow tier
+        # controls when the row runs; the live assertions remain identical.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -4230,6 +4194,82 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
+
+  openshell-gateway-upgrade-compatibility:
+    name: openshell-gateway-upgrade-compatibility / ${{ matrix.id }}
+    needs: generate-matrix
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 0 * * 0') || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-compatibility,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade-compatibility,') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: v0.0.36-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-36-x86-64
+            tier: weekly
+            boundary: oldest retained registry migration
+            nemoclaw_ref: v0.0.36
+            nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
+            installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.36
+            openclaw_version: 2026.4.24
+          - id: v0.0.55-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-55-x86-64
+            tier: weekly
+            boundary: x86_64 OpenShell 0.0.44 regression
+            nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
+            openshell_version: 0.0.44
+            openclaw_version: 2026.5.22
+          - id: v0.0.55-aarch64
+            runner: ubuntu-24.04-arm
+            shard: v0-0-55-aarch64
+            tier: weekly
+            boundary: arm64 OpenShell 0.0.44 regression
+            nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
+            openshell_version: 0.0.44
+            openclaw_version: 2026.5.22
+          - id: v0.0.74-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-74-x86-64
+            tier: weekly
+            boundary: immediate predecessor registry migration
+            nemoclaw_ref: v0.0.74
+            nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
+            installer_sha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.72
+            openclaw_version: 2026.5.27
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "openshell-gateway-upgrade-compatibility"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-upgrade-compatibility
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
+      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
+      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
+      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
+      NEMOCLAW_CURRENT_OPENCLAW_VERSION: ${{ matrix.current_openclaw_version }}
+      NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: ${{ matrix.openclaw_state_upgrade }}
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps: *openshell-gateway-upgrade-steps
 
   messaging-providers:
     needs: generate-matrix
@@ -5620,6 +5660,7 @@ jobs:
         overlayfs-autofix,
         state-backup-restore,
         openshell-gateway-upgrade,
+        openshell-gateway-upgrade-compatibility,
         token-rotation,
         messaging-compatible-endpoint,
         messaging-providers,

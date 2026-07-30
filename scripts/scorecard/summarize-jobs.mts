@@ -184,7 +184,10 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
   if (input.apiJobs !== null) {
     const eligibleJobs = input.apiJobs.filter((job) => {
       const name = job.name.replace(/ \/ [^/]+$/u, "");
-      return !metaJobs.has(name) && (!explicitOnly.has(name) || selected.has(name));
+      return (
+        !metaJobs.has(name) &&
+        (!explicitOnly.has(name) || selected.has(name) || classifyApiJob(job) !== "skipped")
+      );
     });
     const jobs = normalizeApiJobs(eligibleJobs);
     const classified = jobs.map((job) => ({ job, result: classifyApiJob(job) }));
@@ -202,7 +205,10 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
 
   const entries = Object.entries(input.needs)
     .filter(([name]) => !metaJobs.has(name))
-    .filter(([name]) => !explicitOnly.has(name) || selected.has(name))
+    .filter(
+      ([name, value]) =>
+        !explicitOnly.has(name) || selected.has(name) || classifyNeed(value) !== "skipped",
+    )
     .sort(([left], [right]) => left.localeCompare(right));
   const classified = entries.map(([name, value]) => ({ name, result: classifyNeed(value) }));
   const counts = countResults(classified.map(({ result }) => result));

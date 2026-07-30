@@ -35,13 +35,19 @@ describe("PR E2E signal shard policy", () => {
       "hermes-inference-switch": ["anthropic"],
       "openclaw-inference-switch": ["anthropic"],
     });
-    expect(expectedSignalShards(["openshell-gateway-upgrade"], undefined, [DCODE_TARGET])).toEqual({
-      "openshell-gateway-upgrade": [
+    expect(
+      expectedSignalShards(
+        ["openshell-gateway-upgrade", "openshell-gateway-upgrade-compatibility"],
+        undefined,
+        [DCODE_TARGET],
+      ),
+    ).toEqual({
+      "openshell-gateway-upgrade": ["v0-0-89-x86-64"],
+      "openshell-gateway-upgrade-compatibility": [
         "v0-0-36-x86-64",
         "v0-0-55-x86-64",
         "v0-0-55-aarch64",
         "v0-0-74-x86-64",
-        "v0-0-89-x86-64",
       ],
       [DCODE_TARGET]: ["default"],
     });

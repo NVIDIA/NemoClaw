@@ -197,6 +197,12 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "openshell-gateway-upgrade-compatibility",
+    {
+      name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
+    },
+  ],
+  [
     "openshell-gateway-auth-contract",
     {
       name: "e2e-openshell-gateway-auth-contract",

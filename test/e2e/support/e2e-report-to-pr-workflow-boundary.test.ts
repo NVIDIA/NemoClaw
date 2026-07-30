@@ -178,6 +178,7 @@ async function executeReport(options: {
   testMatrix?: CredentialFreeTestMatrixRow[];
   jobs?: string;
   needs?: ReportNeeds;
+  explicitOnlyJobs?: string;
   paginateError?: Error;
 }): Promise<{
   body: string;
@@ -188,6 +189,7 @@ async function executeReport(options: {
     apiJobs = [],
     testMatrix = DEFAULT_TEST_MATRIX,
     jobs = testMatrix.map(({ id }) => id).join(","),
+    explicitOnlyJobs = "",
     needs = {
       "generate-matrix": { result: "success" },
       "shared-e2e": { result: "failure" },
@@ -204,7 +206,7 @@ async function executeReport(options: {
   const github = reportGithub({ createComment, paginate });
   const core = { info: vi.fn(), setFailed, warning };
   const env = {
-    EXPLICIT_ONLY_JOBS: "",
+    EXPLICIT_ONLY_JOBS: explicitOnlyJobs,
     TEST_MATRIX: JSON.stringify(testMatrix),
     JOB_PR_NUMBER: "42",
     JOB_TARGETS: "",
@@ -579,6 +581,7 @@ it("lists explicit-only jobs skipped by default dispatch with their selection hi
   const report = renderE2eReport({
     needs: {
       "generate-matrix": { result: "success" },
+      "mcp-bridge-dev": { result: "skipped" },
     },
     env: {
       EXPLICIT_ONLY_JOBS: "mcp-bridge-dev",
@@ -595,6 +598,61 @@ it("lists explicit-only jobs skipped by default dispatch with their selection hi
   expect(report.body).toContain(
     "> **Explicit-only jobs skipped:** `mcp-bridge-dev` (default dispatch excludes moving OpenShell dev artifacts unless explicitly selected; validate with `jobs=mcp-bridge-dev` or `targets=mcp-bridge-dev`).",
   );
+});
+
+it("reports the weekly gateway migration tier as skipped on a nightly run (#7920)", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (v0.0.89-x86_64)",
+        status: "completed",
+      },
+    ],
+    explicitOnlyJobs: "openshell-gateway-upgrade-compatibility",
+    jobs: "",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "openshell-gateway-upgrade": { result: "success" },
+      "openshell-gateway-upgrade-compatibility": { result: "skipped" },
+    },
+    testMatrix: [],
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| openshell-gateway-upgrade | ✅ success | — |");
+  expect(body).toContain("| openshell-gateway-upgrade-compatibility | ⏭️ skipped | — |");
+  expect(body).toContain(
+    "`openshell-gateway-upgrade-compatibility` (nightly and default manual dispatches exclude weekly gateway compatibility migrations unless selected",
+  );
+  expect(body).not.toContain("| openshell-gateway-upgrade-compatibility | ❌ failure |");
+});
+
+it("does not report the weekly gateway migration tier as skipped after a Sunday run (#7920)", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        conclusion: "success",
+        name: "openshell-gateway-upgrade-compatibility / v0.0.36-x86_64",
+        status: "completed",
+      },
+    ],
+    explicitOnlyJobs: "openshell-gateway-upgrade-compatibility",
+    jobs: "",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "openshell-gateway-upgrade": { result: "success" },
+      "openshell-gateway-upgrade-compatibility": { result: "success" },
+    },
+    testMatrix: [],
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| openshell-gateway-upgrade-compatibility | ✅ success | — |");
+  expect(body).toContain(
+    "**Requested test IDs:** _(default — workflow policy selected the enabled tests for this run)_",
+  );
+  expect(body).not.toContain("Explicit-only jobs skipped");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
@@ -754,6 +812,39 @@ it("reports one total wall clock span from valid matrix E2E jobs", async () => {
   expect(body).toContain("| openshell-gateway-upgrade | ✅ success | 11m 0s |");
   expect(body).not.toContain("OpenShell gateway upgrade (v0.1.0)");
   expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
+});
+
+it("aggregates the weekly gateway matrix under its tier job (#7920)", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        completed_at: "2026-07-15T00:05:00Z",
+        conclusion: "success",
+        name: "openshell-gateway-upgrade-compatibility / v0.0.36-x86_64",
+        started_at: "2026-07-15T00:00:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-15T00:11:00Z",
+        conclusion: "success",
+        name: "openshell-gateway-upgrade-compatibility / v0.0.55-aarch64",
+        started_at: "2026-07-15T00:02:00Z",
+        status: "completed",
+      },
+    ],
+    explicitOnlyJobs: "openshell-gateway-upgrade-compatibility",
+    jobs: "openshell-gateway-upgrade-compatibility",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "openshell-gateway-upgrade-compatibility": { result: "success" },
+    },
+    testMatrix: [],
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| openshell-gateway-upgrade-compatibility | ✅ success | 11m 0s |");
+  expect(body).not.toContain("Explicit-only jobs skipped");
+  expect(body).not.toContain("openshell-gateway-upgrade-compatibility / v0.0.36-x86_64");
 });
 
 it("reports one total wall clock span when matrix job names start with their job ID", async () => {

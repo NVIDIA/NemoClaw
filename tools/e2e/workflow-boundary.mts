@@ -156,6 +156,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "openshell-gateway-upgrade-compatibility",
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
@@ -577,6 +578,20 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
+const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  [
+    "test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts",
+    ["openclaw-plugin-runtime-exdev"],
+  ],
+  [
+    "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+    ["openshell-gateway-upgrade", "openshell-gateway-upgrade-compatibility"],
+  ],
+  [
+    "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
+    ["openshell-gateway-upgrade", "openshell-gateway-upgrade-compatibility"],
+  ],
+]);
 
 export function focusedE2eJobsForChangedFiles(
   changedFiles: readonly string[],
@@ -586,6 +601,9 @@ export function focusedE2eJobsForChangedFiles(
   for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
     for (const job of inventory.liveTestToJobs.get(file) ?? []) {
       addMapValue(matchedFilesByJob, job, file);
+    }
+    for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
+      if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
     }
     if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
       addMapValue(matchedFilesByJob, "snapshot-commands", file);
@@ -994,7 +1012,10 @@ function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
   const cronEntries = schedule
     .map((entry) => asRecord(entry).cron)
     .filter((cron): cron is string => typeof cron === "string");
-  if (!cronEntries.includes("0 0 * * *")) {
+  const runsDaily =
+    cronEntries.includes("0 0 * * *") ||
+    (cronEntries.includes("0 0 * * 1-6") && cronEntries.includes("0 0 * * 0"));
+  if (!runsDaily) {
     errors.push("workflow schedule must run daily at 00:00 UTC");
   }
 }

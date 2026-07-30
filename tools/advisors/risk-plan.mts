@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 8 as const;
+export const RISK_PLAN_VERSION = 9 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
 
@@ -108,6 +108,7 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/live/cloud-onboard.test.ts",
   "test/e2e/risk-signal-reporter.ts",
 ]);
+const E2E_SUPPORT_FILE = /^test\/e2e\/support\//;
 const FOCUSED_E2E_SUMMARY =
   "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
 const FOCUSED_E2E_INVARIANTS = [
@@ -351,6 +352,7 @@ function normalizeFocusedE2eJobs(
 
 function isRuntimeRelevant(file: string): boolean {
   if (RISK_RELEVANT_TEST_FILES.has(file)) return true;
+  if (E2E_SUPPORT_FILE.test(file)) return false;
   if (file.startsWith("tools/e2e/") || file.startsWith("test/e2e/")) {
     return !/\.(?:md|mdx)$/u.test(file);
   }
@@ -374,8 +376,12 @@ export function buildRiskPlan(options: {
 }): RiskPlan {
   const changedFiles = stableUnique(options.changedFiles);
   const runtimeFiles = changedFiles.filter(isRuntimeRelevant);
+  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
+  const focusedLiveFiles = new Set(focusedE2eJobs.flatMap((selection) => selection.matchedFiles));
   const staticFamilies: RiskPlanFamily[] = RISK_RULES.flatMap((rule) => {
-    const matchedFiles = runtimeFiles.filter(rule.matches);
+    const matchedFiles = runtimeFiles.filter(
+      (file) => rule.matches(file) && !(rule.id === "e2e-control-plane" && focusedLiveFiles.has(file)),
+    );
     if (matchedFiles.length === 0) return [];
     return [
       {
@@ -389,7 +395,6 @@ export function buildRiskPlan(options: {
       },
     ];
   });
-  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
   const focusedE2eTargets = normalizeFocusedE2eJobs(
     focusedPrE2eTargetsForChangedFiles(changedFiles),
     changedFiles,

@@ -88,6 +88,25 @@ PR-gate requests using the retired `sandbox-rebuild` and
 through the compatibility controller. `rebuild-openclaw` is the canonical live
 rebuild and upgrade seam.
 
+### Current OpenClaw plugin EXDEV lifecycle
+
+The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+
+1. Onboard the custom weather plugin as v1.
+2. Restart the gateway and verify v1.
+3. Recreate the sandbox with the plugin changed to v2.
+4. Run the cross-device runtime-dependency replacement probe.
+
+The recreation remains the replacement boundary. It verifies the v2 plugin
+with runtime inspection, `tools.catalog`, and `tools.invoke`, and it preserves
+the workspace marker. The job also keeps the test-only tmpfs mount, unchanged
+stock policy-source bytes, and the distinct-device and source-side `EXDEV`
+checks. The duplicate v3 rebuild is removed from this job. The
+`rebuild-openclaw` job remains the canonical live rebuild coverage.
+
+The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
+Scheduled-run timing for the reduced lifecycle has not yet been measured.
+
 ## Larger-runner routing
 
 The larger-runner experiment is inactive while the configuration variable
@@ -214,6 +233,31 @@ graph as the live targets:
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
+
+### Gateway migration tiers
+
+The OpenShell gateway migration matrix separates the current state-migration
+boundary from retained historical and architecture boundaries:
+
+| Job | NemoClaw row | Runner | Boundary | Scheduled cadence |
+| --- | --- | --- | --- | --- |
+| `openshell-gateway-upgrade` | `v0.0.89-x86_64` | `ubuntu-latest` | current OpenClaw state migration | Daily |
+| `openshell-gateway-upgrade-compatibility` | `v0.0.36-x86_64` | `ubuntu-latest` | oldest retained registry migration | Sunday |
+| `openshell-gateway-upgrade-compatibility` | `v0.0.55-x86_64` | `ubuntu-latest` | x86_64 OpenShell 0.0.44 regression | Sunday |
+| `openshell-gateway-upgrade-compatibility` | `v0.0.55-aarch64` | `ubuntu-24.04-arm` | arm64 OpenShell 0.0.44 regression | Sunday |
+| `openshell-gateway-upgrade-compatibility` | `v0.0.74-x86_64` | `ubuntu-latest` | immediate predecessor registry migration | Sunday |
+
+The workflow schedules the nightly path Monday through Saturday and schedules
+the complete tier set on Sunday. The current row runs on both schedules because
+`openshell-gateway-upgrade` is default-enabled.
+`openshell-gateway-upgrade-compatibility` is explicit-only outside the Sunday
+schedule. Select that job directly through the `jobs` or `targets` input for a
+focused PR run or another required qualification.
+
+Nightly reports list the compatibility job as skipped when it is not selected;
+they do not classify that tier as failed. The split removes four shards from
+each Monday-through-Saturday scheduled run. Runner-minute measurements for the
+new cadence are pending.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
 `targets` selectors is a full dispatch. Each full dispatch uses `github.run_id`
@@ -536,9 +580,17 @@ and advisor concurrency groups include that eligibility, so an ignored
 metadata-edit run cannot cancel an eligible run for the same PR. The trusted
 controller reads all changed files after eligible PR CI completes and builds
 the deterministic risk plan.
-Runtime families and changes to workflow-wired live tests select
-canonical selectors from the trusted `e2e.yaml` inventory independently of
-advisor output. Ordinary internal changes execute those focused selections.
+Runtime families and changes to workflow-wired live tests or their owning
+helpers select canonical jobs from the trusted `e2e.yaml` inventory
+independently of advisor output. A workflow-wired live test or owning helper
+selects one to three focused E2E journeys. A gateway-migration live test or
+owning helper selects both `openshell-gateway-upgrade` and
+`openshell-gateway-upgrade-compatibility`.
+
+Changes only under `test/e2e/support/` select no credentialed live E2E job.
+The `e2e-support` Vitest project runs those support tests in PR CI. A new or
+renamed live test that does not match the trusted workflow inventory keeps the
+conservative control-plane floor until its canonical job mapping is added.
 Gate initialization, CI coordination, and protected approval share one
 non-cancelling FIFO concurrency group for the exact
 repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
@@ -558,9 +610,10 @@ GitHub consequently returns no head-repository object.
 Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
 `cloud-inference`, and `security-posture`. The `e2e-control-plane`
-family is a conservative path boundary that includes non-documentation files
-under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
-policy, dependency and test configuration, and preparation and upload actions.
+family remains the conservative boundary for shared E2E tools, workflow and
+security files, unknown live test paths, risk policy, dependency and test
+configuration, and preparation and upload actions. These cross-cutting changes
+keep the broad three-job floor.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.

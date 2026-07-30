@@ -24,41 +24,56 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade workflow boundary", () => {
-  it("pins architecture and immediate-predecessor fixtures to the canonical live test (#6114)", () => {
+  it("pins the nightly and weekly gateway migration tiers to the canonical live test (#7920)", () => {
     const workflow = readOpenShellGatewayUpgradeWorkflow();
     expect(validateOpenShellGatewayUpgradeWorkflow(workflow)).toEqual([]);
     expect(validateE2eWorkflowBoundary()).toEqual([]);
 
-    const job = (workflow.jobs as Record<string, Record<string, unknown>>)[
-      "openshell-gateway-upgrade"
-    ];
-    job["runs-on"] = "ubuntu-latest";
-    const strategy = job.strategy as Record<string, Record<string, unknown>>;
-    const fixtures = strategy.matrix.include as Array<Record<string, unknown>>;
-    fixtures.find((fixture) => fixture.id === "v0.0.55-x86_64")!.sandbox_base_image_ref =
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
-    fixtures.find((fixture) => fixture.id === "v0.0.55-aarch64")!.runner = "ubuntu-latest";
-    fixtures.find((fixture) => fixture.id === "v0.0.74-x86_64")!.openclaw_version = "latest";
-    fixtures.find((fixture) => fixture.id === "v0.0.89-x86_64")!.openclaw_state_upgrade = "0";
-    const env = job.env as Record<string, unknown>;
-    env.NEMOCLAW_E2E_SHARD = "default";
-    env.NEMOCLAW_CURRENT_OPENCLAW_VERSION = "latest";
-    env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF = "0";
-    const run = (job.steps as Array<Record<string, unknown>>).find(
+    const jobs = workflow.jobs as Record<string, Record<string, unknown>>;
+    (workflow.on as Record<string, unknown>).schedule = [{ cron: "0 0 * * *" }];
+    const nightly = jobs["openshell-gateway-upgrade"];
+    const compatibility = jobs["openshell-gateway-upgrade-compatibility"];
+    nightly.if = "always()";
+    compatibility.if = "always()";
+    compatibility.name = "unrelated matrix name";
+    nightly["runs-on"] = "ubuntu-latest";
+    const nightlyFixtures = (nightly.strategy as Record<string, Record<string, unknown>>).matrix
+      .include as Array<Record<string, unknown>>;
+    nightlyFixtures[0]!.tier = "weekly";
+    const nightlyEnv = nightly.env as Record<string, unknown>;
+    nightlyEnv.E2E_DEFAULT_ENABLED = "0";
+    nightlyEnv.E2E_TARGET_ID = "wrong-target";
+    nightlyEnv.NEMOCLAW_E2E_SHARD = "default";
+    nightlyEnv.NEMOCLAW_CURRENT_OPENCLAW_VERSION = "latest";
+    nightlyEnv.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF = "0";
+    const compatibilityFixtures = (
+      compatibility.strategy as Record<string, Record<string, unknown>>
+    ).matrix.include as Array<Record<string, unknown>>;
+    compatibilityFixtures.find((fixture) => fixture.id === "v0.0.55-aarch64")!.runner =
+      "ubuntu-latest";
+    const compatibilityEnv = compatibility.env as Record<string, unknown>;
+    delete compatibilityEnv.E2E_DEFAULT_ENABLED;
+    const run = (nightly.steps as Array<Record<string, unknown>>).find(
       (step) => step.name === "Run OpenShell gateway upgrade live Vitest test",
     )!;
     run.run = "npx vitest run --project e2e-live unrelated.test.ts";
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
+        "E2E schedule must separate six nightly runs from the weekly compatibility run",
+        "openshell-gateway-upgrade must retain its execution-tier selector",
         "openshell-gateway-upgrade must run on ${{ matrix.runner }}",
-        "openshell-gateway-upgrade v0.0.55 matrix must pin x86_64 and arm64 upgrade fixtures",
-        "openshell-gateway-upgrade matrix must pin the immediate v0.0.74 x86_64 upgrade fixture",
-        "openshell-gateway-upgrade matrix must pin the v0.0.89 OpenClaw state-upgrade fixture",
+        "openshell-gateway-upgrade matrix must pin its tiered gateway upgrade fixtures",
+        "openshell-gateway-upgrade must publish its own target identity",
+        "openshell-gateway-upgrade must remain default-enabled",
         "openshell-gateway-upgrade must publish one risk-signal shard per legacy fixture",
         "openshell-gateway-upgrade must bind the current OpenClaw version from its fixture",
         "openshell-gateway-upgrade must bind the OpenClaw state-upgrade proof flag from its fixture",
         "openshell-gateway-upgrade step 'Run OpenShell gateway upgrade live Vitest test' must run: npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts",
+        "openshell-gateway-upgrade-compatibility must retain its execution-tier selector",
+        "openshell-gateway-upgrade-compatibility must keep one scorecard identity across its matrix",
+        "openshell-gateway-upgrade-compatibility matrix must pin its tiered gateway upgrade fixtures",
+        "openshell-gateway-upgrade-compatibility must remain explicit-only outside the weekly schedule",
       ]),
     );
   });

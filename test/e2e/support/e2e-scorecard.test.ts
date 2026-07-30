@@ -546,6 +546,46 @@ describe("E2E scorecard", () => {
     });
   });
 
+  it("counts a scheduled explicit-only tier when it ran and excludes it when skipped (#7920)", () => {
+    const input = {
+      explicitOnlyJobNames: ["openshell-gateway-upgrade-compatibility"],
+      explicitlySelected: [],
+      metaJobNames: ["generate-matrix", "scorecard"],
+    };
+
+    expect(
+      scorecardJobs.summarizeJobs({
+        ...input,
+        apiJobs: [
+          {
+            conclusion: "success",
+            name: "openshell-gateway-upgrade-compatibility / v0.0.36-x86_64",
+            status: "completed",
+          },
+        ],
+        needs: {},
+      }),
+    ).toMatchObject({ ran: 1, skipped: 0, success: 1, total: 1 });
+    expect(
+      scorecardJobs.summarizeJobs({
+        ...input,
+        apiJobs: null,
+        needs: {
+          "openshell-gateway-upgrade-compatibility": { result: "success" },
+        },
+      }),
+    ).toMatchObject({ ran: 1, skipped: 0, success: 1, total: 1 });
+    expect(
+      scorecardJobs.summarizeJobs({
+        ...input,
+        apiJobs: null,
+        needs: {
+          "openshell-gateway-upgrade-compatibility": { result: "skipped" },
+        },
+      }),
+    ).toMatchObject({ ran: 0, skipped: 0, success: 0, total: 0 });
+  });
+
   it("sanitizes raw traces into a timing-only artifact", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-"));
     const source = join(directory, "raw");
