@@ -2578,9 +2578,8 @@ async function createSandboxWithBaseImageResolution(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
-    recreateRuntime.advance("deleting");
-    runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
-    runOpenshell(["sandbox", "delete", "-g", GATEWAY_NAME, sandboxName], { ignoreError: true });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", GATEWAY_NAME, sandboxName], { ignoreError: true }); }
     recreateRuntime.confirmDeleted();
     if (previousEntry?.imageTag) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.

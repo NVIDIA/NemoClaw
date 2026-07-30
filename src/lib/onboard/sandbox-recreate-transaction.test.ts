@@ -33,6 +33,7 @@ const TX_ID = "11111111-1111-4111-8111-111111111111";
 const TARGET_GENERATION = "22222222-2222-4222-8222-222222222222";
 const SOURCE_ID = fingerprintSandboxRecreateValue("openshell-source-id");
 const TARGET_ID = fingerprintSandboxRecreateValue("target-id");
+const FOREIGN_ID = fingerprintSandboxRecreateValue("foreign-openshell-source-id");
 const TARGET_INTENT = fingerprintSandboxRecreateValue({
   agent: "openclaw",
   provider: "nvidia",
@@ -244,6 +245,49 @@ describe("sandbox recreate journal", () => {
       revision: 4,
       targetLiveIdentityFingerprint: TARGET_ID,
     });
+  });
+
+  it("proves the journaled source at the delete edge before onboarding removes it", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator) => {
+          mutator(session);
+          return session;
+        },
+      },
+      {
+        id: TX_ID,
+        targetGeneration: TARGET_GENERATION,
+        targetIntentFingerprint: TARGET_INTENT,
+      },
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => observation,
+      () => undefined,
+    );
+
+    observation = { state: "ready", liveIdentityFingerprint: FOREIGN_ID };
+    expect(() => runtime.beginDelete()).toThrow(/not the journaled source/i);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "planned", revision: 0 });
+
+    observation = { state: "ready", liveIdentityFingerprint: SOURCE_ID };
+    expect(runtime.beginDelete()).toBe("source");
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
+
+    observation = { state: "missing", liveIdentityFingerprint: null };
+    expect(runtime.beginDelete()).toBe("missing");
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
   });
 
   it("recovers or rejects at every resumed-onboard mutation boundary (#6492)", () => {

@@ -363,6 +363,8 @@ interface SandboxRecreateSessionStore {
   updateSession(mutator: (session: Session) => Session | void): Session;
 }
 
+export type SandboxRecreateSourcePresence = "missing" | "source";
+
 export interface SandboxRecreateRuntime {
   readonly acceptedTarget: boolean;
   readonly targetGeneration: string | undefined;
@@ -371,6 +373,7 @@ export interface SandboxRecreateRuntime {
     "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
   >;
   advance(phase: CheckpointSandboxRecreatePhase): void;
+  beginDelete(): SandboxRecreateSourcePresence;
   confirmDeleted(): void;
   recordCreated(): void;
 }
@@ -380,6 +383,7 @@ const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
   targetGeneration: undefined,
   registrationFields: {},
   advance: () => undefined,
+  beginDelete: () => "source",
   confirmDeleted: () => undefined,
   recordCreated: () => undefined,
 };
@@ -401,9 +405,10 @@ export function createSandboxRecreateRuntime(
     transactionId: request.id,
     targetGeneration: request.targetGeneration,
   });
-  const advance = (phase: CheckpointSandboxRecreatePhase): void => {
+  let phase: CheckpointSandboxRecreatePhase = transaction.phase;
+  const advance = (next: CheckpointSandboxRecreatePhase): void => {
     sessionStore.updateSession((current) => {
-      advanceSandboxRecreateTransaction(current, transaction.id, phase);
+      phase = advanceSandboxRecreateTransaction(current, transaction.id, next).phase;
       return current;
     });
   };
@@ -432,6 +437,21 @@ export function createSandboxRecreateRuntime(
       };
     },
     advance,
+    beginDelete: () => {
+      const live = observe(sandboxName);
+      if (live.state !== "missing") {
+        if (
+          !transaction.sourceLiveIdentityFingerprint ||
+          live.liveIdentityFingerprint !== transaction.sourceLiveIdentityFingerprint
+        ) {
+          throw new Error(
+            `Cannot delete sandbox '${sandboxName}': the live same-name sandbox is not the journaled source.`,
+          );
+        }
+      }
+      if (!sandboxRecreatePhaseReached(phase, "deleted")) advance("deleting");
+      return live.state === "missing" ? "missing" : "source";
+    },
     confirmDeleted: () => {
       if (observe(sandboxName).state !== "missing") {
         throw new Error(

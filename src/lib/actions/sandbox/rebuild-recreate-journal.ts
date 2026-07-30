@@ -14,6 +14,7 @@ import {
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
   planSandboxRecreateRecovery,
+  type SandboxRecreateSourcePresence,
   sandboxRecreatePhaseReached,
 } from "../../onboard/sandbox-recreate-transaction";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
@@ -27,7 +28,7 @@ export type RebuildRecreateJournalTarget = SandboxRecreateTarget;
 
 export type RebuildSandboxObserver = SandboxRecreateObserver;
 
-export type RebuildRecreateSourcePresence = "missing" | "source";
+export type RebuildRecreateSourcePresence = SandboxRecreateSourcePresence;
 
 export interface RebuildRecreateJournal {
   readonly id: string;
