@@ -79,6 +79,15 @@ process.exit(0);
       path.join(shimDir, "mv"),
       options.movesFail === true
         ? `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(
+  ${JSON.stringify(moveLog)},
+  JSON.stringify({
+    target: args[args.length - 1],
+    scriptsPresent: fs.existsSync(${JSON.stringify(path.join(hermesDir, "scripts"))}),
+  }) + "\\n",
+);
 process.exit(1);
 `
         : `#!/usr/bin/env node
@@ -207,6 +216,8 @@ describe("Hermes cron state restore", () => {
       movesFail: true,
     });
 
+    expect(result.moves.map((move) => path.basename(move.target))).toEqual(["scripts"]);
+    expect(result.restoredCronJob).toBeNull();
     expect(result.restore.success).toBe(false);
     expect(result.stagingLeftBehind).toBe(false);
   });
