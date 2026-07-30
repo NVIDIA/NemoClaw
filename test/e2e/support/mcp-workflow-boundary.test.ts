@@ -200,7 +200,10 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
-  it("rejects an unverified or mutable cloudflared installer in either MCP lane", () => {
+  it.each([
+    "mcp-bridge-dev",
+    "openshell-credential-generation-window",
+  ])("rejects an unverified or mutable cloudflared installer in %s", (jobName) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {
@@ -216,18 +219,18 @@ describe("MCP workflow artifact boundary", () => {
           }
         >;
       };
-      const cloudflared = workflow.jobs["mcp-bridge-dev"].steps.find(
+      const cloudflared = workflow.jobs[jobName].steps.find(
         (step) => step.name === "Install and verify cloudflared prerequisite",
       );
-      requireFixture(cloudflared?.env, "MCP cloudflared installer fixture is missing");
+      requireFixture(cloudflared?.env, `${jobName} cloudflared installer fixture is missing`);
       cloudflared.env.CLOUDFLARED_DEB_SHA256 = "mutable";
       cloudflared.run = "sudo apt-get install -y cloudflared";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "mcp-bridge-dev must pin the reviewed cloudflared package checksum",
-          "mcp-bridge-dev cloudflared installation must not use mutable package repositories",
+          `${jobName} must pin the reviewed cloudflared package checksum`,
+          `${jobName} cloudflared installation must not use mutable package repositories`,
         ]),
       );
     } finally {
