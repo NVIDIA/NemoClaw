@@ -217,38 +217,6 @@ describe("privileged sandbox exec routing", () => {
     );
   });
 
-  it("selects the pinned container while a transaction backup is still running", () => {
-    withPrivilegedExecMocks(
-      {
-        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
-        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
-        dockerCapture: () =>
-          [
-            "replacement-container-id\topenshell-alpha",
-            "original-container-id\topenshell-alpha-nemoclaw-backup",
-          ].join("\n"),
-      },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(
-          privilegedSandboxExecArgv(
-            "alpha",
-            ["/trusted/control"],
-            false,
-            true,
-            "replacement-container-id",
-          ),
-        ).toEqual(
-          expect.arrayContaining([
-            "--user",
-            "root",
-            "replacement-container-id",
-            "/trusted/control",
-          ]),
-        );
-      },
-    );
-  });
-
   it("refuses privileged execution when the pinned container identity is empty", () => {
     withPrivilegedExecMocks(
       {

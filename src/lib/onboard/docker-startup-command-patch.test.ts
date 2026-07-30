@@ -43,66 +43,6 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("Docker startup-command patch", () => {
-  it("preserves the registered supervisor until recovery finalizes", () => {
-    const dockerCapture = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
-        ? "old-container-id\n"
-        : args[0] === "inspect"
-          ? JSON.stringify([inspectFixture()])
-          : "",
-    );
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
-      status: 0,
-      stdout: "new-container-id\n",
-    }));
-
-    const result = recreateStartupCommandForTest(
-      {
-        sandboxName: "alpha",
-        keepOriginalRunningUntilFinalize: true,
-        waitForSupervisor: false,
-        openshellSandboxCommand: ["env", "nemoclaw-start"],
-      },
-      {
-        dockerCapture,
-        dockerRunDetached,
-        dockerRename,
-        dockerStop,
-        now: () => new Date("2026-07-10T00:00:00Z"),
-      },
-    );
-
-    expect(result).toMatchObject({
-      newContainerId: "new-container-id",
-      backupWasRunning: true,
-      backupRemoved: false,
-    });
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRename.mock.invocationCallOrder[0]).toBeLessThan(
-      dockerRunDetached.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
-    expect(cloneArgs).toContain(`sha256:${"c".repeat(64)}`);
-  });
-
-  it("requires deferred finalization when preserving the registered supervisor", () => {
-    const dockerCapture = vi.fn();
-
-    expect(() =>
-      recreateStartupCommandForTest(
-        {
-          sandboxName: "alpha",
-          keepOriginalRunningUntilFinalize: true,
-          openshellSandboxCommand: ["env", "nemoclaw-start"],
-        },
-        { dockerCapture },
-      ),
-    ).toThrow(/requires deferred supervisor finalization/);
-    expect(dockerCapture).not.toHaveBeenCalled();
-  });
-
   it("persists the startup command without adding GPU-only container privileges", () => {
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
@@ -115,6 +55,7 @@ describe("Docker startup-command patch", () => {
       status: 0,
       stdout: "new-container-id\n",
     }));
+    const dockerStop = vi.fn(() => ({ status: 0 }));
 
     const result = recreateStartupCommandForTest(
       {
@@ -127,7 +68,7 @@ describe("Docker startup-command patch", () => {
         dockerCapture,
         dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
-        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerStop,
         sleep: vi.fn(),
         now: () => new Date("2026-07-10T00:00:00Z"),
       },
@@ -153,6 +94,9 @@ describe("Docker startup-command patch", () => {
     expect(dockerCapture).toHaveBeenCalledWith(
       expect.arrayContaining(["ps", "-a", "--no-trunc"]),
       expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
+      dockerRunDetached.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });
 

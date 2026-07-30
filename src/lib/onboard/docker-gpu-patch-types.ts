@@ -27,7 +27,6 @@ export type DockerGpuPatchDeps = {
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;
   dockerRename?: DockerRenameFn;
-  dockerForceRm?: DockerContainerFn;
   dockerRm?: DockerContainerFn;
   dockerStart?: DockerContainerFn;
   dockerStop?: DockerContainerFn;
@@ -92,9 +91,6 @@ export type DockerGpuPatchResult = {
   originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
-  // True when recovery did not stop the original OpenShell supervisor before
-  // creating the replacement. The caller passes replacement health separately.
-  backupWasRunning?: boolean;
   // True when the patch path also confirmed supervisor reconnect AND removed
   // the backup container. False when the caller deferred the reconnect wait
   // (via `waitForSupervisor: false`); the backup is still in place and the

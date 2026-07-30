@@ -177,7 +177,6 @@ export function relaunchManagedSupervisorSession(
       sandboxName,
       openshellSandboxCommand: startupCommand,
       expectedOldContainerId: containerId,
-      keepOriginalRunningUntilFinalize: true,
       waitForSupervisor: false,
     });
     pendingStateBackupPath = null;

@@ -108,7 +108,6 @@ function selectDirectSandboxContainer(
   sandboxName: string,
   labeledContainerRows: string,
   registeredNames: readonly string[] = [sandboxName],
-  expectedContainerId?: string,
 ): string | null {
   const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
     (a, b) => b.length - a.length || a.localeCompare(b),
@@ -126,16 +125,6 @@ function selectDirectSandboxContainer(
         "refusing lifecycle execution.",
     );
   }
-  if (expectedContainerId !== undefined) {
-    const expected = candidates.filter(({ id }) => id === expectedContainerId);
-    if (expected.length !== 1) {
-      throw new Error(
-        `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
-          "refusing privileged execution against a different container.",
-      );
-    }
-    return expected[0].id;
-  }
   if (candidates.length > 1) {
     throw new Error(
       `Multiple running OpenShell containers are labeled for sandbox '${sandboxName}'; ` +
@@ -149,10 +138,7 @@ function expectedDirectContainerPattern(sandboxName: string): string {
   return `openshell-${sandboxName} or openshell-${sandboxName}-*`;
 }
 
-function findDirectSandboxContainer(
-  sandboxName: string,
-  expectedContainerId?: string,
-): string | null {
+function findDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
   let output: string;
   try {
@@ -176,7 +162,7 @@ function findDirectSandboxContainer(
       { cause: error },
     );
   }
-  return selectDirectSandboxContainer(sandboxName, output, names, expectedContainerId);
+  return selectDirectSandboxContainer(sandboxName, output, names);
 }
 
 function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
@@ -232,7 +218,7 @@ function privilegedSandboxExecArgv(
   // Docker/direct-container is the only supported privileged mutation path.
   // Try it even when older registry entries do not record a driver, then fail
   // clearly if no matching sandbox container is running.
-  const container = findDirectSandboxContainer(sandboxName, expectedContainerId);
+  const container = findDirectSandboxContainer(sandboxName);
   if (container) {
     if (expectedContainerId !== undefined && container !== expectedContainerId) {
       throw new Error(
