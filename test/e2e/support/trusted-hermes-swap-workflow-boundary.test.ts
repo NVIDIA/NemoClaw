@@ -377,17 +377,17 @@ describe("trusted Hermes swap workflow boundary", () => {
     },
     {
       expected: "checkout SHA must be lowercase 40-hex",
-      name: "the exact-head checkout SHA is malformed",
+      name: "the PR E2E checkout SHA is malformed",
       options: { checkoutSha: "A".repeat(40) },
     },
     {
       expected: "workflow source must match the trusted dispatch revision",
-      name: "the exact-head workflow SHA is missing",
+      name: "the PR E2E workflow SHA is missing",
       options: { expectedWorkflowSha: "" },
     },
     {
       expected: "workflow source must match the trusted dispatch revision",
-      name: "the exact-head workflow SHA differs",
+      name: "the PR E2E workflow SHA differs",
       options: { expectedWorkflowSha: "c".repeat(40) },
     },
     {

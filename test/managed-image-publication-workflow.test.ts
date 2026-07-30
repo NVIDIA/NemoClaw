@@ -211,7 +211,7 @@ describe("complete managed-image publication workflow", () => {
 
     expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
     expect(publisher).toMatchObject({
-      needs: ["build-and-push", "build-and-push-openclaw"],
+      needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
       permissions: {
         contents: "read",
         packages: "write",
@@ -222,57 +222,60 @@ describe("complete managed-image publication workflow", () => {
     expect(publisher.if).toContain("github.ref == 'refs/heads/main'");
     expect(publisher.if).toContain("startsWith(github.ref, 'refs/tags/v')");
 
-    const qemuPublisher = required(
-      baseWorkflow.jobs?.["build-and-push"],
-      "base-image workflow is missing Hermes and DCode publishers",
-    );
-    expect(step(qemuPublisher, "Build and push").id).toBe("build");
-    expect(step(qemuPublisher, "Build and push").with?.platforms).toBe("linux/amd64,linux/arm64");
-    expect(step(qemuPublisher, "Export managed base image contract").run).toContain(
-      'reference="${IMAGE}@${DIGEST}"',
-    );
-    expect(step(qemuPublisher, "Export managed base image contract").run).toContain(
-      "platformReferences: $platformReferences",
-    );
-    expect(step(qemuPublisher, "Upload managed base image contract").with?.name).toBe(
-      "managed-base-${{ matrix.agent }}",
-    );
+    const basePublishers = [
+      {
+        agent: "hermes",
+        artifact: "managed-base-hermes",
+        job: "build-and-push-hermes",
+        platformsJob: "build-hermes-platforms",
+      },
+      {
+        agent: "langchain-deepagents-code",
+        artifact: "managed-base-langchain-deepagents-code",
+        job: "build-and-push-dcode",
+        platformsJob: "build-dcode-platforms",
+      },
+      {
+        agent: "openclaw",
+        artifact: "managed-base-openclaw",
+        job: "build-and-push-openclaw",
+        platformsJob: "build-openclaw-platforms",
+      },
+    ] as const;
 
-    const openClawPublisher = required(
-      baseWorkflow.jobs?.["build-and-push-openclaw"],
-      "base-image workflow is missing the OpenClaw manifest publisher",
-    );
-    expect(step(openClawPublisher, "Create and verify multi-platform manifest").id).toBe(
-      "manifest",
-    );
-    expect(step(openClawPublisher, "Export managed base image contract").env?.DIGEST).toBe(
-      "${{ steps.manifest.outputs.digest }}",
-    );
-    expect(step(openClawPublisher, "Export managed base image contract").run).toContain(
-      "platformDigests: $platformDigests",
-    );
-    expect(step(openClawPublisher, "Upload managed base image contract").with?.name).toBe(
-      "managed-base-openclaw",
-    );
+    for (const expectedPublisher of basePublishers) {
+      const basePublisher = required(
+        baseWorkflow.jobs?.[expectedPublisher.job],
+        `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
+      );
+      const manifest = step(basePublisher, "Create and verify multi-platform manifest");
+      expect(manifest.id).toBe("manifest");
+      expect(manifest.run).toContain('reference="$IMAGE@$digest"');
+      expect(manifest.run).toContain(`agent: "${expectedPublisher.agent}"`);
+      expect(manifest.run).toContain("platformDigests: {");
+      expect(step(basePublisher, "Upload managed base image contract").with?.name).toBe(
+        expectedPublisher.artifact,
+      );
 
-    const nativeOpenClaw = required(
-      baseWorkflow.jobs?.["build-openclaw-platforms"],
-      "base-image workflow is missing native OpenClaw platforms",
-    );
-    expect(nativeOpenClaw.strategy?.matrix?.include).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          arch: "amd64",
-          platform: "linux/amd64",
-          runner: "ubuntu-24.04",
-        }),
-        expect.objectContaining({
-          arch: "arm64",
-          platform: "linux/arm64",
-          runner: "ubuntu-24.04-arm",
-        }),
-      ]),
-    );
+      const nativePlatforms = required(
+        baseWorkflow.jobs?.[expectedPublisher.platformsJob],
+        `base-image workflow is missing native ${expectedPublisher.agent} platforms`,
+      );
+      expect(nativePlatforms.strategy?.matrix?.include).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            arch: "amd64",
+            platform: "linux/amd64",
+            runner: "ubuntu-24.04",
+          }),
+          expect.objectContaining({
+            arch: "arm64",
+            platform: "linux/arm64",
+            runner: "ubuntu-24.04-arm",
+          }),
+        ]),
+      );
+    }
   });
 
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
