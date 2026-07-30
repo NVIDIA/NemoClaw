@@ -1968,12 +1968,15 @@ function validateCompatibleMainComparison(
     !Number.isSafeInteger(value.ahead_by) ||
     (value.ahead_by as number) < 1 ||
     value.behind_by !== 0 ||
+    value.total_commits !== value.ahead_by ||
     !isObjectRecord(value.base_commit) ||
     value.base_commit.sha !== workflowSha ||
     !isObjectRecord(value.merge_base_commit) ||
     value.merge_base_commit.sha !== workflowSha ||
-    !isObjectRecord(value.head_commit) ||
-    value.head_commit.sha !== mainSha ||
+    !Array.isArray(value.commits) ||
+    value.commits.length !== value.ahead_by ||
+    !isObjectRecord(value.commits.at(-1)) ||
+    value.commits.at(-1)?.sha !== mainSha ||
     !Array.isArray(value.files)
   ) {
     throw new Error(`main is not a validated descendant of workflow commit ${workflowSha}`);

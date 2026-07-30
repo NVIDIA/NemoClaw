@@ -475,7 +475,7 @@ describe("PR E2E controller", () => {
     ).toThrow(/mismatched workflow dispatch URLs/u);
   });
 
-  it("dispatches from a safe descendant of the triggering workflow commit", async () => {
+  it("dispatches from a safe descendant in GitHub comparison commit order", async () => {
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -495,9 +495,10 @@ describe("PR E2E controller", () => {
                 status: "ahead",
                 ahead_by: 1,
                 behind_by: 0,
+                total_commits: 1,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+                commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
                 files: [{ filename: "docs/quickstart.mdx" }],
               }),
           ),
@@ -589,9 +590,10 @@ describe("PR E2E controller", () => {
                 status: "ahead",
                 ahead_by: 1,
                 behind_by: 0,
+                total_commits: 1,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+                commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
                 files,
               }),
           ),
@@ -628,7 +630,20 @@ describe("PR E2E controller", () => {
         behind_by: 1,
         base_commit: { sha: WORKFLOW_SHA },
         merge_base_commit: { sha: WORKFLOW_SHA },
-        head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+        files: [{ filename: "docs/quickstart.mdx" }],
+      },
+      error: /not a validated descendant/u,
+    },
+    {
+      label: "an incomplete descendant commit list",
+      comparison: {
+        status: "ahead",
+        ahead_by: 2,
+        behind_by: 0,
+        total_commits: 2,
+        base_commit: { sha: WORKFLOW_SHA },
+        merge_base_commit: { sha: WORKFLOW_SHA },
+        commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
         files: [{ filename: "docs/quickstart.mdx" }],
       },
       error: /not a validated descendant/u,
@@ -639,9 +654,10 @@ describe("PR E2E controller", () => {
         status: "ahead",
         ahead_by: 1,
         behind_by: 0,
+        total_commits: 1,
         base_commit: { sha: WORKFLOW_SHA },
         merge_base_commit: { sha: WORKFLOW_SHA },
-        head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+        commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
         files: Array.from({ length: 300 }, (_, index) => ({
           filename: `docs/generated-${index}.mdx`,
         })),
@@ -716,9 +732,10 @@ describe("PR E2E controller", () => {
                 status: "ahead",
                 ahead_by: 1,
                 behind_by: 0,
+                total_commits: 1,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+                commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
                 files: [{ filename: "docs/quickstart.mdx" }],
               }),
           ),
