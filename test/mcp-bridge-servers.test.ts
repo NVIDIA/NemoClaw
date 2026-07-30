@@ -13,6 +13,7 @@ import { MCP_BRIDGE_ALLOWED_METHODS } from "../src/lib/actions/sandbox/mcp-bridg
 import { startTestProgress } from "./e2e/fixtures/progress.ts";
 import {
   buildCloudflaredQuickTunnelArgs,
+  HERMES_DEFERRED_TOOL_SEARCH_MISS,
   parseTryCloudflareOrigin,
   type StartedHttpServer,
   startCompatibleMock,
@@ -36,7 +37,7 @@ type CompatibleToolCallResponse = {
   choices: Array<{
     message: {
       content?: unknown;
-      tool_calls: Array<{ function: { name: string; arguments: string } }>;
+      tool_calls: Array<{ id: string; function: { name: string; arguments: string } }>;
     };
   }>;
 };
@@ -588,6 +589,7 @@ describe("authenticated MCP live fixtures", () => {
       ).json()) as CompatibleToolCallResponse;
     const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
     expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_hermes_tool_search",
       function: {
         name: "tool_search",
         arguments: JSON.stringify({ query: deferredToolName }),
@@ -602,7 +604,11 @@ describe("authenticated MCP live fixtures", () => {
     ]);
     expect(missedSearch).toMatchObject({
       choices: [
-        { message: { content: expect.stringContaining("did not return the deferred target") } },
+        {
+          message: {
+            content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+          },
+        },
       ],
     });
     const echoedSearchQueryWithoutMatch = await call([
@@ -614,7 +620,11 @@ describe("authenticated MCP live fixtures", () => {
     ]);
     expect(echoedSearchQueryWithoutMatch).toMatchObject({
       choices: [
-        { message: { content: expect.stringContaining("did not return the deferred target") } },
+        {
+          message: {
+            content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+          },
+        },
       ],
     });
     const searchResult = {
