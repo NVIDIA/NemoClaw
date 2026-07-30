@@ -31,7 +31,9 @@ function firstId<T extends { id: string }>(rows: readonly T[], label: string): s
 
 function retiredControllerSelectorIds(): string[] {
   const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
-  return RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
+  const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
+  expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
+  return retiredIds;
 }
 
 describe("E2E workflow plan", () => {
