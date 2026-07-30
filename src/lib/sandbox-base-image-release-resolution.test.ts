@@ -273,9 +273,8 @@ describe("sandbox base-image release resolution", () => {
       ignoreError: true,
       suppressOutput: true,
     });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
+    expect(dockerMocks.imageInspect.mock.calls.map(([ref]) => ref)).not.toContain(
       NEAREST_RELEASE_REF,
-      expect.anything(),
     );
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
