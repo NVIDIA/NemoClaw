@@ -38,6 +38,7 @@ import {
 } from "./root-apply";
 import {
   beginManagedStartupSharedStateTransaction,
+  clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
   getManagedStartupSharedStateTransactionStatus,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
@@ -1262,7 +1263,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--apply-bootstrap-file|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--apply-bootstrap-file|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1463,6 +1464,20 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       fail("managed startup transaction is missing at commit");
     }
     console.log(`[managed-startup] committed ${agent} shared state`);
+    return;
+  }
+  if (argv.length === 5 && argv[0] === "--clear-shared-state-commit-receipt") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    if (
+      !clearManagedStartupSharedStateCommitReceipt(agent, {
+        bootstrapIdentity,
+      })
+    ) {
+      fail("managed startup durable commit receipt is missing at cleanup");
+    }
+    console.log(`[managed-startup] cleared ${agent} durable shared-state commit receipt`);
     return;
   }
   if (argv.length === 7 && argv[0] === "--shared-state-transaction-status") {

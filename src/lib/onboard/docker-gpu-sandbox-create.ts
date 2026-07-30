@@ -28,6 +28,10 @@ import {
   type RecreateGpuPatchFn,
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
+import {
+  ManagedBootstrapCommitStateIndeterminateError,
+  ManagedBootstrapDurableCommitCleanupPendingError,
+} from "./managed-bootstrap/adapter";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 export type {
@@ -144,6 +148,8 @@ export function createDockerGpuSandboxCreatePatch(
   let patchError: unknown = null;
   let needsSupervisorWait = false;
   let cutoverFinalized = false;
+  let cutoverCommitCleanupPending = false;
+  let cutoverCommitStateIndeterminate = false;
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
 
@@ -191,6 +197,9 @@ export function createDockerGpuSandboxCreatePatch(
 
   const rollbackAfterFailure = async (): Promise<Error | null> => {
     if (cutoverFinalized || (!managedBootstrapCutover && !result)) return null;
+    // The authoritative commit already made shared state irreversible. The
+    // only legal recovery is an idempotent retry of exact backup removal.
+    if (cutoverCommitCleanupPending || cutoverCommitStateIndeterminate) return null;
     if (cutoverFinalization) {
       try {
         if (cutoverFinalizationOutcome !== "rollback") {
@@ -394,6 +403,32 @@ export function createDockerGpuSandboxCreatePatch(
             await managedBootstrapCutover.commit();
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
+            if (
+              error instanceof ManagedBootstrapDurableCommitCleanupPendingError ||
+              error instanceof ManagedBootstrapCommitStateIndeterminateError ||
+              cutoverCommitCleanupPending
+            ) {
+              cutoverCommitStateIndeterminate =
+                error instanceof ManagedBootstrapCommitStateIndeterminateError;
+              cutoverCommitCleanupPending = !cutoverCommitStateIndeterminate;
+              needsSupervisorWait = false;
+              onPatchFailureExit(options.sandboxName, failure, {
+                runCaptureOpenshell: options.deps.runCaptureOpenshell,
+                dockerCapture: options.deps.dockerCapture,
+                additionalSummaryLines: [
+                  ...routeAdapter.additionalSummaryLines,
+                  cutoverCommitStateIndeterminate
+                    ? "managed_bootstrap_cutover=commit-state-indeterminate"
+                    : "managed_bootstrap_cutover=durably-committed",
+                  "managed_bootstrap_finalization_cleanup=pending",
+                ],
+                context: {
+                  ...failureContext(),
+                  rolledBack: false,
+                },
+              });
+              return;
+            }
             let rollbackError: Error | null = null;
             try {
               await managedBootstrapCutover.rollback();
@@ -423,6 +458,8 @@ export function createDockerGpuSandboxCreatePatch(
         const finalizeOutcome = result
           ? finalizeBackup({ result, supervisorReady: true }, options.deps)
           : null;
+        cutoverCommitCleanupPending = false;
+        cutoverCommitStateIndeterminate = false;
         cutoverFinalized = true;
         if (!finalizeOutcome || finalizeOutcome.backupRemoved) return;
         onPatchFailureExit(

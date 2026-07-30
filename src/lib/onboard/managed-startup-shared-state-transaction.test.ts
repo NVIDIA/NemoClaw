@@ -13,8 +13,10 @@ import type { ManagedStartupAgent, ManagedStartupProfile } from "./managed-start
 import { fingerprintManagedStartupProfile } from "./managed-startup/profile";
 import {
   beginManagedStartupSharedStateTransaction,
+  clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
   getManagedStartupSharedStateTransactionStatus,
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   type ManagedStartupSharedTransactionOptions,
   rollbackManagedStartupSharedStateTransaction,
 } from "./managed-startup/shared-state-transaction";
@@ -66,6 +68,13 @@ describe("managed startup shared-state transaction", () => {
     return path.join(
       sandboxRoot,
       agent === "openclaw" ? ".openclaw" : agent === "hermes" ? ".hermes" : ".deepagents",
+    );
+  }
+
+  function commitReceiptDirectory(): string {
+    return path.join(
+      path.dirname(transactionDirectory),
+      path.basename(MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY),
     );
   }
 
@@ -246,6 +255,136 @@ describe("managed startup shared-state transaction", () => {
     expect(fs.readFileSync(config, "utf8")).toBe("after\n");
     expect(fs.existsSync(transactionDirectory)).toBe(false);
     expect(commitManagedStartupSharedStateTransaction("openclaw", options)).toBe(false);
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("persists one exact compact %s bootstrap commit across fresh calls, forbids rollback, and retires it for the next attempt", (agent) => {
+    const profile = managedStartupE2eProfile(agent);
+    const bootstrapIdentity = "b".repeat(64);
+    const nextBootstrapIdentity = "d".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    const root = agentRoot(agent);
+    fs.mkdirSync(root);
+    const config = path.join(
+      root,
+      agent === "openclaw" ? "openclaw.json" : agent === "hermes" ? "config.yaml" : "config.toml",
+    );
+    fs.writeFileSync(config, "before\n");
+
+    expect(beginManagedStartupSharedStateTransaction(profile, boundOptions)).toBe(true);
+    fs.writeFileSync(config, "committed\n");
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("pending");
+    expect(commitManagedStartupSharedStateTransaction(agent, boundOptions)).toBe(true);
+
+    const receiptDirectory = commitReceiptDirectory();
+    const receiptFile = path.join(receiptDirectory, "receipt.json");
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    expect(fs.readdirSync(receiptDirectory)).toEqual(["receipt.json"]);
+    expect(mode(receiptDirectory)).toBe(0o700);
+    expect(mode(receiptFile)).toBe(0o400);
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toEqual({
+      schemaVersion: 1,
+      agent,
+      profileFingerprint: fingerprintManagedStartupProfile(profile),
+      bootstrapIdentity,
+    });
+
+    // These calls reconstruct state solely from the image-owned receipt.
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("committed");
+    expect(commitManagedStartupSharedStateTransaction(agent, boundOptions)).toBe(true);
+    expect(() => rollbackManagedStartupSharedStateTransaction(agent, boundOptions)).toThrow(
+      /durably committed and cannot be rolled back/u,
+    );
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: "e".repeat(64),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toThrow(/different bootstrap attempt/u);
+    expect(fs.readFileSync(config, "utf8")).toBe("committed\n");
+
+    expect(clearManagedStartupSharedStateCommitReceipt(agent, boundOptions)).toBe(true);
+    expect(fs.existsSync(receiptDirectory)).toBe(false);
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("none");
+
+    const nextOptions = { ...options, bootstrapIdentity: nextBootstrapIdentity };
+    expect(beginManagedStartupSharedStateTransaction(profile, nextOptions)).toBe(true);
+    expect(rollbackManagedStartupSharedStateTransaction(agent, nextOptions)).toBe(true);
+  });
+
+  it("recovers and compacts an atomically established commit after cleanup interruption", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const bootstrapIdentity = "b".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "before\n");
+    beginManagedStartupSharedStateTransaction(profile, boundOptions);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "committed\n");
+
+    const originalRmSync = fs.rmSync.bind(fs);
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(((
+      target: fs.PathLike,
+      removeOptions?: fs.RmDirOptions,
+    ) => {
+      if (String(target).endsWith(`${path.sep}backups`)) {
+        throw new Error("injected post-rename cleanup interruption");
+      }
+      return originalRmSync(target, removeOptions);
+    }) as typeof fs.rmSync);
+    expect(() => commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
+      /injected post-rename cleanup interruption/u,
+    );
+    rm.mockRestore();
+
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("committed");
+    expect(commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toBe(true);
+    expect(fs.readdirSync(commitReceiptDirectory())).toEqual(["receipt.json"]);
+    expect(clearManagedStartupSharedStateCommitReceipt("openclaw", boundOptions)).toBe(true);
   });
 
   it("resumes the same pending profile idempotently and rejects profile drift", () => {

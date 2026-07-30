@@ -9,6 +9,10 @@ import type {
   DockerGpuPatchResult,
 } from "./docker-gpu-patch";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import {
+  ManagedBootstrapCommitStateIndeterminateError,
+  ManagedBootstrapDurableCommitCleanupPendingError,
+} from "./managed-bootstrap/adapter";
 
 function startupResult(): DockerGpuPatchResult {
   return {
@@ -249,6 +253,78 @@ describe("Docker startup-command sandbox creation", () => {
     );
     await patch.rollbackManagedStartupAfterCreateFailure();
     expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      label: "durably committed cleanup-pending",
+      failure: new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: "b".repeat(64),
+        cleanupRuntimeId: "old-container",
+        detail: "injected exact backup cleanup failure",
+      }),
+      stateLine: "managed_bootstrap_cutover=durably-committed",
+    },
+    {
+      label: "commit-state-indeterminate",
+      failure: new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: "b".repeat(64),
+        runtimeId: "replacement-container",
+        detail: "injected immutable commit probe failure",
+      }),
+      stateLine: "managed_bootstrap_cutover=commit-state-indeterminate",
+    },
+  ])("never rolls back a $label cutover", async ({ failure, stateLine }) => {
+    const deps = makeDeps();
+    const commit = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined);
+    const rollback = vi.fn(async () => {});
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: { onPatchFailureExit },
+    });
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "startup-command",
+        label: "managed bootstrap",
+        device: "",
+        args: [],
+      },
+      failureContext: {
+        sandboxName: "alpha",
+        oldContainerId: "old-container",
+        newContainerId: "replacement-container",
+      },
+      commit,
+      rollback,
+    });
+
+    await patch.commitAfterReady();
+    await patch.rollbackManagedStartupAfterCreateFailure();
+
+    expect(commit).toHaveBeenCalledOnce();
+    expect(rollback).not.toHaveBeenCalled();
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      failure,
+      expect.objectContaining({
+        additionalSummaryLines: expect.arrayContaining([
+          stateLine,
+          "managed_bootstrap_finalization_cleanup=pending",
+        ]),
+        context: expect.objectContaining({ rolledBack: false }),
+      }),
+    );
+
+    // The live owner can retry cleanup; the terminal report did not convert
+    // the irreversible commit into rollback or poison the retry promise.
+    await patch.commitAfterReady();
+    expect(commit).toHaveBeenCalledTimes(2);
+    expect(rollback).not.toHaveBeenCalled();
   });
 
   it("reports startup-command creation failures through the composed patch boundary", async () => {
