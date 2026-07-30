@@ -126,6 +126,7 @@ const lifecycleMock = vi.hoisted(() => {
 });
 
 export const backupSandboxStateMock = vi.fn();
+export const activateSandboxHostRuntimeMock = vi.fn(() => () => undefined);
 export const loadAgentMock = vi.fn((name: string) => ({
   name,
   policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
@@ -253,6 +254,17 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainerByName: vi.fn(),
 }));
 
+vi.mock("./gateway-target", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./gateway-target")>();
+  return {
+    ...actual,
+    persistedHostContainerRuntimeActivation: {
+      ...actual.persistedHostContainerRuntimeActivation,
+      activateSandbox: activateSandboxHostRuntimeMock,
+    },
+  };
+});
+
 vi.mock("../../policy", () => ({
   applyPreset: applyPresetMock,
   applyPresetContent: applyPresetContentMock,
@@ -352,6 +364,7 @@ export function resetSnapshotRestoreMocks(): void {
   lifecycleMock.events.length = 0;
   lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
+  activateSandboxHostRuntimeMock.mockImplementation(() => () => undefined);
   dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
   establishRestoredSandboxGatewayPairingMock.mockReset();
   findBackupMock.mockReturnValue({ match: null });

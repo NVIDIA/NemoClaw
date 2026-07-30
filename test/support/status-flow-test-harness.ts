@@ -26,6 +26,7 @@ requireDist(statusModulePath);
 delete require.cache[requireDist.resolve(statusModulePath)];
 
 export type StatusFlowHarness = {
+  activateHostRuntimeSpy: MockInstance;
   checkAgentVersionSpy: MockInstance;
   collectSandboxStatusSnapshotSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
@@ -114,6 +115,12 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const shields = requireDist("../../src/lib/shields/index.js");
   const registry = requireDist("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
+  const persistedHostContainerRuntime = requireDist(
+    "../../src/lib/actions/sandbox/gateway-target.js",
+  );
+  const activateHostRuntimeSpy = vi
+    .spyOn(persistedHostContainerRuntime.persistedHostContainerRuntimeActivation, "activateSandbox")
+    .mockReturnValue(() => undefined);
 
   const lookup: SandboxGatewayState =
     options.lookup ??
@@ -244,6 +251,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   logSpy.mockClear();
 
   return {
+    activateHostRuntimeSpy,
     checkAgentVersionSpy,
     collectSandboxStatusSnapshotSpy,
     getActiveSandboxSessionsSpy,

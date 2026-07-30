@@ -264,6 +264,12 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
+    expect(f.activateSandboxHostRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "alpha",
+        openshellDriver: "podman",
+      }),
+    );
     expect(consoleError.mock.calls.flat().join("\n")).toContain("socket authority changed");
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(

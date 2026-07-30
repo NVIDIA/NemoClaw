@@ -13,6 +13,7 @@ const requireDist = createRequire(
 const destroyModulePath = "./destroy.js";
 
 export type DestroyHarness = {
+  activateHostRuntimeSpy: MockInstance;
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   destroySandbox: DestroySandbox;
@@ -125,8 +126,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const timerControl = requireDist("../../shields/timer-control.js");
   const mcpBridge = requireDist("./mcp-bridge.js");
   const dockerRun = requireDist("../../adapters/docker/run.js");
+  const persistedHostContainerRuntime = requireDist("./gateway-target.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+  const activateHostRuntimeSpy = vi
+    .spyOn(persistedHostContainerRuntime.persistedHostContainerRuntimeActivation, "activateSandbox")
+    .mockReturnValue(() => undefined);
   const promptSpy = vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
   for (const response of options.promptResponses ?? []) {
     promptSpy.mockResolvedValueOnce(response);
@@ -312,6 +317,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   logSpy.mockClear();
 
   return {
+    activateHostRuntimeSpy,
     cleanupGatewaySpy,
     captureOpenshellSpy,
     dockerCaptureSpy,

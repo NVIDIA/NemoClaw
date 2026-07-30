@@ -6,7 +6,10 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence } from "./destroy-presence";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import {
+  getSandboxTargetGatewayName,
+  persistedHostContainerRuntimeActivation,
+} from "./gateway-target";
 import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
 
 export type SandboxDestroyPreflight = {
@@ -15,6 +18,8 @@ export type SandboxDestroyPreflight = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
 };
+
+export { persistedHostContainerRuntimeActivation };
 
 function stopSandboxInferenceResources(sandboxName: string, sandbox: SandboxEntry | null): void {
   const nim = require("../../inference/nim") as {

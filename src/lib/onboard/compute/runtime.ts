@@ -15,6 +15,7 @@ export * from "./host-local-inference-runtime";
  */
 export * from "./managed-gateway-profile";
 export * from "./managed-startup-runtime-requirements";
+export * from "./persisted-host-container-runtime";
 export * from "./plan";
 export * from "./podman/active-watcher";
 export * from "./podman/gateway-env";

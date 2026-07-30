@@ -6,6 +6,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
+import { persistedHostContainerRuntimeActivation } from "./gateway-target";
 import { printSandboxGatewayLookupStatus } from "./status-lookup-rendering";
 import {
   getSandboxStatusPreflight,
@@ -64,6 +65,17 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
 }
 
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
+  const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateSandbox(
+    registry.getSandbox(sandboxName),
+  );
+  try {
+    await showSandboxStatusWithPersistedRuntime(sandboxName);
+  } finally {
+    restoreHostRuntime();
+  }
+}
+
+async function showSandboxStatusWithPersistedRuntime(sandboxName: string): Promise<void> {
   const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a

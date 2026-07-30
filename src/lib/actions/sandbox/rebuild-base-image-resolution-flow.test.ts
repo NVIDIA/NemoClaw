@@ -60,6 +60,12 @@ describe("rebuildSandbox base-image resolution flow", () => {
           forceBaseImageRefresh: true,
         },
       );
+      expect(harness.activateHostRuntimeSpy).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          agent: "hermes",
+          name: "alpha",
+        }),
+      );
     } finally {
       restoreEnv();
     }

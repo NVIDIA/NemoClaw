@@ -34,7 +34,10 @@ import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox, resolvePerGatewayState } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
-import { prepareSandboxDestroy } from "./destroy-preflight";
+import {
+  persistedHostContainerRuntimeActivation,
+  prepareSandboxDestroy,
+} from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { classifyDestroySandboxPresence } from "./destroy-presence";
@@ -334,7 +337,20 @@ async function destroySandboxUnlocked(
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
+  const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateSandbox(
+    registry.getSandbox(sandboxName),
+  );
+  try {
+    await destroySandboxWithPersistedRuntime(sandboxName, normalized);
+  } finally {
+    restoreHostRuntime();
+  }
+}
 
+async function destroySandboxWithPersistedRuntime(
+  sandboxName: string,
+  normalized: DestroySandboxOptions,
+): Promise<void> {
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
   const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);

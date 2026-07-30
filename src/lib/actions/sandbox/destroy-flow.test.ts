@@ -66,6 +66,9 @@ describe("destroySandbox flow", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.activateHostRuntimeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ openshellDriver: "podman" }),
+    );
     expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
       "nemoclaw-19080",
       harness.runOpenshellSpy,
