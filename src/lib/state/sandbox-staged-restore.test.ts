@@ -43,9 +43,7 @@ function runHermesRestore(options: { stateDirs: string[] }): {
       fs.mkdirSync(path.join(backupPath, stateDir), { recursive: true });
     }
     fs.writeFileSync(path.join(backupPath, "cron", "jobs.json"), '{"jobs":[{"enabled":true}]}\n');
-    if (options.stateDirs.includes("scripts")) {
-      fs.writeFileSync(path.join(backupPath, "scripts", "digest.sh"), "#!/bin/bash\necho ok\n");
-    }
+    fs.writeFileSync(path.join(backupPath, "scripts", "digest.sh"), "#!/bin/bash\necho ok\n");
 
     fs.writeFileSync(
       path.join(backupPath, "rebuild-manifest.json"),
