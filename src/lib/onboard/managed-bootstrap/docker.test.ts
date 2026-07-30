@@ -610,6 +610,31 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toThrow(`found ${String(count)}`);
   });
 
+  it("removes an identity-bound incomplete create and proves its owner and runtime absent", async () => {
+    const fake = fakeDocker(heldArgv());
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    const receipt = await adapter.cleanupIncompleteCreate({
+      plan: plan(),
+      bootstrapIdentity: IDENTITY,
+      heldWorkloadArgv: heldArgv(),
+    });
+
+    expect(receipt).toMatchObject({
+      sandbox: {
+        sandboxName: "alpha",
+        sandboxId: "sandbox-alpha",
+        driverId: "docker",
+      },
+      bootstrapIdentity: IDENTITY,
+      outcome: "rolled-back",
+      heldWorkloadRemoved: true,
+    });
+    expect(fake.state.events).toEqual(["sandbox-delete"]);
+    expect(fake.state.sandboxId).toBeNull();
+    expect(fake.state.containerIds).toEqual([]);
+  });
+
   it("refuses owner cleanup when the same name now resolves to another durable sandbox ID", async () => {
     const intendedArgv = ["env", "nemoclaw-start"] as const;
     const heldArgv = [

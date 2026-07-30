@@ -88,6 +88,12 @@ export interface ManagedBootstrapHeldWorkloadHandle {
   readonly createReceipt: ManagedBootstrapCreateReceipt;
 }
 
+export interface ManagedBootstrapIncompleteCreateCleanupInput {
+  readonly plan: ManagedBootstrapExpectedPlan;
+  readonly bootstrapIdentity: string;
+  readonly heldWorkloadArgv: readonly string[];
+}
+
 export interface ManagedBootstrapDiscoveryInput {
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly bootstrapIdentity: string;
@@ -173,6 +179,16 @@ export interface ManagedBootstrapAdapter {
   createHeldWorkload(
     input: ManagedBootstrapCreateInput,
   ): Promise<ManagedBootstrapHeldWorkloadHandle>;
+
+  /**
+   * Remove a create that returned after materializing the held workload but
+   * before a Ready durable sandbox receipt could be established. The adapter
+   * must bind cleanup to the one-time bootstrap identity and prove both the
+   * sandbox owner record and its runtime are absent before returning.
+   */
+  cleanupIncompleteCreate(
+    input: ManagedBootstrapIncompleteCreateCleanupInput,
+  ): Promise<ManagedBootstrapFinalizationReceipt>;
 
   /**
    * Resolve exactly one runtime from the durable sandbox, driver, bootstrap,
