@@ -9,6 +9,10 @@ keywords: ["nemoclaw gateway lifecycle", "externally supervised gateway", "opens
 content:
   type: "reference"
 ---
+This page covers the host-side OpenShell gateway that NemoClaw uses for OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
+It does not describe the in-sandbox agent gateway used by OpenClaw and Hermes.
+Deep Agents Code has no in-sandbox agent gateway.
+
 At every point, exactly one component owns the OpenShell gateway lifecycle.
 
 Platform images sometimes supervise the gateway with their own service.
@@ -69,7 +73,7 @@ The declaration uses the following fields.
 | `version` | Contract version. Only `1` is supported. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
 | `endpoint` | Exact bare origin for an externally supervised gateway. Use `http` or `https`, host `127.0.0.1` or `[::1]`, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
-| `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`; uninstall removes those owned paths and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
+| `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`. While the external gateway process remains, uninstall preserves the selected local gateway state and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
 | `supervisor` | Required for `externally-supervised` and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` names one `.service` unit, and `execPath` is the absolute gateway executable path. |
 | `requiredCapabilities` | Capabilities onboarding needs. Supported values are `gateway.health`, `sandbox.create`, `sandbox.exec`, and `gpu.passthrough`. |
 
@@ -149,15 +153,15 @@ A completed gateway step does not bypass listener, supervisor, identity, health,
 
 ## Inspect the selected authority
 
-Run `nemoclaw status` to see the management mode and redacted owner identity selected by the last onboarding run.
+Run `$$nemoclaw status` to see the management mode and redacted owner identity selected by the last onboarding run.
 The JSON form includes the same secret-free fields under `gatewayAuthority`.
 
 ```bash
-nemoclaw status
-nemoclaw status --json
+$$nemoclaw status
+$$nemoclaw status --json
 ```
 
-`nemoclaw debug` also records `gatewayAuthority` in `onboard-session-summary.txt`.
+`$$nemoclaw debug` also records `gatewayAuthority` in `onboard-session-summary.txt`.
 The status and debug views omit the external state directory and never include credential values.
 
 ## Keep external lifecycle paths inert
@@ -174,7 +178,7 @@ When a valid checkpoint exists, they compare the current authority with that che
 The comparison uses the exact gateway name and port.
 If the authority changed, teardown stops before it scans listeners or changes gateway runtime resources.
 
-`nemoclaw stop` does not scan or signal the externally supervised gateway.
+`$$nemoclaw stop` does not scan or signal the externally supervised gateway.
 Final-sandbox cleanup can stop local dashboard forwards and remove the modern local gateway registration.
 It does not signal the gateway, use the legacy `gateway destroy` fallback, or remove its Docker volumes.
 Uninstall can delete the selected sandboxes, providers, and local registration.
@@ -198,5 +202,5 @@ For `systemd-user`, use the user manager:
 systemctl --user status openshell-gateway.service
 ```
 
-Bring the supervised gateway up, leave exactly one verified process holding the configured port, and rerun `nemoclaw onboard`.
+Bring the supervised gateway up, leave exactly one verified process holding the configured port, and rerun `$$nemoclaw onboard`.
 To hand the lifecycle back to NemoClaw, remove the platform gateway service and declare `nemoclaw-managed`, or remove the declaration.

@@ -55,11 +55,22 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     ["full", "systemd-user"],
     ["scoped", "systemd-system"],
     ["scoped", "systemd-user"],
-  ] as const)("preserves the gateway process, Docker resources, and OpenShell binaries during %s uninstall for a %s-supervised gateway (#6576)", (scope, kind) => {
+  ] as const)("preserves the gateway process, Docker resources, OpenShell binaries, and gateway state during %s uninstall for a %s-supervised gateway (#6576)", (scope, kind) => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-external-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
+      const gatewayStatePath = path.join(
+        tmpHome,
+        ".local",
+        "state",
+        "nemoclaw",
+        "openshell-docker-gateway",
+        "openshell-gateway.toml",
+      );
+      const gatewayState = 'listen_address = "127.0.0.1:8080"\n';
       fs.mkdirSync(stateDir, { recursive: true });
+      fs.mkdirSync(path.dirname(gatewayStatePath), { recursive: true });
+      fs.writeFileSync(gatewayStatePath, gatewayState);
       const prepareScope = {
         full: () => undefined,
         scoped: () =>
@@ -129,6 +140,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             command === "rm" && args.includes("/usr/local/bin/openshell-gateway"),
         ),
       ).toBe(false);
+      expect(fs.existsSync(gatewayStatePath)).toBe(true);
+      expect(fs.readFileSync(gatewayStatePath, "utf8")).toBe(gatewayState);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

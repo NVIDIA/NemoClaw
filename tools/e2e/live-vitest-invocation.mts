@@ -134,7 +134,7 @@ export function resolveLiveSelector(
   const validated = validateLiveSelector(selector);
   if (testPath !== MCP_BRIDGE_TEST_PATH) return validated;
 
-  // Exact-head E2E executes trusted base-branch YAML with this helper from the
+  // PR E2E executes trusted base-branch YAML with this helper from the
   // tested checkout, so keep the reviewed shard mapping effective pre-merge.
   const agent = env.NEMOCLAW_MCP_BRIDGE_AGENT ?? "openclaw";
   const expected = MCP_BRIDGE_SELECTOR_BY_AGENT[agent as keyof typeof MCP_BRIDGE_SELECTOR_BY_AGENT];

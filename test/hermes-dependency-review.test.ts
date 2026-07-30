@@ -21,6 +21,10 @@ const review = fs.readFileSync(
   path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
   "utf8",
 );
+const securityDependenciesPatch = fs.readFileSync(
+  path.join(root, "agents", "hermes", "security-dependencies.patch"),
+  "utf8",
+);
 
 function arg(name: string): string {
   const match = dockerfileBase.match(new RegExp(`^ARG ${name}=(.+)$`, "mu"));
@@ -53,7 +57,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(config).toMatch(/display:\s*\{\s*[\s\S]*?show_commentary: false/u);
     expect(config).toMatch(/updates:\s*\{\s*[\s\S]*?pre_update_backup: false/u);
     expect(config).toMatch(/updates:\s*\{\s*[\s\S]*?refresh_cua_driver: false/u);
-    expect(manifest).toContain("path: cron/executions.db\n    strategy: sqlite_backup");
+    expect(manifest).toContain("path: runtime/cron-executions.db\n    strategy: sqlite_backup");
     expect(manifest).toContain(
       "path: gateway/discord_message_recovery.db\n    strategy: sqlite_backup",
     );
@@ -75,7 +79,34 @@ describe("Hermes 0.19.0 dependency review", () => {
     }
   });
 
-  it("ships the reviewed multipart remediation and records residual debt", () => {
+  it("ships the reviewed Python dependency remediations and records residual debt", () => {
+    expect(dockerfileBase).toContain(
+      "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
+    );
+    expect(dockerfileBase).toContain(
+      "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
+    );
+    expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
+    expect(arg("NODE_VERSION")).toBe("24.18.1");
+    expect(arg("UV_VERSION")).toBe("0.11.33");
+    for (const selection of [
+      '"cryptography==48.0.1"',
+      '"mcp==1.28.1"',
+      '"Pillow==12.3.0"',
+      '"starlette==1.3.1"',
+      '"tornado==6.5.7"',
+    ]) {
+      expect(securityDependenciesPatch).toContain(selection);
+    }
+    for (const installedVersion of [
+      "'cryptography': '48.0.1'",
+      "'mcp': '1.28.1'",
+      "'pillow': '12.3.0'",
+      "'starlette': '1.3.1'",
+      "'tornado': '6.5.7'",
+    ]) {
+      expect(dockerfileBase).toContain(installedVersion);
+    }
     expect(dockerfileBase).toContain("python-multipart==0.0.32");
     expect(dockerfileBase).toContain(
       "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e",
@@ -86,8 +117,12 @@ describe("Hermes 0.19.0 dependency review", () => {
     for (const advisory of ["GHSA-5rvq-cxj2-64vf", "GHSA-6jv3-5f52-599m", "GHSA-v9pg-7xvm-68hf"]) {
       expect(review).toContain(advisory);
     }
-    expect(review).toContain("Pillow `12.2.0`");
-    expect(review).toContain("Starlette `1.0.1`");
-    expect(review).toContain("zero critical");
+    expect(review).toContain("`cryptography==48.0.1`");
+    expect(review).toContain("`mcp==1.28.1`");
+    expect(review).toContain("`Pillow==12.3.0`");
+    expect(review).toContain("`starlette==1.3.1`");
+    expect(review).toContain("`tornado==6.5.7`");
+    expect(review).toContain("checksum-pinned Node.js `24.18.1`");
+    expect(review).toContain("exact uv `0.11.33`");
   });
 });

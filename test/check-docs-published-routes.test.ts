@@ -527,6 +527,24 @@ describe("headless server deployment routes", () => {
   });
 });
 
+describe("gateway lifecycle authority routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes the OpenShell gateway guide for every guide variant (#6576)", () => {
+    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+      expect(
+        index.routes.has(`/user-guide/${variant}/deployment/gateway-lifecycle-authority`),
+      ).toBe(true);
+    }
+  });
+
+  it("resolves every OpenShell gateway guide link for each guide variant (#6576)", () => {
+    expect(findBrokenPublishedRoutes("deployment/gateway-lifecycle-authority.mdx", index)).toEqual(
+      [],
+    );
+  });
+});
+
 describe("native changelog legacy routes", () => {
   it("redirects every retired Release Notes route directly to the changelog", () => {
     expect(findMissingDirectLegacyReleaseNotesRedirects()).toEqual([]);
