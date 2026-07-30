@@ -7,24 +7,26 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `d112ad4a01ff2b87211b1a10ecb98950e62d4bdffb37a122326af7b352250d25`
+- Lockfile SHA-256: `b348f12ea2874c4240b523dc4e5814dce58893cd70de5ebbd74d313cbf6cc1e1`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
-- Audit date: 2026-07-29
-- Targeted audit result: `Pillow 12.3.0 has no known vulnerabilities`
-- Complete-lock audit result: `6 records in 3 unrelated packages`
+- Audit date: 2026-07-30
+- Targeted audit result: `uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`
+- Complete-lock audit result: `2 duplicate records in 1 unrelated package`
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
-The lock now selects `Pillow==12.3.0` instead of the transitive `12.2.0`
-resolution, removing the image-parser advisories in this remediation scope.
-The image build runs `pip3 check` and asserts the exact installed Pillow
-version before publishing.
+The lock now selects `uv==0.11.33`, `mcp==1.28.1`, `Pillow==12.3.0`, and
+`pyasn1==0.6.4`. The direct MCP and pyasn1 requirements are temporary,
+hash-locked constraints for the released Deep Agents Code `0.1.34` graph.
+Deep Agents Code `0.1.45` and later contain both dependency fixes, but their hook
+boundary has changed. Remove the temporary direct constraints only as part of a
+separately validated semantic migration to `>=0.1.45` that preserves NemoClaw's
+managed runtime hooks.
 
-The complete point-in-time audit also reports one record for `mcp==1.28.0`,
-three for `pyasn1==0.6.3`, and two duplicate database records for
-`setuptools==82.0.1`. These newly published records are not introduced by the
-Pillow-only lock regeneration and remain visible for a separate
-dependency-lifecycle review; this review does not claim the complete lock is
-vulnerability-free.
+The image build runs `pip3 check` and asserts all five installed package
+versions, including Deep Agents Code itself, before publishing. The complete
+point-in-time audit now reports only two duplicate database records for
+`setuptools==82.0.1`; that record is outside the Critical/High remediation
+scope. This review does not claim the complete lock is vulnerability-free.
 
 ## Managed `fetch_url` Proxy Adapter
 

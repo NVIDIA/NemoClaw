@@ -267,6 +267,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
+      "category": "security"
+    },
+    {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
       "test": "locks recovery identities to the source workflows' runtime names (#7140)",
       "category": "security"
@@ -404,11 +409,6 @@
     {
       "file": "test/reviewed-npm-audit-workflow.test.ts",
       "test": "runs PR audits from trusted code and keeps the main audit on the checked-in action",
-      "category": "security"
-    },
-    {
-      "file": "test/perl-critical-cve-remediation.test.ts",
-      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
       "category": "security"
     },
     {

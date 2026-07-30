@@ -126,7 +126,7 @@ async function expectLockedPosture(sandbox: SandboxClient, cycle: number): Promi
   );
   assertExitZero(result, `inspect Hermes locked posture after cycle ${cycle}`);
   expect(result.stdout).toContain("1775 root:sandbox /sandbox");
-  expect(result.stdout).toContain(`755 root:root ${HERMES_DIR}`);
+  expect(result.stdout).toContain(`3770 root:sandbox ${HERMES_DIR}`);
   expect(result.stdout).toContain(`444 root:root ${CONFIG_PATH}`);
   expect(result.stdout).toContain(`444 root:root ${HERMES_DIR}/.env`);
   expect(result.stdout).toContain(`444 root:root ${HERMES_DIR}/.config-hash`);
