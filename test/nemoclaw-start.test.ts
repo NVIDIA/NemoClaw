@@ -1035,7 +1035,7 @@ exit 1
       for (const op of ["add", "remove"]) {
         for (const channel of channels) {
           const result = runGuardedShell(setup, [
-            "export OPENSHELL_SANDBOX=my-assistant",
+            "export OPENSHELL_SANDBOX=1; export NEMOCLAW_SANDBOX_NAME=my-assistant",
             shellOpenclawCommand(["channels", op, channel]),
           ]);
           expect(result.status, `channels ${op} ${channel} should be blocked`).toBe(1);

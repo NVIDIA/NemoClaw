@@ -319,13 +319,13 @@ describe("prepareSandboxCreateLaunch", () => {
     }
   });
 
-  it("forwards the validated sandbox name into the Deep Agents Code sandbox create env", () => {
+  it("forwards the validated sandbox name instead of an ambient or rendered name", () => {
     const result = prepareSandboxCreateLaunch({
-      agent: { name: "langchain-deepagents-code" } as any,
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
       chatUiUrl: "",
       createArgs: ["--name", "rendered-name"],
-      sandboxName: "dcode-demo",
-      env: {},
+      sandboxName: "openclaw-demo",
+      env: { NEMOCLAW_SANDBOX_NAME: "ambient-name" },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: vi.fn(() => "0"),
       hermesDashboardState: disabledHermesDashboardState,
@@ -334,11 +334,12 @@ describe("prepareSandboxCreateLaunch", () => {
       buildEnv: () => ({}),
     });
 
-    expect(result.envArgs).toContain("NEMOCLAW_SANDBOX_NAME=dcode-demo");
+    expect(result.envArgs).toContain("NEMOCLAW_SANDBOX_NAME=openclaw-demo");
+    expect(result.envArgs).not.toContain("NEMOCLAW_SANDBOX_NAME=ambient-name");
     expect(result.envArgs).not.toContain("NEMOCLAW_SANDBOX_NAME=rendered-name");
   });
 
-  it("does not forward the sandbox name for non-Deep-Agents-Code agents", () => {
+  it("omits the sandbox name when the caller has not resolved one", () => {
     const result = prepareSandboxCreateLaunch({
       agent: { name: "openclaw", configPaths: { dir: "/sandbox/.custom-openclaw" } } as any,
       chatUiUrl: "http://127.0.0.1:19000/",

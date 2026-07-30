@@ -118,6 +118,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const serialized = options?.openshellSandboxCommand.join(" ") ?? "";
     expect(serialized).toContain("NEMOCLAW_DASHBOARD_PORT=18789");
+    expect(serialized).toContain("NEMOCLAW_SANDBOX_NAME=alpha");
     expect(serialized).toMatch(/nemoclaw-start$/);
     expect(serialized).not.toContain("s3cr3t-token");
     expect(serialized).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");

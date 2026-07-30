@@ -149,11 +149,14 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
 
+  // OpenShell exposes OPENSHELL_SANDBOX as a boolean marker on some supported
+  // versions. Preserve the host-validated name so in-sandbox recovery hints can
+  // render copyable `nemoclaw <name> ...` commands for every managed agent.
+  if (input.sandboxName) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", input.sandboxName));
+  }
+
   if (agent?.name === "langchain-deepagents-code") {
-    const sandboxName = input.sandboxName;
-    if (sandboxName) {
-      envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
-    }
     envArgs.push(
       formatEnvAssignment(
         "NEMOCLAW_OBSERVABILITY",

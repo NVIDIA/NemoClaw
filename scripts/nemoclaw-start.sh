@@ -3873,10 +3873,11 @@ openclaw() {
 # denial-time curl/git/wget error itself denial-adjacent — that is intentional,
 # given the source boundary above — so the tool error stays unchanged.
 _nemoclaw_policy_denial_hint_label() {
-  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
-  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
-  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
-  # rather than merely stripping: only render it when it is a valid sandbox name.
+  # NemoClaw injects its host-validated name as NEMOCLAW_SANDBOX_NAME. Fall
+  # back to OpenShell's runtime marker for compatibility; supported OpenShell
+  # versions may still expose that marker as the boolean "1". Both variables
+  # are treated as untrusted here because they are interpolated into copyable
+  # `nemoclaw …` commands, so only render a valid sandbox name.
   # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
   # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
   # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
@@ -3891,14 +3892,15 @@ _nemoclaw_policy_denial_hint_label() {
   # is only ever called inside $(…) command substitution (a subshell), so the
   # assignment cannot leak into the interactive shell.
   LC_ALL=C
+  _nemoclaw_sandbox_hint_candidate="${NEMOCLAW_SANDBOX_NAME:-${OPENSHELL_SANDBOX:-}}"
   # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
   # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
-  case "${OPENSHELL_SANDBOX:-}" in
+  case "$_nemoclaw_sandbox_hint_candidate" in
     "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
     [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
     *)
-      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
-        printf '%s' "$OPENSHELL_SANDBOX"
+      if [ "${#_nemoclaw_sandbox_hint_candidate}" -le 63 ]; then
+        printf '%s' "$_nemoclaw_sandbox_hint_candidate"
       else
         printf '<name>'
       fi

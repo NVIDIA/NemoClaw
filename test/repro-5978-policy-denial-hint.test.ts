@@ -175,6 +175,26 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
   });
 
+  it("prefers NemoClaw's validated name when OpenShell exposes only a boolean marker", () => {
+    const { stdout, status } = gate({
+      NEMOCLAW_SANDBOX_NAME: "qa-7292",
+      OPENSHELL_SANDBOX: "1",
+    });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw qa-7292 logs --tail 50");
+  });
+
+  it("does not render an invalid NemoClaw sandbox name", () => {
+    const { stdout, status } = gate({
+      NEMOCLAW_SANDBOX_NAME: "qa-7292; echo injected",
+      OPENSHELL_SANDBOX: "fallback-name",
+    });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+    expect(stdout).not.toContain("echo injected");
+    expect(stdout).not.toContain("nemoclaw fallback-name logs");
+  });
+
   it("falls back to <name> when OPENSHELL_SANDBOX is unusable (older OpenShell)", () => {
     for (const value of ["", "1", "true"]) {
       const { stdout, status } = gate({ OPENSHELL_SANDBOX: value });
