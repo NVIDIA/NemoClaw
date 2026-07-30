@@ -294,19 +294,19 @@ async function assertDashboardHome(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "Hermes dashboard-home was not seeded with sandbox-owned 0700/0600 allowlisted config",
+    "Hermes dashboard profile was not seeded with sandbox-owned 0700/0600 allowlisted config",
     String.raw`
 set -eu
 for _ in $(seq 1 30); do
-  [ -f /sandbox/.hermes/dashboard-home/config.yaml ] && [ -f /sandbox/.hermes/dashboard-home/.env ] && break
+  [ -f /sandbox/.hermes/profiles/dashboard-home/config.yaml ] && [ -f /sandbox/.hermes/profiles/dashboard-home/.env ] && break
   sleep 1
 done
-[ "$(stat -c '%a' /sandbox/.hermes/dashboard-home)" = "700" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/dashboard-home)" = "sandbox:sandbox" ]
-[ "$(stat -c '%a' /sandbox/.hermes/dashboard-home/config.yaml)" = "600" ]
-[ "$(stat -c '%a' /sandbox/.hermes/dashboard-home/.env)" = "600" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/dashboard-home/config.yaml)" = "sandbox:sandbox" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/dashboard-home/.env)" = "sandbox:sandbox" ]
+[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home)" = "700" ]
+[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home)" = "sandbox:sandbox" ]
+[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home/config.yaml)" = "600" ]
+[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home/.env)" = "600" ]
+[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home/config.yaml)" = "sandbox:sandbox" ]
+[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home/.env)" = "sandbox:sandbox" ]
 python3 - <<'PY'
 from pathlib import Path
 
@@ -321,7 +321,7 @@ allowed = {
     "FAL_QUEUE_GATEWAY_URL",
     "MODAL_GATEWAY_URL",
 }
-env_path = Path("/sandbox/.hermes/dashboard-home/.env")
+env_path = Path("/sandbox/.hermes/profiles/dashboard-home/.env")
 keys = set()
 for raw_line in env_path.read_text(encoding="utf-8").splitlines():
     line = raw_line.strip()
@@ -334,7 +334,7 @@ extra = sorted(keys - allowed)
 missing = sorted({"API_SERVER_HOST", "API_SERVER_PORT", "API_SERVER_KEY"} - keys)
 if extra or missing:
     raise SystemExit(f"dashboard .env allowlist mismatch extra={extra} missing={missing}")
-config_text = Path("/sandbox/.hermes/dashboard-home/config.yaml").read_text(encoding="utf-8")
+config_text = Path("/sandbox/.hermes/profiles/dashboard-home/config.yaml").read_text(encoding="utf-8")
 for fragment in ("model:", "custom_providers:", "_nemoclaw_upstream:"):
     if fragment not in config_text:
         raise SystemExit(f"dashboard config missing {fragment}")
@@ -478,7 +478,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "gateway.pid is stored as a regular file below the writable runtime directory",
       "gateway user cannot remove config.yaml from sticky config root",
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
-      "dashboard-home is sandbox-owned 0700 with 0600 allowlisted config/env",
+      "dashboard profile is sandbox-owned 0700 with 0600 allowlisted config/env",
       "legacy gateway.pid symlink/state shape is repaired and booted",
       "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
