@@ -91,9 +91,7 @@ describe("startSandbox", () => {
         runtime: "running",
         health: "starting",
       },
-      detail:
-        "docker container openshell-my-sandbox did not become ready after recovery " +
-        "(runtime=running, health=starting)",
+      detail: "diagnostic wording does not control recovery",
     });
 
     const result = await startSandbox("my-sandbox", h.deps);
