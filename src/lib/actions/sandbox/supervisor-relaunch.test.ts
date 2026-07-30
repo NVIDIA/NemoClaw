@@ -114,6 +114,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(options).toMatchObject({
       sandboxName: "alpha",
       expectedOldContainerId: "old-container-id",
+      keepOriginalRunningUntilFinalize: true,
       waitForSupervisor: false,
     });
     const serialized = options?.openshellSandboxCommand.join(" ") ?? "";

@@ -65,7 +65,9 @@ export function finalizeDockerGpuPatchBackup(
     // even if `docker rm` cannot delete it (e.g. concurrent admin action,
     // daemon timeout). Reflect the actual rm status in the outcome so
     // diagnostics can flag a leaked backup container.
-    const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
+    const rmResult = options.result.backupWasRunning
+      ? resolved.dockerForceRm(options.result.backupContainerName, containerOpts)
+      : resolved.dockerRm(options.result.backupContainerName, containerOpts);
     return { backupRemoved: hasZeroDockerExitStatus(rmResult), rolledBack: false };
   }
   const rolledBack = rollbackToBackupContainer(
@@ -73,6 +75,7 @@ export function finalizeDockerGpuPatchBackup(
       newContainerId: options.result.newContainerId,
       backupContainerName: options.result.backupContainerName,
       originalName: options.result.originalName,
+      backupWasRunning: options.result.backupWasRunning,
     },
     resolved,
   );
@@ -85,7 +88,12 @@ export type SupervisorReconnectOutcome =
 
 export function reconcileSupervisorReconnect(
   execReady: boolean,
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  refs: {
+    newContainerId: string;
+    backupContainerName: string;
+    originalName: string;
+    backupWasRunning?: boolean;
+  },
   deps: DockerGpuPatchDeps,
 ): SupervisorReconnectOutcome {
   const resolved = resolveDockerGpuPatchRollbackDeps(deps);
@@ -100,7 +108,9 @@ export function reconcileSupervisorReconnect(
     // leaked backup container but the user-visible sandbox is healthy.
     // Surface the actual rm status so callers can fold it into diagnostics
     // alongside the deferred-finalize path in `finalizeDockerGpuPatchBackup`.
-    const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
+    const rmResult = refs.backupWasRunning
+      ? resolved.dockerForceRm(refs.backupContainerName, containerOpts)
+      : resolved.dockerRm(refs.backupContainerName, containerOpts);
     return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
   }
   const rolledBack = rollbackToBackupContainer(refs, resolved);
