@@ -1059,6 +1059,61 @@ function validateFreeStandingJobSelector(
   }
 }
 
+const CANDIDATE_SELECTOR_ACTIVE_IF =
+  "${{ steps.selector_compatibility.outputs.retired != 'true' }}";
+const CANDIDATE_SELECTOR_CLASSIFIER = [
+  "set -euo pipefail",
+  'if [[ -f "$LEGACY_TEST_FILE" ]]; then',
+  "  retired=false",
+  "else",
+  "  retired=true",
+  "fi",
+  `printf 'retired=%s\\n' "$retired" >> "$GITHUB_OUTPUT"`,
+].join("\n");
+
+function validateCandidateSelectorCompatibility(
+  errors: string[],
+  options: {
+    installStep: string;
+    jobName: string;
+    legacyTestFile: string;
+    runStep: string;
+    steps: readonly WorkflowStep[];
+  },
+): void {
+  const classifierName = `Classify ${options.jobName} candidate selector`;
+  const classifier = namedStep(options.steps, classifierName);
+  if (
+    stringValue(classifier?.id) !== "selector_compatibility" ||
+    asRecord(classifier?.env).LEGACY_TEST_FILE !== options.legacyTestFile ||
+    stringValue(classifier?.run).trim() !== CANDIDATE_SELECTOR_CLASSIFIER
+  ) {
+    errors.push(`${options.jobName} job must classify candidate selector retirement`);
+  }
+
+  const dockerAuthIndex = options.steps.findIndex(
+    (step) => step.name === "Authenticate to Docker Hub",
+  );
+  const classifierIndex = options.steps.indexOf(classifier ?? {});
+  const prepareIndex = options.steps.findIndex((step) => step.name === "Prepare E2E workspace");
+  if (
+    dockerAuthIndex < 0 ||
+    classifierIndex <= dockerAuthIndex ||
+    prepareIndex < 0 ||
+    classifierIndex >= prepareIndex
+  ) {
+    errors.push(
+      `${options.jobName} candidate selector classifier must follow Docker Hub authentication`,
+    );
+  }
+
+  for (const stepName of [options.installStep, options.runStep]) {
+    if (namedStep(options.steps, stepName)?.if !== CANDIDATE_SELECTOR_ACTIVE_IF) {
+      errors.push(`${options.jobName} step '${stepName}' must skip a retired candidate selector`);
+    }
+  }
+}
+
 function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["gateway-guard-recovery"]);
   if (Object.keys(job).length === 0) return;
@@ -1982,6 +2037,94 @@ function validateRebuildHermesJob(
   }
 }
 
+function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "sandbox-rebuild";
+  const targetName = "sandbox-rebuild";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing sandbox-rebuild job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("sandbox-rebuild job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push("sandbox-rebuild job must keep the legacy 90 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
+    errors.push("sandbox-rebuild job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rebuild") {
+    errors.push(
+      "sandbox-rebuild job must write artifacts under e2e-artifacts/live/sandbox-rebuild",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("sandbox-rebuild job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("sandbox-rebuild job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  for (const secret of [
+    "NVIDIA_INFERENCE_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(errors, "sandbox-rebuild job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  validateCandidateSelectorCompatibility(errors, {
+    installStep: "Install OpenShell",
+    jobName,
+    legacyTestFile: "test/e2e/live/sandbox-rebuild.test.ts",
+    runStep: "Run sandbox rebuild live test",
+    steps,
+  });
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `sandbox-rebuild step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run sandbox rebuild live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("sandbox-rebuild job missing checkout step");
+  requireFullShaAction(errors, checkout, "sandbox-rebuild checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("sandbox-rebuild checkout step must set persist-credentials=false");
+  }
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run sandbox rebuild live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push("sandbox-rebuild step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
+}
+
 function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "state-backup-restore";
   const targetName = "state-backup-restore";
@@ -2072,6 +2215,104 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
+}
+
+function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "upgrade-stale-sandbox";
+  const targetName = "upgrade-stale-sandbox";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing upgrade-stale-sandbox job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("upgrade-stale-sandbox job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
+  if (job["timeout-minutes"] !== 85) {
+    errors.push("upgrade-stale-sandbox job must keep the two-sandbox 85 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
+    errors.push("upgrade-stale-sandbox job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/upgrade-stale-sandbox"
+  ) {
+    errors.push(
+      "upgrade-stale-sandbox job must write artifacts under e2e-artifacts/live/upgrade-stale-sandbox",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("upgrade-stale-sandbox job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("upgrade-stale-sandbox job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-upgrade-stale") {
+    errors.push("upgrade-stale-sandbox job must set NEMOCLAW_SANDBOX_NAME=e2e-upgrade-stale");
+  }
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("upgrade-stale-sandbox job must not set DOCKER_CONFIG at job level");
+  }
+  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
+    requireEnvDoesNotExposeSecret(errors, "upgrade-stale-sandbox job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  validateCandidateSelectorCompatibility(errors, {
+    installStep: "Install OpenShell CLI",
+    jobName,
+    legacyTestFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
+    runStep: "Run upgrade stale sandbox live Vitest test",
+    steps,
+  });
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `upgrade-stale-sandbox step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run upgrade stale sandbox live Vitest test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("upgrade-stale-sandbox job missing checkout step");
+  requireFullShaAction(errors, checkout, "upgrade-stale-sandbox checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("upgrade-stale-sandbox checkout step must set persist-credentials=false");
+  }
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run upgrade stale sandbox live Vitest test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push("upgrade-stale-sandbox step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
 }
 
 function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4821,7 +5062,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateRebuildOpenClawJob(errors, jobs);
   validateRebuildHermesJob(errors, jobs, { staleBase: false });
   validateRebuildHermesJob(errors, jobs, { staleBase: true });
+  validateSandboxRebuildJob(errors, jobs);
   validateStateBackupRestoreJob(errors, jobs);
+  validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");

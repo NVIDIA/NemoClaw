@@ -103,10 +103,14 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
-PR-gate requests using the retired `sandbox-rebuild` and
-`upgrade-stale-sandbox` job or target selectors run focused replacement tests
-through the compatibility controller. `rebuild-openclaw` is the canonical live
-rebuild and upgrade seam.
+## Retired selector transition
+
+When a candidate no longer contains `test/e2e/live/sandbox-rebuild.test.ts` or
+`test/e2e/live/upgrade-stale-sandbox.test.ts`, PR gate requests for the
+corresponding job or target selector run focused replacement tests through the
+compatibility controller. While the file remains, the selector runs its
+dedicated live E2E test. `rebuild-openclaw` is the canonical live rebuild and
+upgrade target.
 
 ## Larger-runner routing
 

@@ -155,7 +155,9 @@ export function selectedRetiredControllerJobs(options: {
   if (!SHA_PATTERN.test(options.expectedSha ?? "")) return [];
   for (const selectors of [options.jobs, options.targets]) {
     if (selectors && !SELECTOR_LIST_PATTERN.test(selectors)) {
-      throw new Error("retired selector compatibility requires safe comma-separated selector IDs");
+      throw new Error(
+        "retired selector compatibility requires comma-separated selector IDs containing only letters, numbers, underscores, and hyphens",
+      );
     }
   }
   const allowedJobs = new Set(options.allowedJobs);
