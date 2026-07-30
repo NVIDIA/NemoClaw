@@ -250,13 +250,10 @@ beta  127.0.0.1  18791  12345  running`
       .spyOn(openshellRuntime, "runOpenshell")
       .mockImplementation((rawArgs: unknown) => {
         const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        if (args[0] === "forward" && args[1] === "stop") {
-          forwardLive = false;
-        }
-        if (args[0] === "forward" && args[1] === "start") {
-          startCount += 1;
-          forwardLive = true;
-        }
+        const forwardAction = args[0] === "forward" ? args[1] : "";
+        const startsForward = Number(forwardAction === "start");
+        startCount += startsForward;
+        forwardLive = startsForward > 0 || (forwardLive && forwardAction !== "stop");
         return { status: 0 } as never;
       });
 
@@ -265,7 +262,7 @@ beta  127.0.0.1  18791  12345  running`
         ensureSandboxPortForwardForPort("beta", 18791, {
           afterSuccess: () => {
             guardCount += 1;
-            if (guardCount === 1) forwardLive = false;
+            forwardLive = guardCount !== 1;
             return true;
           },
           expectedBind: "127.0.0.1",
