@@ -40,6 +40,7 @@ describe("Google Chat tunnel runtime", () => {
       pidDir,
       dashboardPort: 24680,
       cloudflareTunnelToken: "",
+      sandboxName: "test",
     });
     expect(options.getTunnelUrl?.()).toBe("https://restricted.trycloudflare.com");
     expect(services.getTunnelUrl).toHaveBeenCalledWith(pidDir, 24680);

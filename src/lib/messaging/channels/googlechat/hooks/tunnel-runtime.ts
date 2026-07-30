@@ -43,13 +43,17 @@ export function createDefaultGooglechatTunnelGateOptions(
     (() => {
       throw new Error("Google Chat tunnel runtime requires an injected webhook proxy.");
     });
-  const resolveGooglechatPidDir = (): string => {
+  const resolveSandboxName = (): string => {
     const sandboxName = deps.sandboxName?.trim();
     if (!sandboxName) {
       throw new Error("Google Chat tunnel runtime requires a sandbox name.");
     }
-    return googlechatWebhookTunnelPidDir(loadServices().resolveServicePidDir({ sandboxName }));
+    return sandboxName;
   };
+  const resolveGooglechatPidDir = (): string =>
+    googlechatWebhookTunnelPidDir(
+      loadServices().resolveServicePidDir({ sandboxName: resolveSandboxName() }),
+    );
   return {
     hasCloudflared:
       deps.hasCloudflared ??
@@ -82,7 +86,12 @@ export function createDefaultGooglechatTunnelGateOptions(
       stopCloudflared({ pidDir });
       const proxyPort = await startGooglechatWebhookProxy(pidDir, dashboardPort);
       try {
-        await startAll({ pidDir, dashboardPort: proxyPort, cloudflareTunnelToken: "" });
+        await startAll({
+          pidDir,
+          dashboardPort: proxyPort,
+          cloudflareTunnelToken: "",
+          sandboxName: resolveSandboxName(),
+        });
       } catch (error) {
         stopGooglechatWebhookProxy(pidDir);
         throw error;
