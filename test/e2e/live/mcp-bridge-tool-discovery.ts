@@ -4,76 +4,14 @@
 import { expect } from "vitest";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertExitZero, type CommandExitResult, resultText } from "../fixtures/clients/command.ts";
+import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  type FakeMcpHttpsServer,
-  type FakeMcpRequest,
-  HERMES_DEFERRED_TOOL_SEARCH_MISS,
-} from "./mcp-bridge-servers.ts";
-
-const HERMES_TOOL_CALL_ATTEMPTS = 15;
-const HERMES_TOOL_CALL_RETRY_DELAY_MS = 2_000;
+import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
 
 export interface AuthenticatedMcpDiscoveryTarget {
   server: FakeMcpHttpsServer;
   expectedSecret: string;
   label: string;
-}
-
-export async function retryHermesToolCallAfterDeferredToolSearchMiss<
-  T extends CommandExitResult,
->(options: {
-  runAttempt(attempt: number): Promise<T>;
-  expectedResultToken: string;
-  attempts?: number;
-  retryDelayMs?: number;
-}): Promise<T> {
-  const attempts = options.attempts ?? HERMES_TOOL_CALL_ATTEMPTS;
-  const retryDelayMs = options.retryDelayMs ?? HERMES_TOOL_CALL_RETRY_DELAY_MS;
-  let result = await options.runAttempt(1);
-  for (let attempt = 2; attempt <= attempts; attempt += 1) {
-    const output = resultText(result);
-    const canRetry =
-      result.exitCode === 0 &&
-      !output.includes(options.expectedResultToken) &&
-      output.includes(`mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`);
-    if (!canRetry) return result;
-    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    result = await options.runAttempt(attempt);
-  }
-  return result;
-}
-
-export async function runMcpToolCallWithHermesRetry(
-  sandbox: SandboxClient,
-  command: string,
-  options: {
-    agent: string;
-    sandboxName: string;
-    artifactName: string;
-    expectedResultToken: string;
-  },
-): Promise<ShellProbeResult> {
-  const runAttempt = (attempt: number) =>
-    sandbox.execShell(
-      options.sandboxName,
-      trustedSandboxShellScript(["set -eu", command].join("\n")),
-      {
-        artifactName:
-          attempt === 1 ? options.artifactName : `${options.artifactName}-retry-${attempt - 1}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 5 * 60_000,
-      },
-    );
-  return options.agent === "hermes"
-    ? retryHermesToolCallAfterDeferredToolSearchMiss({
-        runAttempt,
-        expectedResultToken: options.expectedResultToken,
-      })
-    : runAttempt(1);
 }
 
 export async function assertAuthenticatedMcpRediscovery(

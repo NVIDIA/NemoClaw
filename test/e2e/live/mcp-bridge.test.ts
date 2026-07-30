@@ -52,7 +52,6 @@ import {
   assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
-  runMcpToolCallWithHermesRetry,
 } from "./mcp-bridge-tool-discovery.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
@@ -733,12 +732,15 @@ async function assertRealAdapterToolCall(
             `if [ -n "\${API_SERVER_KEY:-}" ]; then curl -fsS --max-time 180 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY}" --data-binary ${shellQuote(hermesPayload)}; else curl -fsS --max-time 180 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' --data-binary ${shellQuote(hermesPayload)}; fi`,
           ].join("\n")
         : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
-  const result = await runMcpToolCallWithHermesRetry(sandbox, command, {
-    agent: options.agent,
-    sandboxName: options.sandboxName,
-    artifactName: options.artifactName,
-    expectedResultToken: options.resultToken,
-  });
+  const result = await sandbox.execShell(
+    options.sandboxName,
+    trustedSandboxShellScript(["set -eu", command].join("\n")),
+    {
+      artifactName: options.artifactName,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    },
+  );
   expectExitZero(result, `${options.agent} real MCP tool call`);
   expect(resultText(result)).toContain(options.resultToken);
   const calls = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call");
