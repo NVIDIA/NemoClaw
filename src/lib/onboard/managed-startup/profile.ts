@@ -1632,7 +1632,7 @@ export function serializeManagedStartupProfile(profile: ManagedStartupProfile): 
   return serialized;
 }
 
-/** Encode canonical JSON as unpadded base64url for an argv/env-safe handoff. */
+/** Encode canonical JSON as unpadded base64url for transport through argv or an environment variable. */
 export function encodeManagedStartupProfile(profile: ManagedStartupProfile): string {
   return Buffer.from(serializeManagedStartupProfile(profile), "utf8").toString("base64url");
 }
