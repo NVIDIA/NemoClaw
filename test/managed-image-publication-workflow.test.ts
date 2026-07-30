@@ -201,7 +201,7 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
 }
 
 describe("complete managed-image publication workflow", () => {
-  it("starts after exact base contracts with complete main triggers and release-safe concurrency (#7744)", () => {
+  it("starts after exact base contracts with complete main triggers and does not cancel release-tag runs (#7744)", () => {
     const baseWorkflow = readWorkflow("base-image.yaml");
     const managedWorkflow = readWorkflow("managed-images.yaml");
     const publisher = required(
