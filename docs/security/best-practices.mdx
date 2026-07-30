@@ -582,8 +582,8 @@ A direct runtime can override the image user to `root`, which lets the entrypoin
 |---|---|
 | Default | `run_as_user: sandbox`, `run_as_group: sandbox`. OpenShell runs the entrypoint, gateway, and agent under the sandbox UID. |
 | What you can change | Change the `process` section in the policy file to run as a different user. Direct container runtimes can override the image user to `root` when separate gateway and agent UIDs are required. |
-| Risk if relaxed | Running as `root` inside the container gives the agent access to modify any file in the container filesystem and increases the impact of container escape vulnerabilities. |
-| Recommendation | Never run as root. Keep the `sandbox` user. |
+| Risk if relaxed | Running agent commands as `root` gives the agent access to modify any file in the container filesystem and increases the impact of container escape vulnerabilities. |
+| Recommendation | Keep agent commands under the `sandbox` user. Use `root` only as the direct-runtime entrypoint supervisor when separate gateway and agent UIDs are required; do not run agent commands as `root` or make `root` the OpenShell image default. |
 
 ### PATH Hardening
 
