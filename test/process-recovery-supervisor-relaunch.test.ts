@@ -302,6 +302,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(finalize).toHaveBeenCalledWith(true);
+    expect(captureOpenshell.mock.invocationCallOrder[0]).toBeLessThan(
+      finalize.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "busy-recovered-box"],
       expect.objectContaining({ ignoreError: true }),
@@ -341,13 +344,13 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
-      recovered: true,
+      recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining("did not become ready in OpenShell"),
     });
     expect(finalize).toHaveBeenCalledOnce();
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(finalize).toHaveBeenCalledWith(false);
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
       "unready-box",
       expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 180 }),
@@ -402,7 +405,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
-      recovered: true,
+      recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining(
@@ -410,7 +413,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ),
     });
     expect(captureOpenshell).toHaveBeenCalled();
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(finalize).toHaveBeenCalledWith(false);
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -453,12 +456,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
-      recovered: true,
+      recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining("failed the managed health guard"),
     });
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(finalize).toHaveBeenCalledWith(false);
     expect(captureOpenshell).not.toHaveBeenCalled();
   });
 

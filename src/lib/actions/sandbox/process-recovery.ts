@@ -1299,22 +1299,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    if (relaunch) {
-      try {
-        const completion = relaunch.finalize(true);
-        if (!completion.backupRemoved && !quiet) {
-          console.error(
-            "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
-          );
-        }
-      } catch {
-        if (!quiet) {
-          console.error(
-            "  Warning: the recovered sandbox is healthy, but container transaction cleanup could not be confirmed.",
-          );
-        }
-      }
-    }
     const readinessFailureDetail = relaunch
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
@@ -1336,14 +1320,41 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         })()
       : null;
     if (readinessFailureDetail) {
+      let rolledBack = true;
+      try {
+        rolledBack = relaunch?.finalize(false).rolledBack ?? true;
+      } catch {
+        rolledBack = false;
+      }
+      if (!rolledBack && !quiet) {
+        console.error(
+          "  Automatic rollback of the previous sandbox container failed; inspect Docker state before retrying.",
+        );
+      }
       return {
         checked: true,
         wasRunning: false,
-        recovered: true,
+        recovered: false,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: readinessFailureDetail,
       };
+    }
+    if (relaunch) {
+      try {
+        const completion = relaunch.finalize(true);
+        if (!completion.backupRemoved && !quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
+          );
+        }
+      } catch {
+        if (!quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but container transaction cleanup could not be confirmed.",
+          );
+        }
+      }
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
