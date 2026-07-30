@@ -93,7 +93,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(fs.statSync(fixture.envPath).ino).not.toBe(envBefore.ino);
       expect(fs.statSync(fixture.compatHashPath).ino).not.toBe(compatBefore.ino);
       expect(mode(fixture.sandboxDir)).toBe(0o1775);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
       expect(mode(fixture.configPath)).toBe(0o444);
       expect(mode(fixture.envPath)).toBe(0o444);
       expect(mode(fixture.compatHashPath)).toBe(0o444);
@@ -171,7 +171,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
         true,
       );
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
       expect(mode(fixture.configPath)).toBe(0o444);
       expect(mode(fixture.sandboxDir)).toBe(0o755);
 
@@ -261,7 +261,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         token,
       });
       expect(finished.status, finished.stderr).toBe(0);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -297,7 +297,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       });
       expect(finished.status, finished.stderr).toBe(0);
       expect(fs.existsSync(fixture.statePath)).toBe(false);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -358,7 +358,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         token: lockedToken,
       });
       expect(finished.status, finished.stderr).toBe(0);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
       expect(mode(fixture.configPath)).toBe(0o444);
       expect(strictHashIsValid(fixture)).toBe(true);
     } finally {

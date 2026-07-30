@@ -69,6 +69,8 @@ function runCaptureWithLspci(lspciOutput: string): (command: readonly string[]) 
   };
 }
 
+const noHostCommandOutput = () => "";
+
 function healthySystemctlAndStat(command: readonly string[]) {
   if (command[0] === "systemctl" && command[1] === "is-enabled") return "enabled";
   if (command[0] === "systemctl" && command[1] === "is-active") return "active";
@@ -85,6 +87,7 @@ describe("assessHost — CDI", () => {
       release: "6.8.0-58-generic",
       readFileImpl: () => "Linux version 6.8.0-58-generic",
       readdirImpl: () => [],
+      runCaptureImpl: noHostCommandOutput,
       dockerInfoOutput: JSON.stringify({
         ServerVersion: "27.0",
         OperatingSystem: "Ubuntu 24.04",
@@ -108,6 +111,7 @@ describe("assessHost — CDI", () => {
           ? "cdiVersion: 0.5.0\nkind: nvidia.com/gpu\ndevices: []\n"
           : "Linux version 6.8.0-58-generic",
       readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["nvidia.yaml"] : []),
+      runCaptureImpl: noHostCommandOutput,
       dockerInfoOutput: JSON.stringify({
         ServerVersion: "27.0",
         CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
@@ -256,6 +260,7 @@ describe("assessHost — CDI", () => {
       release: "6.8.0-58-generic",
       readFileImpl: () => "Linux version 6.8.0-58-generic",
       readdirImpl: () => [],
+      runCaptureImpl: noHostCommandOutput,
       dockerInfoOutput: JSON.stringify({ ServerVersion: "27.0", CDISpecDirs: ["/etc/cdi"] }),
       commandExistsImpl: (name: string) => name === "docker",
       gpuProbeImpl: () => false,
@@ -266,6 +271,7 @@ describe("assessHost — CDI", () => {
       release: "6.8.0-58-generic",
       readFileImpl: () => "Linux version 6.8.0-58-generic",
       readdirImpl: () => [],
+      runCaptureImpl: noHostCommandOutput,
       dockerInfoOutput: JSON.stringify({ ServerVersion: "24.0" }),
       commandExistsImpl: (name: string) => name === "docker",
       gpuProbeImpl: () => true,
