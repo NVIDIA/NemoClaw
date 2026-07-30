@@ -268,7 +268,7 @@
     },
     {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
-      "test": "keeps the locked config root writable by the sandbox identity while the sealed files stay protected (#7865)",
+      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"
     },
     {

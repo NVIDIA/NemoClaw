@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Re-verify that the sandbox filesystem still matches what `shields up`
-// established: 444 root:root on each locked file, 755 root:root on the
-// config directory, no legacy state layout, and (when the caller knows
-// chattr was applied) the immutable bit. When the caller supplies the
+// established: 444 root:root on each locked file, the agent-specific
+// locked ownership and mode on the config directory, no legacy state
+// layout, and the immutable bit when the caller knows `chattr` was
+// applied. When the caller supplies the
 // SHA-256 seal that was captured at lock time, also re-hash each file
 // and surface a content-drift entry on any mismatch. This catches the
 // host-root tamper pattern that defeats perm-only verification: chmod

@@ -688,7 +688,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
   // source-shape-contract: security -- Executes the shipped guard as root so a real sandbox identity proves the locked-root capability split
   it.skipIf(!shouldAttemptRootContainerContract)(
-    "keeps the locked config root writable by the sandbox identity while the sealed files stay protected (#7865)",
+    "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
     () => {
       // Exercise the real kernel capabilities of a distinct sandbox identity
       // against a genuinely locked tree instead of asserting modes: Hermes must
