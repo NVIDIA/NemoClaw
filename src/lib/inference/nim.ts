@@ -6,6 +6,11 @@
 import fs from "node:fs";
 import nimImages from "../../../bin/lib/nim-images.json";
 import {
+  currentHostContainerEngineCommand,
+  hostContainerEngineDisplayName,
+} from "../adapters/container-engine";
+import {
+  dockerCapture,
   dockerContainerInspectFormat,
   dockerForceRm,
   dockerLoginPasswordStdin,
@@ -687,6 +692,14 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
 // leaves an empty marker entry { "nvcr.io": {} } in auths after a successful
 // login. That marker plus a global credsStore is treated as logged in.
 export function isNgcLoggedIn(): boolean {
+  if (currentHostContainerEngineCommand().driverName === "podman") {
+    return Boolean(
+      dockerCapture(["login", "--get-login", "nvcr.io"], {
+        ignoreError: true,
+        timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
+      }).trim(),
+    );
+  }
   try {
     const os = require("os");
     const fs = require("fs");
@@ -708,12 +721,13 @@ export function isNgcLoggedIn(): boolean {
 // NGC expects literal "$oauthtoken" as the username for API key authentication.
 export function dockerLoginNgc(apiKey: string): boolean {
   const result = dockerLoginPasswordStdin("nvcr.io", "$oauthtoken", apiKey);
+  const engine = hostContainerEngineDisplayName();
   if (result.error) {
-    console.error(`  Docker error: ${result.error.message}`);
+    console.error(`  ${engine} error: ${result.error.message}`);
     return false;
   }
   if (result.status !== 0 && result.stderr) {
-    console.error(`  Docker login error: ${String(result.stderr).trim()}`);
+    console.error(`  ${engine} login error: ${String(result.stderr).trim()}`);
   }
   return result.status === 0;
 }

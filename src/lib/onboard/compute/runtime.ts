@@ -4,6 +4,7 @@
 export { readManagedGatewayRuntimeBinding } from "../docker-driver-gateway-config";
 export { ensureDockerDriverGatewayLocalTlsBundle as ensureManagedGatewayLocalTlsBundle } from "../docker-driver-gateway-local-tls";
 export { isLinuxDockerDriverGatewayEnabled } from "../docker-driver-platform";
+export * from "./host-local-inference-runtime";
 /**
  * Driver-neutral onboarding runtime facade.
  *

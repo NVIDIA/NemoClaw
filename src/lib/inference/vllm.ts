@@ -11,6 +11,11 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { isDeepStrictEqual } from "node:util";
 import {
+  currentHostContainerEngineCommand,
+  hostContainerEngineDisplayName,
+  hostContainerEngineExecutable,
+} from "../adapters/container-engine";
+import {
   dockerCapture,
   dockerForceRm,
   dockerImageInspectFormat,
@@ -465,8 +470,14 @@ function formatElapsed(ms: number): string {
 }
 
 function dockerPrereqsOk(): { ok: boolean; reason?: string } {
-  if (!runCapture(["sh", "-c", "command -v docker"], { ignoreError: true }).trim()) {
-    return { ok: false, reason: "docker not found on PATH" };
+  const executable = hostContainerEngineExecutable();
+  const displayName = hostContainerEngineDisplayName();
+  if (
+    !runCapture(["sh", "-c", 'command -v "$1"', "--", executable], {
+      ignoreError: true,
+    }).trim()
+  ) {
+    return { ok: false, reason: `${displayName} not found on PATH` };
   }
   if (!runCapture(["sh", "-c", "command -v nvidia-smi"], { ignoreError: true }).trim()) {
     return { ok: false, reason: "nvidia-smi not found — vLLM requires NVIDIA drivers" };
@@ -496,16 +507,17 @@ export async function pullImage(
     logLine: emit,
   });
   if (result.status !== 0) {
+    const engine = currentHostContainerEngineCommand().driverName;
     if (result.timeoutKind === "stall") {
-      return { ok: false, reason: "docker pull stalled with no progress" };
+      return { ok: false, reason: `${engine} pull stalled with no progress` };
     }
     if (result.timeoutKind === "max") {
       return {
         ok: false,
-        reason: `docker pull exceeded ${String(profile.pullTimeoutSec)}s safety budget`,
+        reason: `${engine} pull exceeded ${String(profile.pullTimeoutSec)}s safety budget`,
       };
     }
-    return { ok: false, reason: `docker pull failed (exit ${String(result.status)})` };
+    return { ok: false, reason: `${engine} pull failed (exit ${String(result.status)})` };
   }
   return { ok: true };
 }
@@ -777,6 +789,44 @@ type VllmContainerOwnership =
   | { kind: "managed"; containerId: string; running: boolean }
   | { kind: "unknown" };
 
+interface VllmContainerOwnershipFields {
+  containerId: string;
+  expectedName: string;
+  observedName: string;
+  state: string;
+  labels: Readonly<Record<string, string>>;
+}
+
+function classifyVllmContainerOwnership({
+  containerId,
+  expectedName,
+  labels,
+  observedName,
+  state,
+}: VllmContainerOwnershipFields): VllmContainerOwnership {
+  if (observedName !== expectedName) return { kind: "unknown" };
+  if (!DOCKER_CONTAINER_ID_PATTERN.test(containerId)) return { kind: "unknown" };
+
+  const managedLabel = labels[NEMOCLAW_VLLM_MANAGED_LABEL] ?? "";
+  const dualRole = labels[DUAL_STATION_VLLM_ROLE_LABEL] ?? "";
+  const dualEndpoint = labels[DUAL_STATION_VLLM_ENDPOINT_LABEL] ?? "";
+  const dualCluster = labels[DUAL_STATION_VLLM_CLUSTER_LABEL] ?? "";
+  if (managedLabel !== "true") return { kind: "foreign" };
+  const hasAnyDualLabel = Boolean(dualRole || dualEndpoint || dualCluster);
+  if (hasAnyDualLabel) {
+    const exactDualHead =
+      dualRole === "head" &&
+      /^http:\/\/192\.168\.|^http:\/\/10\.|^http:\/\/172\.(?:1[6-9]|2[0-9]|3[01])\./.test(
+        dualEndpoint,
+      ) &&
+      /^[a-f0-9]{64}$/.test(dualCluster);
+    return exactDualHead
+      ? { kind: "dual-managed", containerId, running: state === "running" }
+      : { kind: "unknown" };
+  }
+  return { kind: "managed", containerId, running: state === "running" };
+}
+
 function inspectVllmContainerOwnershipInDockerEnv(
   containerName: string,
   env: Record<string, string>,
@@ -812,29 +862,93 @@ function inspectVllmContainerOwnershipInDockerEnv(
     if (fields.length !== 7) return { kind: "unknown" };
     const [containerId, observedName, state, managedLabel, dualRole, dualEndpoint, dualCluster] =
       fields;
-    if (observedName !== containerName || !DOCKER_CONTAINER_ID_PATTERN.test(containerId)) {
+    if (observedName !== containerName) {
       return { kind: "unknown" };
     }
-    if (managedLabel !== "true") return { kind: "foreign" };
-    const hasAnyDualLabel = Boolean(dualRole || dualEndpoint || dualCluster);
-    if (hasAnyDualLabel) {
-      const exactDualHead =
-        dualRole === "head" &&
-        /^http:\/\/192\.168\.|^http:\/\/10\.|^http:\/\/172\.(?:1[6-9]|2[0-9]|3[01])\./.test(
-          dualEndpoint,
-        ) &&
-        /^[a-f0-9]{64}$/.test(dualCluster);
-      return exactDualHead
-        ? { kind: "dual-managed", containerId, running: state === "running" }
-        : { kind: "unknown" };
+    return classifyVllmContainerOwnership({
+      containerId,
+      expectedName: containerName,
+      labels: {
+        [DUAL_STATION_VLLM_CLUSTER_LABEL]: dualCluster,
+        [DUAL_STATION_VLLM_ENDPOINT_LABEL]: dualEndpoint,
+        [DUAL_STATION_VLLM_ROLE_LABEL]: dualRole,
+        [NEMOCLAW_VLLM_MANAGED_LABEL]: managedLabel,
+      },
+      observedName,
+      state,
+    });
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+function stringRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") return null;
+    result[key] = entry;
+  }
+  return result;
+}
+
+function inspectVllmContainerOwnershipInPodmanEnv(
+  containerName: string,
+  env: Record<string, string>,
+): VllmContainerOwnership {
+  try {
+    const output = dockerCapture(
+      [
+        "container",
+        "ls",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^${containerName}$`,
+        "--format",
+        "json",
+      ],
+      { env, timeout: 10_000 },
+    ).trim();
+    if (!output) return { kind: "unknown" };
+
+    const parsed: unknown = JSON.parse(output);
+    if (!Array.isArray(parsed) || parsed.length > 1) return { kind: "unknown" };
+    if (parsed.length === 0) return { kind: "absent" };
+    const row = parsed[0];
+    if (!row || typeof row !== "object" || Array.isArray(row)) return { kind: "unknown" };
+    const record = row as Record<string, unknown>;
+    const containerId = record.Id ?? record.ID;
+    const names = record.Names;
+    const state = record.State;
+    const labels = stringRecord(record.Labels);
+    if (
+      typeof containerId !== "string" ||
+      !Array.isArray(names) ||
+      names.length !== 1 ||
+      names[0] !== containerName ||
+      typeof state !== "string" ||
+      !labels
+    ) {
+      return { kind: "unknown" };
     }
-    return { kind: "managed", containerId, running: state === "running" };
+    return classifyVllmContainerOwnership({
+      containerId,
+      expectedName: containerName,
+      labels,
+      observedName: names[0],
+      state,
+    });
   } catch {
     return { kind: "unknown" };
   }
 }
 
 function inspectVllmContainerOwnership(containerName: string): VllmContainerOwnership {
+  if (currentHostContainerEngineCommand().driverName === "podman") {
+    return inspectVllmContainerOwnershipInPodmanEnv(containerName, buildVllmDockerEnv());
+  }
+
   // A managed dual-Station head always lives on the physical host's default
   // daemon. Inspect it before following ambient single-host Docker routing so
   // DOCKER_HOST, DOCKER_CONTEXT, or Docker's persisted currentContext cannot
@@ -861,9 +975,10 @@ function vllmContainerReplacementTarget(
     };
   }
   if (ownership.kind === "unknown") {
+    const engine = hostContainerEngineDisplayName();
     return {
       ok: false,
-      reason: `Could not verify ownership of Docker container "${containerName}". NemoClaw will not remove it. Check Docker access and retry.`,
+      reason: `Could not verify ownership of ${engine} container "${containerName}". NemoClaw will not remove it. Check ${engine} access and retry.`,
     };
   }
   if (ownership.kind === "dual-managed") {
@@ -968,7 +1083,10 @@ function startContainer(
     suppressOutput: true,
   });
   if (result.status !== 0) {
-    return { ok: false, reason: `docker run failed (exit ${String(result.status)})` };
+    return {
+      ok: false,
+      reason: `${currentHostContainerEngineCommand().driverName} run failed (exit ${String(result.status)})`,
+    };
   }
   return { ok: true };
 }
@@ -1211,7 +1329,7 @@ function managedStorageRequirements({
   const requirements: ManagedStorageRequirement[] = [];
   if (includeImage && dockerProbe) {
     requirements.push({
-      label: "Docker image storage",
+      label: `${hostContainerEngineDisplayName()} image storage`,
       probe: dockerProbe,
       requiredBytes: estimate.imageCompressedBytes + estimate.imageUnpackedBytes,
     });
@@ -1351,8 +1469,13 @@ function printManagedStorageWarning({
   }
   console.error("  Useful diagnostics:");
   if (includeImage) {
-    console.error("    docker system df");
-    console.error("    docker info --format '{{.DockerRootDir}}'");
+    const executable = hostContainerEngineExecutable();
+    console.error(`    ${executable} system df`);
+    console.error(
+      currentHostContainerEngineCommand().driverName === "podman"
+        ? `    ${executable} info --format json`
+        : `    ${executable} info --format '{{.DockerRootDir}}'`,
+    );
   }
   console.error('    df -h "$HOME/.cache/huggingface"');
 }
@@ -1415,8 +1538,11 @@ async function managedStorageAccepted(
     (requirement) => requirement.label === "Model cache storage" && !requirement.probe.ok,
   );
   if (problem.kind === "unknown") {
-    if (problem.check.label === "Docker image storage") {
-      console.error("  Continuing because Docker storage capacity could not be verified.");
+    const engineStorageLabel = `${hostContainerEngineDisplayName()} image storage`;
+    if (problem.check.label === engineStorageLabel) {
+      console.error(
+        `  Continuing because ${hostContainerEngineDisplayName()} storage capacity could not be verified.`,
+      );
       return true;
     }
     if (opts.nonInteractive) {

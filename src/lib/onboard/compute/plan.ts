@@ -48,7 +48,7 @@ export const CURRENT_OPEN_SHELL_COMPUTE_PLANS = {
 export const CURRENT_OPEN_SHELL_COMPUTE_CAPABILITIES = {
   docker: { hostLocalInference: true },
   kubernetes: { hostLocalInference: true },
-  podman: { hostLocalInference: false },
+  podman: { hostLocalInference: true },
 } as const satisfies OpenShellComputeCapabilitiesRegistry;
 
 export interface ResolveOpenShellComputeSelectionInput {

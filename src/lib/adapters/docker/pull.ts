@@ -6,7 +6,7 @@ import type { SpawnOptions } from "node:child_process";
 import { ROOT } from "../../runner";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { dockerSpawn } from "./exec";
-import { dockerRun, type DockerRunOptions, type DockerRunResult } from "./run";
+import { type DockerRunOptions, type DockerRunResult, dockerRun } from "./run";
 
 export function dockerPull(imageRef: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["pull", imageRef], opts);
@@ -78,9 +78,22 @@ export function dockerPullProgressSignature(line: string): string | null {
   if (/^Status: /.test(normalized)) {
     return `status:${normalized}`;
   }
+  const podmanCopy = normalized.match(
+    /^(Copying (?:blob|config))\s+([a-f0-9]{6,}|sha256:[a-f0-9]{6,})\s*(.*)$/iu,
+  );
+  if (podmanCopy) {
+    return `podman:${podmanCopy[1].toLowerCase()}:${podmanCopy[2].toLowerCase()}:${podmanCopy[3].trim().toLowerCase()}`;
+  }
+  if (
+    /^(?:Trying to pull|Getting image source signatures|Writing manifest to image destination|Storing signatures)\b/iu.test(
+      normalized,
+    )
+  ) {
+    return `podman:${normalized.toLowerCase()}`;
+  }
 
-  // This vLLM watchdog intentionally recognizes observed `docker pull`
-  // layer/status output only; BuildKit-style build output is not pull progress.
+  // This vLLM watchdog intentionally recognizes observed Docker and Podman
+  // pull output only; BuildKit-style build output is not pull progress.
   return null;
 }
 

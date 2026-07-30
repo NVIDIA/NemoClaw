@@ -13,6 +13,7 @@ vi.mock("../../runner", () => ({
 }));
 
 import {
+  configureHostContainerEngine,
   dockerBuild,
   dockerContainerInspectFormat,
   dockerInfoFormat,
@@ -24,14 +25,56 @@ import {
   dockerRmi,
   dockerRunDetached,
   dockerTag,
+  resetHostContainerEngineForTests,
 } from "./index";
 
 describe("docker helpers", () => {
   beforeEach(() => {
+    resetHostContainerEngineForTests();
     runMock.mockReset();
     runCaptureMock.mockReset();
     runMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
     runCaptureMock.mockReturnValue("");
+  });
+
+  it("routes legacy helper call sites through a scoped pluggable container engine", () => {
+    const restore = configureHostContainerEngine({
+      driverName: "podman",
+      executable: "podman",
+      prefixArgs: ["--url", "unix:///run/user/1000/podman/podman.sock"],
+    });
+    try {
+      dockerPull("nvcr.io/nvidia/nim:latest");
+      dockerRunDetached(["--device", "nvidia.com/gpu=all", "nvcr.io/nvidia/nim:latest"]);
+    } finally {
+      restore();
+    }
+
+    expect(runMock.mock.calls).toEqual([
+      [
+        [
+          "podman",
+          "--url",
+          "unix:///run/user/1000/podman/podman.sock",
+          "pull",
+          "nvcr.io/nvidia/nim:latest",
+        ],
+        {},
+      ],
+      [
+        [
+          "podman",
+          "--url",
+          "unix:///run/user/1000/podman/podman.sock",
+          "run",
+          "-d",
+          "--device",
+          "nvidia.com/gpu=all",
+          "nvcr.io/nvidia/nim:latest",
+        ],
+        {},
+      ],
+    ]);
   });
 
   it("prefixes docker argv for pull/build/run/rmi helpers", () => {

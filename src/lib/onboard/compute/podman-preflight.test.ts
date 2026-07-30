@@ -15,6 +15,9 @@ const INFO = JSON.stringify({
     cgroupVersion: "v2",
     networkBackend: "netavark",
     security: { rootless: true },
+    cdi: {
+      devices: ["nvidia.com/gpu=all", "nvidia.com/gpu=GPU-deadbeef"],
+    },
   },
 });
 const SOCKET_AUTHORITY = {
@@ -41,15 +44,30 @@ function socketStat(filePath: string) {
 }
 
 function successfulRun(command: string, args: readonly string[]) {
-  if (command === "lsof") return { status: 0, stdout: "", stderr: "" };
-  if (command !== "podman") return { status: 1, stdout: "", stderr: "unexpected command" };
-  if (args[0] === "--version") {
-    return { status: 0, stdout: "podman version 5.6.2\n", stderr: "" };
+  switch (`${command}:${args[0] ?? ""}`) {
+    case "lsof:-v":
+      return { status: 0, stdout: "", stderr: "" };
+    case "podman:--version":
+      return { status: 0, stdout: "podman version 5.6.2\n", stderr: "" };
+    case "podman:unshare":
+      return { status: 0, stdout: "0 1000 1\n1 100000 65536\n", stderr: "" };
+    case "podman:--url":
+      return { status: 0, stdout: INFO, stderr: "" };
+    case "nvidia-ctk:cdi":
+      return {
+        status: 0,
+        stdout: [
+          "nvidia.com/gpu=all",
+          "nvidia.com/gpu=0",
+          "nvidia.com/gpu=GPU-deadbeef",
+          "nvidia.com/gpu=MIG-GPU-deadbeef/1/0",
+          "",
+        ].join("\n"),
+        stderr: "",
+      };
+    default:
+      return { status: 1, stdout: "", stderr: "unexpected command" };
   }
-  if (args[0] === "unshare") {
-    return { status: 0, stdout: "0 1000 1\n1 100000 65536\n", stderr: "" };
-  }
-  return { status: 0, stdout: INFO, stderr: "" };
 }
 
 describe("native Podman preflight", () => {
@@ -96,7 +114,38 @@ describe("native Podman preflight", () => {
       os: "linux",
       architecture: "amd64",
       networkBackend: "netavark",
+      cdiDevices: [
+        "nvidia.com/gpu=0",
+        "nvidia.com/gpu=GPU-deadbeef",
+        "nvidia.com/gpu=MIG-GPU-deadbeef/1/0",
+        "nvidia.com/gpu=all",
+      ],
     });
+  });
+
+  it("qualifies Linux arm64 and preserves the Podman CDI device identities", () => {
+    const receipt = assessNativePodman({
+      platform: "linux",
+      architecture: "arm64",
+      env: { OPENSHELL_PODMAN_SOCKET: "/runtime/podman.sock" },
+      uid: 1000,
+      lstatSync: socketStat as never,
+      run: (command, args) =>
+        args[0] === "--url"
+          ? {
+              status: 0,
+              stdout: JSON.stringify({
+                ...JSON.parse(INFO),
+                host: { ...JSON.parse(INFO).host, arch: "aarch64" },
+              }),
+              stderr: "",
+            }
+          : successfulRun(command, args),
+    });
+
+    expect(receipt.architecture).toBe("arm64");
+    expect(receipt.cdiDevices).toContain("nvidia.com/gpu=all");
+    expect(receipt.cdiDevices).toContain("nvidia.com/gpu=MIG-GPU-deadbeef/1/0");
   });
 
   it("rejects a socket replacement during the Podman info probe", () => {
@@ -121,7 +170,7 @@ describe("native Podman preflight", () => {
     expect(assertSocketAuthority).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects nonroot, cgroup-v1, non-amd64, and missing subordinate mappings", () => {
+  it("rejects nonroot, cgroup-v1, unsupported architectures, and missing subordinate mappings", () => {
     const cases = [
       {
         info: {
@@ -135,8 +184,8 @@ describe("native Podman preflight", () => {
         message: "requires cgroups v2",
       },
       {
-        info: { ...JSON.parse(INFO), host: { ...JSON.parse(INFO).host, arch: "arm64" } },
-        message: "requires amd64",
+        info: { ...JSON.parse(INFO), host: { ...JSON.parse(INFO).host, arch: "ppc64le" } },
+        message: "requires amd64 or arm64",
       },
     ];
     for (const testCase of cases) {
@@ -181,7 +230,7 @@ describe("native Podman preflight", () => {
           throw new Error("must not run");
         },
       }),
-    ).toThrow("requires Linux x86_64");
+    ).toThrow("requires Linux amd64 or arm64");
   });
 
   it("fails with remediation when complete listener inspection is unavailable", () => {

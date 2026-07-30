@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { run, runCapture } from "../../runner";
+import { hostContainerEngineArgv } from "../container-engine";
 
 export type DockerRunOptions = Parameters<typeof run>[1];
 export type DockerCaptureOptions = Parameters<typeof runCapture>[1];
 export type DockerRunResult = ReturnType<typeof run>;
 export function dockerArgv(args: readonly string[]): string[] {
-  return ["docker", ...args];
+  return hostContainerEngineArgv(args);
 }
 
 export function dockerRun(args: readonly string[], opts: DockerRunOptions = {}): DockerRunResult {
