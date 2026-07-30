@@ -41,6 +41,23 @@ export type VerifyShieldsLockResult = {
 const EXPECTED_FILE_MODE = "444";
 const EXPECTED_DIR_MODE = "755";
 const EXPECTED_OWNER = "root:root";
+// Hermes writes its top-level runtime state inside the config root, so its
+// locked root stays group-writable with set-id/sticky and only changes owner.
+// The sticky bit is what stops the sandbox identity from unlinking the sealed
+// root-owned files (#7865). A Hermes root still sitting at the pre-#7865
+// `755 root:root` cannot run a gateway at all, so report it as drift and let
+// the caller's re-lock repair it rather than passing it as a healthy lock.
+const HERMES_EXPECTED_DIR_MODE = "3770";
+const HERMES_EXPECTED_DIR_OWNER = "root:sandbox";
+
+function expectedLockedDirPosture(agentName?: string): {
+  mode: string;
+  owner: string;
+} {
+  return agentName === "hermes"
+    ? { mode: HERMES_EXPECTED_DIR_MODE, owner: HERMES_EXPECTED_DIR_OWNER }
+    : { mode: EXPECTED_DIR_MODE, owner: EXPECTED_OWNER };
+}
 
 function noopAssertLegacyLayout(_sandboxName: string, _configDir: string): void {
   // Production callers replace this with the real legacy-layout assertion;
@@ -73,13 +90,14 @@ export function verifyShieldsLockState(
     }
   }
 
+  const expectedDir = expectedLockedDirPosture(target.agentName);
   try {
     const dirPerms = exec(["stat", "-c", "%a %U:%G", target.configDir]);
     const [dirMode, dirOwner] = dirPerms.split(" ");
-    if (dirMode !== EXPECTED_DIR_MODE)
-      issues.push(`dir mode=${dirMode} (expected ${EXPECTED_DIR_MODE})`);
-    if (dirOwner !== EXPECTED_OWNER)
-      issues.push(`dir owner=${dirOwner} (expected ${EXPECTED_OWNER})`);
+    if (dirMode !== expectedDir.mode)
+      issues.push(`dir mode=${dirMode} (expected ${expectedDir.mode})`);
+    if (dirOwner !== expectedDir.owner)
+      issues.push(`dir owner=${dirOwner} (expected ${expectedDir.owner})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     issues.push(`dir stat failed: ${msg}`);

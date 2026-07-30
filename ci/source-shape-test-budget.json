@@ -267,6 +267,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "keeps the locked config root writable by the sandbox identity while the sealed files stay protected (#7865)",
+      "category": "security"
+    },
+    {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
       "test": "locks recovery identities to the source workflows' runtime names (#7140)",
       "category": "security"
