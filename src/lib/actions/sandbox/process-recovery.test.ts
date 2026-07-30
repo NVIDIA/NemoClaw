@@ -135,7 +135,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
-  it("retries a blank OpenShell failure after an exact re-registration state", () => {
+  it("retries repeated blank OpenShell failures after an exact re-registration state", () => {
     const captureOpenshellImpl = vi
       .fn()
       .mockReturnValueOnce({
@@ -145,22 +145,28 @@ describe("recreated sandbox OpenShell readiness", () => {
         stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
       })
       .mockReturnValueOnce({ status: 1, output: "", stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 1, output: "", stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
+    let nowMs = 0;
 
     expect(
       waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
-        sleepImpl: (seconds) => sleeps.push(seconds),
-        timeoutSeconds: 6,
+        nowImpl: () => nowMs,
+        sleepImpl: (seconds) => {
+          sleeps.push(seconds);
+          nowMs += seconds * 1000;
+        },
+        timeoutSeconds: 10,
       }),
     ).toBe(true);
-    expect(beforeProbe).toHaveBeenCalledTimes(3);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([3, 3]);
+    expect(beforeProbe).toHaveBeenCalledTimes(4);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(4);
+    expect(sleeps).toEqual([3, 3, 3]);
   });
 
   it("keeps an isolated blank OpenShell failure terminal", () => {
