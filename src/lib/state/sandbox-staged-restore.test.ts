@@ -19,7 +19,7 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
-function runHermesRestore(options: { stateDirs: string[] }): {
+function runHermesRestore(options: { stateDirs: string[]; movesFail?: boolean }): {
   moves: MoveRecord[];
   restore: ReturnType<typeof restoreRecreatedSandboxState>;
   restoredCronJob: string | null;
@@ -77,7 +77,11 @@ process.exit(0);
 
     writeExecutable(
       path.join(shimDir, "mv"),
-      `#!/usr/bin/env node
+      options.movesFail === true
+        ? `#!/usr/bin/env node
+process.exit(1);
+`
+        : `#!/usr/bin/env node
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
@@ -194,6 +198,16 @@ describe("Hermes cron state restore", () => {
       "scripts",
       "workspace",
     ]);
+    expect(result.stagingLeftBehind).toBe(false);
+  });
+
+  it("removes the archive copy when a state directory cannot be published", () => {
+    const result = runHermesRestore({
+      stateDirs: ["scripts", "cron", "workspace"],
+      movesFail: true,
+    });
+
+    expect(result.restore.success).toBe(false);
     expect(result.stagingLeftBehind).toBe(false);
   });
 });

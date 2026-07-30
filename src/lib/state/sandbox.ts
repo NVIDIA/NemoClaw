@@ -1374,8 +1374,9 @@ function orderStateDirsForRestore(stateDirs: readonly string[]): string[] {
 function buildStagedRestoreCommand(dir: string, stateDirs: readonly string[]): string {
   const staging = `${dir}/${RESTORE_STAGING_DIR}`;
   const quotedStaging = shellQuote(staging);
+  const removeStaging = `rm -rf -- ${quotedStaging}`;
   const commands = [
-    `rm -rf -- ${quotedStaging}`,
+    removeStaging,
     `mkdir -p -- ${quotedStaging}`,
     `tar --no-same-owner -xf - -C ${quotedStaging}`,
   ];
@@ -1384,8 +1385,9 @@ function buildStagedRestoreCommand(dir: string, stateDirs: readonly string[]): s
     commands.push(`rm -rf -- ${target}`);
     commands.push(`mv -- ${shellQuote(`${staging}/${stateDir}`)} ${target}`);
   }
-  commands.push(`rm -rf -- ${quotedStaging}`);
-  return commands.join(" && ");
+  // A failed extraction or move ends the chain, so the archive copy is removed
+  // on the way out instead of at the end of the chain.
+  return `trap ${shellQuote(removeStaging)} EXIT; ${commands.join(" && ")}`;
 }
 
 /**
