@@ -206,13 +206,12 @@ function readManagedWorkloadRebuildAuthority(
   const hermesInferenceProvider = entry.hermesInferenceProvider?.trim() || null;
   const profileUsesIsolatedHermesInference =
     profile.agent === "hermes" &&
-    profile.tools.enabledGateways.length > 0 &&
     profile.inference.upstreamProvider === expectedHermesInferenceProvider;
   if (
     (hermesInferenceProvider !== null &&
       hermesInferenceProvider !== expectedHermesInferenceProvider) ||
-    (hermesInferenceProvider === expectedHermesInferenceProvider) !==
-      profileUsesIsolatedHermesInference
+    (profileUsesIsolatedHermesInference &&
+      hermesInferenceProvider !== expectedHermesInferenceProvider)
   ) {
     throw new ManagedWorkloadRebuildError(
       "the recorded Hermes inference identity does not match the durable startup profile",

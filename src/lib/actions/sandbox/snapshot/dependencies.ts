@@ -51,6 +51,8 @@ export {
 } from "../../../onboard/managed-startup/transport";
 export { assertSandboxCreateArgvWithinTransportLimit } from "../../../onboard/sandbox-create/transport";
 export {
+  cleanupHermesSandboxProviders,
+  HERMES_SANDBOX_PROVIDER_SUFFIXES,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../../onboard/sandbox-provider-cleanup";

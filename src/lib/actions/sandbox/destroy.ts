@@ -78,6 +78,11 @@ export type CleanupSandboxServicesDeps = {
   warn?: (message: string) => void;
 };
 
+export type CleanupSandboxServicesResult = {
+  identityBoundCleanupCompleted: boolean;
+  identityBoundCleanupRequired: boolean;
+};
+
 type ShieldsTimerNeutralizeResult = {
   warnings?: string[];
 };
@@ -121,7 +126,7 @@ export function cleanupSandboxServices(
     removeIdentityBoundState = true,
   }: { stopHostServices?: boolean; removeIdentityBoundState?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
-): void {
+): CleanupSandboxServicesResult {
   // Source boundary: this exported helper can be called independently of CLI
   // dispatch, including from forced local recovery. Validate once before every
   // host and provider cleanup side effect, then derive the PID path from that
@@ -156,15 +161,17 @@ export function cleanupSandboxServices(
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
   const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
+  const sandbox = getSandbox(validatedSandboxName);
   const removeHermesToolGatewayProviderState =
     deps.removeHermesToolGatewayProviderState ??
-    ((name: string) => {
+    (() => {
       const broker = require("../../hermes-tool-gateway-broker") as {
-        removeHermesToolGatewayProviderState: (sandboxName: string) => boolean;
+        removeHermesToolGatewayProviderStateForSandboxEntry: (
+          entry: NonNullable<typeof sandbox>,
+        ) => boolean;
       };
-      return broker.removeHermesToolGatewayProviderState(name);
+      return sandbox ? broker.removeHermesToolGatewayProviderStateForSandboxEntry(sandbox) : false;
     });
-  const sandbox = getSandbox(validatedSandboxName);
 
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
@@ -204,18 +211,29 @@ export function cleanupSandboxServices(
     });
   }
   const hasHermesBrokerIdentity =
-    sandbox?.agent === "hermes" &&
-    (Boolean(sandbox.hermesInferenceProvider) ||
-      (Array.isArray(sandbox.hermesToolGateways) && sandbox.hermesToolGateways.length > 0));
-  cleanupHermesSandboxProviders(
+    Boolean(sandbox?.hermesInferenceProvider) ||
+    (Array.isArray(sandbox?.hermesToolGateways) && sandbox.hermesToolGateways.length > 0);
+  if (!removeIdentityBoundState) {
+    return {
+      identityBoundCleanupCompleted: !hasHermesBrokerIdentity,
+      identityBoundCleanupRequired: hasHermesBrokerIdentity,
+    };
+  }
+  const hermesCleanup = cleanupHermesSandboxProviders(
     validatedSandboxName,
-    removeIdentityBoundState && hasHermesBrokerIdentity,
+    hasHermesBrokerIdentity,
     {
       runOpenshell,
       removeHermesToolGatewayProviderState,
       warn,
     },
   );
+  return {
+    identityBoundCleanupCompleted:
+      !hasHermesBrokerIdentity ||
+      (hermesCleanup.providerCleanupSucceeded && hermesCleanup.brokerStateRemoved),
+    identityBoundCleanupRequired: hasHermesBrokerIdentity,
+  };
 }
 
 /**
@@ -371,6 +389,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
         );
+      } else if (destructiveResult.hermesOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains Hermes provider ownership required for exact credential cleanup.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard Hermes provider ownership.`,
+        );
       } else {
         console.error(
           `  The OpenShell gateway is unreachable. Start it (run '${CLI_NAME} ${sandboxName} status'),`,
@@ -425,10 +450,22 @@ async function destroySandboxUnlocked(
     sandboxStillRegistered: !!registry.getSandbox(sandboxName),
   });
 
-  cleanupSandboxServices(sandboxName, {
+  const serviceCleanup = cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
     removeIdentityBoundState: deleteSucceededOrAlreadyGone,
   });
+  if (
+    serviceCleanup.identityBoundCleanupRequired &&
+    !serviceCleanup.identityBoundCleanupCompleted
+  ) {
+    console.error(
+      `  Sandbox '${sandboxName}' is gone, but its identity-bound Hermes provider cleanup is incomplete.`,
+    );
+    console.error(
+      "  Registry and broker ownership state were preserved. Re-run destroy to finish cleanup.",
+    );
+    process.exit(1);
+  }
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.

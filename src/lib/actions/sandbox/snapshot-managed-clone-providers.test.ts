@@ -70,6 +70,7 @@ function fakeBroker() {
       brokerToken: "test-only-broker-token",
     })),
     removeHermesToolGatewayProviderState: vi.fn(() => true),
+    removeHermesToolGatewayProviderStateForSandboxEntry: vi.fn(() => true),
   };
 }
 
@@ -303,6 +304,53 @@ describe("managed snapshot clone provider credentials", () => {
     );
   });
 
+  it("accepts exact already-missing Hermes providers during rollback cleanup", () => {
+    const broker = fakeBroker();
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runner = vi.fn((args: string[]) => ({
+      status: 1,
+      stdout: "",
+      stderr: `provider '${args[2]}' not found`,
+      output: "",
+    }));
+
+    cleanupManagedCloneProviders(
+      ["beta-hermes-inference", "beta-hermes-tool-gateway"],
+      runner,
+      undefined,
+      broker,
+    );
+
+    expect(broker.removeHermesToolGatewayProviderState).toHaveBeenCalledExactlyOnceWith("beta");
+    expect(consoleWarn.mock.calls.flat().join("\n")).not.toContain(
+      "preserving Hermes tool-gateway broker state",
+    );
+  });
+
+  it("preserves broker state when rollback diagnostics hit the capture ceiling", () => {
+    const broker = fakeBroker();
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runner = vi.fn((args: string[]) => ({
+      status: 1,
+      stdout: "",
+      stderr:
+        `provider '${args[2]}' not found\n` + "x".repeat(64 * 1024) + "\nauthentication failed",
+      output: "",
+    }));
+
+    cleanupManagedCloneProviders(
+      ["beta-hermes-inference", "beta-hermes-tool-gateway"],
+      runner,
+      undefined,
+      broker,
+    );
+
+    expect(broker.removeHermesToolGatewayProviderState).not.toHaveBeenCalled();
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "preserving Hermes tool-gateway broker state",
+    );
+  });
+
   it("rejects broker runtime incompatibility before inspecting or mutating providers", () => {
     const broker = fakeBroker();
     broker.preflightHermesToolGatewayCloneBinding.mockImplementation(() => {
@@ -336,6 +384,70 @@ describe("managed snapshot clone provider credentials", () => {
       stderr: "transport unavailable",
       output: "",
     }));
+
+    expect(() =>
+      prepareManagedCloneProviders({
+        profile: managedHermesToolProfile(),
+        messagingPlan: null,
+        destinationSandboxName: "beta",
+        destinationWillBeReplaced: true,
+        environment: {
+          [REFRESH_ENV]: "test-only-refresh",
+          OPENAI_API_KEY: "test-only-placeholder",
+        },
+        root: "/repo",
+        runOpenshell: runner,
+        hermesToolGatewayBroker: broker,
+      }),
+    ).toThrow("could not prove whether managed clone provider 'beta-hermes-inference' exists");
+    expect(runner.mock.calls.some(([args]) => args[0] === "provider" && args[1] !== "get")).toBe(
+      false,
+    );
+    expect(runner).toHaveBeenCalledWith(
+      ["provider", "get", "beta-hermes-inference"],
+      expect.objectContaining({
+        maxBuffer: 64 * 1024,
+        suppressOutput: true,
+        timeout: 5_000,
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "process error",
+      {
+        status: 0,
+        error: new Error("spawn failed"),
+        stdout: "",
+        stderr: "",
+        output: "",
+      },
+    ],
+    [
+      "timeout result",
+      {
+        status: null,
+        stdout: "",
+        stderr: "",
+        output: "",
+      },
+    ],
+    [
+      "truncated mixed diagnostic",
+      {
+        status: 1,
+        stdout: "",
+        stderr:
+          "provider 'beta-hermes-inference' not found\n" +
+          "x".repeat(64 * 1024) +
+          "\ngateway authentication failed",
+        output: "",
+      },
+    ],
+  ])("fails closed on %s before provider mutation", (_scenario, inspection) => {
+    const broker = fakeBroker();
+    const runner = vi.fn(() => inspection);
 
     expect(() =>
       prepareManagedCloneProviders({
