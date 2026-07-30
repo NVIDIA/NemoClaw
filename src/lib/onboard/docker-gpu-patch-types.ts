@@ -92,8 +92,8 @@ export type DockerGpuPatchResult = {
   originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
-  // True when deferred startup-command recovery kept the original OpenShell
-  // supervisor running while the replacement established managed health.
+  // True when recovery did not stop the original OpenShell supervisor before
+  // creating the replacement. The caller passes replacement health separately.
   backupWasRunning?: boolean;
   // True when the patch path also confirmed supervisor reconnect AND removed
   // the backup container. False when the caller deferred the reconnect wait
