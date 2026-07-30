@@ -40,6 +40,7 @@ const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 const onboardSession = requireDist("../../state/onboard-session.js");
 const registry = requireDist("../../state/registry.js");
+const registryPersistence = requireDist("../../state/registry/persistence.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
@@ -48,6 +49,7 @@ const gatewayState = requireDist("./gateway-state.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
+const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 const buildContextFingerprint = requireDist("../../adapters/fs/build-context-fingerprint.js");
 const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 const rebuildShields = requireDist("./rebuild-shields.js");
@@ -243,7 +245,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return true;
     });
   let registryLoadCount = 0;
-  vi.spyOn(registry, "load").mockImplementation(() => {
+  vi.spyOn(registryPersistence, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
     const defaultSandbox = isPreDeleteRead ? preDeleteDefaultSandbox : initialDefaultSandbox;
@@ -269,6 +271,42 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       Object.assign(currentSandboxEntry, updates);
       return true;
     });
+  vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockImplementation(
+    (...args: unknown[]) => {
+      const input = args[0] as {
+        sandboxName: string;
+        gatewayName: string;
+        targetUpdate: Record<string, unknown>;
+      };
+      if (!registry.updateSandbox(input.sandboxName, input.targetUpdate)) {
+        return {
+          ok: false,
+          message: "Sandbox registry entry disappeared during rebuild route preflight.",
+        };
+      }
+      return {
+        ok: true,
+        receipt: {
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          route: {
+            provider: input.targetUpdate.provider ?? null,
+            model: input.targetUpdate.model ?? null,
+            endpointUrl: input.targetUpdate.endpointUrl ?? null,
+            preferredInferenceApi: input.targetUpdate.preferredInferenceApi ?? null,
+            credentialEnv: input.targetUpdate.credentialEnv ?? null,
+          },
+          migratedSandboxNames: [],
+        },
+      };
+    },
+  );
+  vi.spyOn(rebuildRoutePreflight, "revalidateRebuildRouteBeforeDelete").mockImplementation(
+    (...args: unknown[]) => {
+      const receipt = args[0] as Record<string, unknown>;
+      return overrides.revalidateRebuildRouteBeforeDelete?.(receipt) ?? { ok: true, receipt };
+    },
+  );
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation((...args: unknown[]) => {

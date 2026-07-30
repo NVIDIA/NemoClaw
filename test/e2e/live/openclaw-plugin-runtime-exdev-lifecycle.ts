@@ -4,7 +4,8 @@
 export const CURRENT_LIFECYCLE_PHASES = [
   "confirm Docker CLI and clear the current plugin sandbox",
   "clone and prepare the current plugin fixture",
-  "install current OpenShell and onboard plugin v1",
+  "install and validate current OpenShell",
+  "build and onboard plugin v1",
   "restart the gateway and confirm plugin v1",
   "recreate the sandbox with plugin v2",
   "prove cross-device runtime dependency replacement",

@@ -41,6 +41,10 @@ function legacyTransitionScriptForCurrentUser(): string {
     .replace(
       "os.fchown(parent_fd, 0, sandbox_gid)",
       "os.fchown(parent_fd, os.geteuid(), os.getegid())",
+    )
+    .replace(
+      "os.fchown(config_fd, 0, sandbox_gid)",
+      "os.fchown(config_fd, os.geteuid(), os.getegid())",
     );
 }
 
@@ -144,7 +148,7 @@ describe("legacy Hermes config transition", () => {
     expect(afterStaleWrite.inode).toBe(lockedSnapshot.inode);
     expect(afterStaleWrite.bytes).toEqual(fixture.configBytes);
     expect(mode(fixture.parentDir)).toBe(0o1775);
-    expect(mode(fixture.configDir)).toBe(0o755);
+    expect(mode(fixture.configDir)).toBe(0o3770);
     expect(afterStaleWrite.mode).toBe(0o444);
     expect(mode(fixture.envPath)).toBe(0o444);
     expect(mode(fixture.compatPath)).toBe(0o444);
@@ -156,7 +160,7 @@ describe("legacy Hermes config transition", () => {
     expect(refused.status).not.toBe(0);
     expect(refused.stderr).toContain("strict hash verification failed");
     expect(mode(fixture.parentDir)).toBe(0o1775);
-    expect(mode(fixture.configDir)).toBe(0o755);
+    expect(mode(fixture.configDir)).toBe(0o3770);
     const afterRefusedUnlock = readRegularFileSnapshot(fixture.configPath);
     expect(afterRefusedUnlock.inode).toBe(afterStaleWrite.inode);
     expect(afterRefusedUnlock.bytes).toEqual(fixture.configBytes);

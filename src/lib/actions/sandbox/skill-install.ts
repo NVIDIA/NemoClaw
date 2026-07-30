@@ -72,6 +72,43 @@ export type SkillRemoveRequest = {
   extraArgs?: string[];
 };
 
+function lstatOrNull(candidatePath: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(candidatePath);
+  } catch {
+    return null;
+  }
+}
+
+type RegularFileRead =
+  | { content: string; success: true }
+  | { reason: "invalid" | "missing"; success: false };
+
+function readRegularFileNoFollow(candidatePath: string): RegularFileRead {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  const nonblock = fs.constants.O_NONBLOCK;
+  if (typeof noFollow !== "number" || typeof nonblock !== "number") {
+    return { reason: "invalid", success: false };
+  }
+
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(candidatePath, fs.constants.O_RDONLY | noFollow | nonblock);
+    if (!fs.fstatSync(descriptor).isFile()) return { reason: "invalid", success: false };
+    return { content: fs.readFileSync(descriptor, "utf8"), success: true };
+  } catch (error) {
+    return {
+      reason:
+        error instanceof Error && "code" in error && error.code === "ENOENT"
+          ? "missing"
+          : "invalid",
+      success: false,
+    };
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 export function printPluginInstallHint(): void {
   console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
   console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
@@ -122,6 +159,16 @@ export async function removeSandboxSkill(
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const paths = skillInstall.resolveSkillPaths(agent, skillName);
+  if (paths.uploadDirSharedWithAgent) {
+    console.error(
+      "  Automatic removal is unavailable for Deep Agents skills because the destination is shared with agent-authored content.",
+    );
+    console.error(
+      "  Inspect and remove the skill with the agent's native or manual workflow after confirming ownership.",
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const sshConfigResult = captureSandboxSshConfig(sandboxName, {
     ignoreError: true,
@@ -221,14 +268,19 @@ export async function installSandboxSkill(
   }
 
   const resolvedPath = path.resolve(skillPath);
+  const resolvedStat = lstatOrNull(resolvedPath);
+  if (resolvedStat?.isSymbolicLink()) {
+    console.error(`  Skill path '${resolvedPath}' must not be a symbolic link.`);
+    process.exit(1);
+  }
 
   // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
   let skillDir: string;
   let skillMdPath: string;
-  if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+  if (resolvedStat?.isDirectory()) {
     skillDir = resolvedPath;
     skillMdPath = path.join(resolvedPath, "SKILL.md");
-  } else if (fs.existsSync(resolvedPath) && resolvedPath.endsWith("SKILL.md")) {
+  } else if (resolvedStat?.isFile() && resolvedPath.endsWith("SKILL.md")) {
     skillDir = path.dirname(resolvedPath);
     skillMdPath = resolvedPath;
   } else {
@@ -240,7 +292,15 @@ export async function installSandboxSkill(
     process.exit(1);
   }
 
-  if (!fs.existsSync(skillMdPath)) {
+  const skillDirStat = lstatOrNull(skillDir);
+  if (!skillDirStat?.isDirectory() || skillDirStat.isSymbolicLink()) {
+    console.error(`  Skill directory '${skillDir}' must remain a regular directory.`);
+    process.exit(1);
+  }
+  const expectedRootIdentity = { dev: skillDirStat.dev, ino: skillDirStat.ino };
+
+  const skillMdRead = readRegularFileNoFollow(skillMdPath);
+  if (!skillMdRead.success && skillMdRead.reason === "missing") {
     console.error(`  No SKILL.md found in '${skillDir}'.`);
     console.error("  The skill directory must contain a SKILL.md file.");
     if (looksLikeOpenClawPlugin(skillDir)) {
@@ -248,12 +308,15 @@ export async function installSandboxSkill(
     }
     process.exit(1);
   }
+  if (!skillMdRead.success) {
+    console.error(`  SKILL.md at '${skillMdPath}' must be a regular file, not a symbolic link.`);
+    process.exit(1);
+  }
 
   // 1. Validate frontmatter
   let frontmatter;
   try {
-    const content = fs.readFileSync(skillMdPath, "utf-8");
-    frontmatter = skillInstall.parseFrontmatter(content);
+    frontmatter = skillInstall.parseFrontmatter(skillMdRead.content);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(`  ${errorMessage}`);
@@ -265,6 +328,12 @@ export async function installSandboxSkill(
     console.error("  Skill directory contains files with unsafe characters:");
     for (const p of collected.unsafePaths) console.error(`    ${p}`);
     console.error("  File names must match [A-Za-z0-9._-/]. Rename or remove them.");
+    process.exit(1);
+  }
+  if (collected.unsupportedPaths.length > 0) {
+    console.error("  Skill directory contains unsupported non-regular paths:");
+    for (const p of collected.unsupportedPaths) console.error(`    ${p}`);
+    console.error("  Skills may contain only regular files and directories.");
     process.exit(1);
   }
   if (collected.skippedDotfiles.length > 0) {
@@ -296,6 +365,37 @@ export async function installSandboxSkill(
 
   try {
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
+
+    if (paths.uploadDirSharedWithAgent) {
+      const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths, {
+        expectedRootIdentity,
+      });
+      if (!fresh.success || !fresh.contentDigest) {
+        if (fresh.reason === "destination_exists") {
+          console.error(
+            `  Refusing to replace '${frontmatter.name}': the Deep Agents skill destination already exists.`,
+          );
+          console.error(
+            "  Deep Agents skill install supports fresh names only because that directory also contains agent-authored skills.",
+          );
+        } else if (fresh.reason === "snapshot_failed") {
+          console.error("  Failed to create an exact regular-file snapshot of the local skill.");
+        } else {
+          console.error(
+            "  The remote install did not confirm whether the Deep Agents skill was committed.",
+          );
+          console.error(
+            `  Inspect ${paths.uploadDir} before retrying; NemoClaw will not replace or delete shared agent content.`,
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`  ${G}✓${R} Installed ${fresh.uploaded} file(s) into the agent skill directory`);
+      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed`);
+      console.log(`  ${D}Start a new Deep Agents session to load the skill.${R}`);
+      return;
+    }
 
     // 5. Check if skill already exists (update vs fresh install). This probe is
     //    advisory for install only: stale SSH config files and transient remote
@@ -342,7 +442,7 @@ export async function installSandboxSkill(
     } else {
       console.error(
         `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
-          (paths.isOpenClaw && paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
+          (paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
       );
       process.exit(1);
     }

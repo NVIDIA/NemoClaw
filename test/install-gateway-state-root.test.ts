@@ -154,6 +154,23 @@ printf 'state=%s\n' "$(nemoclaw_state_dir)"`,
     }
   });
 
+  it("normalizes a trailing slash in HOME before selecting its state root", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-home-slash-"));
+    try {
+      const result = runInstallerFunctions(
+        `${home}/`,
+        `NEMOCLAW_GATEWAY_PORT=8080
+printf 'state=%s\n' "$(nemoclaw_state_dir)"`,
+      );
+
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain(`state=${home}/.nemoclaw`);
+      expect(result.output).not.toContain(`${home}//.nemoclaw`);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an overlong digit-only gateway port before selecting its state root (#7203)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-overlong-port-"));
     try {

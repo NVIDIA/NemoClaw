@@ -3,10 +3,11 @@
 
 import type { SpawnOptions } from "node:child_process";
 
+import { BoundedLineDecoder } from "../../core/bounded-line-transcript";
 import { ROOT } from "../../runner";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { dockerSpawn } from "./exec";
-import { dockerRun, type DockerRunOptions, type DockerRunResult } from "./run";
+import { type DockerRunOptions, type DockerRunResult, dockerRun } from "./run";
 
 export function dockerPull(imageRef: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["pull", imageRef], opts);
@@ -20,6 +21,7 @@ const DEFAULT_DOCKER_PULL_STALL_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_DOCKER_PULL_MAX_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 const DOCKER_PULL_OUTPUT_TAIL_LINES = 200;
 const DOCKER_PULL_PROGRESS_STATE_LIMIT = 512;
+const DOCKER_PULL_MAX_PENDING_CHARS = 16 * 1024;
 
 export interface DockerPullWatchdogOptions {
   suppressOutput?: boolean;
@@ -119,8 +121,6 @@ export async function dockerPullWithProgressWatchdog(
     const latestProgressByKey = new Map<string, string>();
     const startedAt = Date.now();
     let lastProgressAt = startedAt;
-    let stdoutPending = "";
-    let stderrPending = "";
     let settled = false;
     let timeoutKind: "stall" | "max" | null = null;
     let capturedError: Error | undefined;
@@ -156,24 +156,14 @@ export async function dockerPullWithProgressWatchdog(
       if (!opts.suppressOutput) logLine(trimmed);
     }
 
-    function consumeChunk(pending: string, chunk: Buffer | string): string {
-      const text = pending + chunk.toString();
-      const parts = text.split(/[\r\n]+/);
-      const nextPending = parts.pop() ?? "";
-      for (const part of parts) flushLine(part);
-      return nextPending;
-    }
-
-    function flushPending() {
-      if (stdoutPending) {
-        flushLine(stdoutPending);
-        stdoutPending = "";
-      }
-      if (stderrPending) {
-        flushLine(stderrPending);
-        stderrPending = "";
-      }
-    }
+    const stdoutDecoder = new BoundedLineDecoder({
+      maxPendingChars: DOCKER_PULL_MAX_PENDING_CHARS,
+      onLine: flushLine,
+    });
+    const stderrDecoder = new BoundedLineDecoder({
+      maxPendingChars: DOCKER_PULL_MAX_PENDING_CHARS,
+      onLine: flushLine,
+    });
 
     function requestKill(kind: "stall" | "max") {
       if (settled || timeoutKind) return;
@@ -214,7 +204,8 @@ export async function dockerPullWithProgressWatchdog(
     function finish(code: number | null, signal: NodeJS.Signals | null) {
       if (settled) return;
       settled = true;
-      flushPending();
+      stdoutDecoder.end();
+      stderrDecoder.end();
       clearInterval(watchdog);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       const status = code ?? (timeoutKind ? 124 : 1);
@@ -230,10 +221,10 @@ export async function dockerPullWithProgressWatchdog(
     }
 
     child.stdout?.on("data", (chunk) => {
-      stdoutPending = consumeChunk(stdoutPending, chunk);
+      if (!settled) stdoutDecoder.write(chunk);
     });
     child.stderr?.on("data", (chunk) => {
-      stderrPending = consumeChunk(stderrPending, chunk);
+      if (!settled) stderrDecoder.write(chunk);
     });
     child.on("error", (error: Error) => {
       capturedError = error;

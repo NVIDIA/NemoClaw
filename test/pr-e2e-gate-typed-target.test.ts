@@ -17,6 +17,7 @@ const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 const DCODE_TARGET = PR_E2E_TYPED_TARGET_IDS[0];
+const POST_REBOOT_TARGET = PR_E2E_TYPED_TARGET_IDS[1];
 const DCODE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 
@@ -95,5 +96,19 @@ describe("PR E2E typed-target gate (#7031)", () => {
         expectedCheckTitle: "Evaluating PR commit",
       }),
     ).rejects.toThrow(/Controller dispatch inputs are invalid/u);
+  });
+
+  it("accepts the trusted post-reboot target in a PR E2E plan (#7824)", () => {
+    const plan = buildRiskPlan({
+      headSha: HEAD_SHA,
+      changedFiles: ["src/lib/actions/sandbox/status-snapshot.ts"],
+    });
+
+    expect(plan.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: POST_REBOOT_TARGET,
+        matchedFiles: ["src/lib/actions/sandbox/status-snapshot.ts"],
+      }),
+    ]);
   });
 });
