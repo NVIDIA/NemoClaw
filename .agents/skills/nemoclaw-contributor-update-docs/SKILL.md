@@ -93,7 +93,7 @@ Filter to commits that are likely to affect docs. Apply every rule below before 
 2. **Files changed**: Changes to `nemoclaw/src/`, `nemoclaw-blueprint/`, `bin/`, `scripts/`, or policy-related code are high-signal.
 3. **Ignore**: Changes limited to `test/`, `.github/`, or internal-only modules.
 4. **Skip list**: Exclude any commit whose short hash appears in `skip-commits`, or whose commit message or changed file paths contain a `skip-features` substring. Report skipped commits in the final summary under a "Skipped (docs-skip)" heading.
-5. **Agent support matrix**: Do not document agent support (e.g., Claude Code, OpenHands, Goose) unless the agent is listed in the tested agent support matrix in the quickstart or platform docs. Commits that add or modify agent integration code should only produce doc updates for agents already in the matrix. Report excluded agents under "Skipped (not in agent matrix)" in the summary.
+5. **Agent product scope**: Use the platform support matrix to locate an existing claim, not to approve product scope. Document an agent as supported only when an accepted issue or accepted design decision establishes its product scope. Verify its behavior against checked-in source, tests, or scripts. Report excluded agents under "Skipped (product scope not established)" in the summary.
 
 ```bash
 # Show files changed per commit to assess impact
@@ -116,6 +116,11 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 | `scripts/` (setup, start) | `docs/get-started/quickstart.mdx` |
 | `Dockerfile` | `docs/reference/architecture.mdx` |
 | Inference-related changes | Start at `docs/inference/how-inference-routing-works.mdx`, then update the focused provider, model, setup, management, or validation page that owns the behavior. |
+
+For every target page, determine which agent runtimes execute the behavior and which guide variants must publish it.
+Use implementation gates, tests, or accepted product scope as evidence for each inclusion or exclusion.
+Do not infer applicability from the page's current navigation placement.
+Host-side NemoClaw and OpenShell behavior is not OpenClaw-only unless the implementation or accepted scope establishes that restriction.
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
 If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
@@ -146,9 +151,10 @@ Identify where the new content should go. Follow the page's existing structure.
 
 ## Step 5: Draft the Update
 
-Before writing, verify that the commit was not excluded in Step 1. Do not draft content for commits matched by the skip list or for agent integrations not in the tested agent support matrix. After drafting, scan the content for any `skip-terms` from `docs/.docs-skip`. Remove any sentence or section that contains a skip-term. If in doubt, skip the commit and report it.
+Before writing, verify that the commit was not excluded in Step 1. Do not draft content for commits matched by the skip list or for agent integrations whose product scope is not established by an accepted issue or accepted design decision. After drafting, scan the content for any `skip-terms` from `docs/.docs-skip`. Remove any sentence or section that contains a skip-term. If in doubt, skip the commit and report it.
 
-Follow the [NemoClaw Writing Guide](../../../WRITING.md) for changed documentation and changelog text.
+Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
+contract for changed documentation, changelog text, independent review, and receipt evidence.
 
 Write the doc update following these conventions:
 
@@ -158,8 +164,8 @@ Write the doc update following these conventions:
 - **Start sections with an introductory sentence** that orients the reader.
 - **No superlatives.** Say what the feature does, not how great it is.
 - **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.
-- **Shared NemoClaw CLI examples use `$$nemoclaw`.** In shared OpenClaw/Hermes variant pages, write host CLI examples with the `$$nemoclaw` build-time placeholder so the docs build renders `nemoclaw` on OpenClaw pages and `nemohermes` on Hermes pages before Fern renders fenced code blocks.
-- **Do not duplicate code blocks for binary-name-only differences.** Use one fenced block with `$$nemoclaw` when the only difference is `nemoclaw` versus `nemohermes`; keep `<AgentOnly>` only when the surrounding text, flags, behavior, or setup steps actually differ.
+- **Shared NemoClaw CLI examples use `$$nemoclaw`.** In pages rendered for multiple guide variants, write host CLI examples with the `$$nemoclaw` build-time placeholder. The docs build renders `nemoclaw`, `nemohermes`, or `nemo-deepagents` for the applicable variant before Fern renders fenced code blocks.
+- **Do not duplicate code blocks for binary-name-only differences.** Use one fenced block with `$$nemoclaw` when only the host CLI binary differs. Use `<AgentOnly>` when behavior, setup, paths, state locations, capabilities, or agent-specific wording differ.
 - **Use `console` only for terminal transcripts** that include prompts, output, or interactive sessions.
 - **Include the SPDX header** if creating a new page.
 - **Match existing frontmatter format** if creating a new page.
@@ -168,7 +174,7 @@ Write the doc update following these conventions:
 - **Always capitalize OpenShell correctly.** Wrong: openshell (in prose), Openshell, openShell.
 - **Do not number section titles.** Wrong: "Section 1: Configure Inference" or "Step 3: Verify." Use plain descriptive titles.
 - **No colons in titles.** Wrong: "Inference: Cloud and Local." Write "Cloud and Local Inference" instead.
-- **Use colons only to introduce a list.** Do not use colons as general-purpose punctuation between clauses.
+- **Use colons to introduce a list or define a term or value.** Do not use a colon to join independent clauses.
 
 When updating an existing page:
 
@@ -200,7 +206,9 @@ When updating an existing page:
 When creating a new page:
 
 - Follow the frontmatter template from existing pages in `docs/`.
-- Add the page to the appropriate navigation entry in `docs/index.yml`.
+- Add the page to every applicable navigation variant in `docs/index.yml`.
+- Use generated navigation targets when the page applies to more than one variant.
+- Declare the exact `agent-variants` subset in frontmatter when the page intentionally applies to fewer than OpenClaw, Hermes, and Deep Agents.
 
 ## Step 6: Present the Results
 

@@ -497,6 +497,11 @@
       "category": "security"
     },
     {
+      "file": "test/pr-limit-policy.test.ts",
+      "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "does not persist checkout credentials in PR or main jobs",
       "category": "security"
@@ -558,7 +563,7 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
-      "test": "runs repository checks for every operational dependency-pin authority and consumer",
+      "test": "preserves repository validation file routing, command scopes, and compatibility aliases",
       "category": "compatibility"
     },
     {
