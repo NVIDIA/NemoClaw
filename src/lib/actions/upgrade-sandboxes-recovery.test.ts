@@ -323,6 +323,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       recoveryManifest: undefined,
       throwOnError: true,
     });
+    expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {
