@@ -607,14 +607,17 @@ check.
 
 Before dispatch, the controller verifies that the live PR still matches the CI
 run's PR SHA and base SHA. It uses its own workflow commit when that commit is
-still `main`. If `main` advanced, the controller accepts the current commit
-only when GitHub reports it as a descendant whose merge base is the workflow
-commit, the comparison contains fewer than 300 fully enumerated files, neither
-side of a rename enters the `e2e-control-plane` risk family, and a second read
-confirms that `main` did not move again. Any divergence, incomplete comparison,
-control-plane change, or second advance fails closed. The accepted `main`
-commit is recorded as the workflow SHA and passed as `workflow_sha`. Before
-matrix or secret-bearing jobs can run, `e2e.yaml` requires
+still `main`. If `main` advanced, the GitHub comparison `status` must be
+`ahead`, `ahead_by` must be positive, and `behind_by` must be `0`.
+The `base_commit` and `merge_base_commit` SHAs must equal the workflow commit.
+The `total_commits` value and ordered `commits` length must both equal
+`ahead_by`, and the final commit SHA must equal the current `main` SHA.
+The comparison must contain fewer than 300 fully enumerated files, and neither
+side of a rename can enter the `e2e-control-plane` risk family. A second read
+must confirm that `main` did not move again. Any divergence, incomplete
+comparison, control-plane change, or second advance fails closed. The accepted
+`main` commit is recorded as the workflow SHA and passed as `workflow_sha`.
+Before matrix or secret-bearing jobs can run, `e2e.yaml` requires
 `github.workflow_sha` to match that accepted commit. Each selected job checks
 out `checkout_sha` from the live PR head repository. The same validation
 verifies that the PR remains open in `NVIDIA/NemoClaw`, the checkout repository
