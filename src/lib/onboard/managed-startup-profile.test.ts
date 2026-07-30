@@ -15,9 +15,11 @@ import {
   MANAGED_STARTUP_AGENTS,
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
   MANAGED_STARTUP_PROFILE_CAPABILITIES,
+  MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS,
   MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+  MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
   serializeManagedStartupProfile,
@@ -247,6 +249,57 @@ const STOCK_DOCKER_ARGS = {
   ),
 } satisfies Record<ManagedStartupAgent, Set<string>>;
 
+const RUNTIME_INPUT_SOURCE_FILES = [
+  "src/lib/onboard/sandbox-create-launch.ts",
+  "src/lib/onboard/openclaw-runtime-env.ts",
+  "src/lib/onboard/extra-placeholder-keys.ts",
+  "src/lib/onboard/host-proxy-env.ts",
+  "src/lib/onboard/hermes-dashboard.ts",
+  "src/lib/hermes-dashboard.ts",
+] as const;
+const QUOTED_RUNTIME_INPUT_RE =
+  /["']((?:(?:NEMOCLAW|OPENCLAW)_[A-Z0-9_]+)|CHAT_UI_URL|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)["']/gu;
+const STOCK_RUNTIME_INPUTS = new Set(
+  RUNTIME_INPUT_SOURCE_FILES.flatMap((relativePath) => [
+    ...readFileSync(path.join(process.cwd(), relativePath), "utf8").matchAll(
+      QUOTED_RUNTIME_INPUT_RE,
+    ),
+  ]).map((match) => match[1] as string),
+);
+const OPENCLAW_AUTO_PAIR_CONSUMER_INPUTS = new Set(
+  readFileSync(path.join(process.cwd(), "scripts/nemoclaw-start.sh"), "utf8").match(
+    /\bNEMOCLAW_AUTO_PAIR_[A-Z0-9_]+\b/gu,
+  ) ?? [],
+);
+const STOCK_RUNTIME_INPUT_AGENTS = {
+  CHAT_UI_URL: ["openclaw", "hermes"],
+  HTTPS_PROXY: MANAGED_STARTUP_AGENTS,
+  HTTP_PROXY: MANAGED_STARTUP_AGENTS,
+  NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: ["openclaw"],
+  NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: ["openclaw"],
+  NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: ["openclaw"],
+  NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: ["openclaw"],
+  NEMOCLAW_DASHBOARD_BIND: ["openclaw"],
+  NEMOCLAW_DASHBOARD_PORT: ["openclaw", "hermes"],
+  NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: MANAGED_STARTUP_AGENTS,
+  NEMOCLAW_HERMES_DASHBOARD: ["hermes"],
+  NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: ["hermes"],
+  NEMOCLAW_HERMES_DASHBOARD_PORT: ["hermes"],
+  NEMOCLAW_HERMES_DASHBOARD_TUI: ["hermes"],
+  NEMOCLAW_MINIMAL_BOOTSTRAP: ["openclaw"],
+  NEMOCLAW_OBSERVABILITY: ["langchain-deepagents-code"],
+  NEMOCLAW_PROXY_HOST: MANAGED_STARTUP_AGENTS,
+  NEMOCLAW_PROXY_PORT: MANAGED_STARTUP_AGENTS,
+  NEMOCLAW_SANDBOX_NAME: ["langchain-deepagents-code"],
+  NO_PROXY: MANAGED_STARTUP_AGENTS,
+  OPENCLAW_HOME: ["openclaw"],
+  OPENCLAW_STATE_DIR: ["openclaw"],
+  OPENCLAW_WORKSPACE_DIR: ["openclaw"],
+  http_proxy: MANAGED_STARTUP_AGENTS,
+  https_proxy: MANAGED_STARTUP_AGENTS,
+  no_proxy: MANAGED_STARTUP_AGENTS,
+} as const satisfies Record<string, readonly ManagedStartupAgent[]>;
+
 describe("managed startup profile", () => {
   it.each(
     VALID_PROFILES,
@@ -391,6 +444,22 @@ describe("managed startup profile", () => {
     ).toEqual([]);
   });
 
+  it("keeps exported capabilities deeply frozen and validation authority private", () => {
+    const capabilities = MANAGED_STARTUP_PROFILE_CAPABILITIES["langchain-deepagents-code"];
+    expect(Object.isFrozen(MANAGED_STARTUP_PROFILE_CAPABILITIES)).toBe(true);
+    expect(Object.isFrozen(capabilities)).toBe(true);
+    expect(Object.isFrozen(capabilities.inferenceApis)).toBe(true);
+    expect(() =>
+      (capabilities.inferenceApis as unknown as string[]).push("openai-responses"),
+    ).toThrow(TypeError);
+    expect(() =>
+      validateManagedStartupProfile({
+        ...DCODE_PROFILE,
+        inference: { ...DCODE_PROFILE.inference, api: "openai-responses" },
+      }),
+    ).toThrow(/not supported/);
+  });
+
   // source-shape-contract: compatibility -- Every shipped Docker build input must map to versioned startup intent or a declared build-only exclusion
   it("classifies every stock Docker ARG as startup-affordance or deliberate exclusion", () => {
     for (const agent of MANAGED_STARTUP_AGENTS) {
@@ -400,6 +469,77 @@ describe("managed startup profile", () => {
       ]);
       expect([...STOCK_DOCKER_ARGS[agent]].filter((input) => !classified.has(input))).toEqual([]);
     }
+  });
+
+  // source-shape-contract: compatibility -- Every centralized agent runtime input must map to versioned startup intent or a typed downstream owner
+  it("classifies every centralized runtime input as profile intent or an explicit deferral", () => {
+    expect([...STOCK_RUNTIME_INPUTS].sort()).toEqual(
+      Object.keys(STOCK_RUNTIME_INPUT_AGENTS).sort(),
+    );
+    const missing = Object.entries(STOCK_RUNTIME_INPUT_AGENTS).flatMap(([input, agents]) =>
+      agents
+        .filter(
+          (agent) =>
+            !new Set([
+              ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(
+                ({ input: profileInput }) => profileInput,
+              ),
+              ...MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].map(
+                ({ input: deferredInput }) => deferredInput,
+              ),
+            ]).has(input),
+        )
+        .map((agent) => `${agent}:${input}`),
+    );
+    expect(missing).toEqual([]);
+
+    const openClawAutoPairInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS.openclaw.filter(
+      ({ input }) => input.startsWith("NEMOCLAW_AUTO_PAIR_"),
+    );
+    expect([...OPENCLAW_AUTO_PAIR_CONSUMER_INPUTS].sort()).toEqual(
+      openClawAutoPairInputs.map(({ input }) => input).sort(),
+    );
+    expect(
+      Object.fromEntries(openClawAutoPairInputs.map(({ admission, input }) => [input, admission])),
+    ).toEqual({
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "managed-launch-forwarded",
+      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "managed-launch-forwarded",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "image-consumed-not-forwarded",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "image-consumed-not-forwarded",
+      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "managed-launch-forwarded",
+      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "managed-launch-forwarded",
+    });
+  });
+
+  it("records generic cross-agent emissions as cleanup obligations, not supported semantics", () => {
+    expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
+    for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
+      const supportedAgents =
+        STOCK_RUNTIME_INPUT_AGENTS[obligation.input as keyof typeof STOCK_RUNTIME_INPUT_AGENTS];
+      expect(obligation.owner).toBe("application-environment");
+      for (const agent of obligation.emittedFor) {
+        expect(supportedAgents).not.toContain(agent);
+        expect(
+          MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
+        ).not.toContain(obligation.input);
+      }
+      for (const agent of obligation.supportedFor) {
+        expect(supportedAgents).toContain(agent);
+      }
+    }
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("keeps deferred %s runtime inputs separate from typed profile intent", (agent) => {
+    const profileInputs = new Set(
+      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
+    );
+    expect(
+      MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].filter(({ input }) =>
+        profileInputs.has(input),
+      ),
+    ).toEqual([]);
   });
 
   it.each(MANAGED_STARTUP_AGENTS)("keeps the %s affordance inventory unambiguous", (agent) => {
@@ -715,6 +855,18 @@ describe("managed startup profile", () => {
     ).toThrow(/does not support/);
   });
 
+  it("rejects an OpenClaw primary model reference that disagrees with its provider and model", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        inference: {
+          ...OPENCLAW_PROFILE.inference,
+          primaryModelRef: "different-provider/different-model",
+        },
+      }),
+    ).toThrow(/primaryModelRef must match routeProvider and model/);
+  });
+
   it("accepts only declared Hermes gateway IDs and rejects gateways for other agents", () => {
     expect(validateManagedStartupProfile(HERMES_PROFILE).tools.enabledGateways).toHaveLength(5);
     expect(() =>
@@ -1009,6 +1161,51 @@ describe("managed startup profile", () => {
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toMatch(/bundleSha256/);
     expect(getterInvoked).toBe(false);
+  });
+
+  it("requires own messaging discriminators without invoking inherited getters", () => {
+    let getterInvoked = false;
+    Object.defineProperties(Object.prototype, {
+      schemaVersion: {
+        configurable: true,
+        get() {
+          getterInvoked = true;
+          return 1;
+        },
+      },
+      agent: {
+        configurable: true,
+        get() {
+          getterInvoked = true;
+          return "openclaw";
+        },
+      },
+    });
+
+    try {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          messaging: { plan: {} },
+        }),
+      ).toThrow(/version 1 plan for the selected agent/);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "schemaVersion");
+      Reflect.deleteProperty(Object.prototype, "agent");
+    }
+
+    expect(getterInvoked).toBe(false);
+  });
+
+  it("returns opaque JSON objects without inherited prototype data", () => {
+    const profile = validateManagedStartupProfile(OPENCLAW_PROFILE);
+    expect(Object.getPrototypeOf(profile.inference.compatibility as object)).toBeNull();
+    expect(Object.getPrototypeOf(profile.messaging.plan as object)).toBeNull();
+    expect(
+      Object.getPrototypeOf(
+        (profile.messaging.plan as Record<string, Record<string, unknown>>).networkPolicy,
+      ),
+    ).toBeNull();
   });
 
   it("rejects non-enumerable unknown fields instead of silently stripping them", () => {

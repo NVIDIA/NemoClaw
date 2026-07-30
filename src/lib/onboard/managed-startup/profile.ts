@@ -328,9 +328,29 @@ export interface ManagedStartupAgentCapabilities {
  * does not advertise the requested semantic capability is rejected instead of
  * silently dropping a field.
  */
-export const MANAGED_STARTUP_PROFILE_CAPABILITIES = {
+const VALIDATED_INFERENCE_APIS_BY_AGENT = Object.freeze({
+  openclaw: Object.freeze([...MANAGED_STARTUP_INFERENCE_APIS]),
+  hermes: Object.freeze([...MANAGED_STARTUP_INFERENCE_APIS]),
+  "langchain-deepagents-code": Object.freeze(["openai-completions"] as const),
+}) satisfies Readonly<Record<ManagedStartupAgent, readonly ManagedStartupInferenceApi[]>>;
+
+function freezeAgentCapabilities(
+  capabilities: ManagedStartupAgentCapabilities,
+): Readonly<ManagedStartupAgentCapabilities> {
+  return Object.freeze({
+    ...capabilities,
+    inferenceApis: Object.freeze([...capabilities.inferenceApis]),
+    dashboardModes: Object.freeze([...capabilities.dashboardModes]),
+    inputModalities: Object.freeze([...capabilities.inputModalities]),
+    webSearchProviders: Object.freeze([...capabilities.webSearchProviders]),
+    toolGateways: Object.freeze([...capabilities.toolGateways]),
+    tuningFields: Object.freeze([...capabilities.tuningFields]),
+  });
+}
+
+const PROFILE_CAPABILITIES = {
   openclaw: {
-    inferenceApis: MANAGED_STARTUP_INFERENCE_APIS,
+    inferenceApis: [...VALIDATED_INFERENCE_APIS_BY_AGENT.openclaw],
     dashboardModes: ["loopback", "remote"],
     inputModalities: ["text", "image"],
     webSearchProviders: ["brave", "tavily"],
@@ -349,11 +369,11 @@ export const MANAGED_STARTUP_PROFILE_CAPABILITIES = {
     supportsMinimalBootstrap: true,
   },
   hermes: {
-    inferenceApis: MANAGED_STARTUP_INFERENCE_APIS,
+    inferenceApis: [...VALIDATED_INFERENCE_APIS_BY_AGENT.hermes],
     dashboardModes: ["disabled", "loopback-forwarded"],
     inputModalities: [],
     webSearchProviders: ["tavily"],
-    toolGateways: MANAGED_STARTUP_HERMES_TOOL_GATEWAYS,
+    toolGateways: [...MANAGED_STARTUP_HERMES_TOOL_GATEWAYS],
     tuningFields: ["contextWindow"],
     supportsMessaging: true,
     supportsInferenceCompatibility: false,
@@ -386,7 +406,18 @@ export const MANAGED_STARTUP_PROFILE_CAPABILITIES = {
     observability: "dcode-marker",
     supportsMinimalBootstrap: false,
   },
-} as const satisfies Record<ManagedStartupAgent, ManagedStartupAgentCapabilities>;
+} satisfies Record<ManagedStartupAgent, ManagedStartupAgentCapabilities>;
+
+for (const agent of MANAGED_STARTUP_AGENTS) {
+  Object.defineProperty(PROFILE_CAPABILITIES, agent, {
+    configurable: false,
+    enumerable: true,
+    value: freezeAgentCapabilities(PROFILE_CAPABILITIES[agent]),
+    writable: false,
+  });
+}
+
+export const MANAGED_STARTUP_PROFILE_CAPABILITIES = Object.freeze(PROFILE_CAPABILITIES);
 
 export type ManagedStartupAffordanceSource = "docker-arg" | "runtime-env" | "host-material";
 export type ManagedStartupAffordanceRepresentation = "value" | "derived" | "digest-handoff";
@@ -517,6 +548,159 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     ...HOST_PROXY_AFFORDANCES,
   ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupAffordance[]>;
+
+export type ManagedStartupDeferredRuntimeOwner =
+  | "application-environment"
+  | "credential-plumbing"
+  | "engine-identity"
+  | "fixed-image-contract";
+
+export type ManagedStartupDeferredRuntimeAdmission =
+  | "managed-launch-forwarded"
+  | "image-consumed-not-forwarded";
+
+export interface ManagedStartupDeferredRuntimeInput {
+  readonly input: string;
+  readonly owner: ManagedStartupDeferredRuntimeOwner;
+  readonly admission: ManagedStartupDeferredRuntimeAdmission;
+  readonly reason: string;
+}
+
+function deferredRuntimeInput(
+  input: string,
+  owner: ManagedStartupDeferredRuntimeOwner,
+  reason: string,
+  admission: ManagedStartupDeferredRuntimeAdmission = "managed-launch-forwarded",
+): ManagedStartupDeferredRuntimeInput {
+  return Object.freeze({ input, owner, admission, reason });
+}
+
+/**
+ * Runtime inputs intentionally deferred from the secret-free v1 profile.
+ * Every other input emitted by the sandbox-create environment must resolve to
+ * an affordance above. These remain owned by the application-environment,
+ * credential-plumbing, engine-identity, or fixed-image-contract surfaces
+ * instead of becoming implicit runtime-specific profile fields.
+ */
+export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
+  openclaw: Object.freeze([
+    deferredRuntimeInput(
+      "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+      "application-environment",
+      "operator scheduler tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+      "application-environment",
+      "operator scheduler tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+      "application-environment",
+      "the image consumes this documented scheduler control but managed launch must admit it in the application environment transaction",
+      "image-consumed-not-forwarded",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+      "application-environment",
+      "the image consumes this documented scheduler control but managed launch must admit it in the application environment transaction",
+      "image-consumed-not-forwarded",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+      "application-environment",
+      "operator scheduler tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+      "application-environment",
+      "operator scheduler tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
+      "OPENCLAW_HOME",
+      "fixed-image-contract",
+      "the managed image and agent definition own this fixed runtime layout path",
+    ),
+    deferredRuntimeInput(
+      "OPENCLAW_STATE_DIR",
+      "fixed-image-contract",
+      "the managed image and agent definition own this fixed runtime layout path",
+    ),
+    deferredRuntimeInput(
+      "OPENCLAW_WORKSPACE_DIR",
+      "fixed-image-contract",
+      "the managed image and agent definition own this fixed runtime layout path",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+      "credential-plumbing",
+      "credential provider construction owns key metadata outside the secret-free profile",
+    ),
+  ]),
+  hermes: Object.freeze([
+    deferredRuntimeInput(
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+      "credential-plumbing",
+      "credential provider construction owns key metadata outside the secret-free profile",
+    ),
+  ]),
+  "langchain-deepagents-code": Object.freeze([
+    deferredRuntimeInput(
+      "NEMOCLAW_SANDBOX_NAME",
+      "engine-identity",
+      "the lifecycle engine owns instance identity outside reusable startup intent",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+      "credential-plumbing",
+      "credential provider construction owns key metadata outside the secret-free profile",
+    ),
+  ]),
+}) satisfies Readonly<Record<ManagedStartupAgent, readonly ManagedStartupDeferredRuntimeInput[]>>;
+
+export interface ManagedStartupRuntimeCleanupObligation {
+  readonly input: string;
+  readonly emittedFor: readonly ManagedStartupAgent[];
+  readonly supportedFor: readonly ManagedStartupAgent[];
+  readonly owner: "application-environment";
+  readonly reason: string;
+}
+
+function runtimeCleanupObligation(
+  input: string,
+  emittedFor: readonly ManagedStartupAgent[],
+  supportedFor: readonly ManagedStartupAgent[],
+  reason: string,
+): ManagedStartupRuntimeCleanupObligation {
+  return Object.freeze({
+    input,
+    emittedFor: Object.freeze([...emittedFor]),
+    supportedFor: Object.freeze([...supportedFor]),
+    owner: "application-environment" as const,
+    reason,
+  });
+}
+
+/**
+ * Known generic launch emissions that are not supported cross-agent semantics.
+ * The application environment transaction must remove these leaks before
+ * buildless activation; listing them here prevents profile construction from
+ * accidentally blessing the current implementation detail.
+ */
+export const MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS = Object.freeze([
+  runtimeCleanupObligation(
+    "NEMOCLAW_DASHBOARD_BIND",
+    ["hermes"],
+    ["openclaw"],
+    "generic managed-dashboard construction currently emits the OpenClaw-only bind control for Hermes",
+  ),
+  runtimeCleanupObligation(
+    "NEMOCLAW_MINIMAL_BOOTSTRAP",
+    ["hermes", "langchain-deepagents-code"],
+    ["openclaw"],
+    "generic host-proxy construction currently emits the OpenClaw-only bootstrap control for other agents",
+  ),
+]) satisfies readonly ManagedStartupRuntimeCleanupObligation[];
 
 export interface ManagedStartupExcludedDockerInput {
   readonly input: string;
@@ -937,7 +1121,7 @@ function cloneJsonValue(
 function requireJsonObjectOrNull(value: unknown, where: string): ManagedStartupJsonObject | null {
   if (value === null) return null;
   if (!isPlainObject(value)) invalid(`${where} must be null or a plain JSON object`);
-  return cloneJsonValue(value, where) as ManagedStartupJsonObject;
+  return cloneJsonValue(value, where, { nullPrototypeObjects: true }) as ManagedStartupJsonObject;
 }
 
 function requireJsonObject(value: unknown, where: string): ManagedStartupJsonObject {
@@ -1390,13 +1574,14 @@ function validateDashboard(
 function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedStartupInference {
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
+  const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");
+  const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
     INFERENCE_API_SET,
     "inference.api",
   );
-  const supportedInferenceApis: readonly string[] =
-    MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].inferenceApis;
+  const supportedInferenceApis = VALIDATED_INFERENCE_APIS_BY_AGENT[agent];
   let apiSupported = false;
   for (let index = 0; index < supportedInferenceApis.length; index += 1) {
     if (supportedInferenceApis[index] === api) apiSupported = true;
@@ -1434,6 +1619,9 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (primaryModelRef === null || inputModalities === null) {
       invalid("openclaw requires primaryModelRef and inputModalities");
     }
+    if (primaryModelRef !== `${routeProvider}/${model}`) {
+      invalid("openclaw primaryModelRef must match routeProvider and model");
+    }
   } else {
     if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
       invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
@@ -1444,12 +1632,12 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   }
 
   return {
-    routeProvider: requireBoundedString(inference.routeProvider, "inference.routeProvider"),
+    routeProvider,
     upstreamProvider: requireBoundedString(
       inference.upstreamProvider,
       "inference.upstreamProvider",
     ),
-    model: requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES),
+    model,
     routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
     upstreamEndpointUrl,
     api,
@@ -1579,7 +1767,10 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   }
   if (
     messagingPlan !== null &&
-    (messagingPlan.schemaVersion !== 1 || messagingPlan.agent !== agent)
+    (!Object.hasOwn(messagingPlan, "schemaVersion") ||
+      !Object.hasOwn(messagingPlan, "agent") ||
+      messagingPlan.schemaVersion !== 1 ||
+      messagingPlan.agent !== agent)
   ) {
     invalid("messaging.plan must be a version 1 plan for the selected agent");
   }
