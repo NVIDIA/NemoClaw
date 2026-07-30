@@ -489,33 +489,16 @@ describe("Manage Sandboxes extension routes", () => {
 
 describe("Documentation Engineering routes", () => {
   const index = buildPublishedRouteIndex();
-  const pages = [
-    "design-agent-ready-documentation",
-    "automate-documentation-workflows",
-    "generate-documentation-variants",
-    "govern-agentic-documentation",
-  ] as const;
 
-  it("publishes every focused page under the non-clickable group for every agent variant", () => {
-    for (const page of pages) {
-      const source = `resources/${page}.mdx`;
+  it("publishes the agentic documentation guide for every agent variant", () => {
+    const source = "resources/engineer-agentic-documentation.mdx";
 
-      expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([
-        `/user-guide/openclaw/resources/documentation-engineering/${page}`,
-        `/user-guide/deepagents/resources/documentation-engineering/${page}`,
-        `/user-guide/hermes/resources/documentation-engineering/${page}`,
-      ]);
-      expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
-    }
-  });
-
-  it("does not publish a stale route for the retired source-only guide", () => {
-    expect(index.sourceToRoutes.has("resources/engineer-agentic-documentation.mdx")).toBe(false);
-    for (const variant of ["openclaw", "deepagents", "hermes"]) {
-      expect(
-        index.routes.has(`/user-guide/${variant}/resources/engineer-agentic-documentation`),
-      ).toBe(false);
-    }
+    expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([
+      "/user-guide/openclaw/resources/engineer-agentic-documentation",
+      "/user-guide/deepagents/resources/engineer-agentic-documentation",
+      "/user-guide/hermes/resources/engineer-agentic-documentation",
+    ]);
+    expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
   });
 });
 
