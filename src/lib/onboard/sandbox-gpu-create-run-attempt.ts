@@ -152,6 +152,7 @@ export function createSandboxGpuCreateAttemptRunner(
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
     let streamedManagedCreateResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let managedSequence: ManagedBootstrapSequenceResult | null = null;
+    let managedIncompleteCreateRecovered = false;
     if (managedBootstrap && managedMode) {
       const runtimeProvider = managedBootstrap.runtimeProvider;
       const adapter =
@@ -161,24 +162,25 @@ export function createSandboxGpuCreateAttemptRunner(
           runOpenshell: deps.runOpenshell,
           sleep: deps.sleep,
         });
+      const createPlan = {
+        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+        sandboxName: input.sandboxName,
+        driverId: runtimeProvider.driverId,
+        image: managedBootstrap.image,
+        profile: {
+          agent: managedBootstrap.request.agent,
+          fingerprint: managedBootstrap.request.profileFingerprint,
+        },
+        agentIdentity: managedBootstrap.agentIdentity,
+        intendedWorkloadArgv: managedBootstrap.intendedWorkloadArgv,
+        expectedSupervisorArgv: managedBootstrap.expectedSupervisorArgv,
+        metadata: {},
+      } as const;
       try {
         managedSequence = await runManagedBootstrapSequence(adapter, {
           create: {
             bootstrapIdentity: managedBootstrap.bootstrapIdentity,
-            plan: {
-              schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-              sandboxName: input.sandboxName,
-              driverId: runtimeProvider.driverId,
-              image: managedBootstrap.image,
-              profile: {
-                agent: managedBootstrap.request.agent,
-                fingerprint: managedBootstrap.request.profileFingerprint,
-              },
-              agentIdentity: managedBootstrap.agentIdentity,
-              intendedWorkloadArgv: managedBootstrap.intendedWorkloadArgv,
-              expectedSupervisorArgv: managedBootstrap.expectedSupervisorArgv,
-              metadata: {},
-            },
+            plan: createPlan,
             request: managedBootstrap.request,
             launch: async ({ heldWorkloadArgv, bootstrapIdentity }) => {
               if (
@@ -194,21 +196,80 @@ export function createSandboxGpuCreateAttemptRunner(
               }
               const result = await streamCreate();
               streamedManagedCreateResult = result;
-              if (result.status !== 0) {
+              const createFailure =
+                result.status === 0 ? null : classifySandboxCreateFailure(result.output);
+              if (result.status !== 0 && createFailure?.kind !== "sandbox_create_incomplete") {
                 throw new ManagedBootstrapCreateStreamFailure(result);
               }
-              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
-                ignoreError: true,
-              });
-              if (!isSandboxReady(list, input.sandboxName)) {
-                throw new Error(
-                  "Managed bootstrap create completed without an authoritative Ready sandbox.",
+              const cleanupIncompleteCreate = async (failure: Error): Promise<never> => {
+                try {
+                  const rollback = await adapter.cleanupIncompleteCreate({
+                    plan: createPlan,
+                    bootstrapIdentity,
+                    heldWorkloadArgv,
+                  });
+                  (
+                    failure as Error & {
+                      managedBootstrapRollback?: Awaited<
+                        ReturnType<typeof adapter.cleanupIncompleteCreate>
+                      >;
+                    }
+                  ).managedBootstrapRollback = rollback;
+                } catch (cleanupError) {
+                  (
+                    failure as Error & { managedBootstrapRollbackError?: unknown }
+                  ).managedBootstrapRollbackError = cleanupError;
+                }
+                throw failure;
+              };
+              if (createFailure?.kind === "sandbox_create_incomplete") {
+                const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+                  sandboxName: input.sandboxName,
+                  timeoutSecs: input.sandboxReadyTimeoutSecs,
+                  runCaptureOpenshell: deps.runCaptureOpenshell,
+                  isSandboxReady,
+                  getSandboxFailurePhase,
+                  stableReadyPolls: 1,
+                  sleep: deps.sleep,
+                });
+                if (!readiness.ready) {
+                  return cleanupIncompleteCreate(
+                    new Error(
+                      `Managed bootstrap incomplete create did not reach authoritative Ready state (${readiness.reason}).`,
+                    ),
+                  );
+                }
+              } else {
+                const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+                  ignoreError: true,
+                });
+                if (!isSandboxReady(list, input.sandboxName)) {
+                  return cleanupIncompleteCreate(
+                    new Error(
+                      "Managed bootstrap create completed without an authoritative Ready sandbox.",
+                    ),
+                  );
+                }
+              }
+              let sandboxId: string;
+              try {
+                sandboxId = resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
+              } catch (error) {
+                return cleanupIncompleteCreate(
+                  new Error(
+                    createFailure?.kind === "sandbox_create_incomplete"
+                      ? "Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready."
+                      : "Managed bootstrap create did not return one exact durable sandbox identity after Ready.",
+                    { cause: error },
+                  ),
                 );
               }
+              managedIncompleteCreateRecovered =
+                createFailure?.kind === "sandbox_create_incomplete";
               return {
                 sandbox: {
                   sandboxName: input.sandboxName,
-                  sandboxId: resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell),
+                  sandboxId,
                   driverId: runtimeProvider.driverId,
                 },
                 ready: true,
@@ -283,10 +344,16 @@ export function createSandboxGpuCreateAttemptRunner(
       const failure = classifySandboxCreateFailure(createResult.output);
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
-        console.warn(
-          `  Create stream exited with code ${createResult.status} after sandbox was created.`,
-        );
-        console.warn("  Checking whether the sandbox reaches Ready state...");
+        if (managedIncompleteCreateRecovered) {
+          console.warn(
+            `  Create stream exited with code ${createResult.status}; the exact durable sandbox reached Ready and completed managed bootstrap.`,
+          );
+        } else {
+          console.warn(
+            `  Create stream exited with code ${createResult.status} after sandbox was created.`,
+          );
+          console.warn("  Checking whether the sandbox reaches Ready state...");
+        }
       } else if (
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&

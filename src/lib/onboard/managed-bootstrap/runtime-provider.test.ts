@@ -33,6 +33,7 @@ describe("managed bootstrap runtime providers", () => {
     expect(provider.driverId).toBe("docker");
     expect(Object.keys(provider.createAdapter()).sort()).toEqual([
       "awaitBootstrap",
+      "cleanupIncompleteCreate",
       "createHeldWorkload",
       "discoverHeldWorkload",
       "finalizeBootstrap",

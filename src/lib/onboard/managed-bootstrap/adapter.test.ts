@@ -130,6 +130,7 @@ function adapterFor(order: string[]): ManagedBootstrapAdapter {
       order.push("create-ready");
       return created;
     }),
+    cleanupIncompleteCreate: vi.fn(),
     discoverHeldWorkload: vi.fn(async () => {
       order.push("discover");
       return {

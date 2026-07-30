@@ -54,9 +54,11 @@ import {
   type ManagedBootstrapDiscoveryInput,
   type ManagedBootstrapFinalizationReceipt,
   type ManagedBootstrapHeldWorkloadHandle,
+  type ManagedBootstrapIncompleteCreateCleanupInput,
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapReplacementHandle,
   type ManagedBootstrapReplacementOptions,
+  type ManagedBootstrapSandboxIdentity,
   renderManagedBootstrapHeldCommand,
 } from "./adapter";
 import {
@@ -901,35 +903,35 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
   }
 }
 
-function removeHeldWorkload(handle: ManagedBootstrapHeldWorkloadHandle, deps: ResolvedDeps): void {
+function removeOwnedWorkload(sandbox: ManagedBootstrapSandboxIdentity, deps: ResolvedDeps): void {
   if (!deps.runOpenshell || !deps.runCaptureOpenshell) {
     throw new Error(
       "Managed bootstrap cannot clean a post-create failure without its OpenShell owner.",
     );
   }
-  const getBeforeDelete = deps.runCaptureOpenshell(["sandbox", "get", handle.sandbox.sandboxName], {
+  const getBeforeDelete = deps.runCaptureOpenshell(["sandbox", "get", sandbox.sandboxName], {
     ignoreError: false,
   });
   const sandboxIdBeforeDelete = parseOpenShellSandboxId(getBeforeDelete);
-  if (sandboxIdBeforeDelete !== handle.sandbox.sandboxId) {
+  if (sandboxIdBeforeDelete !== sandbox.sandboxId) {
     throw new Error(
       "Managed bootstrap owner cleanup refused to delete a same-name sandbox with a different durable ID.",
     );
   }
-  deps.runOpenshell(["sandbox", "delete", handle.sandbox.sandboxName], {
+  deps.runOpenshell(["sandbox", "delete", sandbox.sandboxName], {
     ignoreError: true,
     suppressOutput: true,
   });
   const list = deps.runCaptureOpenshell(["sandbox", "list"], {
     ignoreError: true,
   });
-  const getAfterDelete = deps.runCaptureOpenshell(["sandbox", "get", handle.sandbox.sandboxName], {
+  const getAfterDelete = deps.runCaptureOpenshell(["sandbox", "get", sandbox.sandboxName], {
     ignoreError: true,
   });
   const sandboxIdAfterDelete = parseOpenShellSandboxId(getAfterDelete);
   if (
-    sandboxIdAfterDelete === handle.sandbox.sandboxId ||
-    (sandboxIdAfterDelete === null && hasSandboxListEntry(list, handle.sandbox.sandboxName))
+    sandboxIdAfterDelete === sandbox.sandboxId ||
+    (sandboxIdAfterDelete === null && hasSandboxListEntry(list, sandbox.sandboxName))
   ) {
     throw new Error(
       "Managed bootstrap owner cleanup did not prove its exact durable sandbox ID was removed.",
@@ -943,7 +945,7 @@ function removeHeldWorkload(handle: ManagedBootstrapHeldWorkloadHandle, deps: Re
       "--filter",
       `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
       "--filter",
-      `label=${OPENSHELL_SANDBOX_ID_LABEL}=${handle.sandbox.sandboxId}`,
+      `label=${OPENSHELL_SANDBOX_ID_LABEL}=${sandbox.sandboxId}`,
       "--format",
       "{{.ID}}",
     ],
@@ -958,6 +960,47 @@ function removeHeldWorkload(handle: ManagedBootstrapHeldWorkloadHandle, deps: Re
       "Managed bootstrap owner cleanup did not prove the exact held runtime was removed.",
     );
   }
+}
+
+function resolveIncompleteCreateSandbox(
+  input: ManagedBootstrapIncompleteCreateCleanupInput,
+  deps: ResolvedDeps,
+): ManagedBootstrapSandboxIdentity {
+  if (
+    input.plan.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    input.plan.driverId !== DOCKER_DRIVER_ID
+  ) {
+    throw new Error("Managed bootstrap Docker incomplete-create cleanup received another driver.");
+  }
+  assertManagedBootstrapIdentity(input.bootstrapIdentity);
+  const query = queryOpenShellDockerSandboxContainers(input.plan.sandboxName, deps);
+  if (!query.ok) {
+    throw new Error(`Managed bootstrap Docker incomplete-create discovery failed: ${query.error}`);
+  }
+  if (query.ids.length !== 1) {
+    throw new Error(
+      `Managed bootstrap incomplete-create cleanup requires exactly one labeled Docker workload; found ${String(
+        query.ids.length,
+      )}.`,
+    );
+  }
+  const runtimeId = String(query.ids[0] ?? "").toLowerCase();
+  const inspect = inspectExact(runtimeId, deps);
+  const sandboxId = String(inspect.Config?.Labels?.[OPENSHELL_SANDBOX_ID_LABEL] ?? "");
+  if (parseOpenShellSandboxId(`ID: ${sandboxId}\n`) !== sandboxId) {
+    throw new Error(
+      "Managed bootstrap Docker incomplete-create workload has no exact durable sandbox ID.",
+    );
+  }
+  const sandbox = Object.freeze({
+    sandboxName: input.plan.sandboxName,
+    sandboxId,
+    driverId: input.plan.driverId,
+  });
+  assertImage(inspect, input.plan.image, deps);
+  assertMetadata(inspect, sandbox, input.plan.metadata);
+  assertHeldCommand(inspect, input.heldWorkloadArgv, input.bootstrapIdentity);
+  return sandbox;
 }
 
 function managedSharedStateTransaction(
@@ -1061,7 +1104,7 @@ export function createDockerManagedBootstrapAdapter(
     const finalized = priorRollback(handle);
     if (finalized) return finalized;
     if (!snapshot) {
-      removeHeldWorkload(handle, deps);
+      removeOwnedWorkload(handle.sandbox, deps);
       return completedRollback(handle, false);
     }
     const existing = transactions.get(handle.bootstrapIdentity);
@@ -1102,7 +1145,7 @@ export function createDockerManagedBootstrapAdapter(
     if (restoredSpec.hash !== snapshot.specHash) {
       throw new Error("Managed bootstrap Docker rollback receipt spec does not match.");
     }
-    removeHeldWorkload(handle, deps);
+    removeOwnedWorkload(handle.sandbox, deps);
     return completedRollback(handle, alreadyRolledBack);
   };
   const commitBootstrapNow = (receipt: ManagedBootstrapCompletionReceipt): void => {
@@ -1222,6 +1265,22 @@ export function createDockerManagedBootstrapAdapter(
         intendedWorkloadArgv: Object.freeze([...input.plan.intendedWorkloadArgv]),
         plan: input.plan,
         createReceipt,
+      });
+    },
+
+    async cleanupIncompleteCreate(input) {
+      const sandbox = resolveIncompleteCreateSandbox(input, deps);
+      removeOwnedWorkload(sandbox, deps);
+      return Object.freeze({
+        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+        sandbox,
+        bootstrapIdentity: input.bootstrapIdentity,
+        outcome: "rolled-back",
+        restoredRuntimeId: null,
+        restoredSpecHash: null,
+        heldWorkloadRemoved: true,
+        alreadyRolledBack: false,
+        finalizedAt: deps.now().toISOString(),
       });
     },
 
