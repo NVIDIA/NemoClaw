@@ -128,6 +128,32 @@ def _directory_is_empty_no_follow(path: str) -> bool:
         os.close(fd)
 
 
+def _ensure_profile_parent(path: str) -> bool:
+    """Create the canonical profile parent and reject non-directory replacements."""
+
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        print(f"[dashboard] failed to create profile directory {path} ({exc})", file=sys.stderr)
+        return False
+
+    try:
+        parent_stat = os.lstat(path)
+    except OSError as exc:
+        print(f"[dashboard] failed to inspect profile directory {path} ({exc})", file=sys.stderr)
+        return False
+    if not stat.S_ISDIR(parent_stat.st_mode):
+        print(
+            f"[SECURITY] Refusing to migrate legacy dashboard profile because {path} "
+            "is not a safe directory",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def _migrate_legacy_dashboard_profile(dst: str) -> bool:
     """Move the legacy dashboard home into the canonical profiles directory."""
 
@@ -182,6 +208,9 @@ def _migrate_legacy_dashboard_profile(dst: str) -> bool:
             )
             return False
         os.rmdir(dashboard_home)
+
+    if not _ensure_profile_parent(profiles_dir):
+        return False
 
     try:
         os.rename(legacy_home, dashboard_home)

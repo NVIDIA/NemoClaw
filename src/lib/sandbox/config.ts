@@ -665,11 +665,12 @@ function hermesDashboardReseedFailureDetail(
 
 /**
  * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
- * dashboard-home config (`<configDir>/dashboard-home/config.yaml`) re-mirrors the
- * gateway config's model routing after an in-place `inference set`. Sandbox
- * startup runs the same seeder; without re-running it, Dashboard Chat and its
- * `/api/model/info` endpoint stay on the previous model even though the gateway
- * config, registry, and CLI status all report the new one (#6893).
+ * dashboard profile config (`<configDir>/profiles/dashboard-home/config.yaml`)
+ * re-mirrors the gateway config's model routing after an in-place
+ * `inference set`. Sandbox startup runs the same seeder; without re-running it,
+ * Dashboard Chat and its `/api/model/info` endpoint stay on the previous model
+ * even though the gateway config, registry, and CLI status all report the new
+ * one (#6893).
  *
  * Runs as the sandbox user (non-privileged `sandbox exec`, matching start.sh's
  * step-down before touching sandbox-owned dashboard-home state); the seeder does
@@ -681,7 +682,8 @@ function seedHermesDashboardConfig(
   target: AgentConfigTarget,
   deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
 ): HermesDashboardReseedResult {
-  const dashboardHome = `${target.configDir}/dashboard-home`;
+  const dashboardHome = `${target.configDir}/profiles/dashboard-home`;
+  const legacyDashboardHome = `${target.configDir}/dashboard-home`;
   const binary = deps.getOpenshellBinary();
   const capture = (command: string[]) =>
     deps.captureOpenshellCommand(
@@ -726,13 +728,20 @@ function seedHermesDashboardConfig(
   // lstat distinguishes a genuinely absent profile from a file, a symlink
   // (including a broken one), or an inspection error. Only the first case is a
   // clean no-op; everything else fails closed so callers cannot report sync.
-  const inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
+  let inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
   if (
     !inspection.error &&
     !inspection.signal &&
     inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
   ) {
-    return "absent";
+    inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, legacyDashboardHome]);
+    if (
+      !inspection.error &&
+      !inspection.signal &&
+      inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
+    ) {
+      return "absent";
+    }
   }
   if (failed(inspection)) {
     reportFailure("inspection", inspection);

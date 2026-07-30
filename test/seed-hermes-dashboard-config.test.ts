@@ -150,6 +150,80 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(dash.updates).toEqual(REVIEWED_POLICY.updates);
   });
 
+  it("moves the legacy dashboard home into the Hermes profiles directory (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "keep me\n");
+
+    const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("migrated legacy dashboard profile");
+    expect(fs.existsSync(legacyHome)).toBe(false);
+    expect(fs.statSync(path.dirname(dashboardHome)).isDirectory()).toBe(true);
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("keep me\n");
+    expect(readYaml(path.join(dashboardHome, "config.yaml")).model).toEqual(GATEWAY_CONFIG.model);
+  });
+
+  it("refuses to merge two populated dashboard profiles (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+    fs.writeFileSync(path.join(dashboardHome, "MEMORY.md"), "current\n");
+
+    const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("Refusing to merge legacy and current dashboard profiles");
+    expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("current\n");
+  });
+
+  it("refuses to migrate a symlinked legacy dashboard profile (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    const outsideHome = path.join(tmpDir, "outside-dashboard-home");
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.mkdirSync(outsideHome);
+    fs.writeFileSync(path.join(outsideHome, "MEMORY.md"), "outside\n");
+    fs.symlinkSync(outsideHome, legacyHome);
+
+    const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("is not a safe directory");
+    expect(fs.lstatSync(legacyHome).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(outsideHome, "MEMORY.md"), "utf-8")).toBe("outside\n");
+  });
+
+  it("refuses to migrate through a symlinked profiles directory (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const profilesDir = path.join(hermesHome, "profiles");
+    const outsideProfiles = path.join(tmpDir, "outside-profiles");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(outsideProfiles);
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+    fs.symlinkSync(outsideProfiles, profilesDir);
+
+    const res = runSeed(src, path.join(profilesDir, "dashboard-home", "config.yaml"));
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("is not a safe directory");
+    expect(fs.existsSync(legacyHome)).toBe(true);
+    expect(fs.readdirSync(outsideProfiles)).toEqual([]);
+  });
+
   it("mirrors only the exact native Tavily backend into dashboard config", () => {
     const src = writeYaml("gw.yaml", {
       ...GATEWAY_CONFIG,

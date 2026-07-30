@@ -55,6 +55,17 @@ Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
 Do not copy `.hermes/dashboard-home/.env` or `.hermes/dashboard-home/config.yaml`.
 NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
 
+If startup refuses a legacy profile migration, download the preserved user files for inspection:
+
+```bash
+mkdir -p "$BACKUP_DIR/dashboard-home-legacy"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home-legacy/MEMORY.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home-legacy/USER.md"
+```
+
+Do not download the legacy `.env` or `config.yaml`.
+Compare the preserved user files with the canonical profile before you upload either version.
+
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
