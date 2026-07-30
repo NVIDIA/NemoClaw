@@ -2713,6 +2713,21 @@ The Hermes entrypoint supervisor remains responsible for the gateway, dashboard,
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
 The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
 
+### Restart or recovery reports `relaunch quarantined`
+
+In the OpenShell-managed topology the strict root-owned hash is not a trust anchor for mutable config, so a direct edit of `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` is not refused by the host controller.
+The in-sandbox supervisor still refuses to start a gateway on configuration it cannot match to the persisted managed state, and it stops attempting relaunch once that refusal or repeated gateway exits exhaust its crash budget.
+`$$nemoclaw <name> gateway restart`, `$$nemoclaw <name> recover`, and `$$nemoclaw <name> connect` then report the `relaunch quarantined` failure layer.
+
+The refusal is deterministic, so retrying any of those commands cannot clear it.
+Restore the registered configuration and refresh its integrity metadata in one transaction:
+
+```bash
+nemohermes <name> rebuild --yes
+```
+
+After the rebuild, make the intended change through a supported command such as `$$nemoclaw <name> config set` or `$$nemoclaw inference set`, which update the configuration and its hashes together.
+
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
 `nemohermes onboard` forwards port `8642`, but Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.

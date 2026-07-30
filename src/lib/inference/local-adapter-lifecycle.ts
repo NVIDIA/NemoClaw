@@ -28,6 +28,7 @@ export type RunFn = (
 export type LocalAdapterProcessMatcher = string | RegExp | ((commandLine: string) => boolean);
 
 export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = nemoclawStateRoot(os.homedir(), GATEWAY_PORT);
+export const LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES = 64 * 1024;
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {
   rejectSymlinksOnPath(stateDir);
@@ -191,6 +192,12 @@ export function probeLocalAdapterHealth(options: {
   tokenHashField?: string;
 }): Promise<boolean> {
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (healthy: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(healthy);
+    };
     const req = http.request(
       {
         hostname: options.host,
@@ -200,31 +207,59 @@ export function probeLocalAdapterHealth(options: {
         timeout: options.timeoutMs || 1000,
       },
       (res) => {
+        const declaredBytes = Number(res.headers["content-length"]);
+        if (
+          Number.isFinite(declaredBytes) &&
+          declaredBytes > LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES
+        ) {
+          res.destroy();
+          settle(false);
+          return;
+        }
+
         const chunks: Buffer[] = [];
-        res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        let receivedBytes = 0;
+        res.on("data", (chunk) => {
+          if (settled) return;
+          const chunkBytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+          if (receivedBytes + chunkBytes > LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES) {
+            chunks.length = 0;
+            res.destroy();
+            settle(false);
+            return;
+          }
+          receivedBytes += chunkBytes;
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          chunks.push(buffer);
+        });
+        res.on("close", () => {
+          if (!res.complete) settle(false);
+        });
+        res.on("error", () => settle(false));
         res.on("end", () => {
+          if (settled) return;
           if (res.statusCode !== 200) {
-            resolve(false);
+            settle(false);
             return;
           }
           if (!options.expectedTokenHash) {
-            resolve(true);
+            settle(true);
             return;
           }
           try {
             const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonObject;
-            resolve(body[options.tokenHashField || "tokenHash"] === options.expectedTokenHash);
+            settle(body[options.tokenHashField || "tokenHash"] === options.expectedTokenHash);
           } catch {
-            resolve(false);
+            settle(false);
           }
         });
       },
     );
     req.on("timeout", () => {
       req.destroy();
-      resolve(false);
+      settle(false);
     });
-    req.on("error", () => resolve(false));
+    req.on("error", () => settle(false));
     req.end();
   });
 }
