@@ -11,36 +11,39 @@ const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
 const googlechatPidDir = `${mainPidDir}-googlechat`;
 
 describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
-  it("keeps the Google Chat PID directory when the tunnel stop fails so a later destroy can stop the orphaned processes", () => {
+  it("fails closed before later cleanup when the Google Chat tunnel cannot stop", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rmSync = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const stopAll = vi.fn();
+    const getSandbox = vi.fn(() => null);
     const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
     const stopGooglechatWebhookTunnel = vi.fn(() => {
       throw new Error("cloudflared refused to stop");
     });
 
-    cleanupSandboxServices(
-      SANDBOX,
-      { stopHostServices: true },
-      {
-        stopAll: vi.fn(),
-        getSandbox: vi.fn(() => null),
-        rmSync,
-        runOpenshell,
-        stopGooglechatWebhookTunnel,
-        googlechatWebhookTunnelPidDir,
-      },
-    );
+    expect(() =>
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: true },
+        {
+          stopAll,
+          getSandbox,
+          rmSync,
+          runOpenshell,
+          stopGooglechatWebhookTunnel,
+          googlechatWebhookTunnelPidDir,
+        },
+      ),
+    ).toThrow(/public Google Chat webhook endpoint may still be running/);
 
-    // The main services directory is still removed.
-    expect(rmSync).toHaveBeenCalledWith(mainPidDir, { recursive: true, force: true });
-    // The Google Chat directory is preserved because its stop failed — deleting
-    // it would orphan the public tunnel with no PID handle for a later destroy.
-    expect(rmSync).not.toHaveBeenCalledWith(googlechatPidDir, expect.anything());
     expect(googlechatWebhookTunnelPidDir).toHaveBeenCalledWith(mainPidDir);
-    // Destroy stays best-effort: provider cleanup still runs after the failure.
-    expect(runOpenshell).toHaveBeenCalled();
+    // Preserve both PID directories and refuse every later side effect so a
+    // repeated destroy can still prove and stop the public endpoint.
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(stopAll).not.toHaveBeenCalled();
+    expect(getSandbox).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
 
     warn.mockRestore();
