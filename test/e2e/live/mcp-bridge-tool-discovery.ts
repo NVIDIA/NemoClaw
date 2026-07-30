@@ -8,6 +8,12 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { FakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
+export interface AuthenticatedMcpDiscoveryTarget {
+  server: FakeMcpHttpsServer;
+  expectedSecret: string;
+  label: string;
+}
+
 export async function assertAuthenticatedMcpDiscovery(
   fakeMcp: FakeMcpHttpsServer,
   options: {
