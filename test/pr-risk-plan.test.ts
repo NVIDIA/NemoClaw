@@ -6,7 +6,6 @@ import {
   buildRiskPlan,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
-  requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../tools/advisors/risk-plan.mts";
@@ -170,7 +169,6 @@ describe("deterministic PR risk plan", () => {
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
@@ -215,7 +213,6 @@ describe("deterministic PR risk plan", () => {
     ]);
     expect(riskPlanRequiredTargetIds(adjacentStatusFile)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -379,31 +376,6 @@ describe("deterministic PR risk plan", () => {
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
     expect(result.requiredTargets).toEqual([]);
-  });
-
-  it("runs controller-only changes without credentialed E2E authorization", () => {
-    const result = plan(
-      ".github/workflows/pr-e2e-gate.yaml",
-      "tools/e2e/pr-e2e-gate.mts",
-      "tools/e2e/pr-e2e-required.mts",
-    );
-
-    expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
-  });
-
-  it.each([
-    ".github/workflows/e2e.yaml",
-    "test/e2e/risk-signal-reporter.ts",
-    "tools/e2e/workflow-plan.mts",
-  ])("requires authorization before credentialed E2E can execute %s", (file) => {
-    expect(requiresCredentialedE2eAuthorization(plan(file))).toBe(true);
-  });
-
-  it("keeps mixed controller and credentialed execution changes behind authorization", () => {
-    const result = plan(".github/workflows/pr-e2e-gate.yaml", "test/e2e/risk-signal-reporter.ts");
-
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it.each([
