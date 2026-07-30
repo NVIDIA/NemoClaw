@@ -7,6 +7,10 @@
 # Node for NemoClaw build-time config generation, Python, shell tools, and a
 # hash-locked deepagents-code install with the NVIDIA provider extra.
 
+ARG PERL_VERSION=5.44.0
+ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
+ARG PERL_PACKAGE_REVISION=1nemoclaw1
+
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,9 +30,24 @@ COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /script
 
 RUN bash /scripts/security/build-native-security-packages.sh /out
 
+FROM native-security-builder AS perl-builder
+
+ARG PERL_VERSION
+ARG PERL_SHA256
+ARG PERL_PACKAGE_REVISION
+
+COPY scripts/security/build-perl-security-packages.sh /scripts/security/build-perl-security-packages.sh
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        netbase=6.5 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN bash /scripts/security/build-perl-security-packages.sh \
+    /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
+
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
-COPY --from=native-security-builder /out /tmp/nemoclaw-native-security
+COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
@@ -120,6 +139,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "$security_deb_dir/vim-tiny.deb" \
         /tmp/nemoclaw-native-security/libssh2-1t64.deb \
         /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
+    && apt-get install -y --no-install-recommends \
+        /tmp/nemoclaw-native-security/perl-base.deb \
+        /tmp/nemoclaw-native-security/perl.deb \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
@@ -139,6 +163,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')" \
     && python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')" \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
+    && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
+    && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \
+    && test "$(perl -MIO::Compress::Base -e 'print IO::Compress::Base->VERSION')" = "2.223" \
+    && test "$(perl -MIO::Uncompress::Unzip -e 'print IO::Uncompress::Unzip->VERSION')" = "2.223" \
+    && test "$(perl -MFile::GlobMapper -e 'print File::GlobMapper->VERSION')" = "1.001" \
+    && perl -MSocket=pack_ip_mreq_source -e \
+        'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
     && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' \
         "architecture=$arch" \
@@ -150,12 +185,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-tiny=2:9.2.0782-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
     && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf "$security_deb_dir" \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && test -z "$(dpkg --audit)"
 
 # Node remains available to the managed terminal at runtime, so remediate
 # npm's private node-tar copy after curl is installed even though Deep Agents
