@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getCredential, prompt, saveCredential } from "../../../../credentials/store";
-import type { ChannelHookOutputSpec } from "../../../manifest";
 import {
   createTokenPasteHook,
   resolveManifestTokenPasteField,
@@ -10,6 +9,7 @@ import {
   type TokenPasteHookOptions,
 } from "../../../hooks/common/token-paste";
 import type { MessagingHookRegistration } from "../../../hooks/types";
+import type { ChannelHookOutputSpec } from "../../../manifest";
 import { googlechatManifest } from "../manifest";
 
 export const GOOGLECHAT_TOKEN_PASTE_HOOK_HANDLER_ID = "googlechat.tokenPaste";
@@ -17,7 +17,6 @@ export const GOOGLECHAT_TOKEN_PASTE_HOOK_HANDLER_ID = "googlechat.tokenPaste";
 /**
  * Reject a pasted service-account key that is not valid JSON, so a truncated
  * paste is re-prompted here instead of aborting onboarding later at token-minting.
- * (The manifest regex already checks the required key names are present.)
  */
 export function serviceAccountJsonError(token: string): string | null {
   let parsed: unknown;

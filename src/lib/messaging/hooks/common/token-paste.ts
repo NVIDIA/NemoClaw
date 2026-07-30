@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  MessagingHookHandler,
-  MessagingHookOutputMap,
-  MessagingHookRegistration,
-} from "../types";
 import { createBuiltInChannelManifestRegistry } from "../../channels";
 import type {
   ChannelHookOutputSpec,
   ChannelManifest,
   ChannelSecretInputSpec,
 } from "../../manifest";
+import type {
+  MessagingHookHandler,
+  MessagingHookOutputMap,
+  MessagingHookRegistration,
+} from "../types";
 
 export const COMMON_TOKEN_PASTE_HOOK_HANDLER_ID = "common.tokenPaste";
 
@@ -113,15 +113,12 @@ async function resolveTokenValue(
 
   let token = normalizeCredentialValue(env[field.envKey]) || readCredential(field.envKey);
   let source: "existing" | "prompted" = "existing";
-  if (token && field.format && !field.format.test(token)) {
-    log(`  ✗ Invalid format. ${field.formatHint || "Check the token and try again."}`);
+  const existingValidationError = token ? tokenValidationError(field, token) : null;
+  if (token && existingValidationError) {
+    log(`  ✗ Invalid format. ${existingValidationError}`);
     if (!isInteractive) {
       log(formatSkippedInvalidTokenMessage(channelId, output));
-      throw new Error(
-        `Invalid token format for ${field.envKey}. ${
-          field.formatHint || "Check the token and try again."
-        }`,
-      );
+      throw new Error(`Invalid token format for ${field.envKey}. ${existingValidationError}`);
     }
     log(`  ✗ Invalid existing ${channelId} ${tokenNoun(output)} ignored.`);
     token = "";
@@ -147,22 +144,14 @@ async function resolveTokenValue(
         await prompt(`  ${field.label}: `, { secret: true, maskCap: field.maskCap }),
       );
       if (!token) break;
-      // Accept unless the regex or the field's injected validator (e.g. a JSON check) rejects it.
-      if ((!field.format || field.format.test(token)) && !field.validate?.(token)) break;
+      const validationError = tokenValidationError(field, token);
+      if (!validationError) break;
       if (attempt >= maxAttempts) {
-        log(`  ✗ Invalid format. ${field.formatHint || "Check the value and try again."}`);
+        log(`  ✗ Invalid format. ${validationError}`);
         log(formatSkippedInvalidTokenMessage(channelId, output));
-        throw new Error(
-          `Invalid token format for ${field.envKey}. ${
-            field.formatHint || "Check the value and try again."
-          }`,
-        );
+        throw new Error(`Invalid token format for ${field.envKey}. ${validationError}`);
       }
-      log(
-        `  ✗ Invalid format (attempt ${attempt + 1} of ${maxAttempts}). ${
-          field.formatHint || "Please paste it again."
-        }`,
-      );
+      log(`  ✗ Invalid format (attempt ${attempt + 1} of ${maxAttempts}). ${validationError}`);
     }
   }
   if (!token) {
@@ -171,6 +160,13 @@ async function resolveTokenValue(
   }
 
   return { token, source };
+}
+
+function tokenValidationError(field: TokenPasteField, token: string): string | null {
+  if (field.format && !field.format.test(token)) {
+    return field.formatHint || "Check the value and try again.";
+  }
+  return field.validate?.(token) ?? null;
 }
 
 function persistTokenValue(
