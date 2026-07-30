@@ -238,12 +238,12 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   );
 }
 
-async function assertBuildCachesAbsent(probe: DockerProbe, container: string): Promise<void> {
+async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string): Promise<void> {
   await expectContainerSh(
     probe,
     container,
-    "build-only Hermes caches are present in the runtime image",
-    'for path in /root/.npm /root/.cache/electron /root/.cache/node-gyp; do test ! -e "$path" && test ! -L "$path"; done',
+    "build-only Hermes paths are present in the runtime image",
+    'for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp; do test ! -e "$path" && test ! -L "$path"; done',
   );
 }
 
@@ -375,7 +375,7 @@ async function runCleanVariant(
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
-  await assertBuildCachesAbsent(probe, container);
+  await assertBuildOnlyPathsAbsent(probe, container);
   await assertBearerAuth(probe, container);
   await assertDashboardHome(probe, container);
 }
@@ -447,7 +447,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       "gateway process runs as gateway user",
       "gateway log has no PID race or config load failure",
       "Hermes v0.14 writable runtime directories are present",
-      "build-only root caches are absent from the runtime image",
+      "build-only upstream tests and root caches are absent from the runtime image",
       "gateway.pid is stored as a regular file below the writable runtime directory",
       "gateway user cannot remove config.yaml from sticky config root",
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
@@ -490,7 +490,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       cleanStartupHealthy: true,
       legacyStartupHealthy: true,
       runtimeLayoutVerified: true,
-      buildCachesAbsent: true,
+      buildOnlyPathsAbsent: true,
       gatewayPrivilegeSeparationVerified: true,
       bearerAuthVerified: true,
       dashboardHomeVerified: true,

@@ -808,7 +808,7 @@ describe("PR E2E dispatch-not-observed recovery", () => {
       });
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).toContain("dispatched=true");
-      expect(outputs).not.toContain("approval_mode=");
+      expect(outputs).not.toContain("approval_");
       expect(outputs).not.toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

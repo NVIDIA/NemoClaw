@@ -3,7 +3,7 @@
 
 # Hermes 0.19.0 dependency and compatibility review
 
-Review date: 2026-07-28
+Review date: 2026-07-29
 
 ## Decision
 
@@ -15,9 +15,9 @@ NemoClaw preserves manual command approval instead of inheriting Hermes 0.19's n
 Named-profile copies remain inside the raw `profiles` directory capture under the existing generic snapshot limitation; this bounded residual is recorded rather than described as online backup.
 The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
-The selected Python graph introduces no package-level advisory or license regression relative to `v2026.7.1`.
-The review nevertheless found that both versions resolve `python-multipart==0.0.27`, which is affected by a network-reachable CPU denial of service and parser differential.
-The final image therefore replaces that lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
+The selected Python graph is hardened before installation with a reviewed, exact-source patch that updates the published dependency metadata and frozen lock together.
+It selects `cryptography==48.0.1`, `Pillow==12.3.0`, and `starlette==1.3.1`, then verifies those installed versions and the complete environment with `uv pip check`.
+The final image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 
 The source-pin commit must publish a fresh multi-platform Hermes base image before the final Dockerfile can name its immutable digest.
 The PR is not approval-ready until the pinned final image and required live E2E gates pass on the exact PR head.
@@ -93,9 +93,19 @@ The session-preview patch remains exact-count guarded.
 The target Langfuse plugin still validates credentials before the OpenShell resolver can supply them, so its narrowly bounded placeholder patch remains exact-source guarded.
 The managed light-skin source boundary is also unchanged for NemoClaw's selected terminal environment.
 
-Hermes 0.19 records default-profile cron execution history in `cron/executions.db` and Discord replay state in `gateway/discord_message_recovery.db`.
+Hermes 0.19 records default-profile cron execution history in an SQLite ledger and Discord replay state in `gateway/discord_message_recovery.db`.
+Upstream hard-codes the cron ledger at `cron/executions.db`.
+That location conflicts with Shields up.
+NemoClaw's Shields up transition sets the high-risk `cron` directory to `root:sandbox` mode `0755` and removes group and world write access from its cron job definitions.
+The initial NemoClaw Hermes 0.19 integration attempted to set that directory to `gateway:sandbox` mode `2770` during every gateway start.
+During a managed restart, the nonroot supervisor could not make the sealed directory group-writable, so it stopped before launching the gateway child.
+NemoClaw now hash-binds and exact-source patches both the ledger path and Hermes quick snapshot inventory to `runtime/cron-executions.db`.
+Only the mutable audit database moves into the existing cross-identity runtime boundary; `cron` remains protected.
+The `v0.0.97` tag predates this ledger, so tagged upgrades need no path migration.
+Snapshots made during the brief untagged-main window after the Hermes 0.19 merge retain the superseded path and are outside this release migration contract.
 Both default-profile files use SQLite online backup and restore.
-The cron directory remains a state-directory contract for job definitions, and the later online database copy deliberately replaces its potentially inconsistent raw directory copy.
+The `cron` directory remains the state-directory contract for cron job definitions.
+The relocated execution ledger is a distinct online-backed state file.
 WAL and SHM files are omitted and removed on restore.
 This cleanup is required even after a read-only online backup because opening a WAL-mode source can materialize sidecars owned by the backup identity; leaving those `0640` sidecars in place makes the producer's restored database appear read-only.
 
@@ -106,7 +116,8 @@ This is an upgrade-created instance of the existing generic named-profile databa
 The cron ledger is an audit history rather than a retry queue; an inconsistent Discord recovery ledger can lose or repeat reconnect bookkeeping.
 Supporting dynamic profile-local SQLite discovery safely requires generic path enumeration, validation, backup, and restore work outside this dependency-upgrade scope.
 Both default-profile ledgers cross two runtime identities: `gateway` creates and reopens them under the gateway's `0007` umask, while `sandbox` performs snapshot backup and atomic restore.
-The image therefore maintains both parents as `gateway:sandbox` mode `2770`.
+NemoClaw maintains the writable `runtime` and `gateway` parents as `gateway:sandbox` mode `2770`.
+Shields up leaves the `cron` directory at `root:sandbox` mode `0755` and removes group write access from its cron job definitions.
 Hermes' ordinary SQLite creation produces the live cron database as `gateway:sandbox` mode `0640`, which gives `sandbox` the read access needed for online backup; the sandbox-owned restored replacement is explicitly mode `0660` so `gateway` can reopen it.
 Discord instead forces its live database to `0600`, so NemoClaw exact-source patches that upstream chmod to `0660`.
 Build probes use the real cron and Discord APIs to prove gateway creation, sandbox read/online-backup/replacement, and gateway reopen/write against each restored file.
@@ -119,7 +130,7 @@ The final image hash-binds the patcher and probes those installed PID, lock, and
 The inherited workaround is not a complete upstream metadata migration.
 Hermes still force-unlinks a top-level PID during direct `gateway run --replace`, keeps planned-stop and takeover markers at the top level, and has explicit top-level PID or status readers in named-profile, multiplexer, service-manager, web, container-boot, Windows, backup, and upstream Docker paths.
 Those same direct-consumer gaps exist in base SHA `fa96c91f`'s Hermes 0.18 patch, so the 0.19 retarget does not regress NemoClaw's managed default-gateway lifecycle.
-Under shields-up, direct Hermes replacement or stop and named-profile lifecycle commands can nevertheless fail or observe stale state.
+With Shields up, direct Hermes replacement or stop and named-profile lifecycle commands can nevertheless fail or observe stale state.
 NemoClaw uses plain `gateway run` plus its host-owned managed stop/start recovery; the protected managed-restart E2E proves only that supported path.
 Completing the upstream relocation requires a separate exact-source audit and runtime matrix for every explicit consumer rather than extending this dependency upgrade's claim.
 
@@ -140,18 +151,17 @@ Their PyPI Trusted Publisher attestations bind Apache-2.0 artifacts to `Kludex/p
 The override clears `GHSA-5rvq-cxj2-64vf`, `GHSA-6jv3-5f52-599m`, and `GHSA-v9pg-7xvm-68hf`.
 A Python 3.13 FastAPI `TestClient` probe covered ordinary forms, file upload, and dense CRLF input with the replacement parser.
 
-The resulting point-in-time Python audit contains 37 database records representing 29 unique advisories in nine packages.
-The unique set is 19 high, seven medium, three low, and zero critical.
-Every remaining record is also present in the selected `v2026.7.1` graph.
+The source patch changes the published constraints and `uv.lock` as one transaction rather than overlaying packages after `uv sync`.
+In addition to the three direct selections, the resolver necessarily moves `alibabacloud-tea-openapi` from `0.4.4` to `0.4.5`, `darabonba-core` from `1.0.5` to `1.0.8`, and adds `websocket-client==1.9.0`.
+The changed packages remain under Apache-2.0, BSD-3-Clause, MIT-CMU, or compatible dual-license terms; no restrictive license enters the selected graph.
 
-Two pre-existing high-severity package groups remain plausibly reachable and must stay visible as baseline debt.
-Pillow `12.2.0` parses user-provided images and has parser advisories fixed in `12.3.0`.
-Starlette `1.0.1` parses form requests for Hermes FastAPI `Form` and `File` routes and has a URL-encoded form denial of service fixed in `1.3.1`.
-These findings are not introduced by this release, but the final review must not describe the complete image as vulnerability-free.
-Hermes pins both affected versions exactly in `pyproject.toml`, so post-sync replacements would violate the installed distribution metadata.
-Dependency-coherent remediation requires an upstream constraint change, regenerated `uv.lock`, and wider image, web, MCP, and parser validation rather than an untracked `uv pip install --no-deps` overlay in this PR.
-Exploratory compatibility evidence is promising: Pillow `12.3.0` passes all 97 upstream image-routing tests, and FastAPI `0.133.1` with Starlette `1.3.1` and multipart `0.0.32` passes a real form and upload `TestClient` smoke.
-That exploratory evidence does not replace an upstream-aligned hardening change.
+The 2026-07-29 point-in-time audit reports no advisory for `cryptography==48.0.1`, `Pillow==12.3.0`, or `starlette==1.3.1`.
+The exported patched lock still reports 14 records in seven other packages, but three records are for the published `python-multipart==0.0.27` resolution that the final image already replaces with `0.0.32`, for which the same point-in-time audit reports no advisories.
+The effective image therefore retains 11 newly published records in six unrelated packages: `click==8.3.1`, `mcp==1.26.0`, `pydantic-settings==2.13.1`, `Pygments==2.19.2`, `PyNaCl==1.5.0`, and `tornado==6.5.5`.
+Those records are not introduced by this targeted remediation and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
+
+Compatibility evidence covers all 97 upstream image-routing tests with Pillow `12.3.0`, plus a real FastAPI `0.133.1`, Starlette `1.3.1`, and multipart `0.0.32` form and upload `TestClient` smoke.
+The image build additionally requires the frozen environment to remain consistent and asserts the exact installed versions before continuing.
 
 The remaining high records have evidence-backed exclusions from currently enabled Hermes paths.
 Hermes-owned MCP servers use stdio and do not enable authenticated stateful HTTP, custom WebSocket servers, or MCP tasks.
@@ -182,13 +192,13 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-3` | High | Migrate and test | Generated configuration and the doctor hash contract use schema 33 before runtime startup. |
 | `HERMES-4` | High | Migrate and test | Wrapper routing covers `console`, `--no-restore-cwd`, and `--safe-mode`; it preserves profile selectors, bare continue, and unquoted multi-word names against Hermes' exact coalescing boundaries across all four continue/resume spellings, and recognizes and explicitly rejects `--usage-file` only when the resumed one-shot append workaround would otherwise discard the report. The final image compares the wrapper's private session-name boundary AST to the pinned upstream coalescer instead of deriving it from public help. Unknown future versions remain guarded. |
 | `HERMES-5` | Medium | Guard and test | Every retained compatibility patch was compared with target source, retargeted, hash-bound, and exercised by a focused regression or image smoke probe. |
-| `HERMES-6` | High | Migrate, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent and overlapping-directory tests. Both bind their cross-UID contract to `gateway:sandbox` `2770` parents, descriptor-safe startup repair, and gateway-to-sandbox-to-gateway image probes. Cron's live source is group-readable `0640` and its restored replacement is `0660`; Discord additionally needs its guarded `0660` upstream chmod patch. Rebuild persistence remains a live E2E gate. |
+| `HERMES-6` | High | Migrate, guard, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent tests. The cron execution ledger is exact-source relocated to `runtime/cron-executions.db`, and Hermes quick snapshots follow the same path. The `cron` directory remains `root:sandbox` mode `0755` during Shields up, and its cron job definitions remain non-writable to the `sandbox` group. Descriptor-safe startup repair maintains only the writable runtime and gateway parents as `gateway:sandbox` `2770`. Gateway-to-sandbox-to-gateway image probes cover both ledgers; cron's live source is group-readable `0640` and its restored replacement is `0660`, while Discord additionally needs its guarded `0660` upstream chmod patch. Managed restart and rebuild persistence remain live E2E gates. |
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
 | `HERMES-8` | High | Guard and runtime-proof | Optional upstream secret sources stay disabled, `--safe-mode` does not broaden the generated environment allowlist, and the live environment boundary must reject raw credentials. |
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
-| `HERMES-10` | High | Document and review | Reachable Pillow and Starlette advisory debt predates the target and is not worsened by it, but it remains explicit baseline debt for security disposition rather than a zero-finding audit claim. |
+| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `cryptography==48.0.1`, `Pillow==12.3.0`, and `starlette==1.3.1`, and fails the image build on dependency inconsistency or installed-version drift. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30411365314` published the exact source commit as amd64 and arm64 manifests under OCI index `sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e`. The final Dockerfile pins that digest, and the pinned arm64 final image passes all 62 BuildKit steps, including installed-version, patch, config, and cross-identity SQLite probes. Protected runtime E2E remains. |
+| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30411365314` published the exact source commit as amd64 and arm64 manifests under OCI index `sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e`. The final Dockerfile pins that digest. Before the cron ledger relocation, the pinned arm64 final image passed all 62 BuildKit steps, including installed-version, patch, config, and cross-identity SQLite probes. The exact PR head must build the three added relocation layers and changed cron probe before protected runtime E2E. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -197,13 +207,13 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-18` | High | Migrate and test | Fresh named profiles omit `config.yaml`, so generated pins do not cover every `HERMES_HOME`. The final image hash-binds the exact `v2026.7.20` config, classic-CLI config copy, raw browser-policy, TUI raw-YAML, agent-commentary, update-command, and gateway-policy sources, patches their fail-safe defaults, and creates a real config-less profile to exercise all affected installed loaders. |
 | `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
 | `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose central helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving the managed default gateway's central PID, lock, and status helpers below `runtime`, hash-binds the patcher, and adds unit and final-image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
-| `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. Under shields-up those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
+| `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. With Shields up, those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
 
 Unresolved upgrade-created high-impact concerns: `0`.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation and one inherited Medium direct-runtime-consumer limitation remain explicitly accepted for this upgrade scope.
 
 The remaining exact-head gates are repository CI, automated review, documentation review, security review, and protected Hermes E2E.
-The reachable pre-existing Pillow and Starlette debt also requires an explicit security-review disposition before merge.
+The exact-source dependency patch and its residual audit record require security review before merge.
 
 ## Verification and remaining gates
 
@@ -217,10 +227,11 @@ Completed local evidence:
 - Python 3.13 multipart compatibility probes;
 - a no-cache arm64 Hermes base-image build;
 - trusted amd64 and arm64 branch-image publication plus immutable OCI-index inspection; and
-- a 62-step arm64 final-image build from the pinned branch digest, including private wrapper-boundary and cross-identity SQLite probes.
+- a 62-step arm64 final-image build from the pinned pre-relocation branch digest, including private wrapper-boundary and cross-identity SQLite probes.
 
 Before merge, the exact PR head must still pass:
 
+- the final-image build, including the cron ledger relocation and changed cross-identity probe;
 - managed MCP discovery and invocation;
 - messaging, environment-secret, restart, snapshot, rebuild, and rollback E2E paths;
 - normal repository checks with no unresolved actionable automated-review finding; and

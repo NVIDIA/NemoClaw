@@ -109,6 +109,32 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
+  it("retries the exact same-sandbox Error phase when OpenShell also emits informational stdout", () => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output:
+          `Waiting for sandbox registration\n${OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR}`.trim(),
+        stdout: "Waiting for sandbox registration\n",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
   it("rides out a transient Error phase past the old 30s budget by default (#7227)", () => {
     // No timeoutSeconds option and no env override: the default recovery budget
     // must be large enough (120s, aligned with connect's readiness wait) to keep

@@ -599,30 +599,30 @@ function normalizeOpenshellStructuredError(value: string): string {
   return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-function hasRetryableOpenshellResultShape(result: ReturnType<typeof captureOpenshell>): boolean {
-  return (
-    result.status === 1 &&
-    !result.error &&
-    String(result.stdout ?? "").trim() === "" &&
-    String(result.stderr ?? "").trim() !== ""
-  );
+function hasRetryableOpenshellFailureShape(result: ReturnType<typeof captureOpenshell>): boolean {
+  return result.status === 1 && !result.error && String(result.stderr ?? "").trim() !== "";
 }
 
 function isRetryableOpenshellReRegistrationState(
   result: ReturnType<typeof captureOpenshell>,
   sandboxName: string,
 ): boolean {
-  if (!hasRetryableOpenshellResultShape(result)) return false;
+  if (!hasRetryableOpenshellFailureShape(result)) return false;
   const error = normalizeOpenshellStructuredError(String(result.stderr));
-  if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
   // OpenShell can publish Ready before replacement registration settles.
   // Retry only if the readiness probe reports phase Error for this sandbox.
+  // The CLI can emit informational stdout before this exact stderr refusal;
+  // stdout does not change the result of the read-only `true` probe.
   if (
     error ===
     `Error: sandbox '${sandboxName}' is not ready (phase: Error); wait for it to reach Ready state.`
   ) {
     return true;
   }
+  // All less-specific transient signatures remain constrained to an otherwise
+  // empty stdout stream so unrelated command output cannot be reclassified.
+  if (String(result.stdout ?? "").trim() !== "") return false;
+  if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
 
   // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
   // while its replacement supervisor session is still registering. The exec
