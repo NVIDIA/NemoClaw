@@ -20,11 +20,12 @@ import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { resolveIssue2478RecoverySettings } from "./issue-2478-recovery-profile.ts";
 
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-2478";
-const CRASH_CYCLES = positiveInteger(process.env.NEMOCLAW_E2E_CRASH_CYCLES, 5);
-const SOAK_SECONDS = positiveInteger(process.env.NEMOCLAW_E2E_SOAK_SECONDS, 300);
+const RECOVERY_SETTINGS = resolveIssue2478RecoverySettings(process.env);
+const TARGET_ID = process.env.E2E_TARGET_ID ?? "issue-2478-crash-loop-recovery";
 const COMPATIBLE_MODEL = process.env.NEMOCLAW_COMPAT_MODEL ?? "test-model";
 const COMPATIBLE_AUTH_VALUE = ["nemoclaw", "e2e", "compatible", "mock"].join("-");
 const PROXY_ENV_PATH = "/tmp/nemoclaw-proxy-env.sh";
@@ -35,11 +36,6 @@ const ONBOARD_ARGS = [
   "--yes",
   "--yes-i-accept-third-party-software",
 ];
-
-function positiveInteger(raw: string | undefined, fallback: number): number {
-  const parsed = raw ? Number(raw) : fallback;
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function probeEnv(): NodeJS.ProcessEnv {
   return {
@@ -440,10 +436,11 @@ test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
   },
 }, async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
   await artifacts.target.declare({
-    id: "issue-2478-crash-loop-recovery",
+    id: TARGET_ID,
     issues: ["#2478", "#2701"],
-    crashCycles: CRASH_CYCLES,
-    soakSeconds: SOAK_SECONDS,
+    recoveryProfile: RECOVERY_SETTINGS.profile,
+    crashCycles: RECOVERY_SETTINGS.crashCycles,
+    soakSeconds: RECOVERY_SETTINGS.soakSeconds,
     compatibleEndpointModel: COMPATIBLE_MODEL,
   });
 
@@ -479,7 +476,7 @@ test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
 
   progress.phase("exercise repeated gateway crash recovery");
   let previousPid = initialPid!;
-  for (let cycle = 1; cycle <= CRASH_CYCLES; cycle += 1) {
+  for (let cycle = 1; cycle <= RECOVERY_SETTINGS.crashCycles; cycle += 1) {
     await killGatewayPid(sandbox, instance.sandboxName, previousPid, `cycle-${cycle}-kill-gateway`);
     await runProbeOnly(host, instance.sandboxName, `cycle-${cycle}-connect-probe-only`);
     const nextPid = await waitForGatewayPid(gateway, instance, 45_000);
@@ -523,7 +520,12 @@ test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
   });
 
   progress.phase("measure gateway and inference stability");
-  const soak = await sampleGatewayStability(gateway, runtime, instance, SOAK_SECONDS);
+  const soak = await sampleGatewayStability(
+    gateway,
+    runtime,
+    instance,
+    RECOVERY_SETTINGS.soakSeconds,
+  );
   await artifacts.writeJson("soak-summary.json", soak);
   const distinctPids = new Set(soak.samples.filter((pid): pid is number => pid !== null));
   const emptySamples = soak.samples.filter((pid) => pid === null).length;
