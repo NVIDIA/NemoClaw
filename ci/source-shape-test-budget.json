@@ -37,6 +37,11 @@
       "category": "security"
     },
     {
+      "file": "test/upstream-runtime-drift-workflow.test.ts",
+      "test": "runs Fridays with read-only access and sends Slack only from main",
+      "category": "security"
+    },
+    {
       "file": "test/code-scanning-workflow.test.ts",
       "test": "groups CodeQL action updates so Dependabot keeps the shared revision synchronized",
       "category": "security"

@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Dependencies / Weekly Runtime Drift
+
+on:
+  schedule:
+    - cron: "0 16 * * 5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-runtime-drift-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Report upstream runtime drift
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+
+      - name: Compare NemoClaw pins with stable upstream releases
+        id: drift
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT_DIR: ${{ runner.temp }}/upstream-runtime-drift
+          RUN_URL: https://github.com/NVIDIA/NemoClaw/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${REPORT_DIR}"
+          node --experimental-strip-types --no-warnings \
+            scripts/checks/upstream-runtime-drift.mts \
+            --json-output "${REPORT_DIR}/report.json" \
+            --slack-output "${REPORT_DIR}/slack.json" \
+            --summary-output "${GITHUB_STEP_SUMMARY}" \
+            --run-url "${RUN_URL}"
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-runtime-drift
+          path: ${{ runner.temp }}/upstream-runtime-drift/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Send the advisory Slack summary
+        if: >-
+          always() &&
+          steps.drift.outputs.ready == 'true' &&
+          github.ref == 'refs/heads/main'
+        env:
+          SLACK_PAYLOAD_PATH: ${{ runner.temp }}/upstream-runtime-drift/slack.json
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const webhook = process.env.SLACK_WEBHOOK_URL;
+          if (!webhook) {
+            process.stdout.write(
+              "::notice::SLACK_WEBHOOK_URL_DAILY is not configured; the GitHub report remains available.\n",
+            );
+            process.exit(0);
+          }
+
+          let webhookUrl;
+          try {
+            webhookUrl = new URL(webhook);
+          } catch {
+            throw new Error("The Slack webhook URL is invalid.");
+          }
+          const approvedHost =
+            webhookUrl.hostname.endsWith(".slack.com") ||
+            webhookUrl.hostname.endsWith(".slack-gov.com");
+          if (
+            webhookUrl.protocol !== "https:" ||
+            !approvedHost ||
+            webhookUrl.username ||
+            webhookUrl.password ||
+            webhookUrl.port
+          ) {
+            throw new Error("The Slack webhook URL is invalid.");
+          }
+
+          let payload;
+          try {
+            payload = JSON.parse(fs.readFileSync(process.env.SLACK_PAYLOAD_PATH, "utf8"));
+          } catch {
+            throw new Error("The Slack report payload is not valid JSON.");
+          }
+          const encoded = JSON.stringify(payload);
+          const blocks = payload?.attachments?.[0]?.blocks;
+          if (
+            typeof payload?.text !== "string" ||
+            payload.text.length > 3000 ||
+            !Array.isArray(payload.attachments) ||
+            payload.attachments.length !== 1 ||
+            !Array.isArray(blocks) ||
+            blocks.length < 2 ||
+            blocks.length > 3 ||
+            encoded.length > 50000 ||
+            encoded.includes("<!")
+          ) {
+            throw new Error("The Slack report payload is invalid.");
+          }
+
+          let response;
+          try {
+            response = await fetch(webhookUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: encoded,
+              redirect: "error",
+              signal: AbortSignal.timeout(10000),
+            });
+          } catch {
+            throw new Error("The Slack webhook request failed.");
+          }
+          if (!response.ok) {
+            throw new Error(`The Slack webhook returned HTTP ${response.status}.`);
+          }
+          NODE
