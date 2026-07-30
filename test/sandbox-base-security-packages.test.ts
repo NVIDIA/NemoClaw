@@ -86,7 +86,8 @@ function securityInventory(
   architecture: (typeof ARCHITECTURES)[number],
   includePerl = true,
 ): string {
-  const inventory = [
+  const perlPackages = includePerl ? ["perl-base=5.44.0-1nemoclaw1", "perl=5.44.0-1nemoclaw1"] : [];
+  return `${[
     `architecture=${architecture}`,
     "libexpat1=2.8.2-1",
     "libonig5=6.9.9-1+b1",
@@ -96,11 +97,8 @@ function securityInventory(
     "vim-tiny=2:9.2.0782-1",
     "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
     "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
-  ];
-  if (includePerl) {
-    inventory.push("perl-base=5.44.0-1nemoclaw1", "perl=5.44.0-1nemoclaw1");
-  }
-  return `${inventory.join("\n")}\n`;
+    ...perlPackages,
+  ].join("\n")}\n`;
 }
 
 function completedImageSecurityCommand(
