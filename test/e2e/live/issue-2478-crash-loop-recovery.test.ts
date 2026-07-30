@@ -4,10 +4,10 @@
 /**
  *
  * Preserves the contract with real Docker/OpenShell/NemoClaw boundaries:
- * onboard an OpenClaw sandbox, kill and recover the gateway via the production
+ * onboard an OpenClaw sandbox, pause and recover the gateway via the production
  * `connect --probe-only` path, verify the guard-chain preloads remain present,
- * prove inference.local keeps serving models, and verify that the recovered PID
- * remains unchanged for 15 seconds. Deterministic tests cover repeated
+ * prove inference.local keeps serving models, and verify that the recovered
+ * process identity remains unchanged for 15 seconds. Deterministic tests cover repeated
  * restoration and missing `/tmp` proxy environment state.
  */
 
@@ -202,17 +202,19 @@ async function onboardWithCompatibleEndpoint(
   };
 }
 
-async function waitForGatewayPid(
+type GatewayProcessIdentity = { pid: number; startIdentity: string };
+
+async function waitForGatewayIdentity(
   gateway: {
-    resolveGatewayPid(instance: NemoClawInstance): Promise<number | null>;
+    resolveGatewayIdentity(instance: NemoClawInstance): Promise<GatewayProcessIdentity | null>;
   },
   instance: NemoClawInstance,
   timeoutMs: number,
-): Promise<number | null> {
+): Promise<GatewayProcessIdentity | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const pid = await gateway.resolveGatewayPid(instance);
-    if (pid !== null) return pid;
+    const identity = await gateway.resolveGatewayIdentity(instance);
+    if (identity !== null) return identity;
     await sleep(2_000);
   }
   return null;
@@ -243,7 +245,7 @@ async function runProbeOnly(
   ).toContain(`Probe complete: recovered OpenClaw gateway in '${sandboxName}'.`);
 }
 
-async function killGatewayPid(
+async function pauseGatewayIdentity(
   sandbox: {
     exec(
       name: string,
@@ -252,17 +254,55 @@ async function killGatewayPid(
     ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
   },
   sandboxName: string,
-  pid: number,
+  identity: GatewayProcessIdentity,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.exec(sandboxName, ["kill", "-9", String(pid)], {
-    artifactName,
-    env: probeEnv(),
-    timeoutMs: 30_000,
-  });
+  const result = await sandbox.exec(
+    sandboxName,
+    [
+      "sh",
+      "-c",
+      [
+        "set -eu",
+        'pid="$1"',
+        'expected_start="$2"',
+        "inspect_identity() {",
+        '  stat_line="$(cat "/proc/$pid/stat" 2>/dev/null || true)"',
+        '  [ -n "$stat_line" ] || return 1',
+        '  stat_tail="${stat_line##*) }"',
+        '  [ "$stat_tail" != "$stat_line" ] || return 1',
+        "  set -- $stat_tail",
+        '  [ "$#" -ge 20 ] || return 1',
+        '  process_state="$1"',
+        '  actual_start="${20}"',
+        "}",
+        "inspect_identity",
+        '[ "$actual_start" = "$expected_start" ]',
+        'case "$process_state" in Z|X) exit 1 ;; esac',
+        'kill -STOP "$pid"',
+        "attempt=0",
+        'while [ "$attempt" -lt 50 ]; do',
+        '  if inspect_identity && [ "$actual_start" = "$expected_start" ] && [ "$process_state" = T ]; then',
+        "    exit 0",
+        "  fi",
+        "  attempt=$((attempt + 1))",
+        "  sleep 0.1",
+        "done",
+        "exit 1",
+      ].join("\n"),
+      "sh",
+      String(identity.pid),
+      identity.startIdentity,
+    ],
+    {
+      artifactName,
+      env: probeEnv(),
+      timeoutMs: 10_000,
+    },
+  );
   expect(
     result.exitCode,
-    `${artifactName}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    `${artifactName} did not stop the expected process identity\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).toBe(0);
 }
 
@@ -270,21 +310,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("connect-driven gateway recovery restores the guard chain and keeps the recovered PID for 15 seconds (#2478)", {
+test("connect-driven gateway recovery restores the guard chain and keeps the recovered process identity for 15 seconds (#2478)", {
   meta: {
     e2ePhases: [
       "start the compatible endpoint and confirm host readiness",
       "onboard the guarded OpenClaw sandbox",
       "confirm initial gateway and inference health",
-      "recover one terminated gateway through the production connect path",
-      "verify the recovered PID remains unchanged for 15 seconds",
+      "recover one unresponsive gateway through the production connect path",
+      "verify the recovered process identity remains unchanged for 15 seconds",
     ],
   },
 }, async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
   await artifacts.target.declare({
     id: "issue-2478-crash-loop-recovery",
     issues: ["#2478", "#2701"],
-    crashCycles: 1,
+    unresponsiveRecoveryCycles: 1,
     stabilitySeconds: STABILITY_SECONDS,
     compatibleEndpointModel: COMPATIBLE_MODEL,
   });
@@ -311,43 +351,52 @@ test("connect-driven gateway recovery restores the guard chain and keeps the rec
   });
 
   progress.phase("confirm initial gateway and inference health");
-  const initialPid = await waitForGatewayPid(gateway, instance, 60_000);
-  expect(initialPid, "gateway should be running after onboard").not.toBeNull();
+  const initialIdentity = await waitForGatewayIdentity(gateway, instance, 60_000);
+  expect(initialIdentity, "gateway should be running after onboard").not.toBeNull();
   await gateway.expectGuardChainActive(instance);
   await runtime.expectInferenceLocalModels(instance, {
     artifactName: "initial-inference-local-models",
     timeoutMs: 60_000,
   });
+  const preRecoveryIdentity = await gateway.resolveGatewayIdentity(instance);
+  expect(preRecoveryIdentity, "gateway process identity changed before the recovery probe").toEqual(
+    initialIdentity,
+  );
 
-  progress.phase("recover one terminated gateway through the production connect path");
-  await killGatewayPid(
+  progress.phase("recover one unresponsive gateway through the production connect path");
+  await pauseGatewayIdentity(
     sandbox,
     instance.sandboxName,
-    initialPid!,
-    "functional-recovery-kill-gateway",
+    preRecoveryIdentity!,
+    "functional-recovery-pause-gateway",
   );
   await runProbeOnly(host, instance.sandboxName, "functional-recovery-connect-probe-only");
-  const recoveredPid = await waitForGatewayPid(gateway, instance, 45_000);
-  expect(recoveredPid, "gateway should respawn after the production recovery probe").not.toBeNull();
-  expect(recoveredPid, "recovery should replace the terminated gateway process").not.toBe(
-    initialPid,
-  );
+  const recoveredIdentity = await waitForGatewayIdentity(gateway, instance, 45_000);
+  expect(
+    recoveredIdentity,
+    "gateway should respawn after the production recovery probe",
+  ).not.toBeNull();
+  expect(
+    `${recoveredIdentity!.pid}:${recoveredIdentity!.startIdentity}`,
+    "recovery should replace the unresponsive gateway process identity",
+  ).not.toBe(`${preRecoveryIdentity!.pid}:${preRecoveryIdentity!.startIdentity}`);
   await gateway.expectGuardChainActive(instance);
   await runtime.expectInferenceLocalModels(instance, {
     artifactName: "recovered-inference-local-models",
     timeoutMs: 60_000,
   });
 
-  progress.phase("verify the recovered PID remains unchanged for 15 seconds");
-  const stablePid = await gateway.expectPidStable(instance, {
+  progress.phase("verify the recovered process identity remains unchanged for 15 seconds");
+  const stableIdentity = await gateway.expectPidStable(instance, {
     durationSeconds: STABILITY_SECONDS,
     pollIntervalSeconds: 5,
   });
-  expect(stablePid).toBe(recoveredPid);
+  expect(stableIdentity).toEqual(recoveredIdentity);
   await artifacts.writeJson("functional-recovery-summary.json", {
-    initialPid,
-    recoveredPid,
-    stablePid,
+    initialIdentity,
+    preRecoveryIdentity,
+    recoveredIdentity,
+    stableIdentity,
     stabilitySeconds: STABILITY_SECONDS,
   });
 });

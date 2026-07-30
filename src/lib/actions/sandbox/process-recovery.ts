@@ -41,6 +41,8 @@ import {
   type GatewayRestartResult,
   gatewayIntegrityRepairLines,
   isGatewayIntegrityRepairLayer,
+  type ManagedGatewayControlCompletion,
+  parseManagedGatewayControlCompletion,
   printGatewayRestartFailure,
   type RestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
@@ -71,6 +73,7 @@ export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
   GatewayRestartResult,
+  ManagedGatewayControlCompletion,
   RestartSandboxGatewayOptions,
 } from "./gateway-restart";
 
@@ -357,11 +360,13 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
 }
 
 function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean {
-  return !!(
-    result &&
-    result.status === 0 &&
-    (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
-  );
+  if (!result || result.status !== 0) return false;
+  if (parseManagedGatewayControlCompletion(result)) return true;
+  // A structured controller response must satisfy the exact authenticated
+  // completion shape above. Only output without a protocol record may use the
+  // legacy/custom marker compatibility path.
+  if (result.stdout.split(/\r?\n/).some((line) => line.startsWith("v1 "))) return false;
+  return result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING");
 }
 
 // Source contract: scripts/gateway-control.sh and its installed managed helper
@@ -437,7 +442,8 @@ export async function isSandboxGatewayRunningForStatus(
  * commit or roll back after the managed health gate.
  */
 type SandboxProcessRecovery =
-  | { kind: "managed" | "custom" }
+  | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
+  | { kind: "custom" }
   | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
 
 function recoverSandboxProcesses(
@@ -480,6 +486,8 @@ function recoverSandboxProcesses(
     let execResult: SandboxCommandResult | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       execResult = requestGatewaySupervisorAction(sandboxName, "recover");
+      const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
+      if (managedControlCompletion) return { kind: "managed", managedControlCompletion };
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
 
       // PID 1 may replace the gateway between the host's stopped observation
@@ -1243,6 +1251,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     },
   });
   if (recovery !== null) {
+    const withManagedControlCompletion = <T extends { recovered: true }>(
+      result: T,
+    ): T | (T & { managedControlCompletion: ManagedGatewayControlCompletion }) =>
+      recovery.kind === "managed" && recovery.managedControlCompletion
+        ? { ...result, managedControlCompletion: recovery.managedControlCompletion }
+        : result;
     const relaunch = recovery.kind === "relaunched" ? recovery.relaunch : null;
     const requestManagedProbe = relaunch
       ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
@@ -1384,14 +1398,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         })()
       : null;
     if (readinessFailureDetail) {
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: readinessFailureDetail,
-      };
+      });
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
@@ -1401,7 +1415,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       isWsl: isWslOverride,
     });
     if (!forwardRecovered && relaunchedIdentityRejected) {
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
@@ -1409,7 +1423,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
           "the primary dashboard/API host forward could not be re-established",
-      };
+      });
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
@@ -1434,7 +1448,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
     }
     if (!forwardRecovered) {
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
@@ -1442,25 +1456,25 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
           "the primary dashboard/API host forward could not be re-established",
-      };
+      });
     }
     if (auxiliaryFailureDetail !== null) {
       if (!quiet) console.error(`  ${auxiliaryFailureDetail}.`);
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
-      };
+      });
     }
-    return {
+    return withManagedControlCompletion({
       checked: true,
       wasRunning: false,
       recovered: true,
       forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
-    };
+    });
   }
   if (!quiet) {
     console.error(`  Could not restart ${recoveryDisplayName} gateway automatically.`);
