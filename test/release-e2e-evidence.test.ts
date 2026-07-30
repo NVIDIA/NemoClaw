@@ -94,13 +94,14 @@ describe("release E2E evidence", () => {
       targets: "",
     });
     const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
-    expect(parallelExplicitJobs).toHaveLength(4);
+    expect(parallelExplicitJobs).toHaveLength(5);
     expect(new Set(parallelExplicitJobs)).toEqual(
       new Set([
         "openshell-gateway-auth-contract",
         "mcp-bridge-dev",
         "hermes-gpu-startup",
         "sandbox-rlimits-connect",
+        "openshell-gateway-upgrade-compatibility",
       ]),
     );
     expect(plan.dispatches.conditional).toEqual([
@@ -116,7 +117,10 @@ describe("release E2E evidence", () => {
 
     expect(ids.filter((id) => id.startsWith("mcp-bridge-dev["))).toHaveLength(3);
     expect(ids.filter((id) => id.startsWith("hermes-gpu-startup["))).toHaveLength(3);
-    expect(ids.filter((id) => id.startsWith("openshell-gateway-upgrade["))).toHaveLength(5);
+    expect(ids.filter((id) => id.startsWith("openshell-gateway-upgrade["))).toHaveLength(1);
+    expect(
+      ids.filter((id) => id.startsWith("openshell-gateway-upgrade-compatibility[")),
+    ).toHaveLength(4);
     expect(ids).toContain("live[id=ubuntu-repo-cloud-openclaw]");
     expect(ids).toContain("shared-e2e[id=vllm-docker-storage]");
     expect(new Set(ids).size).toBe(ids.length);
