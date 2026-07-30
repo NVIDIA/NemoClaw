@@ -114,13 +114,13 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
   console.error(error);

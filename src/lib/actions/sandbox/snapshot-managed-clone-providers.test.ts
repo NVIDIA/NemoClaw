@@ -223,27 +223,19 @@ describe("managed snapshot clone provider credentials", () => {
       throw new Error("synthetic broker bind failure");
     });
     const commands: string[] = [];
-    const created = new Set<string>();
-    const runner = vi.fn((args: string[]) => {
+    const providerRunner = s.managedProviderCreationRunner({
+      "beta-hermes-inference": {
+        type: "openai",
+        credential: "OPENAI_API_KEY",
+      },
+      "beta-hermes-tool-gateway": {
+        type: "generic",
+        credential: REFRESH_ENV,
+      },
+    });
+    const runner = vi.fn((args: string[], options?: s.TestCommandOptions) => {
       commands.push(args.join(" "));
-      if (args[1] === "get") {
-        const providerName = args[2] ?? "";
-        const inference = providerName.endsWith("-hermes-inference");
-        return created.has(providerName)
-          ? {
-              status: 0,
-              stdout: s.providerMetadata(
-                providerName,
-                inference ? "openai" : "generic",
-                inference ? "OPENAI_API_KEY" : REFRESH_ENV,
-              ),
-              output: "",
-            }
-          : { status: 1, stderr: `provider '${providerName}' not found`, output: "" };
-      }
-      if (args[1] === "create") created.add(args[3] ?? "");
-      if (args[1] === "delete") created.delete(args[2] ?? "");
-      return { status: 0, output: "" };
+      return providerRunner(args, options);
     });
     const prepared = prepareManagedCloneProviders({
       profile: managedHermesToolProfile(),

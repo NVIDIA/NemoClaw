@@ -30,7 +30,8 @@ OpenClaw owns the summarization behavior and decides whether the compacted trans
 
 ## When the Setting Applies
 
-NemoClaw generates the safeguard setting when it builds or recreates the sandbox image.
-Recreate the sandbox when you need a new image to incorporate changed build-time settings.
+NemoClaw applies the safeguard setting from the managed startup profile when it creates or recreates a stock sandbox.
+An explicit custom Dockerfile applies the setting during its local build.
+Recreate the sandbox when you need to change this host-managed setting.
 
 For model context-window and output-token limits, refer to [Configure Model Limits](../inference/manage-inference/configure-model-limits).

@@ -18,11 +18,17 @@ import {
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
+import type {
+  ManagedBootstrapAgentIdentity,
+  ManagedBootstrapImageIdentity,
+} from "../managed-bootstrap/adapter";
+import type { ManagedBootstrapRuntimeProvider } from "../managed-bootstrap/runtime-provider";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
+import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import { getChannelsFromPlan } from "../messaging-plan-session";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
@@ -231,6 +237,48 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly dashboardRemoteBindPrepared: boolean;
   readonly legacyBuildContext: CreateSandboxBuildContextResult | null;
   readonly launch: SandboxCreateLaunchWithPrebuild;
+}
+
+export interface OnboardManagedBootstrapLaunch {
+  readonly bootstrapIdentity: string;
+  readonly runtimeProvider: ManagedBootstrapRuntimeProvider;
+  readonly request: ManagedStartupRootApplyRequest;
+  readonly image: ManagedBootstrapImageIdentity;
+  readonly agentIdentity: ManagedBootstrapAgentIdentity;
+  readonly intendedWorkloadArgv: readonly string[];
+  readonly expectedSupervisorArgv: readonly string[];
+}
+
+export function resolveOnboardManagedBootstrapLaunch(input: {
+  readonly workload: PreparedSandboxWorkloadSource;
+  readonly runtimeProvider: ManagedBootstrapRuntimeProvider | null;
+  readonly bootstrapIdentity: string | null;
+  readonly request: ManagedStartupRootApplyRequest | null;
+  readonly intendedWorkloadArgv: readonly string[] | null | undefined;
+}): OnboardManagedBootstrapLaunch | null {
+  if (input.workload.source.kind !== "managed-image") return null;
+  if (
+    !input.runtimeProvider ||
+    !input.bootstrapIdentity ||
+    !input.request ||
+    !input.intendedWorkloadArgv
+  ) {
+    throw new Error(
+      "Managed image onboarding is missing its identity-bound bootstrap launch contract.",
+    );
+  }
+  return {
+    bootstrapIdentity: input.bootstrapIdentity,
+    runtimeProvider: input.runtimeProvider,
+    request: input.request,
+    image: {
+      repository: input.workload.source.contract.image,
+      manifestDigest: input.workload.source.contract.digest,
+    },
+    agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    intendedWorkloadArgv: input.intendedWorkloadArgv,
+    expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+  };
 }
 
 function requireLegacyBuildContext(

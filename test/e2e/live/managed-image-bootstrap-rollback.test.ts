@@ -1,30 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 import {
   managedImageProtectedSandboxName,
   PROTECTED_MANAGED_IMAGE_AGENTS,
-  parseProtectedManagedImageContracts,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { REPO_ROOT } from "./gpu-e2e-helpers.ts";
+import { REPO_ROOT, readProtectedManagedImageContracts } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 70 * 60_000;
 
-function imageContracts() {
-  const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
-  if (!contractPath || !path.isAbsolute(contractPath)) {
-    throw new Error("NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT must be an absolute path");
-  }
-  return parseProtectedManagedImageContracts(JSON.parse(fs.readFileSync(contractPath, "utf8")));
-}
-
-test("all-agent managed bootstrap failures roll back without owned runtime or harness orphans", {
+test("all-agent managed bootstrap failures quiesce exact owners without harness orphans", {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -34,14 +22,14 @@ test("all-agent managed bootstrap failures roll back without owned runtime or ha
     ],
   },
 }, async ({ artifacts, host, progress }) => {
-  const contracts = imageContracts();
+  const contracts = readProtectedManagedImageContracts();
   await artifacts.target.declare({
     id: "managed-image-bootstrap-rollback",
     boundary:
       "same-job localhost registry digest + all managed agents + real Docker/OpenShell managed-bootstrap rollback",
     agents: PROTECTED_MANAGED_IMAGE_AGENTS,
     failureBoundary:
-      "The injected failure occurs only after the real adapter observes bootstrap completion; the production rollback path must remove the failed exact PR-image sandbox before test-owned cleanup.",
+      "The injected failure occurs only after the real adapter observes bootstrap completion; production must quiesce and retain the exact PR-image owner when OpenShell cannot enforce immutable-ID deletion, then the isolated harness removes that runtime by exact ID.",
     registryBoundary:
       "The workflow owns the isolated localhost registry and proves its removal in an always-running cleanup step.",
   });
@@ -82,8 +70,9 @@ test("all-agent managed bootstrap failures roll back without owned runtime or ha
     );
     expect(result.exitCode, resultText(result)).toBe(0);
     expect(result.stdout).toContain(
-      `removed the failed exact ${contract.agent} sandbox before harness cleanup`,
+      `quiesced and retained the typed exact ${contract.agent} sandbox`,
     );
+    expect(result.stdout).toContain("before exact-ID harness cleanup");
     expect(result.stdout).toContain(
       `left no sandbox, container, network, or harness state orphan for ${contract.agent}`,
     );

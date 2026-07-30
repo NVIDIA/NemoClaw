@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   type ManagedImageLocalInferenceKind,
   managedImageProtectedSandboxName,
   PROTECTED_MANAGED_IMAGE_AGENTS,
   type ProtectedManagedImageContract,
-  parseProtectedManagedImageContracts,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
   getOllamaProxyToken,
@@ -24,7 +22,10 @@ import {
   assertNvidiaAvailable,
   ensureOllama,
   env as gpuEnv,
+  protectedManagedImageHome,
   REPO_ROOT,
+  readProtectedManagedImageContracts,
+  stopOwnedProcess,
 } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 240 * 60_000;
@@ -38,70 +39,6 @@ const OLLAMA_PID = path.join(
   process.env.RUNNER_TEMP ?? "/tmp",
   "protected-managed-image-ollama.pid",
 );
-
-function protectedManagedImageHome(): string {
-  const runnerTemp = process.env.RUNNER_TEMP;
-  const configured = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_HOME;
-  if (!runnerTemp || !path.isAbsolute(runnerTemp)) {
-    throw new Error("RUNNER_TEMP must be an absolute path");
-  }
-  const expected = path.join(runnerTemp, "nemoclaw-managed-image-home");
-  if (
-    configured !== expected ||
-    os.homedir() !== expected ||
-    fs.lstatSync(expected).isSymbolicLink()
-  ) {
-    throw new Error("protected managed-image E2E must use its exact isolated HOME");
-  }
-  return expected;
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function stopOwnedProcess(
-  pidPath: string,
-  commandPattern: RegExp,
-  expectedEnvironment: string,
-): Promise<void> {
-  if (!fs.existsSync(pidPath)) return;
-  const stat = fs.lstatSync(pidPath);
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw new Error(`refusing invalid protected PID path ${pidPath}`);
-  }
-  const raw = fs.readFileSync(pidPath, "utf8").trim();
-  if (!/^[1-9][0-9]*$/u.test(raw)) {
-    throw new Error(`invalid protected PID in ${pidPath}`);
-  }
-  const pid = Number(raw);
-  if (!processAlive(pid)) return;
-  const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
-  const environment = fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
-  if (
-    !commandPattern.test(command) ||
-    !environment.includes(`HOME=${protectedManagedImageHome()}`) ||
-    !environment.includes(expectedEnvironment)
-  ) {
-    throw new Error(`refusing to signal unverified protected PID ${pid}`);
-  }
-  process.kill(pid, "SIGTERM");
-  for (let attempt = 0; attempt < 30 && processAlive(pid); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  if (processAlive(pid)) {
-    process.kill(pid, "SIGKILL");
-    for (let attempt = 0; attempt < 30 && processAlive(pid); attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  if (processAlive(pid)) throw new Error(`protected PID ${pid} remained after cleanup`);
-}
 
 async function cleanupProtectedLocalInference(
   host: HostCliClient,
@@ -129,14 +66,6 @@ async function cleanupProtectedLocalInference(
   ]) {
     fs.rmSync(ownedPath, { force: true });
   }
-}
-
-function imageContracts(): ProtectedManagedImageContract[] {
-  const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
-  if (!contractPath || !path.isAbsolute(contractPath)) {
-    throw new Error("NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT must be an absolute path");
-  }
-  return parseProtectedManagedImageContracts(JSON.parse(fs.readFileSync(contractPath, "utf8")));
 }
 
 async function runExactImageQualification(
@@ -194,7 +123,7 @@ test("exact all-agent managed images retain NVIDIA GPU and real Ollama/vLLM infe
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, skip }) => {
-  const contracts = imageContracts();
+  const contracts = readProtectedManagedImageContracts();
   await artifacts.target.declare({
     id: "managed-image-gpu-e2e",
     boundary:

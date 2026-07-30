@@ -25,6 +25,7 @@ vi.mock("./sandbox-readiness-tracing", () => ({
 }));
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { createManagedSandboxIdentityCapture } from "./__test-helpers__/sandbox-gpu-create-flow";
 import type {
   ManagedBootstrapAdapter,
   ManagedBootstrapCompletionReceipt,
@@ -242,15 +243,13 @@ function createFlowFixture(options: {
   };
   const deps: SandboxGpuCreateFlowDeps = {
     runOpenshell: vi.fn(() => ({ status: 0 })),
-    runCaptureOpenshell: vi.fn((args) => {
-      if (args[0] === "sandbox" && args[1] === "get") {
-        return options.getOutput ?? `Name: alpha\nID: ${SANDBOX_ID}\n`;
-      }
-      if (args[0] === "sandbox" && args[1] === "list") {
-        return options.listOutput ?? "alpha Ready\n";
-      }
-      return "";
-    }),
+    runCaptureOpenshell: vi.fn(
+      createManagedSandboxIdentityCapture({
+        sandboxId: SANDBOX_ID,
+        getOutput: options.getOutput,
+        listOutput: options.listOutput,
+      }),
+    ),
     sleep: vi.fn(),
     openshellArgv: vi.fn((args) => ["openshell", ...args]),
     verifyDirectSandboxGpu: vi.fn(),

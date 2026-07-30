@@ -21,7 +21,8 @@ On supported `amd64` and `arm64` Docker hosts, stock OpenClaw, Hermes, and Deep 
 NemoClaw resolves each selected image to an exact digest and applies current configuration through a secret-free startup profile.
 Managed rebuilds resolve the current CLI release to an exact image digest and prepare a replacement startup profile.
 Managed clones retain the source image digest and rebind target-specific configuration through the same startup-profile contract.
-Stock onboarding requires the complete immutable managed-image cohort and stops before mutation if it cannot be resolved.
+Stock onboarding requires the complete immutable managed-image cohort and stops before sandbox creation or replacement if it cannot be resolved.
+Gateway startup and provider preparation can already have completed by that point.
 An explicit user-supplied `--from <Dockerfile>` remains a separate opt-in path.
 Explicit custom Dockerfile and custom-image workflows continue to use their local-build behavior.
 

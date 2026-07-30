@@ -59,7 +59,8 @@ This is opt-in because many hosts cannot drop capabilities, including cloud VMs,
 The check covers the agent process tree only.
 
 For defense-in-depth, also drop all Linux capabilities at the container runtime when you launch the image directly.
-In the examples below, `nemoclaw-sandbox` is a placeholder for the sandbox image NemoClaw builds during onboarding; substitute the image tag your install produced, which you can find with `docker images`.
+In the examples below, `nemoclaw-sandbox` is a placeholder for either the exact managed release image NemoClaw resolves during stock onboarding or an explicitly selected custom image.
+Substitute a local image reference from `docker images` when launching it directly.
 
 ```bash
 docker run --rm \

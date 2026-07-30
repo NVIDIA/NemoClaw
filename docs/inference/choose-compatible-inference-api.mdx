@@ -67,16 +67,17 @@ Deep Agents sandboxes keep `use_responses_api = false` in `/sandbox/.deepagents/
 ## Reconfigure an Existing Sandbox
 
 Rerun onboarding after changing the preferred API.
-NemoClaw probes the endpoint again and writes the selected API path into the rebuilt sandbox image.
+NemoClaw probes the endpoint again and records the selected API path in the replacement sandbox's managed startup profile.
+An explicit custom Dockerfile applies the selected path during its local build.
 
 ```bash
 $$nemoclaw onboard
 ```
 
 <Note>
-`NEMOCLAW_INFERENCE_API_OVERRIDE` changes the container-startup configuration but does not update the API path baked into the sandbox image.
-If you later recreate the sandbox without the override, the image returns to its original API path.
-Rerun onboarding to persist the API choice in both the session and image.
+`NEMOCLAW_INFERENCE_API_OVERRIDE` changes the current container-startup configuration but does not update the API path recorded by onboarding.
+If you later recreate the sandbox without the override, the managed startup profile returns to the recorded API path.
+Rerun onboarding to persist the API choice in both the session and replacement startup profile.
 </Note>
 
 ## Related Topics

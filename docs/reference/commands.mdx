@@ -357,12 +357,18 @@ It resolves the selected image to an exact repository digest and builds a secret
 The startup applicator verifies and materializes that profile when the sandbox starts.
 Managed rebuilds resolve the current CLI release to an exact digest, while managed clones retain the source image digest and prepare a target-specific profile.
 
-On those Docker hosts, catalog or registry resolution failures stop stock onboarding before mutation.
+On those Docker hosts, catalog or registry resolution failures stop stock onboarding before it creates a new sandbox or deletes and replaces an existing one.
+Gateway startup and provider preparation can already have completed before managed-image resolution.
 The Docker managed-image path never silently falls back to a Dockerfile.
 Kubernetes drivers continue to use the trusted Dockerfile workflow until they advertise the managed-image startup-profile capability.
 An explicit `--from <Dockerfile>` request remains a separate local Dockerfile build.
 NemoClaw shows a Dockerfile build-time estimate only after that explicit local-build path is known.
 Stock managed-image launch does not show the estimate because it does not run a local Dockerfile build.
+
+On Docker, managed-image onboarding binds startup to the exact OpenShell sandbox ID, Docker runtime ID, image digest, and startup-profile fingerprint.
+It durably commits shared state only after the replacement runtime reports completion.
+If cleanup cannot prove that a mutable sandbox name still identifies that exact sandbox ID, NemoClaw quiesces and retains the exact Docker runtime instead of issuing an unsafe name-only delete.
+Follow [Managed bootstrap quiesced and retained a sandbox](troubleshooting#managed-bootstrap-quiesced-and-retained-a-sandbox) before removing the retained owner.
 
 The base-image resolution controls below apply only to explicit custom Dockerfile workflows.
 When Docker exposes the required identity metadata, NemoClaw records the resolved base identity on a locally built sandbox image.
@@ -665,7 +671,8 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
-Native Podman is not supported by this release; use Docker Engine, Docker Desktop, or Colima.
+Native Podman remains unsupported in this release; the native-runtime follow-up in issue #7744 owns that enablement.
+Use Docker Engine, Docker Desktop, or Colima.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -2043,7 +2050,7 @@ $$nemoclaw my-assistant channels list
 
 ### `$$nemoclaw <name> channels add <channel>`
 
-Register a messaging channel with the sandbox and rebuild so the image picks up the new channel.
+Register a messaging channel with the sandbox and rebuild so the replacement startup configuration includes the new channel.
 Channels fall into three login modes:
 
 - **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
@@ -3680,7 +3687,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
-| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the image's original value. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the original onboarding value. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 
@@ -3740,7 +3747,8 @@ Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entri
 Managed-image onboarding carries the validated values in the startup profile, while a local Dockerfile path carries them through that build.
 Each entry must declare `id` and `tools`; `workspace`, `agentDir`, `subagents`, `description`, and `model` are optional.
 The generator always writes the canonical `main` entry first with `default: true`, so secondary agents cannot displace the primary agent.
-Malformed JSON or invalid entries fail the image build with a structured error.
+Malformed JSON or invalid entries fail with a structured error.
+For managed images, the trusted startup config generator refuses to start the agent with invalid configuration; an explicit custom Dockerfile runs the same generator during its local build.
 
 Field rules:
 
@@ -3750,8 +3758,8 @@ Field rules:
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
 - `model`, when set, must be a `"provider/model"` string whose provider portion matches the primary onboard provider.
 - `default: true` is rejected because the primary agent is the only default.
-- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
-- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
+- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails configuration application (no implicit credential or env pass-through).
+- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails configuration application.
 
 OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object.
 The value must be an integer between `1` and `5` (OpenClaw's accepted range); to set it, use the object payload shape and pass it under `defaults`:
@@ -3953,7 +3961,7 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when managed image pull and startup, a local Dockerfile build and gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default. When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when managed image pull and startup, a local Dockerfile build and gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default. When the post-create deadline expires, onboarding attempts exact-owner cleanup and prints the retry or retained-owner guidance. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 
 <AgentOnly variant="openclaw,hermes">
@@ -3971,7 +3979,8 @@ $$nemoclaw onboard
 
 If the Ollama pull or post-create readiness timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
-The post-create readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
+The post-create readiness wait removes the orphaned sandbox when exact-owner cleanup is safe so the next `$$nemoclaw onboard` starts clean.
+If OpenShell can delete only by mutable name and NemoClaw cannot prove that name still identifies the exact managed bootstrap owner, it leaves the exact Docker runtime quiesced and prints retained-owner recovery guidance instead.
 A post-policy re-registration failure leaves the sandbox in place and reports that OpenShell did not re-register it.
 
 ### Lifecycle Behavior Flags

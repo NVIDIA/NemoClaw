@@ -154,7 +154,8 @@ On supported `amd64` and `arm64` Docker hosts, stock onboarding requires a compl
 NemoClaw accepts the release catalog only when one publication cohort contains OpenClaw, Hermes, and Deep Agents images.
 It resolves the selected image to an exact digest and builds a secret-free startup profile for the current sandbox configuration.
 The image startup applicator materializes that configuration when the sandbox starts.
-Stock onboarding requires the complete immutable managed-image cohort and stops before mutation if it cannot be resolved.
+Stock onboarding requires the complete immutable managed-image cohort and stops before sandbox creation or replacement if it cannot be resolved.
+Gateway startup and provider preparation can already have completed by that point.
 An explicit user-supplied `--from <Dockerfile>` remains a separate opt-in path.
 Explicit custom Dockerfile and custom-image workflows continue to build locally.
 

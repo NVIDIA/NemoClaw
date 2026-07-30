@@ -25,6 +25,7 @@ FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
 WORKDIR /opt/nemoclaw-managed-startup-build
 COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
 COPY src/lib/messaging/ ./src/lib/messaging/
+COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/
 COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
 COPY src/lib/security/credential-hash.ts ./src/lib/security/
 COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/

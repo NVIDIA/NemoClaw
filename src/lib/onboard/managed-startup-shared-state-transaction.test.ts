@@ -9,6 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+import {
+  applyCommitRecoveryInterruption,
+  COMMIT_RECOVERY_INTERRUPTION_POINTS,
+  installPostRenameCleanupInterruption,
+} from "./managed-startup/__test-helpers__/shared-state-transaction-fixture";
 import type { ManagedStartupAgent, ManagedStartupProfile } from "./managed-startup/profile";
 import { fingerprintManagedStartupProfile } from "./managed-startup/profile";
 import {
@@ -367,13 +372,9 @@ describe("managed startup shared-state transaction", () => {
     expect(rollbackManagedStartupSharedStateTransaction(agent, nextOptions)).toBe(true);
   });
 
-  it.each([
-    "during-compact-receipt-write",
-    "before-backup-removal",
-    "during-backup-removal",
-    "after-backup-removal",
-    "after-manifest-removal",
-  ] as const)("recovers an atomically established commit interrupted %s", (interruption) => {
+  it.each(
+    COMMIT_RECOVERY_INTERRUPTION_POINTS,
+  )("recovers an atomically established commit interrupted %s", (interruption) => {
     const profile = managedStartupE2eProfile("openclaw");
     const bootstrapIdentity = "b".repeat(64);
     const boundOptions = { ...options, bootstrapIdentity };
@@ -383,39 +384,15 @@ describe("managed startup shared-state transaction", () => {
     beginManagedStartupSharedStateTransaction(profile, boundOptions);
     fs.writeFileSync(path.join(root, "openclaw.json"), "committed\n");
 
-    const originalRmSync = fs.rmSync.bind(fs);
-    const rm = vi.spyOn(fs, "rmSync").mockImplementation(((
-      target: fs.PathLike,
-      removeOptions?: fs.RmDirOptions,
-    ) => {
-      if (String(target).endsWith(`${path.sep}backups`)) {
-        throw new Error("injected post-rename cleanup interruption");
-      }
-      return originalRmSync(target, removeOptions);
-    }) as typeof fs.rmSync);
+    const { originalRmSync, restore } = installPostRenameCleanupInterruption();
     expect(() => commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
       /injected post-rename cleanup interruption/u,
     );
-    rm.mockRestore();
+    restore();
 
     expect(fs.existsSync(transactionDirectory)).toBe(false);
     const committedDirectory = commitReceiptDirectory();
-    const backups = path.join(committedDirectory, "backups");
-    const manifest = path.join(committedDirectory, "manifest.json");
-    if (interruption === "during-compact-receipt-write") {
-      fs.renameSync(
-        path.join(committedDirectory, "receipt.json"),
-        path.join(committedDirectory, ".receipt.json.1234567890abcdef12345678"),
-      );
-    } else if (interruption === "during-backup-removal") {
-      const [firstBackup] = fs.readdirSync(backups);
-      expect(firstBackup).toBeTruthy();
-      fs.unlinkSync(path.join(backups, firstBackup!));
-    } else if (interruption === "after-backup-removal") {
-      originalRmSync(backups, { force: false, recursive: true });
-    } else if (interruption === "after-manifest-removal") {
-      fs.unlinkSync(manifest);
-    }
+    applyCommitRecoveryInterruption(interruption, committedDirectory, originalRmSync);
     expect(
       getManagedStartupSharedStateTransactionStatus(
         {
@@ -464,6 +441,16 @@ describe("managed startup shared-state transaction", () => {
       recursive: true,
       preserveTimestamps: true,
     });
+    // Node's recursive directory copy can apply the process umask to newly
+    // created directories on Linux. Model the image/mount contract explicitly
+    // so this fixture has the same trusted metadata on every runner.
+    fs.chmodSync(copiedReceipt, 0o700);
+    const copiedBackups = path.join(copiedReceipt, "backups");
+    fs.chmodSync(copiedBackups, 0o700);
+    fs.chmodSync(path.join(copiedReceipt, "manifest.json"), 0o400);
+    for (const backup of fs.readdirSync(copiedBackups)) {
+      fs.chmodSync(path.join(copiedBackups, backup), 0o400);
+    }
 
     expect(
       getManagedStartupSharedStateTransactionStatus(

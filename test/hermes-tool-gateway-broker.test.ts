@@ -11,6 +11,7 @@ import net from "node:net";
 import path from "node:path";
 import zlib from "node:zlib";
 import { vi } from "vitest";
+import { handleHermesBrokerCoexistencePortal } from "./helpers/hermes-tool-gateway-broker-fixture";
 import { describe, expect, test as it } from "./helpers/owned-test-resources";
 import { testTimeout } from "./helpers/timeouts";
 
@@ -615,34 +616,9 @@ describe("Hermes managed-tool gateway broker", () => {
 
     const refreshHeaders: string[] = [];
     const portal = resources.ownServer(
-      http.createServer((req, res) => {
-        const chunks: Buffer[] = [];
-        req.on("data", (chunk) => chunks.push(chunk));
-        req.on("end", () => {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          if (req.url === "/api/oauth/agent-key") {
-            res.end(
-              JSON.stringify({
-                api_key: "local-agent-key",
-                expires_in: 1800,
-                inference_base_url: "https://inference-api.nousresearch.com/v1",
-              }),
-            );
-            return;
-          }
-          const refreshToken = String(req.headers["x-nous-refresh-token"] || "");
-          refreshHeaders.push(refreshToken);
-          const identity = refreshToken.split("-")[0] || "source";
-          res.end(
-            JSON.stringify({
-              access_token: `access-${identity}`,
-              refresh_token: refreshToken,
-              expires_in: 900,
-              token_type: "Bearer",
-            }),
-          );
-        });
-      }),
+      http.createServer((req, res) =>
+        handleHermesBrokerCoexistencePortal(refreshHeaders, req, res),
+      ),
     );
     const portalPort = await listen(portal);
 

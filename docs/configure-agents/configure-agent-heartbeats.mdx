@@ -41,7 +41,8 @@ The model no longer receives heartbeat-only instructions.
 ## Apply the Change
 
 NemoClaw writes the heartbeat setting into `openclaw.json` during onboarding.
-Direct `openclaw config set` changes are not the supported path for this NemoClaw-managed build-time default, and a rebuild overwrites direct file edits.
+Stock onboarding carries the setting in the managed startup profile; an explicit custom Dockerfile applies it during its local build.
+Direct `openclaw config set` changes are not the supported path for this host-managed default, and a rebuild overwrites direct file edits.
 
 Recreate an existing sandbox to apply a new cadence.
 

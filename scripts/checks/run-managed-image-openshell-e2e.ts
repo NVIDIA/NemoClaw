@@ -10,7 +10,10 @@ import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
 } from "../../src/lib/onboard/initial-policy.ts";
-import type { ManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
+import {
+  type ManagedBootstrapAdapter,
+  ManagedBootstrapOwnerCleanupRequiredError,
+} from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/index.ts";
 import { resolveCurrentManagedBootstrapRuntimeProvider } from "../../src/lib/onboard/managed-bootstrap/runtime-providers.ts";
 import {
@@ -849,30 +852,61 @@ function assertExactSandboxImage(
   return resolved.exactIds[0] ?? "";
 }
 
-function assertFailedSandboxAbsent(
+function assertExactRetainedSandboxQuiescent(
   onboard: OnboardModule,
   input: Inputs,
+  networkName: string,
   env: NodeJS.ProcessEnv,
-): void {
+  cleanupRequired: ManagedBootstrapOwnerCleanupRequiredError,
+): string {
+  const resolved = exactHarnessContainerIds(input, networkName, env);
+  const runtimeId = resolved.exactIds.length === 1 ? resolved.exactIds[0] : undefined;
+  if (
+    resolved.candidateCount !== 1 ||
+    resolved.exactIds.length !== 1 ||
+    runtimeId !== cleanupRequired.runtimeId ||
+    cleanupRequired.sandboxName !== input.sandbox
+  ) {
+    throw new Error(
+      `managed-bootstrap rollback did not retain exactly the typed owner: found ${resolved.candidateCount} labeled and ${resolved.exactIds.length} exact containers`,
+    );
+  }
+  const inspect = commandResult(["docker", "inspect", runtimeId], env);
+  if (inspect.status !== 0) {
+    throw new Error(`could not inspect the retained exact sandbox: ${commandDetail(inspect)}`);
+  }
+  const records = JSON.parse(String(inspect.stdout ?? "")) as Array<{
+    Config?: { Labels?: Record<string, string> };
+    State?: { Paused?: boolean; Restarting?: boolean; Running?: boolean };
+  }>;
+  const record = records.length === 1 ? records[0] : undefined;
+  const labels = record?.Config?.Labels ?? {};
+  if (
+    labels["openshell.ai/managed-by"] !== "openshell" ||
+    labels["openshell.ai/sandbox-name"] !== input.sandbox ||
+    labels["openshell.ai/sandbox-id"] !== cleanupRequired.sandboxId ||
+    record?.State?.Running !== false ||
+    record.State.Paused !== false ||
+    record.State.Restarting !== false
+  ) {
+    throw new Error(
+      `managed-bootstrap rollback did not prove the retained exact sandbox owner and quiescent state: ${commandDetail(inspect)}`,
+    );
+  }
   const get = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
-    ignoreError: true,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const list = onboard.runOpenshell(["sandbox", "list"], {
-    ignoreError: true,
+    ignoreError: false,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (
-    get.status === 0 ||
-    list.status !== 0 ||
-    `${list.stdout ?? ""}\n${list.stderr ?? ""}`.includes(input.sandbox)
+    get.status !== 0 ||
+    !`${get.stdout ?? ""}\n${get.stderr ?? ""}`.includes(cleanupRequired.sandboxId)
   ) {
     throw new Error(
-      `managed-bootstrap rollback retained failed OpenShell sandbox state: get=${commandDetail(get)} list=${commandDetail(list)}`,
+      `managed-bootstrap rollback could not reconcile the retained mutable name to durable sandbox ID ${cleanupRequired.sandboxId}: ${commandDetail(get)}`,
     );
   }
+  return runtimeId;
 }
 
 async function run(input: Inputs): Promise<void> {
@@ -1059,16 +1093,24 @@ async function run(input: Inputs): Promise<void> {
         error instanceof Error &&
         error.message.includes("protected-e2e-injected-bootstrap-completion-failure")
       ) {
-        const resolved = exactHarnessContainerIds(input, networkName, launch.sandboxEnv);
-        if (resolved.candidateCount !== 0 || resolved.exactIds.length !== 0) {
-          throw new Error(
-            `managed-bootstrap rollback retained a failed held sandbox: found ${resolved.candidateCount} labeled and ${resolved.exactIds.length} exact containers`,
-          );
+        const rollbackError = (
+          error as Error & {
+            managedBootstrapRollbackError?: unknown;
+          }
+        ).managedBootstrapRollbackError;
+        if (!(rollbackError instanceof ManagedBootstrapOwnerCleanupRequiredError)) {
+          throw new Error("managed-bootstrap rollback did not report typed exact-owner cleanup");
         }
-        assertFailedSandboxAbsent(onboard, input, launch.sandboxEnv);
+        ownedContainerId = assertExactRetainedSandboxQuiescent(
+          onboard,
+          input,
+          networkName,
+          launch.sandboxEnv,
+          rollbackError,
+        );
         failureInjectionQualified = true;
         process.stdout.write(
-          `Injected managed-bootstrap completion failure removed the failed exact ${input.agent} sandbox before harness cleanup.\n`,
+          `Injected managed-bootstrap completion failure quiesced and retained the typed exact ${input.agent} sandbox ${rollbackError.sandboxId} at runtime ${rollbackError.runtimeId} before exact-ID harness cleanup.\n`,
         );
         return;
       }
@@ -1095,7 +1137,7 @@ async function run(input: Inputs): Promise<void> {
     );
   } finally {
     const cleanupErrors: string[] = [];
-    if (onboard) {
+    if (onboard && !failureInjectionQualified) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
         process.env,

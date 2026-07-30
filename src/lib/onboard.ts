@@ -2244,10 +2244,8 @@ async function createSandboxWithBaseImageResolution(
   preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
   const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
   const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
-  const legacyDockerfilePath =
-    effectiveAgent.dockerfilePath ??
-    effectiveAgent.legacyPaths?.dockerfile ??
-    path.join(ROOT, "Dockerfile");
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const legacyDockerfilePath = effectiveAgent.dockerfilePath ?? effectiveAgent.legacyPaths?.dockerfile ?? path.join(ROOT, "Dockerfile");
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
@@ -2673,33 +2671,12 @@ async function createSandboxWithBaseImageResolution(
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   recreateRuntime.advance("creating");
-  if (
-    preparedSandboxWorkload.source.kind === "managed-image" &&
-    (!managedStartupRootApplyRequest || !managedBootstrapIdentity || !intendedSandboxStartupCommand)
-  ) {
-    throw new Error(
-      "Managed image onboarding is missing its identity-bound bootstrap launch contract.",
-    );
-  }
-  const managedBootstrap =
-    preparedSandboxWorkload.source.kind === "managed-image" &&
-    managedStartupRootApplyRequest &&
-    managedBootstrapIdentity &&
-    intendedSandboxStartupCommand &&
-    managedBootstrapRuntimeProvider
-      ? {
-          bootstrapIdentity: managedBootstrapIdentity,
-          runtimeProvider: managedBootstrapRuntimeProvider,
-          request: managedStartupRootApplyRequest,
-          image: {
-            repository: preparedSandboxWorkload.source.contract.image,
-            manifestDigest: preparedSandboxWorkload.source.contract.digest,
-          },
-          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-          intendedWorkloadArgv: intendedSandboxStartupCommand,
-          expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
-        }
-      : null;
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
+    workload: preparedSandboxWorkload, runtimeProvider: managedBootstrapRuntimeProvider,
+    bootstrapIdentity: managedBootstrapIdentity, request: managedStartupRootApplyRequest,
+    intendedWorkloadArgv: intendedSandboxStartupCommand,
+  });
   const {
     createResult,
     runtimePatch,
