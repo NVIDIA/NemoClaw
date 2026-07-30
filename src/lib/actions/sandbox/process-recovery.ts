@@ -611,12 +611,12 @@ function isRetryableOpenshellReRegistrationState(
   const error = normalizeOpenshellStructuredError(String(result.stderr));
   // OpenShell can publish Ready before replacement registration settles.
   // Retry only if the readiness probe reports phase Error for this sandbox.
-  // The CLI can emit informational stdout before this exact stderr refusal;
-  // stdout does not change the result of the read-only `true` probe.
-  if (
-    error ===
-    `Error: sandbox '${sandboxName}' is not ready (phase: Error); wait for it to reach Ready state.`
-  ) {
+  // The CLI can emit informational stdout or append stderr diagnostics to this
+  // exact refusal; neither changes the result of the read-only `true` probe.
+  const transientErrorPhase =
+    `Error: sandbox '${sandboxName}' is not ready (phase: Error); ` +
+    "wait for it to reach Ready state.";
+  if (error === transientErrorPhase || error.startsWith(`${transientErrorPhase} `)) {
     return true;
   }
   // All less-specific transient signatures remain constrained to an otherwise
