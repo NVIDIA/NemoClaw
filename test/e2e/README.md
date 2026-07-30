@@ -1002,6 +1002,29 @@ context without a gateway-builder fallback, enforces the calibrated root and
 phase limits in the budget file, and limits the longest onboard output gap to
 60 seconds. A violation fails
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
+The artifact records the first-turn command wall clock and OpenClaw's internal
+agent duration separately. Older or malformed OpenClaw output records an
+explicit unavailable reason instead of fabricating a duration.
+The artifact also identifies the model, provider, inference mode, and prompt contract.
+When every deterministic cold-onboard budget passes and the real first turn exits
+successfully with the expected sentinel, a sole root-end-to-first-turn overage
+is recorded as a structured, non-blocking hosted-latency anomaly rather than a
+PR regression.
+The same overage remains blocking when accompanied by a root-start or
+phase-budget failure.
+
+The trusted scheduled scorecard stores the current eligible sample in the
+`e2e-runtime-summary` artifact.
+The scorecard compares only samples with the same agent, provider, model,
+inference mode, and prompt contract.
+The recurrence window contains the 12 most recent eligible samples from
+scheduled `main` runs.
+The current anomaly fails the scorecard when the window is full and contains at
+least one earlier anomaly.
+A current sample without an anomaly does not fail because of an earlier anomaly.
+Missing, malformed, or functionally unsuccessful samples do not enter the window.
+The scorecard waits for 12 eligible samples when retained history is incomplete.
+The canonical E2E uploader retains each nightly summary for 14 days.
 
 When changed base-image inputs require the authoritative local OpenClaw base
 build, the target applies the separately calibrated 90-second allowance only to

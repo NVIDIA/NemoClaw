@@ -5954,6 +5954,9 @@ jobs:
             const runtimeHistory = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-runtime-history.mts'),
             );
+            const firstTurnLatency = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-first-turn-latency.mts'),
+            );
             const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
 
             // GitHub's jobs API is the canonical source because `needs.live`
@@ -5988,6 +5991,13 @@ jobs:
                   { github, context, core },
                   runtimeHistoryRows,
                   process.env.RUNTIME_SUMMARY_FILE,
+                  {
+                    currentFirstTurnLatency:
+                      firstTurnLatency.readCurrentFirstTurnLatencySample(
+                        process.env.RUNTIME_ARTIFACTS,
+                      ),
+                    loadPriorNightlySummaries: runtimeHistory.loadPriorNightlySummaries,
+                  },
                 );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
             if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
@@ -6072,7 +6082,7 @@ jobs:
             }
 
       - name: Upload E2E runtime summary
-        if: ${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}
+        if: ${{ always() && github.event_name == 'schedule' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-runtime-summary
