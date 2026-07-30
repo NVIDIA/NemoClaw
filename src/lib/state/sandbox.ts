@@ -1348,6 +1348,46 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
 // ── Restore ────────────────────────────────────────────────────────
 
+const RESTORE_STAGING_DIR = ".nemoclaw-restore-staging";
+
+// Job definitions in these directories are picked up by a gateway that keeps
+// running throughout a restore, so they must land after every directory whose
+// content those jobs can reference.
+const SCHEDULED_WORK_STATE_DIRS = new Set(["cron"]);
+
+function orderStateDirsForRestore(stateDirs: readonly string[]): string[] {
+  return [
+    ...stateDirs.filter((stateDir) => !SCHEDULED_WORK_STATE_DIRS.has(stateDir)),
+    ...stateDirs.filter((stateDir) => SCHEDULED_WORK_STATE_DIRS.has(stateDir)),
+  ];
+}
+
+/**
+ * Extract a restore archive beside the state directories, then move each
+ * directory into place.
+ *
+ * Extracting straight into the state directory publishes files one at a time to
+ * the running gateway, which can read a directory before its content is
+ * complete. A rename within the same directory publishes each restored
+ * directory whole.
+ */
+function buildStagedRestoreCommand(dir: string, stateDirs: readonly string[]): string {
+  const staging = `${dir}/${RESTORE_STAGING_DIR}`;
+  const quotedStaging = shellQuote(staging);
+  const commands = [
+    `rm -rf -- ${quotedStaging}`,
+    `mkdir -p -- ${quotedStaging}`,
+    `tar --no-same-owner -xf - -C ${quotedStaging}`,
+  ];
+  for (const stateDir of orderStateDirsForRestore(stateDirs)) {
+    const target = shellQuote(`${dir}/${stateDir}`);
+    commands.push(`rm -rf -- ${target}`);
+    commands.push(`mv -- ${shellQuote(`${staging}/${stateDir}`)} ${target}`);
+  }
+  commands.push(`rm -rf -- ${quotedStaging}`);
+  return commands.join(" && ");
+}
+
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
@@ -1685,7 +1725,12 @@ function restoreSandboxStateInternal(
     }
 
     if (restoreTar !== undefined) {
-      const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
+      // Image-managed extensions stay in place and are merged by extracting over
+      // the live directory, so those restores cannot use the staged swap.
+      const extractCmd =
+        pluginRestorePlan.preservedExtensionDirs.length > 0
+          ? `tar --no-same-owner -xf - -C ${shellQuote(dir)}`
+          : buildStagedRestoreCommand(dir, localDirs);
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
         input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],

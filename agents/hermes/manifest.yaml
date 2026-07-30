@@ -63,6 +63,10 @@ state_dirs:
   - sessions
   - skills
   - plugins
+  # Hermes confines the scripts that no_agent cron jobs run to
+  # ~/.hermes/scripts and rejects any path outside it, so cron job definitions
+  # are only restorable together with this directory.
+  - scripts
   - cron
   - logs
   - skins
