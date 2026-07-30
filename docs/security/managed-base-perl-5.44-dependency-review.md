@@ -52,7 +52,7 @@ The base-image publisher now builds these image and platform pairs on native run
 All six platform builds run independently.
 Each final publisher creates tags only after both platform digests for its image pass.
 The publisher then verifies that the manifest contains amd64 and arm64.
-Clean committed checkouts resolve an available exact source-SHA image before attempting a local rebuild.
+Clean unversioned development checkouts resolve an available exact source-SHA image before attempting a local rebuild.
 Dirty base-image inputs still require a local build and cannot consume a published candidate.
 
 ## Runtime proof
@@ -88,7 +88,7 @@ The image build also executes the reviewed Socket argument-length rejection and 
 
 The change does not modify agent configuration, credentials, network policy, runtime entrypoints, or persistent state.
 It changes the Perl files and dpkg identities inside the three existing managed base images.
-It also lets a clean committed checkout resolve its exact published source-SHA candidate before the committed-input divergence check requires a local build.
+It also lets a clean unversioned development checkout resolve its exact published source-SHA candidate before the committed-input divergence check requires a local build.
 Dirty base-image inputs still require a local build.
 
 Rollback selects an earlier immutable base-image digest.
