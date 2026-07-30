@@ -306,6 +306,12 @@ import { AgentOnly } from "../_components/AgentGuide";
     const openClawGatewayBehavior = "restarts only the OpenClaw gateway and verifies its health";
 
     expect(openclaw).toContain(openClawGatewayBehavior);
+    expect(hermes).not.toContain(
+      "updates the provider namespace and selected model in the running configuration",
+    );
+    expect(hermes).not.toContain(
+      "Changes within the current API family hot-reload without replacing the gateway process",
+    );
     expect(hermes).not.toContain(openClawGatewayBehavior);
     expect(hermes).toContain("a normal runtime route change does not rebuild or restart Hermes");
   });
