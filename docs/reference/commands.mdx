@@ -40,7 +40,8 @@ For guidance on choosing between the agent CLIs and the underlying `openshell` C
 <AgentOnly variant="openclaw">
 
 Use `$$nemoclaw` for the OpenClaw variant.
-OpenClaw is the default agent for `$$nemoclaw onboard` unless you pass `--agent hermes` or set `NEMOCLAW_AGENT=hermes`.
+OpenClaw is the default agent for `$$nemoclaw onboard` unless you select another installed agent with `--agent <name>` or set `NEMOCLAW_AGENT=<name>`.
+Run `$$nemoclaw agents list` to see the installed agent names; for example, use `hermes` for Hermes or `langchain-deepagents-code` for LangChain Deep Agents Code.
 OpenClaw-specific sections below describe the `/nemoclaw` slash command, the OpenClaw dashboard URL, the OpenClaw gateway token, and OpenClaw config paths under `/sandbox/.openclaw`.
 
 </AgentOnly>
