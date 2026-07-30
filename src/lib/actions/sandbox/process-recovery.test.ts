@@ -210,6 +210,49 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3, 3]);
   });
 
+  it("retries the exact Error phase when capture metadata is unstable", () => {
+    const bufferError = Object.assign(new Error("spawnSync openshell ENOBUFS"), {
+      code: "ENOBUFS",
+    });
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
+        stdout: "",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+      })
+      .mockReturnValueOnce({
+        status: null,
+        output:
+          `Waiting for sandbox registration\n${OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR}`.trim(),
+        stdout: "Waiting for sandbox registration\n",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+        error: bufferError,
+      })
+      .mockReturnValueOnce({
+        status: null,
+        output: "× │",
+        stdout: "",
+        stderr: "× │",
+        error: bufferError,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(4);
+    expect(sleeps).toEqual([3, 3, 3]);
+  });
+
   it("keeps an isolated blank OpenShell failure terminal", () => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,

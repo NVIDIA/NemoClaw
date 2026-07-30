@@ -607,18 +607,19 @@ function isRetryableOpenshellReRegistrationState(
   result: ReturnType<typeof captureOpenshell>,
   sandboxName: string,
 ): boolean {
-  if (!hasRetryableOpenshellFailureShape(result)) return false;
   const error = normalizeOpenshellStructuredError(String(result.stderr));
   // OpenShell can publish Ready before replacement registration settles.
   // Retry only if the readiness probe reports phase Error for this sandbox.
-  // The CLI can emit informational stdout before this exact stderr refusal;
-  // stdout does not change the result of the read-only `true` probe.
+  // The CLI can emit informational stdout or return unstable process metadata
+  // with this exact stderr refusal; neither changes the result of the read-only
+  // `true` probe.
   if (
     error ===
     `Error: sandbox '${sandboxName}' is not ready (phase: Error); wait for it to reach Ready state.`
   ) {
     return true;
   }
+  if (!hasRetryableOpenshellFailureShape(result)) return false;
   // All less-specific transient signatures remain constrained to an otherwise
   // empty stdout stream so unrelated command output cannot be reclassified.
   if (String(result.stdout ?? "").trim() !== "") return false;
@@ -801,8 +802,7 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     // retryable state and while the pinned managed-health guard continues to
     // pass. Remove this follow-up when supported OpenShell versions keep
     // returning a structured transition response until exec is available.
-    const retryableUnstructuredFollowUp =
-      sawRetryableReRegistrationState && String(result.stderr ?? "").trim() === "";
+    const retryableUnstructuredFollowUp = sawRetryableReRegistrationState && !openshellError;
     if (
       !retryableReRegistrationState &&
       !retryableUnstructuredFollowUp &&
