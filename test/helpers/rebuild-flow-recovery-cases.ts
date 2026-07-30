@@ -340,6 +340,115 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(restarted.onboardSpy).not.toHaveBeenCalled();
     });
 
+    const SOURCE_PROBE = "Name: alpha\nId: sbx-source\nPhase: Ready\n";
+    const MISSING_SOURCE = {
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: sandbox alpha not found",
+    };
+    const PRE_CREATE_PHASES = ["planned", "deleting", "deleted"] as const;
+    const LIVE_SOURCE_PHASES = ["planned", "deleting"] as const;
+
+    function sandboxGetProbes(probes: readonly (string | null)[]) {
+      let gets = 0;
+      return (argv: string[]) => {
+        if (argv[0] !== "sandbox" || argv[1] !== "get") return MISSING_SOURCE;
+        const probe = probes[Math.min(gets++, probes.length - 1)];
+        return probe ? { status: 0, output: probe, stdout: probe, stderr: "" } : MISSING_SOURCE;
+      };
+    }
+
+    async function interruptBeforeCreate(phase: string): Promise<unknown> {
+      const interrupted = createRebuildFlowHarness({
+        captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+        onboard: (session) => {
+          Object.assign(
+            (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
+            { phase },
+          );
+          throw new Error("interrupted before replacement creation");
+        },
+      });
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+      return interrupted.session.checkpoint;
+    }
+
+    function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
+      const restarted = createRebuildFlowHarness({
+        captureOpenshell: sandboxGetProbes(probes),
+      });
+      restarted.session.checkpoint = checkpoint;
+      restarted.runOpenshellSpy.mockClear();
+      restarted.onboardSpy.mockClear();
+      return restarted;
+    }
+
+    it.each(
+      LIVE_SOURCE_PHASES,
+    )("deletes the journaled source when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [SOURCE_PROBE, null],
+        await interruptBeforeCreate(phase),
+      );
+
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
+
+      expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(restarted.onboardSpy).toHaveBeenCalled();
+    });
+
+    it.each(
+      PRE_CREATE_PHASES,
+    )("creates the replacement without widening the delete target when a rebuild restarts from '%s' with the source already absent (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource([null], await interruptBeforeCreate(phase));
+
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
+
+      const deleteCalls = restarted.runOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+      );
+      expect(deleteCalls.map(([args]) => args)).toEqual(
+        deleteCalls.map(() => ["sandbox", "delete", "-g", "nemoclaw", "alpha"]),
+      );
+      expect(restarted.onboardSpy).toHaveBeenCalled();
+    });
+
+    it.each(
+      LIVE_SOURCE_PHASES,
+    )("refuses a changed same-name sandbox when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [FOREIGN_PROBE, null],
+        await interruptBeforeCreate(phase),
+      );
+
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /no longer has the journaled source identity/,
+      );
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    it("refuses a live same-name sandbox when a rebuild restarts from 'deleted' (#7734)", async () => {
+      const restarted = restartFromJournaledSource(
+        [SOURCE_PROBE, null],
+        await interruptBeforeCreate("deleted"),
+      );
+
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /appeared before replacement registration committed/,
+      );
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    });
+
     it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
       const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
       const harness = createRebuildFlowHarness({
