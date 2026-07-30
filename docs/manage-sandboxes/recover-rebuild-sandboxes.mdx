@@ -82,8 +82,12 @@ Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-
 Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
 For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
 
-NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
-The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check.
+Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
+It commits only after the replacement container identity and state restoration pass.
+NemoClaw removes the temporary state backup after a successful restore or rollback.
+If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
+Mounted state remains available, but a committed swap does not retain other writable-layer changes.
 After a transactional recreation, NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
 A definitive managed-health failure still stops immediately; if re-registration does not complete within the budget, the forward stays stopped.
 

@@ -20,7 +20,10 @@ import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
-import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
+import {
+  blockRebuildOnPendingBaselineTransition,
+  revalidateRebuildRouteBeforeDelete,
+} from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   abortPreparedImageRecreate,
@@ -104,6 +107,7 @@ async function rebuildSandboxUnlocked(
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
     preparedImage,
+    routePreflightReceipt,
     releaseOnboardLock,
     log,
     bail,
@@ -260,6 +264,7 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
+        validateAtDeleteEdge: () => revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         validateDeleteEdge: () => {
           if (!preparedImage) return { ok: true };
           if (!verifyPreparedBuildContext(preparedImage)) {

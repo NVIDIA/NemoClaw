@@ -10,6 +10,7 @@ content:
   type: "get_started"
 skill:
   priority: 20
+agent-variants: ["hermes"]
 ---
 Create a sandboxed Hermes agent, then chat with it from the dashboard or terminal.
 The `nemohermes` command is the NemoClaw CLI with Hermes pre-selected.
@@ -155,7 +156,8 @@ Use these details when your first-run path needs more control.
     DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
     After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
     The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
-    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, and headless setup.
+    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
+    Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
     Refer to [Platform Support](../reference/platform-support) for current validation status.
   </Accordion>
 

@@ -67,6 +67,8 @@ const workflow = YAML.parse(
 const FULL_SHA_ACTION = /^[^@]+@[0-9a-f]{40}$/i;
 const OPENCLAW_AGENT_GATE =
   'if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then';
+const PLATFORM_DIGEST_OUTPUT =
+  "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true";
 
 function renderMatrixValue(value: unknown, matrix: PublisherMatrixEntry): string {
   return String(value ?? "").replace(
@@ -193,12 +195,11 @@ function validatePublishers(candidate: Workflow): string[] {
       const dockerActions = steps.filter((step) => step.uses?.startsWith("docker/"));
       const tags = String(metadata?.with?.tags ?? "");
       const metadataImage = renderMatrixValue(metadata?.with?.images, matrix);
-      const expectedCacheRef = `${metadataImage}:buildcache`;
+      const expectedCacheRef = `${metadataImage}:buildcache-${matrix.arch}`;
       const cacheFrom = registryCacheEntries(renderMatrixValue(build.with?.["cache-from"], matrix));
       const cacheTo = registryCacheEntries(renderMatrixValue(build.with?.["cache-to"], matrix));
       const importedCacheRef = cacheFrom[0]?.ref;
       const exportedCacheRef = cacheTo[0]?.ref;
-
       return [
         ...(guardIndex < 0 || guardIndex >= buildIndex
           ? [`${jobName} must validate production build args before publishing`]
@@ -210,11 +211,7 @@ function validatePublishers(candidate: Workflow): string[] {
           ? [`${jobName} must derive publication metadata with docker/metadata-action`]
           : []),
         ...(metadataImage.length === 0 ? [`${jobName} must declare a publication image`] : []),
-        ...(!tags.includes("type=ref,event=tag") ||
-        !tags.includes("type=raw,value=latest") ||
-        !tags.includes("type=sha,prefix=,format=short")
-          ? [`${jobName} must publish release, latest, and commit tags`]
-          : []),
+        ...(tags.length > 0 ? [`${jobName} platform build must not publish mutable tags`] : []),
         ...dockerActions
           .filter((step) => !FULL_SHA_ACTION.test(step.uses ?? ""))
           .map((step) => `${jobName} Docker action must use a full commit SHA: ${step.uses}`),
@@ -222,13 +219,17 @@ function validatePublishers(candidate: Workflow): string[] {
           ? [`${jobName} build-push action must use a full commit SHA`]
           : []),
         ...(build.with?.context !== "." ? [`${jobName} must publish from repository context`] : []),
-        ...(build.with?.platforms !== "linux/amd64,linux/arm64"
-          ? [`${jobName} must publish both supported architectures`]
+        ...(build.with?.platforms !== "${{ matrix.platform }}"
+          ? [`${jobName} must build its selected native platform`]
           : []),
-        ...(build.with?.push !== true ? [`${jobName} must push the built image`] : []),
-        ...(build.with?.tags !== "${{ steps.meta.outputs.tags }}" ||
-        build.with?.labels !== "${{ steps.meta.outputs.labels }}"
-          ? [`${jobName} must publish the reviewed metadata outputs`]
+        ...(build.with?.outputs !== PLATFORM_DIGEST_OUTPUT
+          ? [`${jobName} must push an immutable platform digest`]
+          : []),
+        ...(build.with?.tags !== undefined || build.with?.push !== undefined
+          ? [`${jobName} platform build must not publish tags directly`]
+          : []),
+        ...(build.with?.labels !== "${{ steps.meta.outputs.labels }}"
+          ? [`${jobName} must use the reviewed metadata labels`]
           : []),
         ...(cacheFrom.length !== 1 || !importedCacheRef
           ? [`${jobName} cache-from must declare exactly one registry cache ref`]
@@ -264,26 +265,43 @@ describe("base-image publication behavior", () => {
   // source-shape-contract: security -- Publisher mutations must preserve immutable actions, guarded arguments, and trusted registry cache ownership
   it("accepts every discovered publisher and rejects supply-chain mutations", () => {
     const publishers = publisherJobs(workflow);
-    expect(publisherBuildSteps(workflow)).toHaveLength(2);
+    expect(publisherBuildSteps(workflow)).toHaveLength(3);
     expect(
       publishers.map(({ dockerfile, matrix }) => ({
         agent: matrix.agent,
+        arch: matrix.arch,
         dockerfile,
         image: matrix.image,
       })),
     ).toEqual([
       {
         agent: "hermes",
+        arch: "amd64",
+        dockerfile: "agents/hermes/Dockerfile.base",
+        image: "nvidia/nemoclaw/hermes-sandbox-base",
+      },
+      {
+        agent: "hermes",
+        arch: "arm64",
         dockerfile: "agents/hermes/Dockerfile.base",
         image: "nvidia/nemoclaw/hermes-sandbox-base",
       },
       {
         agent: "langchain-deepagents-code",
+        arch: "amd64",
+        dockerfile: "agents/langchain-deepagents-code/Dockerfile.base",
+        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+      },
+      {
+        agent: "langchain-deepagents-code",
+        arch: "arm64",
         dockerfile: "agents/langchain-deepagents-code/Dockerfile.base",
         image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
       },
     ]);
-    expect(publishers[0].job.strategy?.["fail-fast"]).toBe(false);
+    for (const publisher of publishers) {
+      expect(publisher.job.strategy?.["fail-fast"]).toBe(false);
+    }
     expect(validatePublishers(workflow)).toEqual([]);
     expect(validatePublisherInputs(workflow, openClawPlatformPublishers(workflow))).toEqual([]);
 
@@ -311,7 +329,7 @@ describe("base-image publication behavior", () => {
         `${mutatedPublisher.jobName} must validate production build args before publishing`,
         `${mutatedPublisher.jobName} Docker action must use a full commit SHA: docker/build-push-action@v7`,
         `${mutatedPublisher.jobName} build-push action must use a full commit SHA`,
-        `${mutatedPublisher.jobName} must push the built image`,
+        `${mutatedPublisher.jobName} platform build must not publish tags directly`,
         `${mutatedPublisher.jobName} cache-from must declare exactly one registry cache ref`,
         `${mutatedPublisher.jobName} must import and export the same registry cache ref`,
         `${mutatedPublisher.jobName} must export its registry cache in max mode`,
@@ -394,15 +412,15 @@ describe("base-image publication behavior", () => {
       expect(guardIndex).toBeLessThan(buildIndex);
       expect(hasAgentScopedOpenClawVersion(steps[guardIndex])).toBe(true);
       expect(build.with?.platforms).toBe("${{ matrix.platform }}");
-      expect(build.with?.outputs).toBe(
-        "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true",
-      );
+      expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
       expect(build.with?.tags).toBeUndefined();
       expect(renderMatrixValue(build.with?.["cache-from"], matrix)).toContain(cacheSuffix);
       expect(renderMatrixValue(build.with?.["cache-to"], matrix)).toContain(
         `${cacheSuffix},mode=max`,
       );
+      expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
       expect(digestExport?.run).toContain("^sha256:[0-9a-f]{64}$");
+      expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
       expect(digestUpload?.with?.name).toBe("openclaw-base-digest-${{ matrix.arch }}");
       for (const step of steps.filter((step) => step.uses)) {
         expect(step.uses, `${matrix.arch}: ${step.name}`).toMatch(FULL_SHA_ACTION);
@@ -428,13 +446,141 @@ describe("base-image publication behavior", () => {
     expect(metadata?.with?.tags).toContain("type=raw,value=latest");
     expect(metadata?.with?.tags).toContain("type=ref,event=tag");
     expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
-    expect(createManifest?.run).toContain('"${#digest_files[@]}" -ne 2');
-    expect(createManifest?.run).toContain(
+    const openClawManifestScript = createManifest?.run ?? "";
+    expect(openClawManifestScript).toContain('"${#digest_files[@]}" -ne 2');
+    expect(openClawManifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
+    expect(openClawManifestScript).toContain("--format '{{.Image.OS}}/{{.Image.Architecture}}'");
+    expect(openClawManifestScript).toContain(
+      'if [ "$source_platform" != "linux/$expected_arch" ]; then',
+    );
+    expect(openClawManifestScript).toContain("duplicate platform digest");
+    expect(openClawManifestScript.indexOf("source_platform=")).toBeLessThan(
+      openClawManifestScript.indexOf("docker buildx imagetools create"),
+    );
+    expect(openClawManifestScript).toContain(
       'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
     );
-    expect(createManifest?.run).toContain('"amd64,arm64"');
+    expect(openClawManifestScript).toContain('"amd64,arm64"');
     for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
       expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
+    }
+  });
+
+  it("publishes sibling images atomically from native architecture runners", () => {
+    const publishers = publisherJobs(workflow);
+    const imagePublishers = [
+      {
+        platformJobName: "build-hermes-platforms",
+        manifestJobName: "build-and-push-hermes",
+        manifestName: "Build and push Hermes base image",
+        artifactPattern: "hermes-base-digest-*",
+        image: "${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base",
+      },
+      {
+        platformJobName: "build-dcode-platforms",
+        manifestJobName: "build-and-push-dcode",
+        manifestName: "Build and push Deep Agents Code base image",
+        artifactPattern: "langchain-deepagents-code-base-digest-*",
+        image: "${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+      },
+    ];
+
+    for (const { platformJobName } of imagePublishers) {
+      const platformJob = workflow.jobs?.[platformJobName];
+      expect(platformJob?.["timeout-minutes"]).toBe(60);
+      expect(platformJob?.["runs-on"]).toBe("${{ matrix.runner }}");
+      expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
+    }
+    expect(
+      publishers.map(({ matrix }) => ({
+        agent: matrix.agent,
+        arch: matrix.arch,
+        platform: matrix.platform,
+        runner: matrix.runner,
+      })),
+    ).toEqual([
+      {
+        agent: "hermes",
+        arch: "amd64",
+        platform: "linux/amd64",
+        runner: "ubuntu-24.04",
+      },
+      {
+        agent: "hermes",
+        arch: "arm64",
+        platform: "linux/arm64",
+        runner: "ubuntu-24.04-arm",
+      },
+      {
+        agent: "langchain-deepagents-code",
+        arch: "amd64",
+        platform: "linux/amd64",
+        runner: "ubuntu-24.04",
+      },
+      {
+        agent: "langchain-deepagents-code",
+        arch: "arm64",
+        platform: "linux/arm64",
+        runner: "ubuntu-24.04-arm",
+      },
+    ]);
+
+    for (const { job, build, matrix } of publishers) {
+      const steps = job.steps ?? [];
+      const digestExport = steps.find((step) => step.name === "Export platform digest");
+      const digestUpload = steps.find((step) => step.name === "Upload platform digest");
+
+      expect(steps.some((step) => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(false);
+      expect(build.with?.platforms).toBe("${{ matrix.platform }}");
+      expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
+      expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
+      expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
+      expect(digestUpload?.with?.name).toBe("${{ matrix.agent }}-base-digest-${{ matrix.arch }}");
+      expect(renderMatrixValue(digestUpload?.with?.name, matrix)).toBe(
+        `${matrix.agent}-base-digest-${matrix.arch}`,
+      );
+    }
+
+    for (const imagePublisher of imagePublishers) {
+      const manifestJob = workflow.jobs?.[imagePublisher.manifestJobName];
+      expect(manifestJob?.name).toBe(imagePublisher.manifestName);
+      expect(manifestJob?.needs).toBe(imagePublisher.platformJobName);
+      expect(manifestJob?.["timeout-minutes"]).toBe(10);
+      expect(
+        manifestJob?.steps?.some((step) => step.uses?.startsWith("docker/build-push-action@")),
+      ).toBe(false);
+      const download = manifestJob?.steps?.find(
+        (step) => step.name === "Download platform digests",
+      );
+      const metadata = manifestJob?.steps?.find((step) => step.id === "meta");
+      const createManifest = manifestJob?.steps?.find(
+        (step) => step.name === "Create and verify multi-platform manifest",
+      );
+      expect(download?.with).toMatchObject({
+        pattern: imagePublisher.artifactPattern,
+        "merge-multiple": true,
+      });
+      expect(metadata?.with?.images).toBe(imagePublisher.image);
+      expect(metadata?.with?.tags).toContain("type=raw,value=latest");
+      expect(metadata?.with?.tags).toContain("type=ref,event=tag");
+      expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+      expect(createManifest?.env?.IMAGE).toBe(imagePublisher.image);
+      const manifestScript = createManifest?.run ?? "";
+      expect(manifestScript).toContain('"${#digest_files[@]}" -ne 2');
+      expect(manifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
+      expect(manifestScript).toContain("--format '{{.Image.OS}}/{{.Image.Architecture}}'");
+      expect(manifestScript).toContain('if [ "$source_platform" != "linux/$expected_arch" ]; then');
+      expect(manifestScript).toContain("duplicate platform digest");
+      expect(manifestScript.indexOf("source_platform=")).toBeLessThan(
+        manifestScript.indexOf("docker buildx imagetools create"),
+      );
+      expect(manifestScript).toContain(
+        'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
+      );
+      expect(manifestScript).toContain('"amd64,arm64"');
+      for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
+        expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
+      }
     }
   });
 

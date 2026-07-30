@@ -7,12 +7,26 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332`
+- Lockfile SHA-256: `b348f12ea2874c4240b523dc4e5814dce58893cd70de5ebbd74d313cbf6cc1e1`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
-- Audit date: 2026-07-09
-- Audit result: `No known vulnerabilities found`
+- Audit date: 2026-07-30
+- Targeted audit result: `uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`
+- Complete-lock audit result: `2 duplicate records in 1 unrelated package`
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
+The lock now selects `uv==0.11.33`, `mcp==1.28.1`, `Pillow==12.3.0`, and
+`pyasn1==0.6.4`. The direct MCP and pyasn1 requirements are temporary,
+hash-locked constraints for the released Deep Agents Code `0.1.34` graph.
+Deep Agents Code `0.1.45` and later contain both dependency fixes, but their hook
+boundary has changed. Remove the temporary direct constraints only as part of a
+separately validated semantic migration to `>=0.1.45` that preserves NemoClaw's
+managed runtime hooks.
+
+The image build runs `pip3 check` and asserts all five installed package
+versions, including Deep Agents Code itself, before publishing. The complete
+point-in-time audit now reports only two duplicate database records for
+`setuptools==82.0.1`; that record is outside the Critical/High remediation
+scope. This review does not claim the complete lock is vulnerability-free.
 
 ## Managed `fetch_url` Proxy Adapter
 
@@ -202,10 +216,11 @@ staged into the image, and image regression tests enforce that absence.
 
 Deep Agents Code `0.1.34` is the released consumer; prerelease risk is limited
 to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
-consumer and SDK are hash locked, the dependency audit is clean, and all source,
-version, middleware, graph, and dispatch contracts are enforced by the isolated
-image-build validator. That validator is the fail-closed gate because Deep
-Agents deliberately isolates and logs third-party plugin callback failures.
+consumer and SDK are hash locked and all source, version, middleware, graph,
+and dispatch contracts are enforced by the isolated image-build validator.
+Separately, the point-in-time audit reports no known vulnerabilities for
+Pillow `12.3.0`. The validator is the fail-closed gate because Deep Agents
+deliberately isolates and logs third-party plugin callback failures.
 
 The exact version and source-hash gates remain the executable lifecycle check
 for the alias adapter: any dependency change stops the image build and requires

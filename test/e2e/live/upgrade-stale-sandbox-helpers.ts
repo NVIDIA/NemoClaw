@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { findAvailableDashboardPort } from "../../../src/lib/onboard/dashboard-port.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -30,7 +30,10 @@ export const SANDBOX_NAME =
   [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
     .filter(Boolean)
     .join("-");
+export const SIBLING_SANDBOX_NAME = `${SANDBOX_NAME}-peer`;
+export const SANDBOX_NAMES = [SANDBOX_NAME, SIBLING_SANDBOX_NAME] as const;
 validateSandboxName(SANDBOX_NAME);
+validateSandboxName(SIBLING_SANDBOX_NAME);
 assertSafeSandboxName();
 export const OLD_OPENCLAW_VERSION = "2026.3.11";
 export const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}`;
@@ -39,10 +42,12 @@ const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json"
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
 function assertSafeSandboxName(): void {
-  if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
-    throw new Error(
-      `upgrade-stale-sandbox live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
-    );
+  for (const sandboxName of SANDBOX_NAMES) {
+    if (!sandboxName.startsWith(TEST_SANDBOX_PREFIX)) {
+      throw new Error(
+        `upgrade-stale-sandbox live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${sandboxName}`,
+      );
+    }
   }
 }
 
@@ -67,7 +72,29 @@ async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-export function writeStaleRegistryEntry(): void {
+export function allocateSiblingDashboardPort(forwardListOutput: string | null): number {
+  const registry = readJsonFileOrFallback<{
+    sandboxes?: Record<string, Record<string, unknown>>;
+  }>(REGISTRY_FILE, {});
+  const primaryDashboardPort = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  expect(
+    typeof primaryDashboardPort === "number" &&
+      Number.isInteger(primaryDashboardPort) &&
+      primaryDashboardPort > 0 &&
+      primaryDashboardPort <= 65535,
+    "initial onboard must persist the dashboard port used by authoritative rebuild",
+  ).toBe(true);
+  const occupied = new Map([[String(primaryDashboardPort), SANDBOX_NAME]]);
+  return findAvailableDashboardPort(
+    SIBLING_SANDBOX_NAME,
+    primaryDashboardPort === 18790 ? 18791 : 18790,
+    forwardListOutput,
+    undefined,
+    occupied,
+  );
+}
+
+export function writeStaleRegistryEntries(siblingDashboardPort: number): void {
   const session = readJsonFileOrFallback<Record<string, unknown>>(SESSION_FILE, {});
   const envProvider =
     process.env.NEMOCLAW_PROVIDER === "custom"
@@ -86,7 +113,8 @@ export function writeStaleRegistryEntry(): void {
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
-  const dashboardPort = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  const currentEntry = registry.sandboxes?.[SANDBOX_NAME] ?? {};
+  const dashboardPort = currentEntry.dashboardPort;
   expect(
     typeof dashboardPort === "number" &&
       Number.isInteger(dashboardPort) &&
@@ -94,20 +122,48 @@ export function writeStaleRegistryEntry(): void {
       dashboardPort <= 65535,
     "initial onboard must persist the dashboard port used by authoritative rebuild",
   ).toBe(true);
+  const endpointUrl =
+    (typeof currentEntry.endpointUrl === "string" && currentEntry.endpointUrl) ||
+    (typeof session.endpointUrl === "string" && session.endpointUrl) ||
+    null;
+  const preferredInferenceApi =
+    (typeof currentEntry.preferredInferenceApi === "string" &&
+      currentEntry.preferredInferenceApi) ||
+    (typeof session.preferredInferenceApi === "string" && session.preferredInferenceApi) ||
+    null;
+  if (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") {
+    expect(endpointUrl, "custom stale route must retain its durable endpoint").toBeTruthy();
+    expect(
+      preferredInferenceApi,
+      "custom stale route must retain its durable inference API family",
+    ).toBeTruthy();
+  }
   registry.sandboxes = registry.sandboxes ?? {};
-  registry.sandboxes[SANDBOX_NAME] = {
-    name: SANDBOX_NAME,
-    createdAt: new Date().toISOString(),
-    model,
-    provider,
-    gpuEnabled: false,
-    policies: [],
-    policyTier: null,
-    fromDockerfile: null,
-    dashboardPort,
-    agent: null,
-    agentVersion: OLD_OPENCLAW_VERSION,
-  };
+  for (const [sandboxName, assignedDashboardPort] of [
+    [SANDBOX_NAME, dashboardPort],
+    [SIBLING_SANDBOX_NAME, siblingDashboardPort],
+  ] as const) {
+    registry.sandboxes[sandboxName] = {
+      name: sandboxName,
+      createdAt: new Date().toISOString(),
+      model,
+      provider,
+      endpointUrl,
+      preferredInferenceApi,
+      gpuEnabled: false,
+      policies: [],
+      policyTier: null,
+      fromDockerfile: null,
+      dashboardPort: assignedDashboardPort,
+      gatewayName: "nemoclaw",
+      openshellVersion: "0.0.71",
+      nemoclawVersion: "0.0.71",
+      agent: null,
+      agentVersion: OLD_OPENCLAW_VERSION,
+      // Deliberately omit credentialEnv on both legacy rows. Rebuild must
+      // migrate the shared provider identity before deleting either sandbox.
+    };
+  }
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
   writeJsonFile(SESSION_FILE, { ...session, sandboxName: SANDBOX_NAME, status: "complete" });
@@ -140,20 +196,22 @@ export async function precleanStaleSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
-  await bestEffortPreclean(() =>
-    host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-upgrade-stale",
-      env: commandEnv(),
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffortPreclean(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "cleanup-openshell-delete-upgrade-stale",
-      env: commandEnv(),
-      timeoutMs: 60_000,
-    }),
-  );
+  for (const sandboxName of SANDBOX_NAMES) {
+    await bestEffortPreclean(() =>
+      host.nemoclaw([sandboxName, "destroy", "--yes"], {
+        artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
+        env: commandEnv(),
+        timeoutMs: 120_000,
+      }),
+    );
+    await bestEffortPreclean(() =>
+      sandbox.openshell(["sandbox", "delete", sandboxName], {
+        artifactName: `cleanup-openshell-delete-${sandboxName}`,
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
+  }
 }
 
 export async function cleanupOldImage(host: HostCliClient): Promise<void> {
@@ -251,13 +309,14 @@ export function createFixtureDockerfile(cleanup: Pick<CleanupRegistry, "trackDis
 
 export async function waitSandboxReady(
   host: HostCliClient,
+  sandboxName: string,
   artifactName: string,
 ): Promise<ShellProbeResult> {
   return await host.command(
     "bash",
     [
       "-lc",
-      `for _i in $(seq 1 30); do openshell sandbox list 2>/dev/null | grep -q '${SANDBOX_NAME}.*Ready' && exit 0; sleep 5; done; openshell sandbox list >&2; exit 1`,
+      `for _i in $(seq 1 30); do openshell sandbox list 2>/dev/null | grep -q '${sandboxName}.*Ready' && exit 0; sleep 5; done; openshell sandbox list >&2; exit 1`,
     ],
     { artifactName, env: commandEnv(), timeoutMs: 180_000 },
   );

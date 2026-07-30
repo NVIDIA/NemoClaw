@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
@@ -180,6 +181,32 @@ describe("rebuild destroy phase", () => {
     expect(diagnostics).not.toContain(secret);
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+  });
+
+  it("blocks the exact delete edge when the shared inference route drifts (#7798)", async () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        backupManifest: null,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded: vi.fn(() => true),
+        validateAtDeleteEdge: () => ({
+          ok: false,
+          message: "Shared inference route changed before sandbox deletion.",
+        }),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Shared inference route changed before sandbox deletion.");
+
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(mocks.runOpenshell);
   });
 
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
