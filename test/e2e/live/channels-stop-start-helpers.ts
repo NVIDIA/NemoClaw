@@ -33,13 +33,14 @@ if (AGENT !== "openclaw" && AGENT !== "hermes") {
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
 assertChannelsStopStartSandboxName(SANDBOX_NAME);
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
-const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
+const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"] as const;
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
   discord: (sandbox) => [`${sandbox}-discord-bridge`],
   wechat: (sandbox) => [`${sandbox}-wechat-bridge`],
   slack: (sandbox) => [`${sandbox}-slack-bridge`, `${sandbox}-slack-app`],
   whatsapp: () => [],
+  teams: (sandbox) => [`${sandbox}-teams-bridge`],
 };
 export const LIVE_TIMEOUT_MS = 80 * 60_000;
 
@@ -51,6 +52,7 @@ type Phase6Tokens = {
   slackBot: string;
   slackApp: string;
   wechat: string;
+  teams: string;
 };
 
 function phase6Tokens(suffix: string): Phase6Tokens {
@@ -60,6 +62,7 @@ function phase6Tokens(suffix: string): Phase6Tokens {
     slackBot: process.env.SLACK_BOT_TOKEN ?? `xoxb-fake-slack-token-${suffix}`,
     slackApp: process.env.SLACK_APP_TOKEN ?? `xapp-fake-slack-token-${suffix}`,
     wechat: process.env.WECHAT_BOT_TOKEN ?? `test-fake-wechat-token-${suffix}`,
+    teams: process.env.MSTEAMS_APP_PASSWORD ?? `test-fake-teams-secret-${suffix}`,
   };
 }
 
@@ -86,6 +89,12 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
     WECHAT_ALLOWED_IDS:
       process.env.WECHAT_ALLOWED_IDS ?? process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
     WHATSAPP_ALLOWED_IDS: process.env.WHATSAPP_ALLOWED_IDS ?? "15551234567,15557654321",
+    MSTEAMS_APP_ID: process.env.MSTEAMS_APP_ID ?? "00000000-0000-0000-0000-000000000000",
+    MSTEAMS_APP_PASSWORD: tokens.teams,
+    MSTEAMS_TENANT_ID: process.env.MSTEAMS_TENANT_ID ?? "11111111-1111-1111-1111-111111111111",
+    TEAMS_ALLOWED_USERS: process.env.TEAMS_ALLOWED_USERS ?? "22222222-2222-2222-2222-222222222222",
+    MSTEAMS_PORT: process.env.MSTEAMS_PORT ?? "3978",
+    TEAMS_REQUIRE_MENTION: process.env.TEAMS_REQUIRE_MENTION ?? "0",
   };
   if (tokens.telegram.includes("fake")) env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   if (
@@ -218,6 +227,11 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
       allowedIds: requireEnvValue(env, "WECHAT_ALLOWED_IDS"),
     },
     whatsapp: { allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS") },
+    teams: {
+      appId: requireEnvValue(env, "MSTEAMS_APP_ID"),
+      tenantId: requireEnvValue(env, "MSTEAMS_TENANT_ID"),
+      requireMention: requireEnvValue(env, "TEAMS_REQUIRE_MENTION"),
+    },
   };
   for (const [channelId, inputs] of Object.entries(expected)) {
     const channel = planChannel(channelId);
@@ -232,7 +246,9 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
 }
 
 function openClawChannelKey(channel: string): string {
-  return channel === "wechat" ? "openclaw-weixin" : channel;
+  if (channel === "wechat") return "openclaw-weixin";
+  if (channel === "teams") return "msteams";
+  return channel;
 }
 
 async function agentConfigContains(
@@ -266,6 +282,8 @@ async function agentConfigContains(
       'grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env',
     whatsapp:
       'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env',
+    teams:
+      'grep -Eq "^TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD$" /sandbox/.hermes/.env',
   };
   const result = await sandboxSh(
     sandbox,
