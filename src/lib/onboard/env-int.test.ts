@@ -6,7 +6,7 @@
 // clamped to 0, which is the most damaging reading available for every one of
 // those knobs, while any other invalid value already fell back (#7881).
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { envInt } from "./env";
 
@@ -58,6 +58,15 @@ describe("envInt override parsing", () => {
   });
 
   it("uses the supplied env map rather than the process environment", () => {
-    expect(envInt("NEMOCLAW_TEST_KNOB", FALLBACK, {})).toBe(FALLBACK);
+    // Both assertions need a conflicting process value to have any teeth: with
+    // `process.env` unset, an implementation that ignored the supplied map
+    // would return the fallback here and still pass.
+    vi.stubEnv("NEMOCLAW_TEST_KNOB", "999");
+    try {
+      expect(envInt("NEMOCLAW_TEST_KNOB", FALLBACK, { NEMOCLAW_TEST_KNOB: "7" })).toBe(7);
+      expect(envInt("NEMOCLAW_TEST_KNOB", FALLBACK, {})).toBe(FALLBACK);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
