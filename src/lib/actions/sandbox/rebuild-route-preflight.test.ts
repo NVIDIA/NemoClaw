@@ -91,6 +91,10 @@ const remoteProviders = [
 );
 
 describe("commitRebuildRoutePreflight", () => {
+  it("includes a credential-bearing provider in the migration matrix (#7798)", () => {
+    expect(remoteProviders.length).toBeGreaterThan(0);
+  });
+
   it.each(
     remoteProviders,
   )("migrates missing shared-gateway credential identity for $providerName (#7798)", (providerConfig) => {

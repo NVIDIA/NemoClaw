@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
@@ -205,10 +206,7 @@ describe("rebuild destroy phase", () => {
     ).rejects.toThrow("Shared inference route changed before sandbox deletion.");
 
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
-    expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.anything(),
-    );
+    expectNoSandboxDelete(mocks.runOpenshell);
   });
 
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {

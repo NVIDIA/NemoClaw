@@ -182,12 +182,15 @@ export function commitRebuildRoutePreflight(
 
 /**
  * Re-read the complete shared-gateway route at the synchronous delete edge.
- * Any target or peer drift invalidates the earlier preflight receipt.
+ * A target-route change or peer hard conflict in that snapshot invalidates the
+ * earlier preflight receipt.
  */
 export function revalidateRebuildRouteBeforeDelete(
   receipt: RebuildRoutePreflightReceipt,
   dependencies: Pick<RebuildRouteRegistryDependencies, "load"> = defaultRouteDependencies,
 ): RebuildRoutePreflightResult {
+  // Registry writes install complete files atomically. A read lock would end before
+  // the external delete, so this guard uses a fresh fail-closed snapshot.
   const sandboxRegistry = dependencies.load();
   const target = sandboxRegistry.sandboxes[receipt.sandboxName];
   if (!target) {
