@@ -11,6 +11,7 @@ import {
 import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-provider";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
@@ -387,7 +388,7 @@ export type GpuSandboxAfterReadyOptions = {
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
   ) => Promise<SandboxGpuProofResult>;
   reportGpuProofFailure?: boolean;
-  selectedMode: () => DockerGpuPatchMode | null;
+  selectedMode: ManagedBootstrapRuntimePatch["selectedMode"];
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -395,6 +396,20 @@ export type GpuSandboxAfterReadyOptions = {
   logError?: (message: string) => void;
   deps?: DockerGpuSandboxInferenceVerifyDeps;
 };
+
+function asDockerGpuPatchMode(
+  selected: ReturnType<ManagedBootstrapRuntimePatch["selectedMode"]>,
+): DockerGpuPatchMode | null {
+  if (!selected || !["gpus", "nvidia-runtime", "cdi", "startup-command"].includes(selected.kind)) {
+    return null;
+  }
+  return {
+    kind: selected.kind as DockerGpuPatchMode["kind"],
+    label: selected.label,
+    device: selected.device,
+    args: [...selected.args],
+  };
+}
 
 /**
  * Post-readiness GPU sandbox verification orchestrator (kept out of the
@@ -431,11 +446,16 @@ export async function verifyGpuSandboxAccessAfterReady(
     // prints the richer Error-phase / patched-container diagnostics before
     // rethrowing. Avoid a second generic proof-failure block in that path.
     if (!options.verifyGpuOrExit && options.reportGpuProofFailure !== false) {
-      printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
-        runCaptureOpenshell: options.runCaptureOpenshell,
-        additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
-          .additionalSummaryLines,
-      });
+      printDockerGpuProofFailure(
+        options.sandboxName,
+        error,
+        asDockerGpuPatchMode(options.selectedMode()),
+        {
+          runCaptureOpenshell: options.runCaptureOpenshell,
+          additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
+            .additionalSummaryLines,
+        },
+      );
     }
     throw error;
   }

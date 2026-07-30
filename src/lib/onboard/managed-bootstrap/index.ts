@@ -8,5 +8,9 @@ export {
   runManagedBootstrapSequence,
 } from "./adapter";
 export { createDockerManagedBootstrapAdapter } from "./docker";
-export type { ManagedBootstrapRuntimeProvider } from "./runtime-provider";
+export type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimePatch,
+  ManagedBootstrapRuntimeProvider,
+} from "./runtime-provider";
 export { resolveCurrentManagedBootstrapRuntimeProvider } from "./runtime-providers";

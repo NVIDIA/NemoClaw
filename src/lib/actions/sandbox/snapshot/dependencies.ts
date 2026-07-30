@@ -44,7 +44,11 @@ export {
   renderManagedBootstrapHeldCommand,
   runManagedBootstrapSequence,
 } from "../../../onboard/managed-bootstrap/adapter";
-export type { ManagedBootstrapRuntimeProvider } from "../../../onboard/managed-bootstrap/runtime-provider";
+export type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimePatch,
+  ManagedBootstrapRuntimeProvider,
+} from "../../../onboard/managed-bootstrap/runtime-provider";
 export { resolvePersistedManagedBootstrapRuntimeProvider } from "../../../onboard/managed-bootstrap/runtime-providers";
 export type {
   ManagedStartupAgent,

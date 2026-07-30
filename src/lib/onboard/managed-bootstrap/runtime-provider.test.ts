@@ -80,6 +80,12 @@ describe("managed bootstrap runtime providers", () => {
       driverId: "podman",
       createAdapter: vi.fn(() => adapter),
       createReplacementOptions: vi.fn(() => ({ values: {} })),
+      createCreateLifecycle: vi.fn(() => {
+        throw new Error("not used");
+      }),
+      createOnboardRouting: vi.fn(() => {
+        throw new Error("not used");
+      }),
     };
 
     expect(resolveManagedBootstrapRuntimeProvider("podman", { podman: provider })).toBe(provider);
