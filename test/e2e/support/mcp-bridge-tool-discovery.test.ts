@@ -1,12 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { FakeMcpRequest } from "../live/mcp-bridge-servers.ts";
-import { hasSuccessfulAuthenticatedMcpDiscovery } from "../live/mcp-bridge-tool-discovery.ts";
+import type { CommandExitResult } from "../fixtures/clients/command.ts";
+import {
+  type FakeMcpRequest,
+  HERMES_DEFERRED_TOOL_SEARCH_MISS,
+} from "../live/mcp-bridge-servers.ts";
+import {
+  hasSuccessfulAuthenticatedMcpDiscovery,
+  retryHermesToolCallAfterDeferredToolSearchMiss,
+} from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
+const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
 const PROTOCOL_VERSION = "2025-03-26";
 
@@ -32,6 +40,10 @@ function successfulInitialize(): FakeMcpRequest {
     negotiatedSessionId: SESSION_ID,
     negotiatedProtocolVersion: PROTOCOL_VERSION,
   });
+}
+
+function commandResult(stdout: string, exitCode = 0): CommandExitResult {
+  return { stdout, stderr: "", exitCode };
 }
 
 describe("authenticated MCP rediscovery evidence", () => {
@@ -79,5 +91,64 @@ describe("authenticated MCP rediscovery evidence", () => {
     Object.assign(requests[failedRequestIndex], response);
 
     expect(hasSuccessfulAuthenticatedMcpDiscovery(requests, EXPECTED_SECRET)).toBe(false);
+  });
+});
+
+describe("Hermes deferred MCP tool discovery", () => {
+  it("retries the tool call when tool_search does not return the deferred target", async () => {
+    const runAttempt = vi
+      .fn()
+      .mockResolvedValueOnce(
+        commandResult(`mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`),
+      )
+      .mockResolvedValueOnce(commandResult(EXPECTED_RESULT_TOKEN));
+
+    const result = await retryHermesToolCallAfterDeferredToolSearchMiss({
+      runAttempt,
+      expectedResultToken: EXPECTED_RESULT_TOKEN,
+      attempts: 3,
+      retryDelayMs: 0,
+    });
+
+    expect(runAttempt.mock.calls).toEqual([[1], [2]]);
+    expect(result.stdout).toBe(EXPECTED_RESULT_TOKEN);
+  });
+
+  it.each([
+    ["a command failure", commandResult(HERMES_DEFERRED_TOOL_SEARCH_MISS, 1)],
+    ["a different protocol error", commandResult("mock protocol error: unexpected result")],
+    [
+      "a successful result",
+      commandResult(
+        `${EXPECTED_RESULT_TOKEN}\nmock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+      ),
+    ],
+  ])("does not retry %s", async (_case, firstResult) => {
+    const runAttempt = vi.fn().mockResolvedValue(firstResult);
+
+    const result = await retryHermesToolCallAfterDeferredToolSearchMiss({
+      runAttempt,
+      expectedResultToken: EXPECTED_RESULT_TOKEN,
+      attempts: 3,
+      retryDelayMs: 0,
+    });
+
+    expect(runAttempt.mock.calls).toEqual([[1]]);
+    expect(result).toBe(firstResult);
+  });
+
+  it("stops after the configured attempt count", async () => {
+    const firstResult = commandResult(`mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`);
+    const runAttempt = vi.fn().mockResolvedValue(firstResult);
+
+    const result = await retryHermesToolCallAfterDeferredToolSearchMiss({
+      runAttempt,
+      expectedResultToken: EXPECTED_RESULT_TOKEN,
+      attempts: 3,
+      retryDelayMs: 0,
+    });
+
+    expect(runAttempt.mock.calls).toEqual([[1], [2], [3]]);
+    expect(result).toBe(firstResult);
   });
 });

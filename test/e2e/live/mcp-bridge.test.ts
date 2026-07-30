@@ -52,6 +52,7 @@ import {
   assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
+  runMcpToolCallWithHermesRetry,
 } from "./mcp-bridge-tool-discovery.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
@@ -192,7 +193,7 @@ async function assertAdapterDnsRebindingDenied(
     secretPaths: string[];
     survivingMcp?: AuthenticatedMcpDiscoveryTarget;
   },
-): Promise<void> {
+): Promise<number | undefined> {
   const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
   cleanup.add(`stop ${options.artifactPrefix} DNS rebinding fake MCP HTTPS server`, () =>
     rebindMcp.close(),
@@ -325,7 +326,7 @@ async function assertAdapterDnsRebindingDenied(
     timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.adapter],
   });
   expectExitZero(remove, `${options.artifactPrefix} removes DNS rebinding route after proof`);
-  await assertAuthenticatedMcpRediscovery(options.survivingMcp, survivingDiscoveryOffset);
+  return survivingDiscoveryOffset;
 }
 async function addBridgeAndReadStatus(
   host: HostCliClient,
@@ -732,15 +733,12 @@ async function assertRealAdapterToolCall(
             `if [ -n "\${API_SERVER_KEY:-}" ]; then curl -fsS --max-time 180 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY}" --data-binary ${shellQuote(hermesPayload)}; else curl -fsS --max-time 180 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' --data-binary ${shellQuote(hermesPayload)}; fi`,
           ].join("\n")
         : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
-  const result = await sandbox.execShell(
-    options.sandboxName,
-    trustedSandboxShellScript(["set -eu", command].join("\n")),
-    {
-      artifactName: options.artifactName,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 5 * 60_000,
-    },
-  );
+  const result = await runMcpToolCallWithHermesRetry(sandbox, command, {
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+    artifactName: options.artifactName,
+    expectedResultToken: options.resultToken,
+  });
   expectExitZero(result, `${options.agent} real MCP tool call`);
   expect(resultText(result)).toContain(options.resultToken);
   const calls = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call");
@@ -1243,16 +1241,17 @@ mcpBridgeShardTest("hermes")(
       "hermes-assert-secret-absent-after-add-gateway-restart",
     );
     progress.phase("exercise lifecycle and confirm Hermes bridge removal");
-    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+    const survivingMcp = {
+      server: fakeMcp,
+      expectedSecret: HOST_SECRET,
+      label: "Hermes MCP rediscovery after DNS rebinding bridge removal",
+    };
+    const survivingDiscoveryOffset = await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
       artifactPrefix: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
-      survivingMcp: {
-        server: fakeMcp,
-        expectedSecret: HOST_SECRET,
-        label: "Hermes MCP rediscovery after DNS rebinding bridge removal",
-      },
+      survivingMcp,
     });
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
@@ -1260,6 +1259,7 @@ mcpBridgeShardTest("hermes")(
       resultToken: hermesResult,
       artifactName: "hermes-real-mcp-tool-call-initial",
     });
+    await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",

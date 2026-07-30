@@ -20,6 +20,9 @@ import type { TestProgress, TestProgressCapability } from "../fixtures/progress.
 
 type TestServer = http.Server | https.Server;
 
+export const HERMES_DEFERRED_TOOL_SEARCH_MISS =
+  "Hermes tool_search did not return the deferred target";
+
 export interface StartedHttpServer {
   port: number;
   close(): Promise<void>;
@@ -503,7 +506,7 @@ export async function startCompatibleMock(options: {
               arguments: { name: options.deferredToolName },
             };
           } else {
-            protocolError = "Hermes tool_search did not return the deferred target";
+            protocolError = HERMES_DEFERRED_TOOL_SEARCH_MISS;
           }
         } else if (toolResultCount === 2) {
           if (hasExpectedHermesDescription(options.deferredToolName)) {

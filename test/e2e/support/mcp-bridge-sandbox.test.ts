@@ -317,17 +317,25 @@ network_policies:
     expect(source).toContain(").toHaveLength(0);");
   });
 
-  it("restores the DNS fixture before MCP removal can restart the sandbox", () => {
+  it("restores DNS before removal and checks Hermes discovery after a tool call", () => {
     const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
     const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
     const remove = source.indexOf("const remove = await host.nemoclaw", denialProof);
-    const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", remove);
+    const hermesTest = source.indexOf('mcpBridgeShardTest("hermes")');
+    const rebinding = source.indexOf(
+      "const survivingDiscoveryOffset = await assertAdapterDnsRebindingDenied",
+      hermesTest,
+    );
+    const toolCall = source.indexOf("await assertRealAdapterToolCall", rebinding);
+    const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", toolCall);
 
     expect(denialProof).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(denialProof);
     expect(remove).toBeGreaterThan(restore);
-    expect(rediscovery).toBeGreaterThan(remove);
+    expect(rebinding).toBeGreaterThan(hermesTest);
+    expect(toolCall).toBeGreaterThan(rebinding);
+    expect(rediscovery).toBeGreaterThan(toolCall);
     expect(source).toContain("Hermes MCP rediscovery after DNS rebinding bridge removal");
   });
 
