@@ -43,6 +43,9 @@ export type RebuildGpuOptOutEntry = {
   observabilityEnabled?: boolean;
   policyTier?: string | null;
   endpointSource?: InferenceEndpointSource | null;
+  provider?: string | null;
+  model?: string | null;
+  preferredInferenceApi?: string | null;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -103,6 +106,9 @@ export type RebuildRecreateOnboardOpts = {
   endpointSource?: InferenceEndpointSource | null;
   acceptThirdPartySoftware: true;
   agent: string | null | undefined;
+  recreateProvider: string | null;
+  recreateModel: string | null;
+  recreatePreferredInferenceApi: string | null;
   fromDockerfile: string | null;
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
@@ -179,6 +185,9 @@ export function buildRebuildRecreateOnboardOpts(args: {
     endpointSource: normalizeInferenceEndpointSource(args.sb?.endpointSource),
     acceptThirdPartySoftware: args.usageNoticeAccepted,
     agent: args.rebuildAgent,
+    recreateProvider: args.sb?.provider ?? null,
+    recreateModel: args.sb?.model ?? null,
+    recreatePreferredInferenceApi: args.sb?.preferredInferenceApi ?? null,
     fromDockerfile: args.storedFromDockerfile,
     sandboxGpu: gpuOverrides.sandboxGpu,
     sandboxGpuDevice: gpuOverrides.sandboxGpuDevice,

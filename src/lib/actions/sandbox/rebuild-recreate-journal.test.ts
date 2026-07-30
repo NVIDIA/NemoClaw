@@ -42,6 +42,9 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   authoritativeResumeConfig: true,
   acceptThirdPartySoftware: true,
   agent: "langchain-deepagents-code",
+  recreateProvider: "nvidia",
+  recreateModel: "model-a",
+  recreatePreferredInferenceApi: "openai",
   fromDockerfile: null,
   sandboxGpu: null,
   sandboxGpuDevice: null,
@@ -99,6 +102,9 @@ describe("rebuild replacement target fingerprint", () => {
       { dcodeAutoApprovalMode: "thread-opt-in" },
       { endpointSource: "onboard" },
       { policyTier: "balanced" },
+      { recreateProvider: "compatible-endpoint" },
+      { recreateModel: "model-b" },
+      { recreatePreferredInferenceApi: "anthropic" },
     ] as const) {
       expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
         fingerprintRebuildRecreateTargetIntent(recreateOptions),
@@ -333,6 +339,26 @@ describe("rebuild replacement journal", () => {
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
           endpointSource: "onboard",
+        }),
+        log: vi.fn(),
+      }),
+    ).toThrow(/different recreate transaction in progress/);
+  });
+
+  it.each([
+    { recreateProvider: "compatible-endpoint" },
+    { recreateModel: "model-b" },
+    { recreatePreferredInferenceApi: "anthropic" },
+  ] as const)("refuses to resume a journal whose inference route changed (#7734)", (drift) => {
+    open();
+
+    expect(() =>
+      openRebuildRecreateJournal({
+        target: NON_DEFAULT_TARGET,
+        agentName: "langchain-deepagents-code",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
+          ...recreateOptions,
+          ...drift,
         }),
         log: vi.fn(),
       }),
