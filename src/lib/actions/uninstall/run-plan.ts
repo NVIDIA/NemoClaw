@@ -35,7 +35,7 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../../onboard/docker-driver-gateway-service";
-import { resolveGatewayName } from "../../onboard/gateway-binding";
+import { resolveGatewayName, resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import { isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
   type GatewayTeardownAuthorityResolver,
@@ -162,29 +162,37 @@ function pathEntryExists(target: string, runtime: Pick<UninstallRuntime, "exists
 
 type SharedRegistrySiblingStatus = "none" | "present" | "uncertain";
 
+interface SharedRegistrySiblings {
+  ports: readonly number[];
+  status: SharedRegistrySiblingStatus;
+}
+
 function sharedRegistrySiblingStatus(
   paths: UninstallPaths,
   runtime: Pick<UninstallRuntime, "existsSync">,
   liveGatewayNames: () => Set<string> | null,
-): SharedRegistrySiblingStatus {
+): SharedRegistrySiblings {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const registryFile = path.join(sharedRoot, "sandboxes.json");
-  if (!pathEntryExists(registryFile, runtime)) return "none";
+  if (!pathEntryExists(registryFile, runtime)) return { ports: [], status: "none" };
   try {
     const registry = readGatewayRegistryFile(path.dirname(sharedRoot), registryFile);
-    if (!registry) return "uncertain";
+    if (!registry) return { ports: [], status: "uncertain" };
     const siblingPorts = Object.values(registry.sandboxes)
       .map((entry) => registryEntryGatewayPort(entry))
       .filter((port) => port !== GATEWAY_PORT);
-    if (siblingPorts.length === 0) return "none";
+    if (siblingPorts.length === 0) return { ports: [], status: "none" };
     // A non-current registry row is a live sibling only while OpenShell still
     // knows its gateway; a stale row must not report "present".
     const live = liveGatewayNames();
-    if (live === null) return "present";
-    return siblingPorts.some((port) => live.has(resolveGatewayName(port))) ? "present" : "none";
+    if (live === null) return { ports: siblingPorts, status: "present" };
+    const livePorts = siblingPorts.filter((port) => live.has(resolveGatewayName(port)));
+    return livePorts.length > 0
+      ? { ports: livePorts, status: "present" }
+      : { ports: [], status: "none" };
   } catch {
     // Unknown ownership must never permit host-global cleanup.
-    return "uncertain";
+    return { ports: [], status: "uncertain" };
   }
 }
 
@@ -1306,7 +1314,29 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
 
 interface OtherGatewayInspection {
   otherGatewayEnvironmentsRemain: boolean;
+  otherGatewayPorts: readonly number[];
   sharedRegistryMustBePreserved: boolean;
+  unidentifiedOtherGateways: boolean;
+}
+
+const NO_OTHER_GATEWAY_ENVIRONMENTS: OtherGatewayInspection = {
+  otherGatewayEnvironmentsRemain: false,
+  otherGatewayPorts: [],
+  sharedRegistryMustBePreserved: false,
+  unidentifiedOtherGateways: false,
+};
+
+function otherGatewaysRemain(
+  ports: readonly number[],
+  sharedRegistryMustBePreserved = false,
+  unidentifiedOtherGateways = false,
+): OtherGatewayInspection {
+  return {
+    otherGatewayEnvironmentsRemain: true,
+    otherGatewayPorts: [...new Set(ports)].sort((left, right) => left - right),
+    sharedRegistryMustBePreserved,
+    unidentifiedOtherGateways: unidentifiedOtherGateways || ports.length === 0,
+  };
 }
 
 /**
@@ -1355,85 +1385,107 @@ function inspectOtherGatewayEnvironments(
     }
     return liveGatewayNamesCache;
   };
-  const sharedRegistryStatus = sharedRegistrySiblingStatus(paths, runtime, liveGatewayNames);
-  if (sharedRegistryStatus !== "none") {
-    return {
-      otherGatewayEnvironmentsRemain: true,
-      sharedRegistryMustBePreserved: true,
-    };
+  const sharedRegistrySiblings = sharedRegistrySiblingStatus(paths, runtime, liveGatewayNames);
+  if (sharedRegistrySiblings.status !== "none") {
+    return otherGatewaysRemain(sharedRegistrySiblings.ports, true);
   }
   const liveNames = liveGatewayNames();
   if (liveNames === null) {
-    return {
-      otherGatewayEnvironmentsRemain: true,
-      sharedRegistryMustBePreserved: false,
-    };
+    return otherGatewaysRemain([]);
   }
-  if ([...liveNames].some((name) => name !== resolveGatewayName(GATEWAY_PORT))) {
-    return {
-      otherGatewayEnvironmentsRemain: true,
-      sharedRegistryMustBePreserved: false,
-    };
+  const liveSiblingNames = [...liveNames].filter(
+    (name) => name !== resolveGatewayName(GATEWAY_PORT),
+  );
+  if (liveSiblingNames.length > 0) {
+    const livePorts = liveSiblingNames
+      .map((name) => resolveGatewayPortFromName(name))
+      .filter((port): port is number => port !== null);
+    return otherGatewaysRemain(livePorts, false, livePorts.length !== liveSiblingNames.length);
   }
 
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
     try {
       if (fs.readdirSync(sharedRoot).some((entry) => !SHARED_HOST_STATE_ENTRIES.has(entry))) {
-        return {
-          otherGatewayEnvironmentsRemain: true,
-          sharedRegistryMustBePreserved: false,
-        };
+        return otherGatewaysRemain([DEFAULT_GATEWAY_PORT]);
       }
     } catch {
       // Do not remove a host-shared resource when we cannot prove that the
       // default-port environment is absent.
-      return {
-        otherGatewayEnvironmentsRemain: true,
-        sharedRegistryMustBePreserved: false,
-      };
+      return otherGatewaysRemain([]);
     }
   }
 
   const gatewaysDir = path.join(sharedRoot, GATEWAYS_SUBDIR);
   if (!pathEntryExists(gatewaysDir, runtime)) {
-    return {
-      otherGatewayEnvironmentsRemain: false,
-      sharedRegistryMustBePreserved: false,
-    };
+    return NO_OTHER_GATEWAY_ENVIRONMENTS;
   }
   try {
     const gatewaysStat = fs.lstatSync(gatewaysDir);
     if (gatewaysStat.isSymbolicLink() || !gatewaysStat.isDirectory()) {
-      return {
-        otherGatewayEnvironmentsRemain: true,
-        sharedRegistryMustBePreserved: false,
-      };
+      return otherGatewaysRemain([]);
     }
-    const siblingExists = fs.readdirSync(gatewaysDir, { withFileTypes: true }).some((entry) => {
+    const siblingPorts: number[] = [];
+    let unidentified = false;
+    for (const entry of fs.readdirSync(gatewaysDir, { withFileTypes: true })) {
       const candidate = path.resolve(gatewaysDir, entry.name);
-      if (candidate === selectedRoot) return false;
+      if (candidate === selectedRoot) continue;
       // Never follow or dismiss a symlink or non-directory: a surprising shape
       // may hide live gateway state, so keep the conservative treatment.
-      if (entry.isSymbolicLink() || !entry.isDirectory()) return true;
+      if (entry.isSymbolicLink() || !entry.isDirectory()) {
+        unidentified = true;
+        continue;
+      }
       // A per-port directory whose gateway OpenShell no longer knows is an
       // orphan; dismiss it only when the live set positively lacks it.
       const port = Number(entry.name);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return true;
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        unidentified = true;
+        continue;
+      }
       const live = liveGatewayNames();
-      if (live === null) return true;
-      return live.has(resolveGatewayName(port));
-    });
-    return {
-      otherGatewayEnvironmentsRemain: siblingExists,
-      sharedRegistryMustBePreserved: false,
-    };
+      if (live === null) {
+        unidentified = true;
+        continue;
+      }
+      if (live.has(resolveGatewayName(port))) siblingPorts.push(port);
+    }
+    return siblingPorts.length > 0 || unidentified
+      ? otherGatewaysRemain(siblingPorts, false, unidentified)
+      : NO_OTHER_GATEWAY_ENVIRONMENTS;
   } catch {
     // An unreadable sibling registry is still potentially live.
-    return {
-      otherGatewayEnvironmentsRemain: true,
-      sharedRegistryMustBePreserved: false,
-    };
+    return otherGatewaysRemain([]);
   }
+}
+
+/**
+ * Name the gateway-port environments this uninstall deliberately leaves alone.
+ * Without this the surviving gateway keeps its port bound with nothing to
+ * explain why, which reads as a leaked listener rather than a second
+ * environment (#7791).
+ */
+function reportOtherGatewayEnvironments(
+  inspection: OtherGatewayInspection,
+  runtime: UninstallRuntime,
+): void {
+  if (!inspection.otherGatewayEnvironmentsRemain) return;
+  const branding = runtimeBranding(runtime);
+  runtime.log(
+    `Other ${branding.display} gateway-port environments remain on this host and are outside this uninstall:`,
+  );
+  for (const port of inspection.otherGatewayPorts) {
+    runtime.log(`  · gateway '${resolveGatewayName(port)}' on port ${String(port)}`);
+  }
+  if (inspection.unidentifiedOtherGateways) {
+    runtime.log("  · one or more gateway environments whose port could not be read");
+  }
+  const [firstPort] = inspection.otherGatewayPorts;
+  if (firstPort !== undefined) {
+    runtime.log(
+      `  Remove one of them: NEMOCLAW_GATEWAY_PORT=${String(firstPort)} ${branding.cli} uninstall`,
+    );
+  }
+  runtime.log(`  Remove every gateway port: ${branding.cli} uninstall --all-gateway-ports`);
 }
 
 function removeManagedSwap(
@@ -1861,6 +1913,7 @@ export function runUninstallPlan(
     }
   }
   printBanner(runtime, scopedToSelectedGateway, expectedGatewayName);
+  reportOtherGatewayEnvironments(gatewayInspection, runtime);
   if (!confirm(resolvedOptions, runtime, paths, scopedToSelectedGateway)) {
     return { exitCode: 0, plan };
   }
@@ -1878,6 +1931,7 @@ export function runUninstallPlan(
       runtime.warn(
         "A sibling gateway appeared during uninstall preparation; switching to gateway-scoped cleanup.",
       );
+      reportOtherGatewayEnvironments(boundaryInspection, runtime);
     }
   }
   if (!runtime.commandExists("openshell")) {

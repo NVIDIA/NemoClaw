@@ -369,6 +369,37 @@ These dashboard ports are separate from the gateway-wide inference route.
 
 </AgentOnly>
 
+### A gateway port stays bound after uninstall or re-onboard
+
+A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, is a second environment rather than a leaked listener.
+
+Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`.
+Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects, so a command run without that variable operates on port `8080` and neither reuses nor stops the other environment.
+Clearing the variable does not move an existing sandbox back to the default port.
+
+List the gateways the host still has:
+
+```bash
+openshell gateway list
+```
+
+Remove one environment by selecting its port:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw uninstall
+```
+
+Remove every gateway port in one run:
+
+```bash
+$$nemoclaw uninstall --all-gateway-ports
+```
+
+The same scoping applies to `$$nemoclaw <name> stop`.
+When stop reports that no valid gateway binding is registered for a sandbox, the sandbox was most likely onboarded under a different gateway port; re-run stop with that `NEMOCLAW_GATEWAY_PORT` value set.
+
+Refer to [Uninstall NemoClaw](../manage-sandboxes/uninstall-nemoclaw) for the full sweep contract.
+
 ### A shared inference route conflicts with another sandbox
 
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for route time-sharing, provider-global compatibility, and status drift fields.

@@ -78,6 +78,10 @@ Preserved `sandboxes.json` records are not automatically recoverable after reins
 Interactive uninstall prompts before removing preserved state.
 For non-interactive runs, pass `--destroy-user-data` only when you accept losing local registry metadata and backups.
 
+Uninstall works on one gateway port: it removes the selected state root and leaves every other `~/.nemoclaw/gateways/<port>/` root and its gateway in place.
+It names the environments it left behind and prints the command that removes each one.
+Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to remove every gateway port and the shared host state in one run.
+
 For operational uninstall steps, refer to:
 
 <AgentOnly variant="openclaw">
