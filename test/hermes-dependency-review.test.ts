@@ -34,11 +34,27 @@ function arg(name: string): string {
 }
 
 function uvVersionCheckStatus(output: string, expectedVersion: string): number | null {
+  const dockerfileLines = dockerfileBase.split("\n");
+  const installIndex = dockerfileLines.findIndex(
+    (line) => line.startsWith("RUN pip3 install ") && line.includes('"uv==${UV_VERSION}"'),
+  );
+  expect(installIndex, "Missing Dockerfile uv install command").toBeGreaterThanOrEqual(0);
+
+  const commandLines: string[] = [];
+  for (let index = installIndex; index < dockerfileLines.length; index += 1) {
+    const line = dockerfileLines[index] ?? "";
+    commandLines.push(line);
+    if (!line.endsWith("\\")) {
+      break;
+    }
+  }
+  const versionCheckLines = commandLines.slice(1);
+  expect(versionCheckLines, "Missing Dockerfile uv version check").not.toHaveLength(0);
+
   const script = [
     'uv() { printf "%s\\n" "$UV_OUTPUT"; }',
-    'uv_version_output="$(uv --version)"',
-    'uv_version="${uv_version_output#uv }"',
-    'test "${uv_version%% *}" = "${UV_VERSION}"',
+    "set -e",
+    ...versionCheckLines.map((line) => line.replace(/^\s*&&\s*/u, "").replace(/\s*\\$/u, "")),
   ].join("\n");
   return spawnSync("/bin/sh", ["-c", script], {
     env: { ...process.env, UV_OUTPUT: output, UV_VERSION: expectedVersion },
@@ -118,10 +134,6 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
-    expect(dockerfileBase).toContain('uv_version_output="$(uv --version)"');
-    expect(dockerfileBase).toContain('uv_version="${uv_version_output#uv }"');
-    expect(dockerfileBase).toContain('test "${uv_version%% *}" = "${UV_VERSION}"');
-    expect(dockerfileBase).not.toContain('test "$(uv --version)" = "uv ${UV_VERSION}"');
     for (const selection of [
       '"cryptography==48.0.1"',
       '"mcp==1.28.1"',
