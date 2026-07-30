@@ -1746,7 +1746,9 @@ If a shields auto-restore timer is active, `destroy` holds the same per-sandbox 
 It restores and verifies lockdown and revokes the active timer before deletion.
 It clears the remaining local shields state only after deletion succeeds.
 If hardening fails, for example because the tamper-evidence check rejects a missing `.config-hash`, the command warns and attempts deletion instead of refusing it.
-If that deletion succeeds, the sandbox is removed with its unguarded config; if it fails, the config stays unlocked until you delete or rebuild the sandbox.
+If that deletion succeeds, the sandbox is removed with its unguarded config.
+If it fails, NemoClaw keeps the local shields state and the auto-restore timer, which keeps retrying the lock and can restore it after the sandbox is reachable again.
+The config stays unlocked until one of those retries succeeds, or until you delete or rebuild the sandbox.
 If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
 By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.

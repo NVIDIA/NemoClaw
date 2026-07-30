@@ -130,7 +130,8 @@ function wipeAndHardenLiveSandbox(
     );
     console.warn(
       `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
-        "If the delete fails, the config stays unlocked until the sandbox is deleted or rebuilt.",
+        "If the delete fails, the auto-restore timer keeps retrying the lock until it succeeds " +
+        "or the sandbox is deleted or rebuilt.",
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
