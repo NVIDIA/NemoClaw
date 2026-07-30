@@ -804,7 +804,8 @@ def _seed_dashboard(argv: list[str], dashboard_fd: int | None) -> int:
     src, dst = argv[1], argv[2]
     env_parent_fd = (
         dashboard_fd
-        if len(argv) == 5 and os.path.dirname(argv[4]) == os.path.dirname(dst)
+        if len(argv) == 5
+        and os.path.normpath(os.path.dirname(argv[4])) == os.path.normpath(os.path.dirname(dst))
         else None
     )
 

@@ -267,10 +267,10 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 original_rmdir = module.os.rmdir
-def fail_dashboard_removal(name, *, dir_fd=None):
+def fail_dashboard_removal(name, *args, **kwargs):
     if name == "dashboard-home":
         raise OSError(errno.ENOTEMPTY, "directory changed")
-    return original_rmdir(name, dir_fd=dir_fd)
+    return original_rmdir(name, *args, **kwargs)
 
 module.os.rmdir = fail_dashboard_removal
 ok, dashboard_fd = module._prepare_dashboard_destination(sys.argv[2])
