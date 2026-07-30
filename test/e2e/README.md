@@ -560,7 +560,9 @@ ignored by the controller and PR Review Advisor; base edits are eligible. PR CI
 and advisor concurrency groups include that eligibility, so an ignored
 metadata-edit run cannot cancel an eligible run for the same PR. The trusted
 controller reads all changed files after eligible PR CI completes and builds
-the deterministic risk plan.
+the deterministic risk plan. The controller's Actions run name carries that CI
+display title so operators can distinguish simultaneous PR, head, and base
+identities even when the event omits pull-request metadata.
 Runtime families and changes to workflow-wired live tests select
 canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
@@ -687,12 +689,13 @@ A repository maintainer or administrator chooses **Run workflow** on `main`,
 selects `approve-e2e`, and supplies the PR number, current 40-character head
 SHA as `expected_head_sha`, current 40-character base SHA as
 `expected_base_sha`, and a specific 10–500-character `review_reason`. The
-controller verifies the triggering actor's current `maintain` or `admin`
-permission. It then revalidates the open PR, PR SHA and base SHA, deterministic
-plan, matching pending coordination state, compatible trusted controller
-commit, and final live revision. It updates coordination to
-`Running <count> E2E check(s)` and dispatches the selected jobs and targets in
-one workflow run.
+manual controller run name includes the supplied PR, head, and base identity
+for operator coordination. The controller verifies the triggering actor's
+current `maintain` or `admin` permission. It then revalidates the open PR, PR
+SHA and base SHA, deterministic plan, matching pending coordination state,
+compatible trusted controller commit, and final live revision. It updates
+coordination to `Running <count> E2E check(s)` and dispatches the selected jobs
+and targets in one workflow run.
 
 The child workflow receives the controller-owned coordination check ID. Before
 checking out the PR revision, it requires a GitHub Actions dispatch and verifies

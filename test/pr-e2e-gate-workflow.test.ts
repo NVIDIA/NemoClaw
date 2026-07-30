@@ -282,6 +282,13 @@ describe("PR E2E gate workflow", () => {
     expect(workflow["run-name"]).toContain("github.event.pull_request.base.sha");
     expect(workflow["run-name"]).toContain("github.event.action != 'closed'");
     expect(workflow["run-name"]).not.toContain("github.event.changes.base != null");
+    expect(workflow["run-name"]).toContain("E2E Gate coordinate from {0}");
+    expect(workflow["run-name"]).toContain("github.event.workflow_run.display_title");
+    expect(workflow["run-name"]).toContain("E2E Gate approve PR #{0} head {1} base {2}");
+    expect(workflow["run-name"]).toContain("inputs.pr_number");
+    expect(workflow["run-name"]).toContain("inputs.expected_head_sha");
+    expect(workflow["run-name"]).toContain("inputs.expected_base_sha");
+    expect(workflow["run-name"]).not.toContain("github.run_id");
     expect(workflow.on).toEqual({
       workflow_run: {
         workflows: ["CI / Pull Request"],

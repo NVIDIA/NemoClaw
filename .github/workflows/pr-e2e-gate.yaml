@@ -9,7 +9,11 @@ run-name: >-
   github.event.pull_request.number, github.event.pull_request.head.sha,
   github.event.pull_request.base.sha,
   github.event.action != 'closed') ||
-  format('E2E Gate {0} {1}', github.event_name, github.run_id) }}
+  github.event_name == 'workflow_run' &&
+  format('E2E Gate coordinate from {0}',
+  github.event.workflow_run.display_title) ||
+  format('E2E Gate approve PR #{0} head {1} base {2}',
+  inputs.pr_number, inputs.expected_head_sha, inputs.expected_base_sha) }}
 
 on:
   workflow_run:
