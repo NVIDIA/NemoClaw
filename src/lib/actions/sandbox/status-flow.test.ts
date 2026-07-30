@@ -557,7 +557,7 @@ describe("showSandboxStatus flow", () => {
       lookup: {
         state: "sandbox_recovery_failed",
         output:
-          "  Docker restored sandbox 'alpha', but its agent delivery chain is not ready " +
+          "  Sandbox 'alpha' is present, but its agent delivery chain could not be proven " +
           "(forward-recovery: OpenShell forward state unavailable).",
         recoveredSandbox: true,
       },
@@ -567,10 +567,29 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("restored from Docker");
-    expect(output).toContain("agent delivery chain could not be recovered safely");
+    expect(output).toContain("agent delivery chain could not be proven");
     expect(output).toContain("forward-recovery: OpenShell forward state unavailable");
     expect(output).toContain("Retry `nemoclaw alpha recover`");
     expect(output).not.toContain("Could not verify against live gateway");
+  });
+
+  it("does not claim Docker restoration when a visible sandbox fails delivery recovery", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: null,
+      lookup: {
+        state: "sandbox_recovery_failed",
+        output:
+          "  Sandbox 'alpha' is present, but its agent delivery chain could not be proven " +
+          "(gateway-recovery: the managed agent gateway could not be restarted).",
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Sandbox 'alpha' is present");
+    expect(output).toContain("agent delivery chain could not be proven");
+    expect(output).not.toContain("restored from Docker");
   });
 
   it("renders missing gateway metadata after restart without claiming recovery", async () => {

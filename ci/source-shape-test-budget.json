@@ -497,6 +497,11 @@
       "category": "security"
     },
     {
+      "file": "test/pr-limit-policy.test.ts",
+      "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "does not persist checkout credentials in PR or main jobs",
       "category": "security"
