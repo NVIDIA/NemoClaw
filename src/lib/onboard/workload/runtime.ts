@@ -23,9 +23,10 @@ export interface ManagedImageRuntimeProfile {
 }
 
 /**
- * Runtime support is registered by OpenShell compute-driver identity rather
- * than inferred from the gateway launcher. Podman and future MXC support can
- * therefore opt into this contract without inheriting Docker lifecycle code.
+ * Managed-image capabilities are registered by OpenShell compute-driver
+ * identity instead of inferred from the gateway launcher. Podman and a future
+ * MXC runtime can register this contract without inheriting Docker lifecycle
+ * code.
  */
 export type ManagedImageRuntimeProfileRegistry = Readonly<
   Record<string, ManagedImageRuntimeProfile>
@@ -40,8 +41,8 @@ const COMPLETE_MANAGED_IMAGE_V1_SUPPORT = {
 
 /**
  * PR #7747 established Docker as the first explicit OpenShell compute-driver
- * identity. PR #7744 adds further drivers by registering the same workload
- * contract here; selection remains independent from driver lifecycle.
+ * identity. Additional runtimes can register the same workload contract here;
+ * selection remains independent from driver lifecycle.
  */
 export const CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES = {
   docker: {
