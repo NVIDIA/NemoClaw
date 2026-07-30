@@ -397,7 +397,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
   });
 
-  it("uses the sandbox readiness budget after a longer gateway health wait (#7273)", () => {
+  it("uses the shared recreate-readiness budget after a longer gateway health wait", () => {
     mockOpenClawSandbox("unready-box", 600);
     setImmediateRecoveryPolling();
     const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
@@ -415,7 +415,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       stdout: "GATEWAY_PID=4242\n",
       stderr: "",
     }));
-    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => false);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (
+        _name: string,
+        _options?: { beforeProbe?: (timeoutMs: number) => boolean | null; timeoutSeconds?: number },
+      ) => false,
+    );
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
 
     const result = checkAndRecoverSandboxProcesses("unready-box", {
@@ -439,7 +444,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledWith(true);
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
       "unready-box",
-      expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 180 }),
+      expect.objectContaining({ beforeProbe: expect.any(Function) }),
+    );
+    expect(waitForRecreatedSandboxOpenShellReadyImpl.mock.calls[0]?.[1]).not.toHaveProperty(
+      "timeoutSeconds",
     );
     expect(runOpenshell).not.toHaveBeenCalled();
   });

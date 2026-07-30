@@ -10,10 +10,7 @@ export const finalizationHandlerDeps = {
   waitForSandboxControlPlaneReady(name: string): boolean {
     const processRecovery: typeof import("../actions/sandbox/process-recovery") =
       require("../actions/sandbox/process-recovery");
-    const { SANDBOX_READY_TIMEOUT_SECS }: typeof import("./env") = require("./env");
-    return processRecovery.waitForRecreatedSandboxOpenShellReady(name, {
-      timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
-    });
+    return processRecovery.waitForRecreatedSandboxOpenShellReady(name);
   },
   checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
     const processRecovery: typeof import("../actions/sandbox/process-recovery") =

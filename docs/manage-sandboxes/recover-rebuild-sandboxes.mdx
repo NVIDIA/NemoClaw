@@ -88,7 +88,8 @@ It commits only after the replacement container identity and state restoration p
 NemoClaw removes the temporary state backup after a successful restore or rollback.
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
-After a transactional recreation, NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
+After a transactional recreation, NemoClaw waits 120 seconds for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before the recovery command to change this budget.
 A definitive managed-health failure still stops immediately; if re-registration does not complete within the budget, the forward stays stopped.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
