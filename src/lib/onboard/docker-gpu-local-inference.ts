@@ -385,7 +385,7 @@ export type GpuSandboxAfterReadyOptions = {
   verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
   verifyGpuOrExit?: (
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
-  ) => SandboxGpuProofResult;
+  ) => Promise<SandboxGpuProofResult>;
   reportGpuProofFailure?: boolean;
   selectedMode: () => DockerGpuPatchMode | null;
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
@@ -401,28 +401,28 @@ export type GpuSandboxAfterReadyOptions = {
  * ~12k-line onboard.ts entrypoint per the codebase-growth guardrail). Runs the
  * direct GPU proof, then — only when the Docker GPU patch is active for a local
  * inference provider — gates on local inference reachability from the sandbox
- * runtime (#4509). Exits the process with actionable output if either proof
- * fails.
+ * runtime (#4509). Throws with actionable output if either proof fails so the
+ * caller can complete rollback before selecting a terminal exit status.
  */
-export function verifyGpuSandboxAfterReady(
+export async function verifyGpuSandboxAfterReady(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
   options: GpuSandboxAfterReadyOptions,
-): void {
-  verifyGpuSandboxAccessAfterReady(config, options);
+): Promise<void> {
+  await verifyGpuSandboxAccessAfterReady(config, options);
   verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
 }
 
-export function verifyGpuSandboxAccessAfterReady(
+export async function verifyGpuSandboxAccessAfterReady(
   config: DockerGpuLocalInferenceConfig,
   options: GpuSandboxAfterReadyOptions,
-): SandboxGpuProofResult {
+): Promise<SandboxGpuProofResult> {
   try {
     // Capture the CUDA-usability proof result and write it back onto the shared
     // config so onboarding can persist it to the registry and `status` can
     // report proven usability rather than mere configuration (#4231).
     const proof = options.verifyGpuOrExit
-      ? options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
+      ? await options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
       : options.verifyDirectSandboxGpu(options.sandboxName);
     config.sandboxGpuProof = proof;
     return proof;
@@ -469,6 +469,8 @@ export function verifyGpuSandboxLocalInferenceAfterReady(
       verification,
       options.logError ?? ((message) => console.error(message)),
     );
-    process.exit(1);
+    throw new Error(
+      `GPU sandbox local inference reachability failed for ${verification.endpoint}.`,
+    );
   }
 }

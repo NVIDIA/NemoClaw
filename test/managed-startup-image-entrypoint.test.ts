@@ -60,6 +60,38 @@ function runHoldWithFakeIdentity(identity: FakeIdentity, args: readonly string[]
 }
 
 describe("managed startup image hold", () => {
+  it("uses the image-owned absolute Bash interpreter even with an attacker PATH", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-hold-path-"));
+    try {
+      const attackerTrace = path.join(directory, "attacker-trace");
+      executable(
+        path.join(directory, "bash"),
+        `#!/bin/sh\nprintf 'attacker bash ran\\n' >${JSON.stringify(attackerTrace)}\n`,
+      );
+      const result = spawnSync(
+        HOLD,
+        [
+          "--agent",
+          "unknown",
+          "--profile-fingerprint",
+          "a".repeat(64),
+          "--bootstrap-identity",
+          "b".repeat(64),
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, PATH: directory },
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(fs.existsSync(attackerTrace)).toBe(false);
+      expect(fs.readFileSync(HOLD, "utf8").startsWith("#!/bin/bash\n")).toBe(true);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     "openclaw",
     "hermes",
@@ -109,6 +141,7 @@ describe("managed startup image hold", () => {
       fs.writeFileSync(script, source, { mode: 0o755 });
       fs.chmodSync(script, 0o755);
       const fingerprint = "a".repeat(64);
+      const bootstrapIdentity = "b".repeat(64);
 
       execFileSync(
         script,
@@ -117,9 +150,8 @@ describe("managed startup image hold", () => {
           agent,
           "--profile-fingerprint",
           fingerprint,
-          "/bin/sh",
-          "-c",
-          "exec tail -f /dev/null",
+          "--bootstrap-identity",
+          bootstrapIdentity,
         ],
         {
           env: {
@@ -134,7 +166,7 @@ describe("managed startup image hold", () => {
 
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
         `node:${runtime} --wait-for-completion --agent ${agent} --profile-fingerprint ${fingerprint}`,
-        "start:1:unset:unset:/bin/sh -c exec tail -f /dev/null",
+        "start:1:unset:unset:",
       ]);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -156,6 +188,8 @@ describe("managed startup image hold", () => {
       "openclaw",
       "--profile-fingerprint",
       "a".repeat(64),
+      "--bootstrap-identity",
+      "b".repeat(64),
     ]);
     expect(result.status).not.toBe(0);
     expect(String(result.stderr ?? "")).toContain("must run as the sandbox account");
@@ -164,9 +198,32 @@ describe("managed startup image hold", () => {
   it("rejects unsupported agents before invoking the runtime", () => {
     const result = runHoldWithFakeIdentity(
       { currentUid: 1000, currentGid: 1000, sandboxUid: 1000, sandboxGid: 1000 },
-      ["--agent", "unknown", "--profile-fingerprint", "a".repeat(64)],
+      [
+        "--agent",
+        "unknown",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "b".repeat(64),
+      ],
     );
     expect(result.status).not.toBe(0);
     expect(String(result.stderr ?? "")).toContain("agent is unsupported");
+  });
+
+  it("rejects a missing or malformed one-time bootstrap identity", () => {
+    const result = runHoldWithFakeIdentity(
+      { currentUid: 1000, currentGid: 1000, sandboxUid: 1000, sandboxGid: 1000 },
+      [
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "not-an-identity",
+      ],
+    );
+    expect(result.status).not.toBe(0);
+    expect(String(result.stderr ?? "")).toContain("bootstrap identity");
   });
 });

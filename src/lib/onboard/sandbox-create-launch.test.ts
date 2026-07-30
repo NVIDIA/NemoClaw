@@ -233,6 +233,14 @@ describe("prepareSandboxCreateLaunch", () => {
       agentName,
       "--profile-fingerprint",
       managed.managedStartupRootApplyRequest?.profileFingerprint,
+      "--bootstrap-identity",
+      managed.managedBootstrapIdentity,
+    ]);
+    expect(managed.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
+    expect(managed.intendedSandboxStartupCommand).toEqual([
+      "env",
+      ...managed.envArgs,
+      "nemoclaw-start",
     ]);
     expect(managed.createArgv.join("\n")).not.toContain(encodedProfile);
   });

@@ -7,6 +7,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  MANAGED_BOOTSTRAP_COMPLETION_FILE,
+  MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
+  MANAGED_BOOTSTRAP_REQUEST_FILE,
+  parseManagedBootstrapEnvelope,
+  parseManagedBootstrapImageCompletion,
+  serializeManagedBootstrapImageCompletion,
+} from "../managed-bootstrap/envelope";
+import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
   mapManagedStartupProfileToAgentEnvironment,
@@ -31,6 +39,7 @@ import {
 import {
   beginManagedStartupSharedStateTransaction,
   commitManagedStartupSharedStateTransaction,
+  getManagedStartupSharedStateTransactionStatus,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   rollbackManagedStartupSharedStateTransaction,
 } from "./shared-state-transaction";
@@ -1122,15 +1131,23 @@ function completionAlreadyPublished(request: ManagedStartupRootApplyRequest): bo
 
 export async function applyManagedStartupRootRequest(
   request: ManagedStartupRootApplyRequest,
+  options: { readonly bootstrapIdentity?: string | null } = {},
 ): Promise<ManagedStartupRootApplyResult> {
   requireRoot();
   if (completionAlreadyPublished(request)) {
+    const transactionPending = options.bootstrapIdentity
+      ? getManagedStartupSharedStateTransactionStatus({
+          agent: request.agent,
+          profileFingerprint: request.profileFingerprint,
+          bootstrapIdentity: options.bootstrapIdentity,
+        }) === "pending"
+      : false;
     return {
       agent: request.agent,
       adapterApplied: false,
       fingerprint: request.profileFingerprint,
       runtimeEnvironmentFile: MANAGED_STARTUP_RUNTIME_ENV_FILE,
-      transactionPending: false,
+      transactionPending,
     };
   }
   const profile = decodeManagedStartupProfile(request.encodedProfile);
@@ -1141,7 +1158,9 @@ export async function applyManagedStartupRootRequest(
     fail("root application request identity does not match its profile");
   }
   ensureRootOwnedDirectory(ROOT_STATE_PARENT);
-  beginManagedStartupSharedStateTransaction(profile);
+  beginManagedStartupSharedStateTransaction(profile, {
+    bootstrapIdentity: options.bootstrapIdentity ?? null,
+  });
   const result = await applyManagedStartupImageProfile(request.agent, {
     HOME: "/root",
     PATH: FIXED_PATH,
@@ -1243,7 +1262,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--apply-bootstrap-file|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1255,6 +1274,76 @@ function readCliFingerprint(argv: readonly string[]): string {
     fail("managed startup profile fingerprint argument is missing");
   }
   return argv[index + 1] as string;
+}
+
+function readCliBootstrapIdentity(argv: readonly string[]): string {
+  const index = argv.indexOf("--bootstrap-identity");
+  if (index < 0 || index + 1 >= argv.length || !SHA256_RE.test(String(argv[index + 1] ?? ""))) {
+    fail("managed bootstrap identity argument is missing or invalid");
+  }
+  return argv[index + 1] as string;
+}
+
+function consumeManagedBootstrapEnvelope(expected: {
+  readonly agent: ManagedStartupAgent;
+  readonly fingerprint: string;
+  readonly bootstrapIdentity: string;
+}): ManagedStartupRootApplyRequest {
+  requireRoot();
+  const { bytes, stat } = readStableRegularFileSnapshot(
+    MANAGED_BOOTSTRAP_REQUEST_FILE,
+    MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
+  );
+  if (
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o400
+  ) {
+    fail("managed bootstrap envelope must be root:root mode 0400 with one link");
+  }
+  const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
+  if (
+    envelope.bootstrapIdentity !== expected.bootstrapIdentity ||
+    envelope.rootApplyRequest.agent !== expected.agent ||
+    envelope.rootApplyRequest.profileFingerprint !== expected.fingerprint
+  ) {
+    fail("managed bootstrap envelope identity does not match the replacement");
+  }
+  fs.unlinkSync(MANAGED_BOOTSTRAP_REQUEST_FILE);
+  return envelope.rootApplyRequest;
+}
+
+export function verifyManagedBootstrapImageCompletion(
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly fingerprint: string;
+    readonly bootstrapIdentity: string;
+  },
+  completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
+): void {
+  requireRoot();
+  const { bytes, stat } = readStableRegularFileSnapshot(
+    completionFile,
+    MAX_MANAGED_STARTUP_COMPLETION_BYTES,
+  );
+  if (
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o444
+  ) {
+    fail("managed bootstrap completion must be root:root mode 0444 with one link");
+  }
+  const completion = parseManagedBootstrapImageCompletion(bytes.toString("utf8"));
+  if (
+    completion.agent !== expected.agent ||
+    completion.profileFingerprint !== expected.fingerprint ||
+    completion.bootstrapIdentity !== expected.bootstrapIdentity
+  ) {
+    fail("managed bootstrap completion identity does not match the replacement");
+  }
+  verifyManagedStartupImageCompletion(expected.agent, expected.fingerprint);
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
@@ -1277,6 +1366,49 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       result.transactionPending
         ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
         : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
+    );
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--apply-bootstrap-file") {
+    const expectedAgent = exactAgent(readCliAgent(argv, 7));
+    const expectedFingerprint = readCliFingerprint(argv);
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    const request = consumeManagedBootstrapEnvelope({
+      agent: expectedAgent,
+      fingerprint: expectedFingerprint,
+      bootstrapIdentity,
+    });
+    const result = await applyManagedStartupRootRequest(request, {
+      bootstrapIdentity,
+    });
+    atomicWriteRootFile(
+      MANAGED_BOOTSTRAP_COMPLETION_FILE,
+      serializeManagedBootstrapImageCompletion({
+        agent: result.agent,
+        bootstrapIdentity,
+        profileFingerprint: result.fingerprint,
+        transactionPending: result.transactionPending,
+      }),
+      0o444,
+    );
+    console.log(
+      result.transactionPending
+        ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
+        : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
+    );
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--verify-bootstrap-completion") {
+    const expectedAgent = exactAgent(readCliAgent(argv, 7));
+    const expectedFingerprint = readCliFingerprint(argv);
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    verifyManagedBootstrapImageCompletion({
+      agent: expectedAgent,
+      fingerprint: expectedFingerprint,
+      bootstrapIdentity,
+    });
+    console.log(
+      `[managed-startup] verified ${expectedAgent} profile ${expectedFingerprint} bootstrap ${bootstrapIdentity}`,
     );
     return;
   }
@@ -1303,27 +1435,48 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (
-    argv.length === 4 &&
+    argv.length === 6 &&
     argv[0] === "--rollback-shared-state-transaction" &&
-    argv[3] === "--read-only-receipt"
+    argv[5] === "--read-only-receipt"
   ) {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 4));
+    const agent = exactAgent(readCliAgent(argv, 6));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
     const rolledBack = rollbackManagedStartupSharedStateTransaction(agent, {
       transactionDirectory: MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
       readOnlyReceipt: true,
+      bootstrapIdentity,
     });
     if (!rolledBack) fail("read-only shared-state rollback receipt is missing");
     console.log(`[managed-startup] verified and restored ${agent} shared state`);
     return;
   }
-  if (argv.length === 3 && argv[0] === "--commit-shared-state-transaction") {
+  if (argv.length === 5 && argv[0] === "--commit-shared-state-transaction") {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 3));
-    if (!commitManagedStartupSharedStateTransaction(agent)) {
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    if (
+      !commitManagedStartupSharedStateTransaction(agent, {
+        bootstrapIdentity,
+      })
+    ) {
       fail("managed startup transaction is missing at commit");
     }
     console.log(`[managed-startup] committed ${agent} shared state`);
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--shared-state-transaction-status") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 7));
+    const profileFingerprint = readCliFingerprint(argv);
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    process.stdout.write(
+      `${getManagedStartupSharedStateTransactionStatus({
+        agent,
+        profileFingerprint,
+        bootstrapIdentity,
+      })}\n`,
+    );
     return;
   }
   const result = await applyManagedStartupImageProfile(readCliAgent(argv));

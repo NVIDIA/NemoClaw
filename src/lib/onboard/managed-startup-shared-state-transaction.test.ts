@@ -10,9 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { ManagedStartupAgent, ManagedStartupProfile } from "./managed-startup/profile";
+import { fingerprintManagedStartupProfile } from "./managed-startup/profile";
 import {
   beginManagedStartupSharedStateTransaction,
   commitManagedStartupSharedStateTransaction,
+  getManagedStartupSharedStateTransactionStatus,
   type ManagedStartupSharedTransactionOptions,
   rollbackManagedStartupSharedStateTransaction,
 } from "./managed-startup/shared-state-transaction";
@@ -260,6 +262,54 @@ describe("managed startup shared-state transaction", () => {
       ),
     ).toThrow(/belongs to a different profile/u);
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
+  });
+
+  it("validates a directly mounted copied receipt under an unchanged 0755 image parent", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
+    const profile = managedStartupE2eProfile("openclaw");
+    const bootstrapIdentity = "b".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    beginManagedStartupSharedStateTransaction(profile, boundOptions);
+
+    const imageParent = path.join(temporaryRoot, "image-var-lib-nemoclaw");
+    const copiedReceipt = path.join(imageParent, "managed-startup-shared-state-transaction-v1");
+    fs.mkdirSync(imageParent, { mode: 0o755 });
+    fs.chmodSync(imageParent, 0o755);
+    fs.cpSync(transactionDirectory, copiedReceipt, {
+      recursive: true,
+      preserveTimestamps: true,
+    });
+
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        {
+          ...boundOptions,
+          transactionDirectory: copiedReceipt,
+        },
+      ),
+    ).toBe("pending");
+
+    fs.chmodSync(imageParent, 0o700);
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        {
+          ...boundOptions,
+          transactionDirectory: copiedReceipt,
+        },
+      ),
+    ).toThrow(/must be .* mode 755/u);
   });
 
   it("rejects planted target and ancestor symlinks before creating a receipt", () => {

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
@@ -24,12 +24,15 @@ if [ "$(id -u)" -ne "$_nemoclaw_sandbox_uid" ] \
   || [ "$(id -g)" -ne "$_nemoclaw_sandbox_gid" ]; then
   fail "must run as the sandbox account"
 fi
-[ "$#" -ge 4 ] || fail "expected --agent <agent> --profile-fingerprint <sha256>"
+[ "$#" -eq 6 ] \
+  || fail "expected --agent <agent> --profile-fingerprint <sha256> --bootstrap-identity <hex>"
 [ "$1" = "--agent" ] || fail "agent argument is missing"
 _nemoclaw_agent="$2"
 [ "$3" = "--profile-fingerprint" ] || fail "profile fingerprint argument is missing"
 _nemoclaw_fingerprint="$4"
-shift 4
+[ "$5" = "--bootstrap-identity" ] || fail "bootstrap identity argument is missing"
+_nemoclaw_bootstrap_identity="$6"
+shift 6
 
 case "$_nemoclaw_agent" in
   openclaw | hermes | langchain-deepagents-code) ;;
@@ -40,6 +43,11 @@ case "$_nemoclaw_fingerprint" in
 esac
 [ "${#_nemoclaw_fingerprint}" -eq 64 ] \
   || fail "profile fingerprint must be lowercase SHA-256"
+case "$_nemoclaw_bootstrap_identity" in
+  *[!0-9a-f]* | "") fail "bootstrap identity must be lowercase hex" ;;
+esac
+[ "${#_nemoclaw_bootstrap_identity}" -eq 64 ] \
+  || fail "bootstrap identity must encode 32 bytes"
 
 _nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
 _nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
@@ -59,7 +67,8 @@ fi
 # shellcheck disable=SC1090 # fixed root-owned path authenticated by exact digest above
 . "$_nemoclaw_runtime_env"
 unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64
-unset _nemoclaw_agent _nemoclaw_fingerprint _nemoclaw_runtime _nemoclaw_runtime_env
+unset _nemoclaw_agent _nemoclaw_fingerprint _nemoclaw_bootstrap_identity
+unset _nemoclaw_runtime _nemoclaw_runtime_env
 unset _nemoclaw_sandbox_uid _nemoclaw_sandbox_gid
 unset -f fail
 exec /usr/local/bin/nemoclaw-start "$@"

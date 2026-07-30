@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import {
   dockerRm as defaultDockerRm,
   dockerStop as defaultDockerStop,
@@ -30,6 +32,16 @@ const NEUTRALIZED_PROCESS_INJECTION_ENV = [
   "BASH_ENV=",
   "--env",
   "ENV=",
+  "--env",
+  "LD_PRELOAD=",
+  "--env",
+  "LD_AUDIT=",
+  "--env",
+  "LD_LIBRARY_PATH=",
+  "--env",
+  "SHELLOPTS=",
+  "--env",
+  "PS4=",
 ] as const;
 
 export interface DockerManagedStartupSharedStateOutcome {
@@ -40,6 +52,84 @@ export interface DockerManagedStartupSharedStateOutcome {
   readonly supervisorReady: boolean;
   /** Original commit failure after a successful shared-state rollback. */
   readonly failure: Error | null;
+}
+
+export function probeDockerManagedStartupSharedState(
+  input: {
+    readonly transaction: DockerManagedStartupTransaction;
+    readonly profileFingerprint: string;
+  },
+  deps: DockerGpuPatchDeps = {},
+): "none" | "pending" {
+  const transaction = input.transaction;
+  if (!transaction.bootstrapIdentity) {
+    throw new Error("Managed bootstrap shared-state status identity is missing.");
+  }
+  const receiptPath = copyManagedStartupReceipt(transaction, deps, true);
+  if (!receiptPath) return "none";
+  let verified = false;
+  try {
+    verifyCopiedManagedStartupReceipt(transaction, input.profileFingerprint, receiptPath, deps);
+    verified = true;
+    return "pending";
+  } finally {
+    if (verified) cleanupReceiptBestEffort(receiptPath);
+  }
+}
+
+function verifyCopiedManagedStartupReceipt(
+  transaction: DockerManagedStartupTransaction,
+  profileFingerprint: string,
+  receiptPath: string,
+  deps: DockerGpuPatchDeps,
+): void {
+  if (!transaction.bootstrapIdentity || !/^[a-f0-9]{64}$/u.test(profileFingerprint)) {
+    throw new Error("Managed bootstrap copied-receipt identity is incomplete.");
+  }
+  const dockerRun = deps.dockerRun ?? defaultDockerRun;
+  const result = dockerRun(
+    [
+      "run",
+      "--rm",
+      "--pull",
+      "never",
+      "--network",
+      "none",
+      "--read-only",
+      "--user",
+      "0:0",
+      "--security-opt",
+      "no-new-privileges",
+      "--cap-drop",
+      "ALL",
+      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      "--mount",
+      transactionReceiptMount(receiptPath),
+      "--entrypoint",
+      "/usr/local/bin/node",
+      transaction.image,
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--shared-state-transaction-status",
+      "--agent",
+      transaction.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      transaction.bootstrapIdentity,
+    ],
+    DOCKER_MUTATION_OPTIONS,
+  );
+  if (!hasZeroDockerExitStatus(result)) {
+    throw new Error(
+      `Immutable managed-startup helper could not verify shared-state status: ${commandDetail(result)}. ` +
+        `Protected receipt retained at ${receiptPath}`,
+    );
+  }
+  if (String(result.stdout ?? "").trim() !== "pending") {
+    throw new Error(
+      `Immutable managed-startup helper returned an invalid copied transaction status. Protected receipt retained at ${receiptPath}`,
+    );
+  }
 }
 
 function commandDetail(result: {
@@ -66,12 +156,20 @@ function cleanupReceiptBestEffort(receiptPath: string): void {
   }
 }
 
-function transactionCommand(action: "commit" | "rollback", agent: string): string[] {
+function transactionCommand(
+  action: "rollback",
+  transaction: DockerManagedStartupTransaction,
+): string[] {
+  if (!transaction.bootstrapIdentity) {
+    throw new Error("Managed bootstrap shared-state transaction identity is missing.");
+  }
   return [
     MANAGED_STARTUP_RUNTIME_EXECUTABLE,
     `--${action}-shared-state-transaction`,
     "--agent",
-    agent,
+    transaction.agent,
+    "--bootstrap-identity",
+    transaction.bootstrapIdentity,
   ];
 }
 
@@ -97,22 +195,59 @@ function quiesceManagedStartupContainer(
   }
 }
 
+function isExactMissingReceiptCopy(
+  transaction: DockerManagedStartupTransaction,
+  result: {
+    readonly stderr?: string | Buffer | null;
+    readonly stdout?: string | Buffer | null;
+    readonly error?: Error | null;
+  },
+): boolean {
+  const detail = commandDetail(result);
+  const escapedPath = MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY.replace(
+    /[.*+?^${}()|[\]\\]/gu,
+    "\\$&",
+  );
+  const escapedContainer = transaction.containerId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return [
+    new RegExp(
+      `^(?:Error response from daemon: )?Could not find the file ${escapedPath} in container ${escapedContainer}$`,
+      "u",
+    ),
+    new RegExp(`^(?:lstat|stat) ${escapedPath}: no such file or directory$`, "u"),
+  ].some((pattern) => pattern.test(detail));
+}
+
+function transactionReceiptMount(receiptPath: string): string {
+  return `type=bind,src=${receiptPath},dst=${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY},readonly`;
+}
+
 function copyManagedStartupReceipt(
   transaction: DockerManagedStartupTransaction,
   deps: DockerGpuPatchDeps,
-): string {
+  allowAbsent = false,
+): string | null {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
-  const receiptPath = secureTempFile(RECEIPT_TEMP_PREFIX);
+  const tempSeed = secureTempFile(RECEIPT_TEMP_PREFIX);
+  const receiptPath = path.join(
+    path.dirname(tempSeed),
+    path.basename(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY),
+  );
   try {
     const copy = dockerRun(
       [
         "cp",
+        "-a",
         `${transaction.containerId}:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`,
         receiptPath,
       ],
       DOCKER_MUTATION_OPTIONS,
     );
     if (!hasZeroDockerExitStatus(copy)) {
+      if (allowAbsent && isExactMissingReceiptCopy(transaction, copy)) {
+        cleanupReceiptBestEffort(receiptPath);
+        return null;
+      }
       throw new Error(
         `Could not copy the managed-startup rollback receipt from the failed container: ${commandDetail(copy)}`,
       );
@@ -164,7 +299,7 @@ function rollbackManagedStartupSharedState(
         "--entrypoint",
         "/usr/local/bin/node",
         transaction.image,
-        ...transactionCommand("rollback", transaction.agent),
+        ...transactionCommand("rollback", transaction),
         "--read-only-receipt",
       ],
       DOCKER_MUTATION_OPTIONS,
@@ -214,14 +349,19 @@ export function finalizeDockerManagedStartupSharedState(
   if (!transaction) {
     return { supervisorReady: input.supervisorReady, failure: null };
   }
-  const dockerRun = deps.dockerRun ?? defaultDockerRun;
   if (input.supervisorReady) {
-    // Preserve a verified rollback source before commit deletes the
-    // container-local receipt. If Docker loses the exec acknowledgement after
-    // deletion, this copy still makes the cutover reversible.
+    // Preserve and validate an explicit writable-layer receipt before logical
+    // commit. The helper receives the copy read-only and does not delete it;
+    // this keeps rollback possible when Docker loses the helper acknowledgement.
+    // --volumes-from exposes shared mounts only; it cannot expose this
+    // container-local transaction directory to an immutable helper.
     let receiptPath: string;
     try {
-      receiptPath = copyManagedStartupReceipt(transaction, deps);
+      const copiedReceipt = copyManagedStartupReceipt(transaction, deps);
+      if (!copiedReceipt) {
+        throw new Error("Managed-startup pending receipt disappeared before commit.");
+      }
+      receiptPath = copiedReceipt;
     } catch (error) {
       try {
         quiesceManagedStartupContainer(transaction, deps);
@@ -234,28 +374,24 @@ export function finalizeDockerManagedStartupSharedState(
       }
       throw error;
     }
-    const commit = dockerRun(
-      [
-        "exec",
-        "--user",
-        "0:0",
-        ...NEUTRALIZED_PROCESS_INJECTION_ENV,
-        transaction.containerId,
-        "/usr/bin/env",
-        "-i",
-        "HOME=/root",
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "/usr/local/bin/node",
-        ...transactionCommand("commit", transaction.agent),
-      ],
-      DOCKER_MUTATION_OPTIONS,
-    );
-    if (hasZeroDockerExitStatus(commit)) {
+    let commitFailure: Error | null = null;
+    try {
+      if (!transaction.profileFingerprint) {
+        throw new Error("Managed bootstrap transaction profile fingerprint is missing.");
+      }
+      verifyCopiedManagedStartupReceipt(
+        transaction,
+        transaction.profileFingerprint,
+        receiptPath,
+        deps,
+      );
       cleanupReceiptBestEffort(receiptPath);
       return { supervisorReady: true, failure: null };
+    } catch (error) {
+      commitFailure = error instanceof Error ? error : new Error(String(error));
     }
     const failure = new Error(
-      `OpenShell supervisor reconnected, but managed shared-state commit failed: ${commandDetail(commit)}`,
+      `OpenShell supervisor reconnected, but managed shared-state logical commit validation failed: ${commitFailure.message}`,
     );
     quiesceManagedStartupContainer(transaction, deps);
     rollbackManagedStartupSharedState(transaction, receiptPath, deps);
@@ -264,7 +400,11 @@ export function finalizeDockerManagedStartupSharedState(
   }
 
   quiesceManagedStartupContainer(transaction, deps);
-  const receiptPath = copyManagedStartupReceipt(transaction, deps);
+  const receiptPath = copyManagedStartupReceipt(transaction, deps, true);
+  if (!receiptPath) {
+    if (!input.patchResult) removeFailedUnbackedContainer(transaction, deps);
+    return { supervisorReady: false, failure: null };
+  }
   rollbackManagedStartupSharedState(transaction, receiptPath, deps);
   if (!input.patchResult) removeFailedUnbackedContainer(transaction, deps);
   return { supervisorReady: false, failure: null };

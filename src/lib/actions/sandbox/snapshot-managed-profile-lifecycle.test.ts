@@ -114,16 +114,16 @@ function capturedManagedStartupRootApplyRequest(): {
   readonly encodedProfile: string;
   readonly profileFingerprint: string;
 } {
-  const options = f.createDockerGpuSandboxCreatePatchMock.mock.calls.at(-1)?.[0] as
+  const sequence = f.runManagedBootstrapSequenceMock.mock.calls.at(-1)?.[1] as
     | {
-        managedStartupRootApplyRequest?: {
+        request?: {
           agent: "openclaw" | "hermes" | "langchain-deepagents-code";
           encodedProfile: string;
           profileFingerprint: string;
         };
       }
     | undefined;
-  const request = options?.managedStartupRootApplyRequest;
+  const request = sequence?.request;
   expect(request).toBeDefined();
   return request!;
 }
@@ -275,6 +275,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       "langchain-deepagents-code",
       "--profile-fingerprint",
       rootApplyRequest.profileFingerprint,
+      "--bootstrap-identity",
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
     ]);
     expect(createArgs.join(" ")).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(createEnv?.NEMOCLAW_STARTUP_PROFILE_B64).toBeUndefined();
@@ -287,7 +289,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
   });
 
-  it("routes managed root-apply failures through snapshot clone cleanup", async () => {
+  it("routes managed bootstrap failures through snapshot clone cleanup", async () => {
     const built = managedOpenClawProfile();
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
     const source = {
@@ -326,39 +328,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     );
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.createDockerGpuSandboxCreatePatchMock.mockImplementation((rawOptions) => {
-      const options = rawOptions as {
-        overrides?: {
-          onPatchFailureExit?: (
-            sandboxName: string,
-            error: unknown,
-            deps: Record<string, unknown>,
-          ) => void;
-        };
-      };
-      return {
-        maybeApplyDuringCreate: vi.fn(),
-        createFailureMessage: vi.fn(() => null),
-        exitOnPatchError: vi.fn(),
-        rollbackManagedStartupAfterCreateFailure: vi.fn(),
-        ensureApplied: vi.fn(() =>
-          options.overrides?.onPatchFailureExit?.(
-            "beta",
-            new Error("managed root apply failed"),
-            {},
-          ),
-        ),
-        waitForSupervisorReconnectIfNeeded: vi.fn(),
-        commitAfterReady: vi.fn(),
-        selectedMode: vi.fn(() => null),
-        printReadinessFailureIfEnabled: vi.fn(),
-        verifyGpuOrExit: vi.fn(),
-      };
-    });
+    f.setManagedBootstrapSequenceFailure(new Error("managed bootstrap failed"));
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
-      "managed root apply failed",
+      "managed bootstrap failed",
     );
 
     expect(f.runOpenshellMock).toHaveBeenCalledWith(
@@ -830,6 +804,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       "openclaw",
       "--profile-fingerprint",
       rootApplyRequest.profileFingerprint,
+      "--bootstrap-identity",
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
     ]);
     expect(startupArgs.join(" ")).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     const encodedProfile = rootApplyRequest.encodedProfile;
