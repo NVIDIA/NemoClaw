@@ -389,6 +389,35 @@ function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null):
   return lines.length === 1 && lines[0] === "SUPERVISOR_NOT_RUNNING";
 }
 
+export function waitForManagedGatewaySupervisor(
+  sandboxName: string,
+  options: {
+    intervalSeconds?: number;
+    maxAttempts?: number;
+    requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
+    sleepImpl?: (seconds: number) => void;
+  } = {},
+): boolean {
+  const requestGatewaySupervisorAction =
+    options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
+  const sleep = options.sleepImpl ?? sleepSeconds;
+  const intervalSeconds = options.intervalSeconds ?? 3;
+  const maxAttempts = options.maxAttempts ?? 11;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
+    if (hasGatewayRecoveryMarker(result)) return true;
+    if (
+      !isExactlyMissingManagedSupervisor(result) &&
+      !isExactlyRetryableManagedRecoveryFailure(result)
+    ) {
+      return false;
+    }
+    if (attempt < maxAttempts) sleep(intervalSeconds);
+  }
+  return false;
+}
+
 export function confirmRecoveredSandboxGatewayManaged(
   sandboxName: string,
   options: {

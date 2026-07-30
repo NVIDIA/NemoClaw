@@ -252,6 +252,34 @@ describe("restartRestoredSandboxGateway", () => {
     expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("beta")).toBe(false);
   });
 
+  it("waits for a newly created clone supervisor before retrying restart (#7818)", () => {
+    const restartSandboxGateway = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false as const,
+        failureLayer: "supervisor not running" as const,
+        detail: "SUPERVISOR_NOT_RUNNING",
+      })
+      .mockReturnValueOnce({
+        ok: true as const,
+        restarted: true as const,
+        healthPassed: true as const,
+        forwardRecovered: true,
+      });
+    const checkAndRecoverSandboxProcesses = vi.fn();
+    const waitForManagedGatewaySupervisor = vi.fn(() => true);
+
+    restartRestoredSandboxGateway("beta", {
+      restartSandboxGateway,
+      checkAndRecoverSandboxProcesses,
+      waitForManagedGatewaySupervisor,
+    });
+
+    expect(waitForManagedGatewaySupervisor).toHaveBeenCalledWith("beta");
+    expect(restartSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
+  });
+
   it("preserves the supervisor classification when relaunch is not fully proven (#7818)", () => {
     const restartSandboxGateway = vi.fn(() => ({
       ok: false as const,
