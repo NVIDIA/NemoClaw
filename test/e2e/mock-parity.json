@@ -413,13 +413,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/sandbox-rebuild.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -470,13 +463,6 @@
     },
     {
       "live": "test/e2e/live/token-rotation.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/upgrade-stale-sandbox.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
