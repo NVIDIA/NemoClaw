@@ -33,6 +33,7 @@ COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
+COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
@@ -374,6 +375,53 @@ assert all(path.parent == runtime for path in (
 ))
 assert isinstance(home, Path)
 PY
+
+# NemoClaw installs its wrapper as `hermes` and moves the real entrypoint to
+# `hermes.real`, so every managed gateway command line carries that basename.
+# Hermes only accepts `hermes`/`hermes.exe` as the entry token, which defeats
+# both the PID-file liveness re-check and the process-table fallback, so
+# `hermes status` reports a running foreground gateway as stopped (#7804).
+ARG NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256=1720f557e57c4755b9de47eece2c9c8ad182e1196c40d2783f1768fc5a426681
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-gateway-process-identity.py hash mismatch (update NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256)" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/hermes/gateway/status.py \
+    && /opt/hermes/.venv/bin/python - <<'IDENTITYPY'
+from gateway.status import (
+    _gateway_command_subcommand,
+    looks_like_gateway_command_line,
+    looks_like_gateway_runtime_command_line,
+)
+
+renamed = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway run"
+upstream = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes gateway run"
+
+# The renamed entrypoint is now recognised on both detection paths.
+assert looks_like_gateway_command_line(renamed)
+assert looks_like_gateway_runtime_command_line(renamed)
+assert _gateway_command_subcommand(renamed) == "run"
+assert _gateway_command_subcommand(
+    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart"
+) == "restart"
+
+# The upstream name keeps working, and the subcommand grammar still gates the
+# match: sibling gateway subcommands and unrelated processes stay invisible.
+assert looks_like_gateway_command_line(upstream)
+assert not looks_like_gateway_command_line(
+    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway status"
+)
+assert not looks_like_gateway_command_line(
+    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real dashboard"
+)
+assert not looks_like_gateway_command_line("python -m tui_gateway run")
+assert not looks_like_gateway_command_line(
+    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.realish gateway run"
+)
+IDENTITYPY
 
 # Hermes v0.19.0 creates its writable cron execution-history database below
 # the high-risk directory that contains cron job definitions. When Shields up
