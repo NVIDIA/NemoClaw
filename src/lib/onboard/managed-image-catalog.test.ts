@@ -296,7 +296,7 @@ describe("managed image GHCR catalog", () => {
     ).rejects.toThrow(/GHCR manifest bytes do not match digest/);
   });
 
-  it("hard-stops an oversized chunked manifest before parsing or allocating beyond the cap", async () => {
+  it("rejects an oversized chunked manifest before parsing it or exceeding the response limit", async () => {
     const fixture = registryFixture("openclaw", { oversizedRootBody: true });
 
     await expect(
