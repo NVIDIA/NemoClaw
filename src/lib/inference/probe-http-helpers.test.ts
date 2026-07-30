@@ -76,7 +76,7 @@ describe("validation probe curl timing helpers", () => {
   });
 
   // Streaming probe carries its own short deadline so a stall can't hang onboard (#7792).
-  it("caps the streaming event probe max-time below the standard budget", () => {
+  it("caps the streaming event probe max-time below the standard budget (#7792)", () => {
     expect(getStreamingEventProbeCurlArgs({ isWsl: false })).toEqual([
       "--connect-timeout",
       "10",
@@ -92,7 +92,7 @@ describe("validation probe curl timing helpers", () => {
     ]);
   });
 
-  it("keeps the streaming event probe bounded even when the env raises the budget", () => {
+  it("keeps the streaming event probe bounded even when the env raises the budget (#7792)", () => {
     vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "300");
     expect(getStreamingEventProbeCurlArgs({ isWsl: false })).toEqual([
       "--connect-timeout",
