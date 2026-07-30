@@ -460,7 +460,10 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ quiet: true }),
+    );
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
       "openshell",
@@ -489,6 +492,30 @@ describe("connectSandbox flow", () => {
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+  it("probe-only mode reports the supported repair when relaunch is quarantined (#7801)", async () => {
+    const harness = createConnectHarness({
+      processCheck: { checked: true, wasRunning: false, recovered: false },
+    });
+    // Managed recovery runs quiet on this path, so the classified layer only
+    // reaches the operator through the callback the probe passes in.
+    harness.checkAndRecoverSpy.mockImplementation((_sandboxName: unknown, options: unknown) => {
+      (
+        options as { onRecoveryFailureLayer?: (layer: string) => void } | undefined
+      )?.onRecoveryFailureLayer?.("relaunch quarantined");
+      return { checked: true, wasRunning: false, recovered: false };
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("quarantined gateway relaunch");
+    expect(errorOutput).toContain("nemoclaw alpha rebuild --yes");
+    expect(errorOutput).not.toContain("Check /tmp/gateway.log inside the sandbox for details.");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("probe-only mode exits when primary dashboard/API forward recovery fails", async () => {
     const harness = createConnectHarness({
       processCheck: {
