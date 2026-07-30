@@ -179,6 +179,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
         /opt/venv/bin/python3 -I -c 'from deepagents_code import _nemoclaw_managed as managed; managed.validate_managed_validation_profile_file()'; \
     fi \
     && /opt/venv/bin/python3 -I -c 'from deepagents_code import _nemoclaw_managed as managed; managed.initialize_managed_validation_invocation_budget()' \
+    && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && test "$empty_prompt_status" -eq 2 \

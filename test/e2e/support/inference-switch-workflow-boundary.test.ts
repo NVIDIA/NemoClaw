@@ -14,7 +14,7 @@ import {
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 
 describe("inference switch workflow boundary", () => {
-  it("accepts hosted and Anthropic-compatible modes for both agents", () => {
+  it("accepts the canonical Anthropic-compatible mode for both agents", () => {
     expect(validateInferenceSwitchWorkflowBoundary()).toEqual([]);
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
@@ -23,7 +23,7 @@ describe("inference switch workflow boundary", () => {
     const missingMode = readInferenceSwitchWorkflow();
     missingMode.jobs["hermes-inference-switch"].strategy?.matrix?.include?.pop();
     expect(validateInferenceSwitchWorkflow(missingMode)).toContain(
-      "hermes-inference-switch must run the exact hosted and Anthropic-compatible modes",
+      "hermes-inference-switch must run the canonical Anthropic-compatible mode",
     );
 
     const failFast = readInferenceSwitchWorkflow();
@@ -71,32 +71,32 @@ describe("inference switch workflow boundary", () => {
     );
   });
 
-  it("uses a healthy hosted switch target and scopes its credentials to hosted mode", () => {
+  it("pins the local Anthropic switch target without hosted credentials", () => {
     const wrongTarget = readInferenceSwitchWorkflow();
-    const hosted = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(
-      (entry) => entry.mode === "hosted",
+    const anthropic = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(
+      (entry) => entry.mode === "anthropic",
     );
-    hosted!.switch_model = "nvidia/nvidia/nemotron-3-super-v3";
+    anthropic!.switch_model = "nvidia/nvidia/nemotron-3-super-v3";
     expect(validateInferenceSwitchWorkflow(wrongTarget)).toContain(
-      "hermes-inference-switch must run the exact hosted and Anthropic-compatible modes",
+      "hermes-inference-switch must run the canonical Anthropic-compatible mode",
     );
 
     const unscopedSecret = readInferenceSwitchWorkflow();
     const runStep = unscopedSecret.jobs["openclaw-inference-switch"].steps!.find(
       (step) => step.name === "Run OpenClaw inference switch live test",
     )!;
-    runStep.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    runStep.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
     expect(validateInferenceSwitchWorkflow(unscopedSecret)).toContain(
-      "openclaw-inference-switch must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step",
+      "openclaw-inference-switch must not expose NVIDIA_INFERENCE_API_KEY in its Anthropic-compatible mode",
     );
 
     const unscopedPublicKey = readInferenceSwitchWorkflow();
     const publicRunStep = unscopedPublicKey.jobs["hermes-inference-switch"].steps!.find(
       (step) => step.name === "Run Hermes inference switch live Vitest test",
     )!;
-    publicRunStep.env!.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    publicRunStep.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
     expect(validateInferenceSwitchWorkflow(unscopedPublicKey)).toContain(
-      "hermes-inference-switch must expose NVIDIA_API_KEY only to its hosted run step",
+      "hermes-inference-switch must not expose NVIDIA_API_KEY in its Anthropic-compatible mode",
     );
 
     const publicKey = readInferenceSwitchWorkflow();
@@ -130,7 +130,7 @@ describe("inference switch workflow boundary", () => {
     try {
       writeFileSync(workflowPath, YAML.stringify(workflow));
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "openclaw-inference-switch must run the exact hosted and Anthropic-compatible modes",
+        "openclaw-inference-switch must run the canonical Anthropic-compatible mode",
       );
     } finally {
       rmSync(directory, { force: true, recursive: true });

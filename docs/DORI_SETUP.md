@@ -62,7 +62,7 @@ When DORI MCP is unavailable and `dori` is missing, require an existing `uv` com
 - If `uv` exists, run:
 
   ```bash
-  uv tool install --python 3.14+freethreaded 'dori==0.10.0' \
+  uv tool install --python 3.14+freethreaded 'dori==0.9.0' \
     --index-url https://gitlab-master.nvidia.com/api/v4/projects/226768/packages/pypi/simple
   ```
 
