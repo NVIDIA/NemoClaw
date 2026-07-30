@@ -1087,7 +1087,7 @@ async function run(input: Inputs): Promise<void> {
       assertVerifiedProtectedGpuProof(gpuConfig.sandboxGpuProof ?? null);
       assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       assertProtectedAgentTurn(onboard, input, launch.sandboxEnv);
-      await flow.dockerGpuCreatePatch.commitAfterReady();
+      await flow.runtimePatch.commitAfterReady();
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
     }
     process.stdout.write(

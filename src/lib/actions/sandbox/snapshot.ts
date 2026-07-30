@@ -52,13 +52,10 @@ import {
 } from "./sandbox-gateway-routing";
 import {
   assertSandboxCreateArgvWithinTransportLimit,
-  buildDockerGpuMode,
   captureOpenshell,
   cleanupHermesSandboxProviders,
-  createDockerGpuSandboxCreatePatch,
   createManagedBootstrapIdentity,
   createManagedStartupRootApplyRequest,
-  type DockerGpuSandboxCreatePatch,
   dockerCapture,
   findAvailableDashboardPort,
   formatSnapshotBaselineExclusionSummary,
@@ -72,9 +69,10 @@ import {
   HERMES_SANDBOX_PROVIDER_SUFFIXES,
   type HermesToolGatewayCloneBroker,
   isValidForwardPort,
-  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   MANAGED_STARTUP_CA_ENV,
   MANAGED_STARTUP_PROFILE_ENV,
+  type ManagedBootstrapRuntimeCreateLifecycle,
+  type ManagedBootstrapRuntimePatch,
   type ManagedBootstrapRuntimeProvider,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
@@ -86,7 +84,6 @@ import {
   resolveOpenShellSandboxId,
   resolvePersistedManagedBootstrapRuntimeProvider,
   resolveSandboxGatewayName,
-  runManagedBootstrapSequence,
   runOpenshell,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
@@ -180,6 +177,19 @@ function resolveSrcPodImage(
   srcEntry?: SandboxEntry | { name: string },
 ): string | null {
   const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
+  const registeredWorkload = (
+    srcEntry as
+      | {
+          workload?: { kind?: string; reference?: string } | null;
+        }
+      | undefined
+  )?.workload;
+  if (
+    registeredWorkload?.kind === "managed-image" &&
+    registeredWorkload.reference === registeredImage
+  ) {
+    return registeredImage ?? null;
+  }
   const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
     ?.openshellDriver;
   if (usesGatewayMetadataProbe(registeredDriver)) {
@@ -597,32 +607,62 @@ function prepareSnapshotCloneLaunch(
   };
 }
 
-function createManagedSnapshotStartupPatch(
+function createManagedSnapshotLifecycle(
   dstName: string,
+  fromImage: string,
   launch: PreparedSnapshotCloneLaunch,
-): DockerGpuSandboxCreatePatch | null {
+): ManagedBootstrapRuntimeCreateLifecycle | null {
   const managedClone = launch.managedClone;
   if (!managedClone) return null;
-  if (!launch.managedBootstrapRuntimeProvider) {
+  const runtimeProvider = launch.managedBootstrapRuntimeProvider;
+  const bootstrapIdentity = launch.managedBootstrapIdentity;
+  if (!runtimeProvider || !bootstrapIdentity) {
     throw new Error("managed snapshot clone has no runtime provider");
   }
-  return createDockerGpuSandboxCreatePatch({
-    route: "native",
-    externalRecreation: true,
-    sandboxName: dstName,
-    openshellSandboxCommand: launch.startupCommand,
-    timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
-    backend: "generic",
-    deps: {
-      dockerCapture,
-      runOpenshell,
-      runCaptureOpenshell: (args, options) =>
-        captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "",
+  const separator = fromImage.lastIndexOf("@");
+  const repository = separator > 0 ? fromImage.slice(0, separator) : "";
+  const manifestDigest = separator > 0 ? fromImage.slice(separator + 1) : "";
+  if (!repository || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)) {
+    throw new Error("managed snapshot clone image is not one immutable digest reference");
+  }
+  const captureText = (args: string[], options?: Record<string, unknown>) =>
+    captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
+  return runtimeProvider.createCreateLifecycle({
+    bootstrapIdentity,
+    request: managedClone.rootApplyRequest,
+    image: {
+      repository,
+      manifestDigest: manifestDigest as `sha256:${string}`,
     },
-    overrides: {
-      onPatchFailureExit: (_sandboxName, error) => {
-        throw error instanceof Error ? error : new Error(String(error));
-      },
+    agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    intendedWorkloadArgv: launch.intendedStartupCommand,
+    expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+    launchArgv: [launch.command, ...launch.commandArgs],
+    heldWorkloadArgv: launch.startupCommand,
+    route: "native",
+    persistStartupCommand: true,
+    sandboxName: dstName,
+    sandboxGpuConfig: {
+      mode: "0",
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      sandboxGpuDevice: null,
+      errors: [],
+    },
+    requiredLimits: [],
+    timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
+    onPatchFailure: (error) => {
+      throw error instanceof Error ? error : new Error(String(error));
+    },
+    network: {
+      inferenceProvider: "",
+      dockerDriverGateway: false,
+      gatewayPort: 0,
+    },
+    dependencies: {
+      runOpenshell,
+      runCaptureOpenshell: captureText,
     },
   });
 }
@@ -642,10 +682,18 @@ async function autoCreateSandboxFromSource(
     managedClone,
     destinationDashboardPort,
   } = launch;
-  const managedStartupPatch = createManagedSnapshotStartupPatch(dstName, launch);
+  const managedLifecycle = createManagedSnapshotLifecycle(dstName, fromImage, launch);
+  const managedStartupPatch: ManagedBootstrapRuntimePatch | null = managedLifecycle?.patch ?? null;
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
-  const streamCloneCreate = () =>
-    streamSandboxCreate(command, commandArgs, createEnv, {
+  const streamCloneCreate = () => {
+    const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? [
+      command,
+      ...commandArgs,
+    ];
+    if (!createExecutable) {
+      throw new Error("managed snapshot clone create executable is missing");
+    }
+    return streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
       // Use a pre-built image, so skip build+push and jump to pod creation.
       initialPhase: "create",
       // Wait until the sandbox actually reaches Ready state, not just appears in the list.
@@ -657,125 +705,52 @@ async function autoCreateSandboxFromSource(
         return isSandboxReady(list.output || "", dstName);
       },
     });
+  };
+  await managedLifecycle?.prepareNetwork();
   let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
-  if (managedClone && managedStartupPatch && launch.managedBootstrapIdentity) {
-    const runtimeProvider = launch.managedBootstrapRuntimeProvider;
-    if (!runtimeProvider) {
-      throw new Error("managed snapshot clone has no runtime provider");
-    }
-    const separator = fromImage.lastIndexOf("@");
-    const repository = separator > 0 ? fromImage.slice(0, separator) : "";
-    const manifestDigest = separator > 0 ? fromImage.slice(separator + 1) : "";
-    if (!repository || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)) {
-      throw new Error("managed snapshot clone image is not one immutable digest reference");
-    }
+  if (managedClone && managedLifecycle && launch.managedBootstrapIdentity) {
+    const runtimeDriverId = launch.managedBootstrapRuntimeProvider?.driverId;
+    if (!runtimeDriverId) throw new Error("managed snapshot clone has no runtime provider");
     const captureText = (args: string[], options?: Record<string, unknown>) =>
       captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
-    const adapter = runtimeProvider.createAdapter({
-      runOpenshell,
-      runCaptureOpenshell: captureText,
-    });
-    let streamed: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
-    const sequence = await runManagedBootstrapSequence(adapter, {
-      create: {
-        bootstrapIdentity: launch.managedBootstrapIdentity,
-        plan: {
-          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-          sandboxName: dstName,
-          driverId: runtimeProvider.driverId,
-          image: {
-            repository,
-            manifestDigest: manifestDigest as `sha256:${string}`,
-          },
-          profile: {
-            agent: managedClone.rootApplyRequest.agent,
-            fingerprint: managedClone.rootApplyRequest.profileFingerprint,
-          },
-          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-          intendedWorkloadArgv: launch.intendedStartupCommand,
-          expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
-          metadata: {},
-        },
-        request: managedClone.rootApplyRequest,
-        launch: async ({ heldWorkloadArgv, bootstrapIdentity }) => {
-          if (
-            bootstrapIdentity !== launch.managedBootstrapIdentity ||
-            heldWorkloadArgv.length !== launch.startupCommand.length ||
-            heldWorkloadArgv.some((value, index) => value !== launch.startupCommand[index])
-          ) {
-            throw new Error("managed snapshot clone hold identity changed before create");
-          }
-          streamed = await streamCloneCreate();
-          if (streamed.status !== 0 && !streamed.forcedReady) {
-            const tail = (streamed.output || "").slice(-600);
-            throw new SnapshotCommandError(
-              [
-                `Failed to create sandbox '${dstName}' (exit ${streamed.status}).`,
-                ...(tail ? [tail] : []),
-              ],
-              1,
-            );
-          }
-          const list = captureText(["sandbox", "list"], { ignoreError: true });
-          if (!isSandboxReady(list, dstName)) {
-            throw new Error("managed snapshot clone did not reach authoritative Ready");
-          }
-          return {
+    createResult = await managedLifecycle.runCreate(
+      async ({ heldWorkloadArgv, bootstrapIdentity }) => {
+        if (
+          bootstrapIdentity !== launch.managedBootstrapIdentity ||
+          heldWorkloadArgv.length !== launch.startupCommand.length ||
+          heldWorkloadArgv.some((value, index) => value !== launch.startupCommand[index])
+        ) {
+          throw new Error("managed snapshot clone hold identity changed before create");
+        }
+        const streamed = await streamCloneCreate();
+        if (streamed.status !== 0 && !streamed.forcedReady) {
+          const tail = (streamed.output || "").slice(-600);
+          throw new SnapshotCommandError(
+            [
+              `Failed to create sandbox '${dstName}' (exit ${streamed.status}).`,
+              ...(tail ? [tail] : []),
+            ],
+            1,
+          );
+        }
+        const list = captureText(["sandbox", "list"], { ignoreError: true });
+        if (!isSandboxReady(list, dstName)) {
+          throw new Error("managed snapshot clone did not reach authoritative Ready");
+        }
+        return {
+          value: streamed,
+          receipt: {
             sandbox: {
               sandboxName: dstName,
               sandboxId: resolveOpenShellSandboxId(dstName, captureText),
-              driverId: runtimeProvider.driverId,
+              driverId: runtimeDriverId,
             },
             ready: true,
             readyAt: new Date().toISOString(),
-          };
-        },
+          },
+        };
       },
-      request: managedClone.rootApplyRequest,
-      replacementOptions: runtimeProvider.createReplacementOptions({
-        acceleration: {
-          strategy: "startup-command",
-          label: buildDockerGpuMode("startup-command").label,
-          device: "",
-          arguments: [],
-        },
-        limits: [],
-        supplementaryGroupIds: [],
-      }),
-      timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
-    });
-    if (!streamed) {
-      throw new Error("managed snapshot clone create receipt is missing");
-    }
-    createResult = streamed;
-    const mode = buildDockerGpuMode("startup-command");
-    let finalized = false;
-    managedStartupPatch.attachManagedBootstrapCutover({
-      selectedMode: mode,
-      failureContext: {
-        sandboxName: dstName,
-        oldContainerId: sequence.snapshot.runtimeId,
-        newContainerId: sequence.replacement.replacementRuntimeId,
-        backupContainerName: null,
-        selectedMode: mode,
-      },
-      async rollback() {
-        if (finalized) return;
-        await adapter.finalizeBootstrap({
-          outcome: "rollback",
-          ...sequence,
-        });
-        finalized = true;
-      },
-      async commit() {
-        if (finalized) return;
-        await adapter.finalizeBootstrap({
-          outcome: "commit",
-          ...sequence,
-        });
-        finalized = true;
-      },
-    });
+    );
   } else {
     createResult = await streamCloneCreate();
   }

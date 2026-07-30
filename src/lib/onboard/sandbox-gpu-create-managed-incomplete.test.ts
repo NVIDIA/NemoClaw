@@ -37,7 +37,7 @@ import {
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
-import type { ManagedBootstrapRuntimeProvider } from "./managed-bootstrap/runtime-provider";
+import { resolveCurrentManagedBootstrapRuntimeProvider } from "./managed-bootstrap/runtime-providers";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import {
@@ -198,11 +198,7 @@ function createFlowFixture(options: {
   readonly listOutput?: string;
   readonly getOutput?: string;
 }) {
-  const runtimeProvider: ManagedBootstrapRuntimeProvider = {
-    driverId: "docker",
-    createAdapter: vi.fn(() => options.adapter),
-    createReplacementOptions: vi.fn(() => ({ values: {} })),
-  };
+  const runtimeProvider = resolveCurrentManagedBootstrapRuntimeProvider("docker");
   const input: SandboxGpuCreateFlowInput = {
     sandboxName: "alpha",
     provider: "nim",
@@ -257,6 +253,7 @@ function createFlowFixture(options: {
     sleep: vi.fn(),
     openshellArgv: vi.fn((args) => ["openshell", ...args]),
     verifyDirectSandboxGpu: vi.fn(),
+    createManagedBootstrapAdapter: () => options.adapter,
   };
   return { deps, input, runtimeProvider };
 }

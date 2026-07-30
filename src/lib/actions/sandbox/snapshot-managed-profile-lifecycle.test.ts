@@ -7,6 +7,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import type {
+  ManagedBootstrapRuntimeCreateLaunchResult,
+  ManagedBootstrapRuntimePatch,
+  ManagedBootstrapRuntimeProvider,
+} from "../../onboard/managed-bootstrap/runtime-provider";
 import { decodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { SANDBOX_CREATE_MAX_ARGUMENT_BYTES } from "../../onboard/sandbox-create/transport";
@@ -717,6 +722,134 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         hermesDashboardTui: undefined,
         workload: expect.objectContaining({ encodedProfile }),
       }),
+    );
+  });
+
+  it("routes a managed clone through its registered non-Docker runtime lifecycle", async () => {
+    const built = managedOpenClawProfile();
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    const source = {
+      name: "alpha",
+      agent: "openclaw",
+      dashboardPort: 18_789,
+      imageTag: reference,
+      openshellDriver: "mxc",
+      provider: "openai-api",
+      model: "gpt-5.4",
+      workload: {
+        schemaVersion: 1,
+        kind: "managed-image",
+        reference,
+        release: "v0.0.99",
+        sourceRevision: "b".repeat(40),
+        sourceCohort: "ghrun-123456-1",
+        capabilityContractVersion: 1,
+        startupProfileContractVersion: 1,
+        encodedProfile: built.encodedProfile,
+        startupProfileSha256: built.startupProfileSha256,
+        credentialProxyReplayRequired: false,
+        shared: true,
+      },
+    } as const;
+    let registeredClone: f.SandboxRecord | null = null;
+    f.registerSandboxMock.mockImplementation(
+      (entry) => (registeredClone = entry as f.SandboxRecord),
+    );
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha" ? (source as never) : registeredClone,
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "forward list": {
+          status: 0,
+          output: "alpha 127.0.0.1 18789 23189 running\n",
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+
+    const patch: ManagedBootstrapRuntimePatch = {
+      maybeApplyDuringCreate: vi.fn(),
+      createFailureMessage: vi.fn(() => null),
+      exitOnPatchError: vi.fn(async () => {}),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(async () => {}),
+      ensureApplied: vi.fn(async () => {}),
+      waitForSupervisorReconnectIfNeeded: vi.fn(),
+      commitAfterReady: vi.fn(async () => {}),
+      selectedMode: vi.fn(() => null),
+      printReadinessFailureIfEnabled: vi.fn(),
+      verifyGpuOrExit: vi.fn(async () => {
+        throw new Error("snapshot clone must not request GPU proof");
+      }),
+    };
+    const createCreateLifecycle = vi.fn(
+      (
+        lifecycleInput: Parameters<ManagedBootstrapRuntimeProvider["createCreateLifecycle"]>[0],
+      ): ReturnType<ManagedBootstrapRuntimeProvider["createCreateLifecycle"]> => ({
+        launchArgv: ["mxc-launch", ...lifecycleInput.launchArgv.slice(1)],
+        patch,
+        prepareNetwork: vi.fn(async () => {}),
+        runCreate: async <T>(
+          launch: (input: {
+            readonly heldWorkloadArgv: readonly string[];
+            readonly bootstrapIdentity: string;
+          }) => Promise<ManagedBootstrapRuntimeCreateLaunchResult<T>>,
+        ): Promise<T> =>
+          (
+            await launch({
+              heldWorkloadArgv: lifecycleInput.heldWorkloadArgv,
+              bootstrapIdentity: lifecycleInput.bootstrapIdentity,
+            })
+          ).value,
+      }),
+    );
+    const provider: ManagedBootstrapRuntimeProvider = {
+      driverId: "mxc",
+      createAdapter: vi.fn(() => {
+        throw new Error("snapshot core must not construct the runtime adapter");
+      }),
+      createReplacementOptions: vi.fn(() => {
+        throw new Error("snapshot core must not plan runtime replacement");
+      }),
+      createCreateLifecycle,
+      createOnboardRouting: vi.fn(() => {
+        throw new Error("snapshot core must not construct onboard routing");
+      }),
+    };
+    f.resolvePersistedManagedBootstrapRuntimeProviderMock.mockReturnValue(provider);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+    expect(createCreateLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "native",
+        sandboxName: "beta",
+        launchArgv: expect.arrayContaining(["openshell", "sandbox", "create"]),
+      }),
+    );
+    expect(f.streamSandboxCreateMock).toHaveBeenCalledWith(
+      "mxc-launch",
+      expect.arrayContaining(["sandbox", "create", "--name", "beta"]),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(provider.createAdapter).not.toHaveBeenCalled();
+    expect(provider.createReplacementOptions).not.toHaveBeenCalled();
+    expect(f.createDockerGpuSandboxCreatePatchMock).not.toHaveBeenCalled();
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(f.registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta", openshellDriver: "mxc" }),
     );
   });
 

@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   collectDockerGpuPatchDiagnostics: vi.fn(),
   queryOpenShellDockerSandboxContainers: vi.fn(),
   queryOpenShellDockerSandboxRuntimeSnapshot: vi.fn(),
+  isDockerDesktopWslRuntime: vi.fn(),
+  buildDockerGpuMode: vi.fn(),
+  selectDockerGpuPatchMode: vi.fn(),
 }));
 
 vi.mock("../sandbox/create-stream", () => ({
@@ -32,7 +35,19 @@ vi.mock("./docker-gpu-local-inference", () => ({
 
 vi.mock("./docker-gpu-sandbox-create", () => ({
   createDockerGpuSandboxCreatePatch: mocks.createDockerGpuSandboxCreatePatch,
+  isDockerDesktopWslRuntime: mocks.isDockerDesktopWslRuntime,
 }));
+
+vi.mock("./docker-gpu-patch-mode", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./docker-gpu-patch-mode")>();
+  mocks.buildDockerGpuMode.mockImplementation(actual.buildDockerGpuMode);
+  mocks.selectDockerGpuPatchMode.mockImplementation(actual.selectDockerGpuPatchMode);
+  return {
+    ...actual,
+    buildDockerGpuMode: mocks.buildDockerGpuMode,
+    selectDockerGpuPatchMode: mocks.selectDockerGpuPatchMode,
+  };
+});
 
 vi.mock("./sandbox-create-failure", () => ({
   printSandboxCreateFailureDiagnostics: mocks.printSandboxCreateFailureDiagnostics,
@@ -59,6 +74,13 @@ import {
   setupGpuFlowMocks,
   VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import type {
+  ManagedBootstrapRuntimeCreateLaunchResult,
+  ManagedBootstrapRuntimePatch,
+  ManagedBootstrapRuntimeProvider,
+} from "./managed-bootstrap/runtime-provider";
+import { buildManagedStartupProfile } from "./managed-startup/profile-builder";
+import { prepareSandboxCreateManagedImageLaunch } from "./sandbox-create-launch";
 import {
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
@@ -145,6 +167,159 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
+
+describe("runSandboxGpuCreateFlow managed runtime provider lifecycle", () => {
+  it("drives a registered non-Docker provider without constructing or probing Docker", async () => {
+    const input = createInput();
+    input.sandboxGpuConfig = {
+      mode: "0",
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    const profile = buildManagedStartupProfile({
+      agent: "openclaw",
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "openai-api",
+        model: "gpt-5.4",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-responses",
+        primaryModelRef: "inference/gpt-5.4",
+        compatibility: {},
+      },
+      dashboard: {
+        agent: "openclaw",
+        mode: "loopback",
+        url: "http://127.0.0.1:18789",
+        port: 18_789,
+        bindAddress: "127.0.0.1",
+        wslExposure: false,
+      },
+      webSearch: null,
+      toolDisclosure: "progressive",
+      hermesToolGateways: [],
+      messagingPlan: null,
+      dcodeAutoApprovalMode: null,
+      observabilityEnabled: null,
+      environment: {},
+      corporateCa: null,
+    });
+    const launch = prepareSandboxCreateManagedImageLaunch({
+      agent: null,
+      sandboxName: "alpha",
+      chatUiUrl: "",
+      createArgs: [
+        "--from",
+        `registry.example/nemoclaw-openclaw@sha256:${"d".repeat(64)}`,
+        "--name",
+        "alpha",
+      ],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: { config: null, enabled: false },
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      openshellArgv: (args) => ["openshell", ...args],
+      buildEnv: () => ({}),
+      managedStartupProfile: { encodedProfile: profile.encodedProfile },
+    });
+    input.createArgv = launch.createArgv;
+    input.sandboxEnv = launch.sandboxEnv;
+    input.sandboxStartupCommand = launch.sandboxStartupCommand;
+
+    const patch = createPatch() as unknown as ManagedBootstrapRuntimePatch;
+    const createCreateLifecycle = vi.fn(
+      (
+        lifecycleInput: Parameters<ManagedBootstrapRuntimeProvider["createCreateLifecycle"]>[0],
+      ): ReturnType<ManagedBootstrapRuntimeProvider["createCreateLifecycle"]> => ({
+        launchArgv: ["mxc-launch", ...lifecycleInput.launchArgv.slice(1)],
+        patch,
+        prepareNetwork: vi.fn(async () => {}),
+        runCreate: async <T>(
+          launch: (input: {
+            readonly heldWorkloadArgv: readonly string[];
+            readonly bootstrapIdentity: string;
+          }) => Promise<ManagedBootstrapRuntimeCreateLaunchResult<T>>,
+        ): Promise<T> =>
+          (
+            await launch({
+              heldWorkloadArgv: lifecycleInput.heldWorkloadArgv,
+              bootstrapIdentity: lifecycleInput.bootstrapIdentity,
+            })
+          ).value,
+      }),
+    );
+    const runtimeProvider: ManagedBootstrapRuntimeProvider = {
+      driverId: "mxc",
+      createAdapter: vi.fn(() => {
+        throw new Error("core must not construct the runtime adapter");
+      }),
+      createReplacementOptions: vi.fn(() => {
+        throw new Error("core must not plan runtime replacement");
+      }),
+      createCreateLifecycle,
+      createOnboardRouting: vi.fn(() => ({
+        nativeFallbackHasCleanBaseline: false,
+        inspectNativeRuntime: vi.fn(() => null),
+        isNativeCreateRoutingFailure: vi.fn(() => false),
+        isTrustedNativeRuntimeError: vi.fn(() => false),
+        isNativeReadinessRoutingFailure: vi.fn(() => false),
+        prepareCompatibilityLaunch: vi.fn(() => {
+          throw new Error("MXC fallback is not enabled in this fixture");
+        }),
+      })),
+    };
+    input.managedBootstrap = {
+      bootstrapIdentity: launch.managedBootstrapIdentity!,
+      runtimeProvider,
+      request: launch.managedStartupRootApplyRequest!,
+      image: {
+        repository: "registry.example/nemoclaw-openclaw",
+        manifestDigest: `sha256:${"d".repeat(64)}`,
+      },
+      agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+      intendedWorkloadArgv: launch.intendedSandboxStartupCommand!,
+      expectedSupervisorArgv: ["/mxc/supervisor"],
+    };
+
+    const deps = createDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      args[0] === "sandbox" && args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
+    );
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result).toMatchObject({ route: "none", runtimePatch: patch });
+    expect(createCreateLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "none",
+        launchArgv: input.createArgv,
+        heldWorkloadArgv: input.sandboxStartupCommand,
+      }),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "mxc-launch",
+      input.createArgv.slice(1),
+      input.sandboxEnv,
+      expect.anything(),
+    );
+    expect(runtimeProvider.createAdapter).not.toHaveBeenCalled();
+    expect(runtimeProvider.createReplacementOptions).not.toHaveBeenCalled();
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+    expect(mocks.isDockerDesktopWslRuntime).not.toHaveBeenCalled();
+    expect(mocks.buildDockerGpuMode).not.toHaveBeenCalled();
+    expect(mocks.selectDockerGpuPatchMode).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+  });
+});
 
 describe("runSandboxGpuCreateFlow proof authorization", () => {
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {

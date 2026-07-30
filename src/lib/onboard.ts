@@ -2702,7 +2702,7 @@ async function createSandboxWithBaseImageResolution(
       : null;
   const {
     createResult,
-    dockerGpuCreatePatch,
+    runtimePatch,
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
@@ -2758,17 +2758,17 @@ async function createSandboxWithBaseImageResolution(
           dockerDriverGateway,
           selectedRoute: selectedGpuRoute,
           verifyDirectSandboxGpu,
-          verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
-          selectedMode: dockerGpuCreatePatch.selectedMode,
+          verifyGpuOrExit: runtimePatch.verifyGpuOrExit,
+          selectedMode: runtimePatch.selectedMode,
           runCaptureOpenshell,
           log: console.log,
         },
       );
-      await dockerGpuCreatePatch.commitAfterReady();
+      await runtimePatch.commitAfterReady();
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
       try {
-        await dockerGpuCreatePatch.rollbackManagedStartupAfterCreateFailure();
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       } catch (rollbackError) {
         (
           failure as Error & { managedBootstrapRollbackError?: unknown }

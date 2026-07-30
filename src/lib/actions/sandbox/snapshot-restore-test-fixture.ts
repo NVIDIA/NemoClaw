@@ -7,6 +7,7 @@ import type {
   ManagedBootstrapSequenceInput,
   ManagedBootstrapSequenceResult,
 } from "../../onboard/managed-bootstrap/adapter";
+import type { ManagedBootstrapRuntimeProvider } from "../../onboard/managed-bootstrap/runtime-provider";
 import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../onboard/managed-startup/hold";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
@@ -375,6 +376,15 @@ export async function simulateManagedBootstrapSequence(
 
 export const runManagedBootstrapSequenceMock = vi.fn(simulateManagedBootstrapSequence);
 
+const runtimeProviderMockState = vi.hoisted(() => ({
+  defaultResolver: null as
+    | ((driverName: string | null | undefined) => ManagedBootstrapRuntimeProvider)
+    | null,
+  resolvePersisted: vi.fn(),
+}));
+export const resolvePersistedManagedBootstrapRuntimeProviderMock =
+  runtimeProviderMockState.resolvePersisted;
+
 export function setManagedBootstrapSequenceFailure(error: Error | null): void {
   managedBootstrapSequenceFailure = error;
 }
@@ -403,6 +413,19 @@ vi.mock("../../onboard/managed-bootstrap/adapter", async (importOriginal) => {
 vi.mock("../../onboard/managed-bootstrap/docker", () => ({
   createDockerManagedBootstrapAdapter: createDockerManagedBootstrapAdapterMock,
 }));
+
+vi.mock("../../onboard/managed-bootstrap/runtime-providers", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../onboard/managed-bootstrap/runtime-providers")>();
+  runtimeProviderMockState.defaultResolver = actual.resolvePersistedManagedBootstrapRuntimeProvider;
+  runtimeProviderMockState.resolvePersisted.mockImplementation(
+    actual.resolvePersistedManagedBootstrapRuntimeProvider,
+  );
+  return {
+    ...actual,
+    resolvePersistedManagedBootstrapRuntimeProvider: runtimeProviderMockState.resolvePersisted,
+  };
+});
 
 vi.mock("../../onboard/docker-gpu-sandbox-create", () => ({
   createDockerGpuSandboxCreatePatch: createDockerGpuSandboxCreatePatchMock,
@@ -624,6 +647,13 @@ export function resetSnapshotRestoreMocks(): void {
   }));
   createDockerGpuSandboxCreatePatchMock.mockReset();
   createDockerGpuSandboxCreatePatchMock.mockImplementation(() => managedStartupPatchFixture());
+  resolvePersistedManagedBootstrapRuntimeProviderMock.mockReset();
+  resolvePersistedManagedBootstrapRuntimeProviderMock.mockImplementation((driverName) => {
+    if (!runtimeProviderMockState.defaultResolver) {
+      throw new Error("managed bootstrap runtime-provider fixture is not initialized");
+    }
+    return runtimeProviderMockState.defaultResolver(driverName);
+  });
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
 }
 
