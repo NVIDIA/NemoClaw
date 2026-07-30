@@ -1174,8 +1174,8 @@ mcpBridgeShardTest("hermes")(
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: hermesResult,
-      toolNames: ["mcp_fake_fake_echo"],
-      deferredToolName: "mcp_fake_fake_echo",
+      toolNames: ["mcp__fake__fake_echo"],
+      deferredToolName: "mcp__fake__fake_echo",
     });
     cleanup.add("stop Hermes MCP bridge compatible endpoint mock", () => compatibleMock.close());
     const fakeMcp = await startFakeMcpHttpsServer({
