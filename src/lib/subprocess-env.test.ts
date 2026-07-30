@@ -117,6 +117,20 @@ describe("withLocalNoProxy", () => {
     expect(env.no_proxy).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
   });
 
+  it("unifies distinct uppercase and lowercase proxy exclusions", () => {
+    const env: Record<string, string> = {
+      HTTP_PROXY: "http://proxy:8888",
+      NO_PROXY: "upper.internal",
+      no_proxy: "lower.internal",
+    };
+
+    withLocalNoProxy(env);
+
+    const expected = `upper.internal,lower.internal,${LOCAL_NO_PROXY}`;
+    expect(env.NO_PROXY).toBe(expected);
+    expect(env.no_proxy).toBe(expected);
+  });
+
   it("bypasses the host proxy for the managed inference hostname when HTTP_PROXY is set", () => {
     const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
     withLocalNoProxy(env);
