@@ -93,6 +93,30 @@ describe("withLocalNoProxy", () => {
     expect(env.no_proxy).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
   });
 
+  it("copies an uppercase-only NO_PROXY exclusion to lowercase consumers", () => {
+    const env: Record<string, string> = {
+      HTTP_PROXY: "http://proxy:8888",
+      NO_PROXY: "corp.internal",
+    };
+
+    withLocalNoProxy(env);
+
+    expect(env.NO_PROXY).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
+    expect(env.no_proxy).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
+  });
+
+  it("copies a lowercase-only no_proxy exclusion to uppercase consumers", () => {
+    const env: Record<string, string> = {
+      HTTP_PROXY: "http://proxy:8888",
+      no_proxy: "corp.internal",
+    };
+
+    withLocalNoProxy(env);
+
+    expect(env.NO_PROXY).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
+    expect(env.no_proxy).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
+  });
+
   it("bypasses the host proxy for the managed inference hostname when HTTP_PROXY is set", () => {
     const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
     withLocalNoProxy(env);
