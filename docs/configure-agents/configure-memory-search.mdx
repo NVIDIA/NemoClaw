@@ -36,11 +36,18 @@ nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11434/api
 
 ## Configure the Embedding Provider
 
-Lower shields before you change the OpenClaw configuration.
-Define an Ollama provider, select it for memory search, restart OpenClaw, and raise shields.
+Open a bounded shields-down window before you change the OpenClaw configuration.
+Define an Ollama provider, select it for memory search, restart OpenClaw, and restore lockdown.
+
+<Warning>
+Shields down temporarily relaxes selected lockdown controls for five minutes.
+If a configuration command or restart fails, run `nemoclaw my-assistant shields up` before you retry.
+</Warning>
 
 ```bash
-nemoclaw my-assistant shields down
+nemoclaw my-assistant shields down \
+  --timeout 5m \
+  --reason "configure memory search"
 
 nemoclaw my-assistant config set \
   --key models.providers.ollama-mem \
@@ -55,6 +62,14 @@ nemoclaw my-assistant config set \
 
 nemoclaw my-assistant shields up
 ```
+
+Verify that Shields up restored lockdown:
+
+```bash
+nemoclaw my-assistant shields status
+```
+
+Continue only when the command succeeds and reports `Shields: UP (lockdown active)`.
 
 The host-side `config set` command accepts the bridge URL only for supported provider `baseUrl` fields.
 Generic configuration keys and other private URL shapes remain rejected.

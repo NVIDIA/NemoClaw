@@ -111,6 +111,30 @@ describe("DGX Station documentation ownership", () => {
     expect(dualStationVllmSetup).toContain("[Platform Support](../../reference/platform-support)");
     expect(dualStationVllmSetup).toContain("NEMOCLAW_DGX_STATION_PEER");
     expect(vllmSetup).not.toContain("NEMOCLAW_DGX_STATION_PEER");
+    expect(stationPreparation).toContain("two-Station CX8 fabric playbook");
+    expect(stationPreparation).toContain("exactly two active 400 Gbit/s Ethernet rails");
+    expect(stationPreparation).toContain("passwordless `sudo` for remote preparation");
+    expect(stationPreparation).toContain("## Next Step\n");
+    expect(stationPreparation).not.toContain("## Next Steps\n");
+    expect(stationPreparation).not.toContain(
+      "Station Express selects `nemotron-3-ultra-550b-a55b`",
+    );
+    expect(stationPreparation).not.toContain("owner-only pair state");
+    expect(stationPreparation).not.toContain("Trusted Pair Boundary");
+    expect(stationPreparation).not.toContain("The dual-Station path is a Deferred evaluation");
+    expect(dualStationVllmSetup).not.toContain("two-Station CX8 fabric playbook");
+    expect(dualStationVllmSetup).not.toContain(
+      "Configure SSH host-key trust and non-interactive authentication",
+    );
+    expect(dualStationVllmSetup).toContain("Station Express selects `nemotron-3-ultra-550b-a55b`");
+    expect(dualStationVllmSetup).toContain(
+      "preparation binds the preparing non-root account's UID",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "administrator must remove the file on the affected Station",
+    );
+    expect(dualStationVllmSetup).toContain("pair state binds the preparation helper");
+    expect(dualStationVllmSetup).toContain("distributed runtime uses unauthenticated Ray");
     expect(vllmSetup).toContain("--station-deepseek");
     expect(vllmSetup).toContain("bash -s -- --station-deepseek");
     expect(vllmSetup).toContain("For a headless DGX Station setup");

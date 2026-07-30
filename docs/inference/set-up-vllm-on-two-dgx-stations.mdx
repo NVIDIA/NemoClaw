@@ -15,15 +15,13 @@ The two-Station path is a Deferred evaluation and does not change single-Station
 
 ## Prepare the Stations
 
-Prepare and qualify both hosts before you start managed vLLM setup.
+Prepare both hosts before you start managed vLLM setup.
 
-1. Follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation) on the local host and peer.
-2. Complete NVIDIA's [two-Station CX8 fabric playbook](https://build.nvidia.com/station/connect-two-stations/instructions).
-3. Configure SSH host-key trust and non-interactive authentication for the selected peer account.
-4. Confirm that the selected peer account has passwordless `sudo` for remote preparation.
+1. Follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation) on the local host and peer, including its rail and SSH prerequisites.
+2. Refer to [Platform Support](../../reference/platform-support) for the current qualification and direct GPU policy boundaries.
 
-NemoClaw does not configure physical rails, enroll SSH trust, or reboot either host.
-Refer to [Platform Support](../../reference/platform-support) for the current qualification and direct GPU policy boundaries.
+On each Station, preparation binds the preparing non-root account's UID in the root-owned `/etc/nemoclaw/dual-station-controller-uid` file.
+To replace that account, an administrator must remove the file on the affected Station before rerunning preparation as the replacement account.
 
 <Warning>
 The distributed runtime uses unauthenticated Ray, NVIDIA Collective Communications Library (NCCL), and vLLM coordination traffic on the private rails.
@@ -143,7 +141,7 @@ It does not leave a runtime that full uninstall cannot reach.
 
 ## Related Topics
 
-- [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation) for host and pair qualification.
+- [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation) for host, rail, and SSH preparation.
 - [Set Up vLLM](set-up-vllm) for existing servers, single-host managed setup, model selection, and non-interactive onboarding.
 - [Uninstall NemoClaw](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for managed-pair cleanup.
 - [Host Files and State](../../reference/host-files-and-state) for the cleanup receipt location.

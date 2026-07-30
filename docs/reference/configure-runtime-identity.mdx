@@ -4,7 +4,7 @@
 title: "Configure Experimental Runtime Identity"
 sidebar-title: "Configure Runtime Identity"
 description: "Configure the experimental provider-neutral runtime identity component for a direct OpenClaw blueprint."
-description-agent: "Configures the direct OpenClaw blueprint runner's experimental runtime identity component, including its Okta profile, trust boundary, lifecycle, inspection, and rollback. Use when operating components.identity outside normal onboarding."
+description-agent: "Configures the direct OpenClaw blueprint runner's experimental runtime identity component, including its Okta and Microsoft Entra profiles, trust boundary, lifecycle, inspection, and rollback. Use when operating components.identity outside normal onboarding."
 keywords: ["nemoclaw runtime identity", "openclaw runtime identity", "okta runtime identity", "microsoft entra runtime identity"]
 agent-variants: ["openclaw"]
 content:
@@ -49,7 +49,8 @@ The scenarios enable provider-derived policy and restore its prior setting.
 They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
 They prove that a child launched after rotation receives a different revision-scoped placeholder and that the protected resource receives both bearers.
 They also check secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
-`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the exact Microsoft Graph `GET /v1.0/me` credential-delivery rule. It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
+`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the exact Microsoft Graph `GET /v1.0/me` credential-delivery rule.
+It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
 The deterministic fixture proves the complete Entra-shaped runtime path without storing a third-party tenant credential in pull-request CI; tenant acceptance remains a maintainer-run check against Microsoft Entra and Graph.
 
 Focused tests cover malformed profiles, endpoint and DNS rejection, subprocess scoping, same-name resources, partial-apply compensation, and retryable rollback receipts.
@@ -86,7 +87,7 @@ identity:
   provider_type: okta-runtime-v1
   provider_name: acme-okta-runtime
   credential_key: OKTA_ACCESS_TOKEN
-  client_id_env: OKTA_CLIENT_ID
+  client_id_env: OKTA_CLIENT_ID # must be exactly this value
   refresh_token_env: OKTA_REFRESH_TOKEN
   client_secret_env: OKTA_CLIENT_SECRET
 ```
@@ -132,11 +133,19 @@ Export the named environment variables in the host process that runs the direct 
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server.
 `openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.
 
+<Warning>
+The host process can read `OKTA_REFRESH_TOKEN` and `OKTA_CLIENT_SECRET`, and the runner forwards them only to the scoped refresh-configuration subprocess.
+These environment variables remain available until you unset them or the host process exits.
+After apply succeeds, run `unset OKTA_REFRESH_TOKEN OKTA_CLIENT_SECRET` in the host shell.
+OpenShell retains the refresh material in the gateway credential store until rollback or provider deletion removes the owned provider.
+</Warning>
+
 ## Configure the Microsoft Entra Reference Profile
 
 Copy `nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-entra-runtime.yaml`.
 Replace `organizations` in `token_url` with the Directory (tenant) ID for the application registration.
-The built-in policy accepts only the exact `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host. It does not admit national-cloud endpoints or tenant-controlled custom domains.
+The built-in policy accepts only the exact `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host.
+It does not admit national-cloud endpoints or tenant-controlled custom domains.
 Bearer delivery is restricted to exactly `GET /v1.0/me`.
 
 Configure the same provider-neutral component with the Entra implementation.
@@ -155,7 +164,8 @@ identity:
 Register a separate Entra application for the delegated runtime flow.
 Grant only the Microsoft Graph delegated `User.Read` permission needed by [`GET /me`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0), and request [`offline_access`](https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope) during the external authorization-code bootstrap so the v2 endpoint returns a refresh token.
 Microsoft documents `offline_access` as an explicit requirement for v2 refresh-token issuance and [documents replacement of the stored refresh token](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#refresh-the-access-token) when a refresh response carries a new one.
-Use a confidential web application and `ENTRA_CLIENT_SECRET` when the bootstrap client can keep a secret. Omit `client_secret_env` for a public client rather than placing a public-client secret on the host.
+Use a confidential web application and `ENTRA_CLIENT_SECRET` when the bootstrap client can keep a secret.
+Omit `client_secret_env` for a public client rather than placing a public-client secret on the host.
 NemoClaw does not package the authorization redirect, consent UI, PKCE exchange, or MSAL cache.
 
 <Warning>

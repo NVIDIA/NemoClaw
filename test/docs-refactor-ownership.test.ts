@@ -33,9 +33,15 @@ describe("focused documentation ownership", () => {
     expect(architecture).toContain(
       "[Configure Experimental Runtime Identity](configure-runtime-identity)",
     );
+    expect(architecture).toContain("Okta and Microsoft Entra reference profiles");
     expect(architecture).not.toContain("identity:\n  profile_path:");
     expect(runtimeIdentity).toContain("identity:\n  profile_path:");
     expect(runtimeIdentity).toContain("## Roll Back Runtime Identity");
+    expect(runtimeIdentity).toContain("including its Okta and Microsoft Entra profiles");
+    expect(runtimeIdentity).toContain("unset OKTA_REFRESH_TOKEN OKTA_CLIENT_SECRET");
+    expect(runtimeIdentity).toContain(
+      "OpenShell retains the refresh material in the gateway credential store until rollback or provider deletion",
+    );
     expect(runtimeIdentity).not.toContain("$$nemoclaw");
   });
 
@@ -52,6 +58,16 @@ describe("focused documentation ownership", () => {
     expect(ollama).not.toContain("--key agents.defaults.memorySearch.provider");
     expect(memorySearch).toContain("--key agents.defaults.memorySearch.provider");
     expect(memorySearch).toContain("openclaw memory index --force");
+    expect(memorySearch).toContain(
+      'shields down \\\n  --timeout 5m \\\n  --reason "configure memory search"',
+    );
+    expect(memorySearch).toContain(
+      "If a configuration command or restart fails, run `nemoclaw my-assistant shields up`",
+    );
+    expect(memorySearch).toContain("nemoclaw my-assistant shields status");
+    expect(memorySearch).toContain(
+      "Continue only when the command succeeds and reports `Shields: UP (lockdown active)`",
+    );
     expect(memorySearch).not.toContain("$$nemoclaw");
   });
 });
