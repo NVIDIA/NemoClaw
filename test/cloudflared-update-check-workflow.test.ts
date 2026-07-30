@@ -40,7 +40,7 @@ function pinValues(source: string, name: string): string[] {
 function writePinFixture(file: string, version: string, sha256: string): void {
   fs.writeFileSync(
     file,
-    ["one", "two", "three", "four"]
+    ["one", "two", "three", "four", "five"]
       .map(
         (job) =>
           `  ${job}:\n    env:\n      CLOUDFLARED_VERSION: "${version}"\n      CLOUDFLARED_DEB_SHA256: "${sha256}"`,

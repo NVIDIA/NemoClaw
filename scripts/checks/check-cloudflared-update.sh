@@ -48,10 +48,10 @@ done < <(
     "${E2E_WORKFLOW}"
 )
 
-[[ "${#version_pins[@]}" -eq 4 ]] \
-  || fail "expected exactly four CLOUDFLARED_VERSION pins in ${E2E_WORKFLOW}; found ${#version_pins[@]}"
-[[ "${#sha_pins[@]}" -eq 4 ]] \
-  || fail "expected exactly four CLOUDFLARED_DEB_SHA256 pins in ${E2E_WORKFLOW}; found ${#sha_pins[@]}"
+[[ "${#version_pins[@]}" -eq 5 ]] \
+  || fail "expected exactly five CLOUDFLARED_VERSION pins in ${E2E_WORKFLOW}; found ${#version_pins[@]}"
+[[ "${#sha_pins[@]}" -eq 5 ]] \
+  || fail "expected exactly five CLOUDFLARED_DEB_SHA256 pins in ${E2E_WORKFLOW}; found ${#sha_pins[@]}"
 
 pinned_version="${version_pins[0]}"
 pinned_sha="$(printf '%s' "${sha_pins[0]}" | tr '[:upper:]' '[:lower:]')"
