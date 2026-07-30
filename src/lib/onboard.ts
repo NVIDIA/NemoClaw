@@ -3710,6 +3710,11 @@ async function setupMessagingChannels(
     isNonInteractive,
     sandboxName,
     selectionCompleted: options.selectionCompleted,
+    googlechatTunnelRuntime: {
+      loadServices: () => require("./tunnel/services"),
+      loadWebhookProxy: () => require("./messaging/channels/googlechat/tunnel/proxy"),
+      prompt,
+    },
   });
 }
 

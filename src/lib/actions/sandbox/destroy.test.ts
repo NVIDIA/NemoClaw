@@ -15,6 +15,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rmSync = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
     const stopGooglechatWebhookTunnel = vi.fn(() => {
       throw new Error("cloudflared refused to stop");
     });
@@ -28,6 +29,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
         rmSync,
         runOpenshell,
         stopGooglechatWebhookTunnel,
+        googlechatWebhookTunnelPidDir,
       },
     );
 
@@ -36,6 +38,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     // The Google Chat directory is preserved because its stop failed — deleting
     // it would orphan the public tunnel with no PID handle for a later destroy.
     expect(rmSync).not.toHaveBeenCalledWith(googlechatPidDir, expect.anything());
+    expect(googlechatWebhookTunnelPidDir).toHaveBeenCalledWith(mainPidDir);
     // Destroy stays best-effort: provider cleanup still runs after the failure.
     expect(runOpenshell).toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
@@ -46,6 +49,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
   it("removes the Google Chat PID directory after a successful tunnel stop", () => {
     const rmSync = vi.fn();
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);
+    const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
 
     cleanupSandboxServices(
       SANDBOX,
@@ -56,6 +60,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
         rmSync,
         runOpenshell: vi.fn(() => ({ status: 0 })),
         stopGooglechatWebhookTunnel,
+        googlechatWebhookTunnelPidDir,
       },
     );
 

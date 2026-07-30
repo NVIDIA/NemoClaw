@@ -7,20 +7,24 @@ import {
   createGooglechatTunnelAudienceGateHookRegistration,
   type GooglechatTunnelAudienceGateHookOptions,
 } from "./tunnel-audience-gate";
-import { createDefaultGooglechatTunnelGateOptions } from "./tunnel-runtime";
+import {
+  createDefaultGooglechatTunnelGateOptions,
+  type GooglechatTunnelRuntimeDeps,
+} from "./tunnel-runtime";
 
 export * from "./service-account-token-paste";
 export * from "./tunnel-audience-gate";
 
 export interface GooglechatHookOptions {
   readonly tunnelAudienceGate?: GooglechatTunnelAudienceGateHookOptions;
+  readonly tunnelRuntime?: GooglechatTunnelRuntimeDeps;
 }
 
 export function createGooglechatHookRegistrations(
   options: GooglechatHookOptions = {},
 ): readonly MessagingHookRegistration[] {
   const gateOptions = {
-    ...createDefaultGooglechatTunnelGateOptions(),
+    ...createDefaultGooglechatTunnelGateOptions(options.tunnelRuntime),
     ...withoutUndefinedValues(options.tunnelAudienceGate),
   };
   return [

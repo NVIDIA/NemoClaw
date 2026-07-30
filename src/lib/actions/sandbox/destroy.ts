@@ -65,6 +65,7 @@ export type CleanupSandboxServicesDeps = {
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
+  googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
 type ShieldsTimerNeutralizeResult = {
@@ -146,7 +147,21 @@ export function cleanupSandboxServices(
     ((name: string) => {
       const lifecycle =
         require("../../messaging/channels/googlechat/tunnel/lifecycle") as typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
-      return lifecycle.stopGooglechatWebhookTunnel(name);
+      const services = require("../../tunnel/services") as Parameters<
+        typeof lifecycle.stopGooglechatWebhookTunnel
+      >[1]["services"];
+      const webhookProxy =
+        require("../../messaging/channels/googlechat/tunnel/proxy") as Parameters<
+          typeof lifecycle.stopGooglechatWebhookTunnel
+        >[1]["webhookProxy"];
+      return lifecycle.stopGooglechatWebhookTunnel(name, { services, webhookProxy });
+    });
+  const googlechatWebhookTunnelPidDir =
+    deps.googlechatWebhookTunnelPidDir ??
+    ((servicePidDir: string) => {
+      const lifecycle =
+        require("../../messaging/channels/googlechat/tunnel/lifecycle") as typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
+      return lifecycle.googlechatWebhookTunnelPidDir(servicePidDir);
     });
 
   if (stopHostServices) {
@@ -163,7 +178,7 @@ export function cleanupSandboxServices(
     }
   }
 
-  let googlechatServicesPidDir = `${servicesPidDir}-googlechat`;
+  let googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
   let googlechatTunnelStopped = true;
   try {
     googlechatServicesPidDir = stopGooglechatWebhookTunnel(validatedSandboxName);

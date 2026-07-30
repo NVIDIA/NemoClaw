@@ -26,6 +26,16 @@ type LegacyOnboardProvidersModule = {
 type RebuildModule = typeof import("./rebuild");
 type GooglechatWebhookLifecycleModule =
   typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
+type GooglechatTunnelRuntimeDeps =
+  import("../../messaging/channels/googlechat/hooks/tunnel-runtime").GooglechatTunnelRuntimeDeps;
+type GooglechatTunnelServices = Pick<
+  typeof import("../../tunnel/services"),
+  "getTunnelUrl" | "readCloudflaredState" | "resolveServicePidDir" | "startAll" | "stopCloudflared"
+>;
+type GooglechatWebhookProxy = Pick<
+  typeof import("../../messaging/channels/googlechat/tunnel/proxy"),
+  "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
+>;
 
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
@@ -52,6 +62,22 @@ export const policyChannelDependencies = {
   stopGooglechatWebhookTunnel(sandboxName: string): void {
     const lifecycle =
       require("../../messaging/channels/googlechat/tunnel/lifecycle") as GooglechatWebhookLifecycleModule;
-    lifecycle.stopGooglechatWebhookTunnel(sandboxName);
+    const services = require("../../tunnel/services") as GooglechatTunnelServices;
+    const webhookProxy =
+      require("../../messaging/channels/googlechat/tunnel/proxy") as GooglechatWebhookProxy;
+    lifecycle.stopGooglechatWebhookTunnel(sandboxName, { services, webhookProxy });
+  },
+  googlechatTunnelRuntime(sandboxName: string): GooglechatTunnelRuntimeDeps {
+    return {
+      sandboxName,
+      loadServices: () => require("../../tunnel/services") as GooglechatTunnelServices,
+      loadWebhookProxy: () =>
+        require("../../messaging/channels/googlechat/tunnel/proxy") as GooglechatWebhookProxy,
+      prompt: (question) => {
+        const store =
+          require("../../credentials/store") as typeof import("../../credentials/store");
+        return store.prompt(question);
+      },
+    };
   },
 };

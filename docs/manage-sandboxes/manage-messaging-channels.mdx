@@ -43,6 +43,7 @@ The next rebuild omits WeChat configuration and per-account state files.
 <AgentOnly variant="openclaw">
 `channels remove googlechat` detaches and deletes the `<sandbox>-googlechat-bridge` provider before the rebuild removes Google Chat configuration and the matching policy preset.
 It also stops the dedicated cloudflared process and webhook proxy for that sandbox.
+If endpoint teardown fails, the command exits nonzero without changing the channel credentials, bridge provider, policy preset, or durable messaging plan so you can fix the host service and retry removal.
 </AgentOnly>
 
 For in-sandbox QR-paired channels such as WhatsApp, `channels remove` destructively clears the session directory before rebuild so stale auth files do not reconnect the channel.

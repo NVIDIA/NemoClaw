@@ -976,7 +976,11 @@ async function planSandboxChannelAdd(
 ): Promise<SandboxMessagingPlan> {
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
-    createBuiltInMessagingHookRegistry(),
+    createBuiltInMessagingHookRegistry({
+      googlechat: {
+        tunnelRuntime: policyChannelDependencies.googlechatTunnelRuntime(sandboxName),
+      },
+    }),
     createBuiltInRenderTemplateResolver(),
   );
   const availableChannels = availableManifestChannelsForAgent(agent);
@@ -1610,7 +1614,6 @@ async function removeSandboxChannelUnlocked(
     return;
   }
 
-  clearChannelTokens(channel);
   const tokenKeys = getChannelTokenKeys(channel);
   const isQrChannel = channelUsesInSandboxQrPairing(channel);
 
@@ -1630,6 +1633,24 @@ async function removeSandboxChannelUnlocked(
     (registryEntry?.policies || []).includes(canonical) ||
     sessionPolicyPresets.includes(canonical) ||
     policies.getAppliedPresets(sandboxName).includes(canonical);
+
+  // The public Google Chat endpoint must stop before credentials, providers,
+  // policy, or durable plan state change. Otherwise a partial teardown leaves
+  // a live webhook with no retryable channel record. Attempt this even when
+  // registry residue is absent so `channels remove` can recover an orphaned
+  // endpoint from an earlier interrupted cleanup.
+  if (canonical === "googlechat") {
+    try {
+      policyChannelDependencies.stopGooglechatWebhookTunnel(sandboxName);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  ${YW}⚠${R} Could not stop the Google Chat webhook tunnel: ${message}`);
+      console.error(
+        `  No channel configuration or credentials were changed; fix the tunnel teardown and re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      );
+      process.exit(1);
+    }
+  }
 
   // QR-paired channels store auth blobs inside the sandbox that survive a
   // rebuild via the state_dirs backup. Tear those down FIRST so a cleanup
@@ -1653,6 +1674,7 @@ async function removeSandboxChannelUnlocked(
     process.exit(1);
   }
 
+  clearChannelTokens(channel);
   await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
   if (tokenKeys.length > 0) {
     console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
@@ -1664,15 +1686,6 @@ async function removeSandboxChannelUnlocked(
   if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
-  }
-
-  if (canonical === "googlechat") {
-    try {
-      policyChannelDependencies.stopGooglechatWebhookTunnel(sandboxName);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  ${YW}⚠${R} Could not stop the Google Chat webhook tunnel: ${message}`);
-    }
   }
 
   // Token-based channels: best-effort tidy of any leftover dir. Token

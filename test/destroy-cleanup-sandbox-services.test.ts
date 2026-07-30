@@ -26,6 +26,7 @@ function buildDeps(sandbox: SandboxLike): {
       | "runOpenshell"
       | "rmSync"
       | "stopGooglechatWebhookTunnel"
+      | "googlechatWebhookTunnelPidDir"
     >
   >;
   stopAllCalls: Array<{ sandboxName: string }>;
@@ -49,6 +50,7 @@ function buildDeps(sandbox: SandboxLike): {
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
       stopGooglechatWebhookTunnel: vi.fn(() => "/tmp/nemoclaw-services-regression-2717-googlechat"),
+      googlechatWebhookTunnelPidDir: vi.fn((pidDir) => `${pidDir}-googlechat`),
     },
   };
 }

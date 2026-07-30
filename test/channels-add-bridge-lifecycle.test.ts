@@ -280,6 +280,38 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(stopGooglechatWebhookTunnelSpy).toHaveBeenCalledWith("test-sb");
   });
 
+  it("preserves retryable channel state when Google Chat endpoint teardown fails", async () => {
+    await addSandboxChannel("test-sb", { channel: "googlechat" });
+    expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).toContain("googlechat");
+    expect(appliedPresets).toContain("googlechat");
+
+    providerSpy.mockClear();
+    runOpenshellSpy.mockClear();
+    vi.mocked(policies.removePreset).mockClear();
+    vi.mocked(registry.updateSandbox).mockClear();
+    vi.mocked(policyChannelDependencies.rebuildSandbox).mockClear();
+    stopGooglechatWebhookTunnelSpy.mockImplementation(() => {
+      throw new Error("simulated tunnel cleanup failure");
+    });
+
+    await expect(removeSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
+      code: 1,
+    });
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(printedText()).toContain("Could not stop the Google Chat webhook tunnel");
+    expect(printedText()).toContain("No channel configuration or credentials were changed");
+    expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe(SA_JSON);
+    expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).toContain("googlechat");
+    expect(appliedPresets).toContain("googlechat");
+    expect(session.policyPresets).toContain("googlechat");
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(openshellCalls()).toEqual([]);
+    expect(policies.removePreset).not.toHaveBeenCalled();
+    expect(registry.updateSandbox).not.toHaveBeenCalled();
+    expect(policyChannelDependencies.rebuildSandbox).not.toHaveBeenCalled();
+  });
+
   it("preserves the bridge and webhook endpoint while stop/start restores the enabled plan", async () => {
     await addSandboxChannel("test-sb", { channel: "googlechat" });
     providerSpy.mockClear();

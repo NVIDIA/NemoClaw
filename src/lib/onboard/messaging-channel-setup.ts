@@ -18,6 +18,7 @@ import {
   type SandboxMessagingPlan,
   toMessagingAgentId,
 } from "../messaging";
+import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
 import * as registry from "../state/registry";
 
 export { MessagingHostStateApplier };
@@ -38,6 +39,7 @@ export interface SetupSelectedMessagingChannelsOptions {
   readonly agent?: { readonly name?: string } | null;
   readonly sandboxName?: string | null;
   readonly interactive?: boolean;
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "sandboxName">;
   /** Reuse already-answered config fields while reacquiring process-only credentials. */
   readonly configurationCompleted?: boolean;
 }
@@ -47,6 +49,7 @@ export interface SetupMessagingChannelsDeps {
   readonly note?: (message: string) => void;
   readonly isNonInteractive?: () => boolean;
   readonly sandboxName?: string | null;
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "sandboxName">;
   /** The channel selection is durable; do not reopen the selector on resume. */
   readonly selectionCompleted?: boolean;
 }
@@ -138,6 +141,7 @@ export async function setupMessagingChannels(
         agent,
         interactive: false,
         sandboxName: deps.sandboxName,
+        googlechatTunnelRuntime: deps.googlechatTunnelRuntime,
       });
     } else {
       MessagingSetupApplier.clearPlanEnv();
@@ -191,6 +195,7 @@ export async function setupMessagingChannels(
     agent,
     sandboxName: deps.sandboxName,
     configurationCompleted: deps.selectionCompleted,
+    googlechatTunnelRuntime: deps.googlechatTunnelRuntime,
   });
   console.log("");
 
@@ -254,6 +259,9 @@ export async function setupSelectedMessagingChannels(
 
   const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
+  const googlechatHooks = {
+    tunnelRuntime: { ...options.googlechatTunnelRuntime, sandboxName },
+  };
   const hooks = options.configurationCompleted
     ? createBuiltInMessagingHookRegistry({
         common: {
@@ -266,8 +274,9 @@ export async function setupSelectedMessagingChannels(
             prompt: async () => "",
           },
         },
+        googlechat: googlechatHooks,
       })
-    : createBuiltInMessagingHookRegistry();
+    : createBuiltInMessagingHookRegistry({ googlechat: googlechatHooks });
   const planner = new MessagingWorkflowPlanner(
     registry,
     hooks,

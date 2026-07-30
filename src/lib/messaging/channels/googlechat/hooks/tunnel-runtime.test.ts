@@ -29,6 +29,7 @@ describe("Google Chat tunnel runtime", () => {
       dashboardPort: 18789,
       loadServices: () => services,
       loadWebhookProxy: () => webhookProxy,
+      sandboxName: "test",
     });
 
     expect(options.readTunnelState?.()).toEqual({ running: true });
@@ -66,6 +67,7 @@ describe("Google Chat tunnel runtime", () => {
         startGooglechatWebhookProxy: async () => 24680,
         stopGooglechatWebhookProxy: () => undefined,
       }),
+      sandboxName: "test",
     });
 
     expect(options.readTunnelState?.()).toEqual({ running: false });
@@ -93,6 +95,7 @@ describe("Google Chat tunnel runtime", () => {
         startGooglechatWebhookProxy: async () => 24680,
         stopGooglechatWebhookProxy,
       }),
+      sandboxName: "test",
     });
 
     await expect(options.startTunnel?.()).rejects.toThrow("cloudflared failed");

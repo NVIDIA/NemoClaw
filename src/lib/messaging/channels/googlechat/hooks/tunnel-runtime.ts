@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DASHBOARD_PORT } from "../../../../core/ports";
-import { googlechatWebhookTunnelPidDir } from "../tunnel/lifecycle";
+import { googlechatWebhookTunnelPidDir } from "../tunnel/pid-dir";
 import type { GooglechatTunnelAudienceGateHookOptions } from "./tunnel-audience-gate";
 
 type TunnelServices = Pick<
@@ -20,27 +20,36 @@ export interface GooglechatTunnelRuntimeDeps {
   readonly loadServices?: () => TunnelServices;
   readonly loadWebhookProxy?: () => WebhookProxy;
   readonly prompt?: (question: string) => Promise<string>;
+  readonly sandboxName?: string;
 }
 
-// Side-effectful defaults for the tunnel/audience gate, kept out of the hook
-// file itself. Google Chat uses a dedicated cloudflared state directory and a
-// loopback-only proxy that forwards POST /googlechat while denying dashboard
-// and control paths. It must not reuse `nemoclaw tunnel start`, whose purpose is
-// to publish the full dashboard.
-// tunnel/services, node:child_process, and credentials/store are lazy-required
-// inside the callbacks (not imported at the top) so they stay out of the
-// eagerly-imported hook graph: the built-in hook registry is constructed at
-// module load, and importing tunnel/services eagerly closes an import cycle.
+// Compose the tunnel/audience gate from caller-injected host boundaries. Google
+// Chat uses a dedicated cloudflared state directory and a loopback-only proxy
+// that forwards POST /googlechat while denying dashboard and control paths. It
+// must not reuse `nemoclaw tunnel start`, whose purpose is to publish the full
+// dashboard. Keeping internal host modules out of this eagerly imported hook
+// graph also prevents the built-in registry from closing an import cycle.
 export function createDefaultGooglechatTunnelGateOptions(
   deps: GooglechatTunnelRuntimeDeps = {},
 ): GooglechatTunnelAudienceGateHookOptions {
   const dashboardPort = deps.dashboardPort ?? DASHBOARD_PORT;
   const loadServices =
-    deps.loadServices ?? (() => require("../../../../tunnel/services") as TunnelServices);
+    deps.loadServices ??
+    (() => {
+      throw new Error("Google Chat tunnel runtime requires injected service dependencies.");
+    });
   const loadWebhookProxy =
-    deps.loadWebhookProxy ?? (() => require("../tunnel/proxy") as WebhookProxy);
-  const resolveGooglechatPidDir = (): string =>
-    googlechatWebhookTunnelPidDir(loadServices().resolveServicePidDir());
+    deps.loadWebhookProxy ??
+    (() => {
+      throw new Error("Google Chat tunnel runtime requires an injected webhook proxy.");
+    });
+  const resolveGooglechatPidDir = (): string => {
+    const sandboxName = deps.sandboxName?.trim();
+    if (!sandboxName) {
+      throw new Error("Google Chat tunnel runtime requires a sandbox name.");
+    }
+    return googlechatWebhookTunnelPidDir(loadServices().resolveServicePidDir({ sandboxName }));
+  };
   return {
     hasCloudflared:
       deps.hasCloudflared ??
@@ -95,10 +104,6 @@ export function createDefaultGooglechatTunnelGateOptions(
     },
     prompt:
       deps.prompt ??
-      ((question: string) => {
-        const { prompt } =
-          require("../../../../credentials/store") as typeof import("../../../../credentials/store");
-        return prompt(question);
-      }),
+      (() => Promise.reject(new Error("Google Chat tunnel runtime requires an injected prompt."))),
   };
 }
