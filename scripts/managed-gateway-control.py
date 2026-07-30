@@ -1714,6 +1714,7 @@ def _refresh_supervisor_ca_bundle() -> str:
             try:
                 os.unlink(temporary_name, dir_fd=directory_fd)
             except OSError:
+                # Best-effort cleanup must not mask the original control failure.
                 pass
         os.close(directory_fd)
 
