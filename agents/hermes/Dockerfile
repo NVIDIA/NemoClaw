@@ -210,10 +210,13 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 
 COPY --from=hermes-runtime-payload / /
 
+# Keep the root-owned managed-startup handoff in this image-only layer. The
+# following permissions block is replayed on the host by regression tests.
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && test -z "$discovery_unsafe"
+    && test -z "$discovery_unsafe" \
+    && install -d -o root -g root -m 0755 /run/nemoclaw
 
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
@@ -227,8 +230,7 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN install -d -o root -g root -m 0755 /run/nemoclaw \
-    && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \

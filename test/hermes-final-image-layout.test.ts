@@ -288,6 +288,14 @@ describe("Hermes final image layout", () => {
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
     );
+    const managedRuntimeDirectory = indexOfRequired(
+      finalStage,
+      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+    );
+    const runtimeModeReplay = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/bin/nemoclaw-start",
+    );
     const tirithFinalizerHash = indexOfRequired(
       finalStage,
       '"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"',
@@ -311,7 +319,10 @@ describe("Hermes final image layout", () => {
     expect(agent).toBeGreaterThan(certifiInstall);
     expect(agent).toBeLessThan(agentChmod);
     expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(managedRuntimeDirectory);
+    expect(managedRuntimeDirectory).toBeLessThan(blueprintChmod);
     expect(runtime).toBeLessThan(blueprintChmod);
+    expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
     expect(scan).toBeGreaterThan(darwinCompatibility);

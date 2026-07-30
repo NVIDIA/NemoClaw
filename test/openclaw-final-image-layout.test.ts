@@ -173,7 +173,11 @@ describe("OpenClaw final image layout", () => {
       finalStage,
       "RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0",
     );
-    const runtimeChmod = indexOfRequired(finalStage, "&& chmod 755 /usr/local/bin/nemoclaw-start");
+    const managedRuntimeDirectory = indexOfRequired(
+      finalStage,
+      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+    );
+    const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
 
     expect(dependency).toBeLessThan(tarPatch);
@@ -183,6 +187,8 @@ describe("OpenClaw final image layout", () => {
     expect(patch).toBeGreaterThan(wechatInstall);
     expect(patch).toBeLessThan(patchChmod);
     expect(runtime).toBeGreaterThan(blueprintSetup);
+    expect(runtime).toBeLessThan(managedRuntimeDirectory);
+    expect(managedRuntimeDirectory).toBeLessThan(runtimeChmod);
     expect(runtime).toBeLessThan(runtimeChmod);
     expect(scan).toBeLessThan(metadataCheck);
   });
