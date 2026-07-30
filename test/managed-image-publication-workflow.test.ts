@@ -593,9 +593,6 @@ describe("complete managed-image publication workflow", () => {
     const accepted = runManagedImagePromotion(promotion);
     const acceptedCalls = accepted.calls.join("\n");
     const cohortDigest = `sha256:${"f".repeat(64)}`;
-    const pullCleanupCalls = accepted.calls.filter(
-      (call) => call.startsWith("pull ") || call.startsWith("image rm "),
-    );
     const expectedPullCalls = publicationAgents.flatMap((agent) => {
       const reference = `ghcr.io/nvidia/nemoclaw/${agent}-sandbox@${cohortDigest}`;
       return publicationPlatforms.map((platform) => `pull --platform ${platform} ${reference}`);
@@ -608,16 +605,15 @@ describe("complete managed-image publication workflow", () => {
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
 
     expect(accepted.status, accepted.stderr).toBe(0);
-    expect(pullCleanupCalls).toHaveLength(expectedPullCalls.length * 2);
-    expect(pullCleanupCalls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
+    expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
     );
-    for (let index = 0; index < pullCleanupCalls.length; index += 2) {
-      const pull = pullCleanupCalls[index];
-      const cleanup = pullCleanupCalls[index + 1];
-      const reference = pull?.match(/^pull --platform linux\/(?:amd64|arm64) (.+)$/u)?.[1];
+    for (const pull of expectedPullCalls) {
+      const index = accepted.calls.indexOf(pull);
+      const reference = pull.match(/^pull --platform linux\/(?:amd64|arm64) (.+)$/u)?.[1];
       expect(reference).toBeDefined();
-      expect(cleanup).toBe(`image rm ${reference}`);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(accepted.calls[index + 1]).toBe(`image rm ${reference}`);
     }
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
