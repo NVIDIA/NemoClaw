@@ -42,7 +42,8 @@ Treat snapshot directories as private local data.
 Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
 NemoClaw captures cron job definitions from `.hermes/cron` as directory state, together with the scripts they run from `.hermes/scripts`.
-A restore moves each state directory into place as a unit and applies `.hermes/cron` last, so the running gateway does not schedule a restored job before the script it calls is available.
+A restore moves each state directory into place as a unit and applies `.hermes/cron` after `.hermes/scripts`.
+This ordering does not pause or drain work that the running gateway already dispatched.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
 After it replaces a database, NemoClaw opens a write transaction against the result and fails the restore when the database cannot be written.
 Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use raw directory capture and can be inconsistent if a write overlaps the snapshot.
@@ -108,6 +109,11 @@ $$nemoclaw my-assistant snapshot restore v3
 $$nemoclaw my-assistant snapshot restore before-upgrade
 $$nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
+
+For restore paths that replace state directories as whole units, NemoClaw stages every replacement before it changes live state.
+If publication fails before the transaction commits, NemoClaw restores the original directories.
+If rollback or cleanup cannot finish, NemoClaw preserves `.nemoclaw-restore-rollback` under the agent state directory and refuses another restore so it does not overwrite the recovery copy.
+Preserve the reported recovery path and verify its contents before you retry or remove it.
 
 <AgentOnly variant="hermes">
 A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.

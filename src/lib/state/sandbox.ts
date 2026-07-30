@@ -1350,6 +1350,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 // ── Restore ────────────────────────────────────────────────────────
 
 const RESTORE_STAGING_DIR = ".nemoclaw-restore-staging";
+const RESTORE_ROLLBACK_DIR = ".nemoclaw-restore-rollback";
 
 // Job definitions in these directories are picked up by a gateway that keeps
 // running throughout a restore, so they must land after every directory whose
@@ -1372,23 +1373,91 @@ function orderStateDirsForRestore(stateDirs: readonly string[]): string[] {
  * complete. A rename within the same directory publishes each restored
  * directory whole.
  */
-function buildStagedRestoreCommand(dir: string, stateDirs: readonly string[]): string {
+function buildStagedRestoreCommand(
+  dir: string,
+  stateDirs: readonly string[],
+  staleContentDirs: readonly string[] = [],
+): string {
   const staging = `${dir}/${RESTORE_STAGING_DIR}`;
+  const rollback = `${dir}/${RESTORE_ROLLBACK_DIR}`;
   const quotedStaging = shellQuote(staging);
+  const quotedRollback = shellQuote(rollback);
   const removeStaging = `rm -rf -- ${quotedStaging}`;
+  const removeRollback = `rm -rf -- ${quotedRollback}`;
+  const refuseUnrecoveredRollback =
+    `if [ -e ${quotedRollback} ] || [ -L ${quotedRollback} ]; then ` +
+    `echo ${shellQuote(`Refusing restore: unrecovered NemoClaw state remains at ${rollback}`)} >&2; ` +
+    "exit 1; fi";
+  const restoredDirSet = new Set(stateDirs);
+  const transitionDirs = orderStateDirsForRestore([
+    ...new Set([...stateDirs, ...staleContentDirs]),
+  ]);
+  const rollbackCommands = transitionDirs
+    .map((stateDir, index) => ({ stateDir, index }))
+    .reverse()
+    .map(({ stateDir, index }) => {
+      const target = shellQuote(`${dir}/${stateDir}`);
+      const rollbackTarget = shellQuote(`${rollback}/${stateDir}`);
+      const targetParent = shellQuote(path.posix.dirname(`${dir}/${stateDir}`));
+      const existingMarker = shellQuote(`${rollback}/.existing-${index}`);
+      const absentMarker = shellQuote(`${rollback}/.absent-${index}`);
+      return (
+        `if [ -e ${existingMarker} ]; then ` +
+        `if [ -e ${rollbackTarget} ] || [ -L ${rollbackTarget} ]; then ` +
+        `if rm -rf -- ${target} && mkdir -p -- ${targetParent} && ` +
+        `mv -- ${rollbackTarget} ${target}; then :; else rollback_status=1; fi; fi; ` +
+        `elif [ -e ${absentMarker} ]; then ` +
+        `rm -rf -- ${target} || rollback_status=1; fi`
+      );
+    });
+  const cleanup = [
+    "status=$?",
+    "rollback_status=0",
+    `if [ "$status" -ne 0 ] && [ "$transaction_committed" -ne 1 ]; then ` +
+      `${rollbackCommands.join("; ")}; fi`,
+    removeStaging,
+    `if [ "$status" -ne 0 ] && [ "$transaction_committed" -eq 1 ]; then ` +
+      `echo ${shellQuote(
+        `NemoClaw restore committed but cleanup failed; preserved recovery state at ${rollback}`,
+      )} >&2; ` +
+      `elif [ "$rollback_status" -eq 0 ]; then ${removeRollback}; ` +
+      `else echo ${shellQuote(
+        `NemoClaw restore rollback failed; preserved recovery state at ${rollback}`,
+      )} >&2; fi`,
+    'exit "$status"',
+  ].join("; ");
   const commands = [
     removeStaging,
     `mkdir -p -- ${quotedStaging}`,
+    `mkdir -p -- ${quotedRollback}`,
     `tar --no-same-owner -xf - -C ${quotedStaging}`,
   ];
-  for (const stateDir of orderStateDirsForRestore(stateDirs)) {
+  for (const [index, stateDir] of transitionDirs.entries()) {
     const target = shellQuote(`${dir}/${stateDir}`);
-    commands.push(`rm -rf -- ${target}`);
-    commands.push(`mv -- ${shellQuote(`${staging}/${stateDir}`)} ${target}`);
+    const rollbackTarget = shellQuote(`${rollback}/${stateDir}`);
+    const rollbackParent = shellQuote(path.posix.dirname(`${rollback}/${stateDir}`));
+    const existingMarker = shellQuote(`${rollback}/.existing-${index}`);
+    const absentMarker = shellQuote(`${rollback}/.absent-${index}`);
+    commands.push(
+      `if [ -e ${target} ] || [ -L ${target} ]; then ` +
+        `mkdir -p -- ${rollbackParent} && touch -- ${existingMarker} && ` +
+        `mv -- ${target} ${rollbackTarget}; else touch -- ${absentMarker}; fi`,
+    );
+    if (restoredDirSet.has(stateDir)) {
+      const targetParent = shellQuote(path.posix.dirname(`${dir}/${stateDir}`));
+      commands.push(`mkdir -p -- ${targetParent}`);
+      commands.push(`mv -- ${shellQuote(`${staging}/${stateDir}`)} ${target}`);
+    }
   }
-  // A failed extraction or move ends the chain, so the archive copy is removed
-  // on the way out instead of at the end of the chain.
-  return `trap ${shellQuote(removeStaging)} EXIT; ${commands.join(" && ")}`;
+  commands.push("transaction_committed=1");
+  commands.push(removeRollback);
+  // A failed extraction or move ends the chain. The EXIT trap restores every
+  // live directory already transitioned. If rollback itself fails, keep the
+  // recovery tree and refuse future restores instead of deleting its only copy.
+  return (
+    `${refuseUnrecoveredRollback}; transaction_committed=0; ` +
+    `trap ${shellQuote(cleanup)} EXIT; ${commands.join(" && ")}`
+  );
 }
 
 /**
@@ -1692,12 +1761,13 @@ function restoreSandboxStateInternal(
       restoreTar = tarResult.stdout;
     }
 
-    // Remove existing state dirs before extracting so stale files from later
-    // snapshots don't persist after restoring an earlier one. OpenClaw's
-    // image-managed extensions are preserved from the freshly built image and
-    // excluded from the restore tar; only user/non-managed extension entries
-    // are cleared and restored from the backup.
-    if (cleanupStateDirs.length > 0) {
+    // OpenClaw image-managed extensions must be merged into the live directory,
+    // so that path still cleans user-owned entries before extraction. The
+    // staged path below preserves live directories in its rollback tree and
+    // removes stale content only after every replacement is ready.
+    const usesStagedDirectoryRestore =
+      restoreTar !== undefined && pluginRestorePlan.preservedExtensionDirs.length === 0;
+    if (cleanupStateDirs.length > 0 && !usesStagedDirectoryRestore) {
       const rmCmd = buildRestoreCleanupCommand(
         dir,
         localDirs,
@@ -1733,7 +1803,7 @@ function restoreSandboxStateInternal(
       const extractCmd =
         pluginRestorePlan.preservedExtensionDirs.length > 0
           ? `tar --no-same-owner -xf - -C ${shellQuote(dir)}`
-          : buildStagedRestoreCommand(dir, localDirs);
+          : buildStagedRestoreCommand(dir, localDirs, staleContentDirs);
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
         input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],

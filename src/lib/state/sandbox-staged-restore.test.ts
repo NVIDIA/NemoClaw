@@ -19,11 +19,22 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
-function runHermesRestore(options: { stateDirs: string[]; movesFail?: boolean }): {
+function runHermesRestore(options: {
+  stateDirs: string[];
+  movesFail?: boolean;
+  failPublishingDir?: string;
+  failRemovingRollback?: boolean;
+  failRollingBackDir?: string;
+  seedExistingState?: boolean;
+  seedUnrecoveredRollback?: boolean;
+}): {
   moves: MoveRecord[];
   restore: ReturnType<typeof restoreRecreatedSandboxState>;
+  rollbackScript: string | null;
   restoredCronJob: string | null;
   restoredScript: string | null;
+  restoredWorkspace: string | null;
+  rollbackLeftBehind: boolean;
   stagingLeftBehind: boolean;
 } {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-staged-restore-"));
@@ -38,6 +49,19 @@ function runHermesRestore(options: { stateDirs: string[]; movesFail?: boolean })
     fs.mkdirSync(binDir, { recursive: true });
     fs.mkdirSync(shimDir, { recursive: true });
     fs.mkdirSync(hermesDir, { recursive: true });
+    if (options.seedExistingState === true) {
+      fs.mkdirSync(path.join(hermesDir, "cron"), { recursive: true });
+      fs.mkdirSync(path.join(hermesDir, "scripts"), { recursive: true });
+      fs.mkdirSync(path.join(hermesDir, "workspace"), { recursive: true });
+      fs.writeFileSync(path.join(hermesDir, "cron", "jobs.json"), "old cron\n");
+      fs.writeFileSync(path.join(hermesDir, "scripts", "digest.sh"), "old script\n");
+      fs.writeFileSync(path.join(hermesDir, "workspace", "notes.md"), "old workspace\n");
+    }
+    if (options.seedUnrecoveredRollback === true) {
+      const rollbackScripts = path.join(hermesDir, ".nemoclaw-restore-rollback", "scripts");
+      fs.mkdirSync(rollbackScripts, { recursive: true });
+      fs.writeFileSync(path.join(rollbackScripts, "digest.sh"), "recoverable script\n");
+    }
 
     for (const stateDir of options.stateDirs) {
       fs.mkdirSync(path.join(backupPath, stateDir), { recursive: true });
@@ -77,32 +101,43 @@ process.exit(0);
 
     writeExecutable(
       path.join(shimDir, "mv"),
-      options.movesFail === true
-        ? `#!/usr/bin/env node
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(
-  ${JSON.stringify(moveLog)},
-  JSON.stringify({
-    target: args[args.length - 1],
-    scriptsPresent: fs.existsSync(${JSON.stringify(path.join(hermesDir, "scripts"))}),
-  }) + "\\n",
-);
-process.exit(1);
-`
-        : `#!/usr/bin/env node
+      `#!/usr/bin/env node
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const args = process.argv.slice(2);
+const source = args[args.length - 2] || "";
 const target = args[args.length - 1];
-fs.appendFileSync(
-  ${JSON.stringify(moveLog)},
-  JSON.stringify({
-    target,
-    scriptsPresent: fs.existsSync(${JSON.stringify(path.join(hermesDir, "scripts"))}),
-  }) + "\\n",
-);
+const isPublish = source.includes("/.nemoclaw-restore-staging/");
+const isRollback = source.includes("/.nemoclaw-restore-rollback/");
+if (isPublish) {
+  fs.appendFileSync(
+    ${JSON.stringify(moveLog)},
+    JSON.stringify({
+      target,
+      scriptsPresent: fs.existsSync(${JSON.stringify(path.join(hermesDir, "scripts"))}),
+    }) + "\\n",
+  );
+}
+if (
+  ${JSON.stringify(options.movesFail === true)} ||
+  (isPublish && target.endsWith("/" + ${JSON.stringify(options.failPublishingDir ?? "")})) ||
+  (isRollback && target.endsWith("/" + ${JSON.stringify(options.failRollingBackDir ?? "")}))
+) process.exit(1);
 const result = spawnSync("/bin/mv", args, { stdio: "inherit" });
+process.exit(result.status === null ? 1 : result.status);
+`,
+    );
+
+    writeExecutable(
+      path.join(shimDir, "rm"),
+      `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (
+  ${JSON.stringify(options.failRemovingRollback === true)} &&
+  args.some((arg) => arg.endsWith("/.nemoclaw-restore-rollback"))
+) process.exit(1);
+const result = spawnSync("/bin/rm", args, { stdio: "inherit" });
 process.exit(result.status === null ? 1 : result.status);
 `,
     );
@@ -153,11 +188,25 @@ process.exit(result.status === null ? 1 : result.status);
       : [];
     const cronJobPath = path.join(hermesDir, "cron", "jobs.json");
     const scriptPath = path.join(hermesDir, "scripts", "digest.sh");
+    const workspacePath = path.join(hermesDir, "workspace", "notes.md");
+    const rollbackScriptPath = path.join(
+      hermesDir,
+      ".nemoclaw-restore-rollback",
+      "scripts",
+      "digest.sh",
+    );
     return {
       moves,
       restore,
+      rollbackScript: fs.existsSync(rollbackScriptPath)
+        ? fs.readFileSync(rollbackScriptPath, "utf8")
+        : null,
       restoredCronJob: fs.existsSync(cronJobPath) ? fs.readFileSync(cronJobPath, "utf8") : null,
       restoredScript: fs.existsSync(scriptPath) ? fs.readFileSync(scriptPath, "utf8") : null,
+      restoredWorkspace: fs.existsSync(workspacePath)
+        ? fs.readFileSync(workspacePath, "utf8")
+        : null,
+      rollbackLeftBehind: fs.existsSync(path.join(hermesDir, ".nemoclaw-restore-rollback")),
       stagingLeftBehind: fs.existsSync(path.join(hermesDir, ".nemoclaw-restore-staging")),
     };
   } finally {
@@ -219,6 +268,69 @@ describe("Hermes cron state restore", () => {
     expect(result.moves.map((move) => path.basename(move.target))).toEqual(["scripts"]);
     expect(result.restoredCronJob).toBeNull();
     expect(result.restore.success).toBe(false);
+    expect(result.stagingLeftBehind).toBe(false);
+  });
+
+  it("restores the original state when a staged directory cannot be published", () => {
+    const result = runHermesRestore({
+      stateDirs: ["scripts", "workspace", "cron"],
+      failPublishingDir: "workspace",
+      seedExistingState: true,
+    });
+
+    expect(result.moves.map((move) => path.basename(move.target))).toEqual([
+      "scripts",
+      "workspace",
+    ]);
+    expect(result.restore.success).toBe(false);
+    expect(result.restoredScript).toBe("old script\n");
+    expect(result.restoredWorkspace).toBe("old workspace\n");
+    expect(result.restoredCronJob).toBe("old cron\n");
+    expect(result.stagingLeftBehind).toBe(false);
+    expect(result.rollbackLeftBehind).toBe(false);
+  });
+
+  it("preserves the recovery tree when rolling the original state back fails", () => {
+    const result = runHermesRestore({
+      stateDirs: ["scripts", "workspace", "cron"],
+      failPublishingDir: "workspace",
+      failRollingBackDir: "scripts",
+      seedExistingState: true,
+    });
+
+    expect(result.restore.success).toBe(false);
+    expect(result.restoredWorkspace).toBe("old workspace\n");
+    expect(result.restoredCronJob).toBe("old cron\n");
+    expect(result.rollbackScript).toBe("old script\n");
+    expect(result.rollbackLeftBehind).toBe(true);
+    expect(result.stagingLeftBehind).toBe(false);
+  });
+
+  it("refuses a new restore while an unrecovered rollback tree exists", () => {
+    const result = runHermesRestore({
+      stateDirs: ["scripts", "workspace", "cron"],
+      seedExistingState: true,
+      seedUnrecoveredRollback: true,
+    });
+
+    expect(result.restore.success).toBe(false);
+    expect(result.restoredScript).toBe("old script\n");
+    expect(result.rollbackScript).toBe("recoverable script\n");
+    expect(result.rollbackLeftBehind).toBe(true);
+  });
+
+  it("keeps the new state and recovery tree when post-commit cleanup fails", () => {
+    const result = runHermesRestore({
+      stateDirs: ["scripts", "workspace", "cron"],
+      failRemovingRollback: true,
+      seedExistingState: true,
+    });
+
+    expect(result.restore.success).toBe(false);
+    expect(result.restoredScript).toBe("#!/bin/bash\necho ok\n");
+    expect(result.restoredCronJob).toBe('{"jobs":[{"enabled":true}]}\n');
+    expect(result.rollbackScript).toBe("old script\n");
+    expect(result.rollbackLeftBehind).toBe(true);
     expect(result.stagingLeftBehind).toBe(false);
   });
 });
