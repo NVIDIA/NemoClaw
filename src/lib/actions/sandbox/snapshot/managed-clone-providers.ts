@@ -27,11 +27,15 @@ type ManagedCloneProviderSource =
 
 const HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
 const HERMES_INFERENCE_CREDENTIAL_ENV = "OPENAI_API_KEY";
+const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
+const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 
 type ManagedCloneProviderCommandResult = {
   readonly status: number | null;
   readonly stdout?: string | Buffer | null;
   readonly stderr?: string | Buffer | null;
+  readonly error?: unknown;
+  readonly signal?: NodeJS.Signals | string | null;
 };
 
 export type ManagedCloneProviderRunner = (
@@ -40,7 +44,10 @@ export type ManagedCloneProviderRunner = (
     readonly [key: string]: unknown;
     readonly ignoreError?: boolean;
     readonly env?: NodeJS.ProcessEnv;
+    readonly maxBuffer?: number;
+    readonly suppressOutput?: boolean;
     readonly stdio?: ["ignore", "ignore" | "pipe", "ignore" | "pipe"];
+    readonly timeout?: number;
   },
 ) => ManagedCloneProviderCommandResult;
 
@@ -79,14 +86,20 @@ function inspectProvider(
 ): ProviderInspection {
   const inspection = runOpenshell(["provider", "get", provider.providerName], {
     ignoreError: true,
+    maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
     stdio: ["ignore", "pipe", "pipe"],
+    suppressOutput: true,
+    timeout: PROVIDER_PROBE_TIMEOUT_MS,
   });
-  if (inspection.status !== 0) {
-    const output =
-      `${commandStreamText(inspection.stdout)}\n${commandStreamText(inspection.stderr)}`.trim();
+  if (inspection.error || inspection.signal || inspection.status !== 0) {
+    const output = `${commandStreamText(inspection.stdout)}\n${commandStreamText(
+      inspection.stderr,
+    )}`;
     if (
+      !inspection.error &&
+      !inspection.signal &&
       inspection.status === 1 &&
-      reportsExactProviderNotFound(output, provider.providerName, 64 * 1024)
+      reportsExactProviderNotFound(output, provider.providerName, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
     ) {
       return { kind: "missing" };
     }
@@ -364,9 +377,17 @@ function cleanupCreatedProviders(
         })
       : runOpenshell(["provider", "delete", providerName], {
           ignoreError: true,
-          stdio: ["ignore", "ignore", "ignore"],
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
         });
-    const deleted = "ok" in result ? result.ok : result.status === 0;
+    const deleted =
+      ("ok" in result ? result.ok : result.status === 0) ||
+      (result.status === 1 &&
+        reportsExactProviderNotFound(
+          `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`,
+          providerName,
+          PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
+        ));
     if (!deleted) {
       console.warn(
         `  Warning: could not clean up managed clone provider '${providerName}' after failure.`,

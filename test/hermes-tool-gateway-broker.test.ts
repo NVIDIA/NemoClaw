@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import zlib from "node:zlib";
+import { vi } from "vitest";
 import { describe, expect, test as it } from "./helpers/owned-test-resources";
 import { testTimeout } from "./helpers/timeouts";
 
@@ -211,6 +212,66 @@ describe("Hermes managed-tool gateway broker", () => {
         hashMatches: false,
       }),
     ).toBe("start-or-restart");
+  });
+
+  it("preserves durable state when live credential unregister fails", () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const unlinkState = vi.fn();
+
+    expect(
+      broker.removeHermesToolGatewayProviderState("clone", {
+        getStatePath: () => "/test-only/clone.json",
+        controlSocketExists: () => true,
+        unregister: () => false,
+        unlinkState,
+      }),
+    ).toBe(false);
+    expect(unlinkState).not.toHaveBeenCalled();
+  });
+
+  it("removes broker state only for the exact registry identity", () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const removeState = vi.fn(() => true);
+    const entry = {
+      name: "clone",
+      agent: "hermes",
+      hermesToolGateways: [],
+      hermesInferenceProvider: "clone-hermes-inference",
+    };
+    const exactState = {
+      sandbox: "clone",
+      provider_name: "clone-hermes-tool-gateway",
+      inference_provider_name: "clone-hermes-inference",
+    };
+    const deps = {
+      getStatePath: () => "/test-only/clone.json",
+      stateExists: () => true,
+      removeState,
+    };
+
+    expect(
+      broker.removeHermesToolGatewayProviderStateForSandboxEntry(
+        { ...entry, hermesInferenceProvider: "other-hermes-inference" },
+        { ...deps, stateExists: () => false },
+      ),
+    ).toBe(false);
+    expect(
+      broker.removeHermesToolGatewayProviderStateForSandboxEntry(entry, {
+        ...deps,
+        readState: () => ({ ...exactState, sandbox: "other" }),
+      }),
+    ).toBe(false);
+    expect(removeState).not.toHaveBeenCalled();
+
+    expect(
+      broker.removeHermesToolGatewayProviderStateForSandboxEntry(entry, {
+        ...deps,
+        readState: () => exactState,
+      }),
+    ).toBe(true);
+    expect(removeState).toHaveBeenCalledExactlyOnceWith("clone");
   });
 
   it("probes private broker boot/control and classifies failures before clone mutation", async () => {

@@ -820,6 +820,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
           openshellDriver: "docker",
           provider: "hermes-provider",
           model: "new-model",
+          hermesInferenceProvider: "beta-hermes-inference",
+          hermesToolGateways: ["nous-web"],
         },
       }),
     );
@@ -999,6 +1001,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       },
     );
     expect(f.bindHermesToolGatewayCloneProviderStateMock).not.toHaveBeenCalled();
+    expect(
+      f.removeHermesToolGatewayProviderStateForSandboxEntryMock,
+    ).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        name: "beta",
+        hermesInferenceProvider: "beta-hermes-inference",
+      }),
+    );
     const deleteCallIndex = f.runOpenshellMock.mock.calls.findIndex(
       ([args]) => args[0] === "sandbox" && args[1] === "delete",
     );

@@ -54,6 +54,7 @@ import {
   assertSandboxCreateArgvWithinTransportLimit,
   buildDockerGpuMode,
   captureOpenshell,
+  cleanupHermesSandboxProviders,
   createDockerGpuSandboxCreatePatch,
   createDockerManagedBootstrapAdapter,
   createManagedBootstrapIdentity,
@@ -69,6 +70,7 @@ import {
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
   HERMES_DASHBOARD_PORT_ENV,
   HERMES_DASHBOARD_TUI_ENV,
+  HERMES_SANDBOX_PROVIDER_SUFFIXES,
   type HermesToolGatewayCloneBroker,
   isValidForwardPort,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
@@ -902,11 +904,34 @@ function deleteSandboxForRestore(name: string): void {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
+    const hermesSuffixes = new Set<string>(HERMES_SANDBOX_PROVIDER_SUFFIXES);
     for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
+      if (hermesSuffixes.has(suffix)) continue;
       runOpenshell(["provider", "delete", `${name}-${suffix}`], {
         ignoreError: true,
         stdio: ["ignore", "ignore", "ignore"],
       });
+    }
+    const hasHermesBrokerIdentity =
+      Boolean(sbMeta?.hermesInferenceProvider) ||
+      (Array.isArray(sbMeta?.hermesToolGateways) && sbMeta.hermesToolGateways.length > 0);
+    const hermesBroker = getHermesToolGatewayCloneBroker();
+    const hermesCleanup = cleanupHermesSandboxProviders(name, hasHermesBrokerIdentity, {
+      runOpenshell,
+      removeHermesToolGatewayProviderState: () =>
+        sbMeta ? hermesBroker.removeHermesToolGatewayProviderStateForSandboxEntry(sbMeta) : false,
+    });
+    if (
+      hasHermesBrokerIdentity &&
+      (!hermesCleanup.providerCleanupSucceeded || !hermesCleanup.brokerStateRemoved)
+    ) {
+      console.error(
+        `  Destination '${name}' was deleted, but its identity-bound Hermes provider cleanup is incomplete.`,
+      );
+      console.error(
+        `  Its registry ownership was preserved. Run '${CLI_NAME} ${name} destroy' to finish cleanup, then retry restore.`,
+      );
+      snapshotExit(1);
     }
     cleanupShieldsDestroyArtifacts(name);
     removeSandboxRegistryEntry(name);

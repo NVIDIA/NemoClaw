@@ -725,6 +725,35 @@ describe("managed workload rebuild handoff", () => {
     );
   });
 
+  it("retains a dormant isolated Hermes identity after switching routes and removing managed tools", async () => {
+    const previousProfile = managedStartupE2eProfile("hermes");
+    const dormantProfile: ManagedStartupProfile = {
+      ...previousProfile,
+      inference: {
+        ...previousProfile.inference,
+        upstreamProvider: "openai-api",
+      },
+      tools: {
+        ...previousProfile.tools,
+        enabledGateways: [],
+      },
+    };
+    const dormantEntry = entry("hermes", { profile: dormantProfile });
+    dormantEntry.provider = "openai-api";
+    dormantEntry.hermesInferenceProvider = "alpha-hermes-inference";
+    dormantEntry.hermesToolGateways = undefined;
+    installReplacement("hermes");
+
+    const handoff = await prepareManagedWorkloadRebuildHandoff(dormantEntry, {
+      runtime: RUNTIME,
+      version: NEW_RELEASE,
+    });
+
+    expect(handoff?.hermesInferenceProvider).toBe("alpha-hermes-inference");
+    expect(handoff?.previousProfile.inference.upstreamProvider).toBe("openai-api");
+    expect(handoff?.previousProfile.tools.enabledGateways).toEqual([]);
+  });
+
   it("preserves Hermes receipt-only context and proxy while applying current tools and messaging", async () => {
     const previous = structuredClone(
       managedStartupE2eProfile("hermes"),

@@ -76,6 +76,38 @@ function managedOpenClawProfile() {
   });
 }
 
+function managedHermesProfile() {
+  return buildManagedStartupProfile({
+    agent: "hermes",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "hermes-provider",
+      model: "moonshotai/kimi-k2.6",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: {
+      agent: "hermes",
+      mode: "disabled",
+      url: "http://127.0.0.1:19189",
+      publicPort: null,
+      internalPort: null,
+      tuiEnabled: false,
+    },
+    webSearch: null,
+    toolDisclosure: "direct",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    environment: {},
+    corporateCa: null,
+  });
+}
+
 beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 
@@ -167,5 +199,109 @@ describe("managed snapshot provider preflight", () => {
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the replaced Hermes registry and discards the staged binding when old broker cleanup fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const built = managedHermesProfile();
+    const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
+    f.getSandboxMock.mockImplementation(
+      s.valueByName({
+        alpha: {
+          name: "alpha",
+          agent: "hermes",
+          imageTag: reference,
+          openshellDriver: "docker",
+          provider: "hermes-provider",
+          model: "moonshotai/kimi-k2.6",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "direct",
+          webSearchEnabled: false,
+          webSearchProvider: null,
+          hermesToolGateways: ["nous-web"],
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference,
+            release: "v0.0.99",
+            sourceRevision: "b".repeat(40),
+            sourceCohort: "ghrun-123456-1",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: built.encodedProfile,
+            startupProfileSha256: built.startupProfileSha256,
+            credentialProxyReplayRequired: false,
+            shared: true,
+          },
+        } as never,
+        beta: {
+          name: "beta",
+          agent: "hermes",
+          imageTag: "nemoclaw-beta:test",
+          openshellDriver: "docker",
+          provider: "hermes-provider",
+          model: "moonshotai/kimi-k2.6",
+          hermesInferenceProvider: "beta-hermes-inference",
+          hermesToolGateways: ["nous-web"],
+        },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.runOpenshellMock.mockImplementation(
+      s.managedProviderCreationRunner({
+        "beta-hermes-inference": {
+          type: "openai",
+          credential: "OPENAI_API_KEY",
+        },
+        "beta-hermes-tool-gateway": {
+          type: "generic",
+          credential: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+        },
+      }),
+    );
+    vi.stubEnv("OPENAI_API_KEY", "test-only-inference-key");
+    vi.stubEnv("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN", "test-only-destination-refresh-token");
+    f.removeHermesToolGatewayProviderStateForSandboxEntryMock.mockReturnValue(false);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(f.runOpenshellMock).toHaveBeenCalledWith(
+      ["sandbox", "delete", "beta"],
+      expect.any(Object),
+    );
+    expect(
+      f.removeHermesToolGatewayProviderStateForSandboxEntryMock,
+    ).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        name: "beta",
+        hermesInferenceProvider: "beta-hermes-inference",
+        hermesToolGateways: ["nous-web"],
+      }),
+    );
+    expect(f.removeSandboxRegistryEntryMock).not.toHaveBeenCalled();
+    expect(f.discardHermesToolGatewayCloneBindingMock).toHaveBeenCalledExactlyOnceWith("beta", {
+      activationToken: "nc_activate_test-only",
+      brokerToken: "nc_broker_test-only",
+    });
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "identity-bound Hermes provider cleanup is incomplete",
+    );
   });
 });

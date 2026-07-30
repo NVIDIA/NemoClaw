@@ -210,21 +210,27 @@ function registerHermesToolGatewayRuntimeCredential(refreshToken, exactSandboxNa
   return matched;
 }
 
-function removeHermesToolGatewayProviderState(sandboxName) {
-  const file = getHermesToolGatewayStatePath(sandboxName);
-  const unregistered =
-    !fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH) ||
-    brokerControlRequest("credentials/unregister", {
-      sandbox: validateName(sandboxName, "sandbox name"),
-    });
-  let unlinked = false;
+function removeHermesToolGatewayProviderState(sandboxName, deps = {}) {
+  const sandbox = validateName(sandboxName, "sandbox name");
+  const file = (deps.getStatePath ?? getHermesToolGatewayStatePath)(sandbox);
+  const controlSocketExists =
+    deps.controlSocketExists ?? (() => fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH));
+  const unregister =
+    deps.unregister ??
+    (() =>
+      brokerControlRequest("credentials/unregister", {
+        sandbox,
+      }));
+  // The file is the durable retry identity for an in-memory credential. Keep
+  // it intact until the live broker confirms unregister; otherwise a later
+  // cleanup cannot prove which credential remains active.
+  if (controlSocketExists() && !unregister()) return false;
   try {
-    fs.unlinkSync(file);
-    unlinked = true;
+    (deps.unlinkState ?? fs.unlinkSync)(file);
+    return true;
   } catch (error) {
-    unlinked = Boolean(error && error.code === "ENOENT");
+    return Boolean(error && error.code === "ENOENT");
   }
-  return unregistered && unlinked;
 }
 
 function brokerRuntimeFileHash(file) {
@@ -699,8 +705,8 @@ function isHermesManagedToolGatewayEntry(entry) {
   return Boolean(enabled);
 }
 
-function matchesHermesToolGatewayProviderState(entry, state) {
-  if (!isHermesManagedToolGatewayEntry(entry) || !state || typeof state !== "object") {
+function matchesHermesToolGatewayProviderIdentity(entry, state) {
+  if (entry?.agent !== "hermes" || !state || typeof state !== "object") {
     return false;
   }
   const sandbox = validateName(entry.name, "sandbox name");
@@ -722,6 +728,27 @@ function matchesHermesToolGatewayProviderState(entry, state) {
     isolatedProvider === getHermesInferenceProviderName(sandbox) &&
     state.inference_provider_name === isolatedProvider
   );
+}
+
+function matchesHermesToolGatewayProviderState(entry, state) {
+  return (
+    isHermesManagedToolGatewayEntry(entry) && matchesHermesToolGatewayProviderIdentity(entry, state)
+  );
+}
+
+function removeHermesToolGatewayProviderStateForSandboxEntry(entry, deps = {}) {
+  if (entry?.agent !== "hermes") return false;
+  const sandbox = validateName(entry.name, "sandbox name");
+  const isolatedProvider =
+    typeof entry.hermesInferenceProvider === "string" ? entry.hermesInferenceProvider.trim() : "";
+  if (isolatedProvider && isolatedProvider !== getHermesInferenceProviderName(sandbox)) {
+    return false;
+  }
+  const statePath = (deps.getStatePath ?? getHermesToolGatewayStatePath)(sandbox);
+  if (!(deps.stateExists ?? fs.existsSync)(statePath)) return true;
+  const state = (deps.readState ?? readHermesToolGatewayProviderState)(sandbox);
+  if (!matchesHermesToolGatewayProviderIdentity(entry, state)) return false;
+  return (deps.removeState ?? removeHermesToolGatewayProviderState)(sandbox);
 }
 
 function ensureHermesToolGatewayBrokerForSandboxEntry(entry, options = {}) {
@@ -760,6 +787,8 @@ module.exports = {
   killStaleHermesToolGatewayBroker,
   ensureHermesToolGatewayBroker,
   isHermesManagedToolGatewayEntry,
+  matchesHermesToolGatewayProviderIdentity,
   matchesHermesToolGatewayProviderState,
+  removeHermesToolGatewayProviderStateForSandboxEntry,
   ensureHermesToolGatewayBrokerForSandboxEntry,
 };

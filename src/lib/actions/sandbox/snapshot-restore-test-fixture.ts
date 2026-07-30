@@ -56,6 +56,8 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  hermesInferenceProvider?: string;
+  hermesToolGateways?: string[];
 };
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
@@ -156,6 +158,7 @@ const managedCloneCredentialMock = vi.hoisted(() => ({
   })),
   discardBrokerState: vi.fn(() => true),
   removeBrokerState: vi.fn(() => true),
+  removeBrokerStateForEntry: vi.fn(() => true),
   preflightBrokerState: vi.fn(),
 }));
 
@@ -169,6 +172,8 @@ export const discardHermesToolGatewayCloneBindingMock =
   managedCloneCredentialMock.discardBrokerState;
 export const removeHermesToolGatewayProviderStateMock =
   managedCloneCredentialMock.removeBrokerState;
+export const removeHermesToolGatewayProviderStateForSandboxEntryMock =
+  managedCloneCredentialMock.removeBrokerStateForEntry;
 export const preflightHermesToolGatewayCloneBindingMock =
   managedCloneCredentialMock.preflightBrokerState;
 
@@ -222,6 +227,7 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   }),
 );
 export const registerSandboxMock = vi.fn();
+export const removeSandboxRegistryEntryMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const runOpenshellMock = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
@@ -440,6 +446,8 @@ vi.mock("../../hermes-tool-gateway-clone-broker", () => ({
     discardHermesToolGatewayCloneBinding: managedCloneCredentialMock.discardBrokerState,
     bindHermesToolGatewayCloneProviderState: managedCloneCredentialMock.bindBrokerState,
     removeHermesToolGatewayProviderState: managedCloneCredentialMock.removeBrokerState,
+    removeHermesToolGatewayProviderStateForSandboxEntry:
+      managedCloneCredentialMock.removeBrokerStateForEntry,
   }),
 }));
 
@@ -519,7 +527,7 @@ vi.mock("../../state/sandbox", () => ({
 
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
-  removeSandboxRegistryEntry: vi.fn(),
+  removeSandboxRegistryEntry: removeSandboxRegistryEntryMock,
 }));
 
 vi.mock("./restore-gateway-pairing", () => ({
@@ -567,6 +575,8 @@ export function resetSnapshotRestoreMocks(): void {
   });
   managedCloneCredentialMock.removeBrokerState.mockReset();
   managedCloneCredentialMock.removeBrokerState.mockReturnValue(true);
+  managedCloneCredentialMock.removeBrokerStateForEntry.mockReset();
+  managedCloneCredentialMock.removeBrokerStateForEntry.mockReturnValue(true);
   managedCloneCredentialMock.preflightBrokerState.mockReset();
   managedCloneCredentialMock.stageBrokerState.mockReset();
   managedCloneCredentialMock.stageBrokerState.mockReturnValue({
@@ -593,6 +603,7 @@ export function resetSnapshotRestoreMocks(): void {
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
+  removeSandboxRegistryEntryMock.mockReset();
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({
     success: true,
