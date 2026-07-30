@@ -406,6 +406,21 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.openclaw.generated.mdx
                 slug: community-contributions
+              - section: "Documentation Engineering"
+                slug: documentation-engineering
+                contents:
+                  - page: "Design Agent-Ready Documentation"
+                    path: _build/agent-variants/resources/design-agent-ready-documentation.openclaw.generated.mdx
+                    slug: design-agent-ready-documentation
+                  - page: "Automate Documentation Workflows"
+                    path: _build/agent-variants/resources/automate-documentation-workflows.openclaw.generated.mdx
+                    slug: automate-documentation-workflows
+                  - page: "Generate Documentation Variants"
+                    path: _build/agent-variants/resources/generate-documentation-variants.openclaw.generated.mdx
+                    slug: generate-documentation-variants
+                  - page: "Govern and Evaluate Agentic Documentation"
+                    path: _build/agent-variants/resources/govern-agentic-documentation.openclaw.generated.mdx
+                    slug: govern-agentic-documentation
               - link: "Discord"
                 href: https://discord.gg/XFpfPv9Uvx
               - link: "Report Vulnerabilities"
@@ -575,6 +590,9 @@ navigation:
                   - page: "Run Sandboxes"
                     path: _build/agent-variants/manage-sandboxes/run-sandboxes.deepagents.generated.mdx
                     slug: run-sandboxes
+                  - page: "Run Deep Agents Code"
+                    path: manage-sandboxes/run-deep-agents-code.mdx
+                    slug: run-deep-agents-code
                   - page: "Recover and Rebuild Sandboxes"
                     path: _build/agent-variants/manage-sandboxes/recover-rebuild-sandboxes.deepagents.generated.mdx
                     slug: recover-and-rebuild-sandboxes
@@ -719,6 +737,21 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.deepagents.generated.mdx
                 slug: community-contributions
+              - section: "Documentation Engineering"
+                slug: documentation-engineering
+                contents:
+                  - page: "Design Agent-Ready Documentation"
+                    path: _build/agent-variants/resources/design-agent-ready-documentation.deepagents.generated.mdx
+                    slug: design-agent-ready-documentation
+                  - page: "Automate Documentation Workflows"
+                    path: _build/agent-variants/resources/automate-documentation-workflows.deepagents.generated.mdx
+                    slug: automate-documentation-workflows
+                  - page: "Generate Documentation Variants"
+                    path: _build/agent-variants/resources/generate-documentation-variants.deepagents.generated.mdx
+                    slug: generate-documentation-variants
+                  - page: "Govern and Evaluate Agentic Documentation"
+                    path: _build/agent-variants/resources/govern-agentic-documentation.deepagents.generated.mdx
+                    slug: govern-agentic-documentation
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
@@ -1098,6 +1131,21 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.hermes.generated.mdx
                 slug: community-contributions
+              - section: "Documentation Engineering"
+                slug: documentation-engineering
+                contents:
+                  - page: "Design Agent-Ready Documentation"
+                    path: _build/agent-variants/resources/design-agent-ready-documentation.hermes.generated.mdx
+                    slug: design-agent-ready-documentation
+                  - page: "Automate Documentation Workflows"
+                    path: _build/agent-variants/resources/automate-documentation-workflows.hermes.generated.mdx
+                    slug: automate-documentation-workflows
+                  - page: "Generate Documentation Variants"
+                    path: _build/agent-variants/resources/generate-documentation-variants.hermes.generated.mdx
+                    slug: generate-documentation-variants
+                  - page: "Govern and Evaluate Agentic Documentation"
+                    path: _build/agent-variants/resources/govern-agentic-documentation.hermes.generated.mdx
+                    slug: govern-agentic-documentation
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"

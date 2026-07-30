@@ -459,6 +459,64 @@ describe("Manage Sandboxes extension routes", () => {
       index.routes.has("/user-guide/deepagents/manage-sandboxes/install-openclaw-plugins"),
     ).toBe(false);
   });
+
+  it("publishes the Deep Agents runtime guide only in the Deep Agents guide", () => {
+    const source = "manage-sandboxes/run-deep-agents-code.mdx";
+    const quickstartSource = "get-started/quickstart-langchain-deepagents-code.mdx";
+    const quickstart = readFileSync(path.join(repoRoot, "docs", quickstartSource), "utf8");
+
+    expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([
+      "/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
+    ]);
+    expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
+    expect(findBrokenPublishedRoutes(quickstartSource, index)).toEqual([]);
+    expect(quickstart.split('<a id="use-the-harness"></a>')).toHaveLength(2);
+    expect(quickstart).toContain(
+      "[Run Deep Agents Code](../manage-sandboxes/operate-sandboxes/run-deep-agents-code)",
+    );
+    expect(
+      index.routes.has(
+        "/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
+      ),
+    ).toBe(false);
+    expect(
+      index.routes.has(
+        "/user-guide/hermes/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("Documentation Engineering routes", () => {
+  const index = buildPublishedRouteIndex();
+  const pages = [
+    "design-agent-ready-documentation",
+    "automate-documentation-workflows",
+    "generate-documentation-variants",
+    "govern-agentic-documentation",
+  ] as const;
+
+  it("publishes every focused page under the non-clickable group for every agent variant", () => {
+    for (const page of pages) {
+      const source = `resources/${page}.mdx`;
+
+      expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([
+        `/user-guide/openclaw/resources/documentation-engineering/${page}`,
+        `/user-guide/deepagents/resources/documentation-engineering/${page}`,
+        `/user-guide/hermes/resources/documentation-engineering/${page}`,
+      ]);
+      expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
+    }
+  });
+
+  it("does not publish a stale route for the retired source-only guide", () => {
+    expect(index.sourceToRoutes.has("resources/engineer-agentic-documentation.mdx")).toBe(false);
+    for (const variant of ["openclaw", "deepagents", "hermes"]) {
+      expect(
+        index.routes.has(`/user-guide/${variant}/resources/engineer-agentic-documentation`),
+      ).toBe(false);
+    }
+  });
 });
 
 describe("headless server deployment routes", () => {

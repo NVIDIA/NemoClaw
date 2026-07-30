@@ -134,6 +134,26 @@ docker info
 The managed default gateway service accepts `DOCKER_HOST` only as an absolute local `unix://` socket path.
 It rejects remote endpoints and relative socket paths before service startup.
 
+### Onboarding reports `invalid_docker_host`
+
+The `invalid_docker_host` advisory means that `DOCKER_HOST` is set to an endpoint that NemoClaw cannot safely pass to the managed OpenShell gateway service.
+Remove the override to use Docker's default local socket:
+
+```bash
+unset DOCKER_HOST
+$$nemoclaw onboard
+```
+
+If your Docker daemon uses another local socket, set an absolute `unix://` path before you retry:
+
+```bash
+export DOCKER_HOST=unix:///var/run/docker.sock
+$$nemoclaw onboard
+```
+
+NemoClaw rejects TCP and SSH endpoints, relative socket paths, values that contain single quotes, and values that contain line breaks.
+Do not wrap the socket path in single quotes inside the variable value.
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.

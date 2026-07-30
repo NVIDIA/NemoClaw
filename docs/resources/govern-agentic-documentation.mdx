@@ -1,0 +1,157 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Govern and Evaluate Agentic Documentation"
+sidebar-title: "Govern and Evaluate Docs"
+description: "Set publication boundaries, assurance gates, human ownership, and quality measures for agentic documentation."
+description-agent: "Defines executable documentation gates, product scope controls, human-owned decisions, retrieval and task-quality measures, phased adoption, and readiness criteria. Use when governing automated documentation or evaluating whether a documentation system is agent-ready."
+keywords: ["documentation governance", "agentic documentation evaluation", "documentation quality gates", "retrieval accuracy", "docs readiness"]
+content:
+  type: "how_to"
+---
+
+Treat documentation as a product surface with deterministic assurance, explicit publication boundaries, and outcome-based evaluation.
+Agents can execute repeatable checks and workflows, while maintainers retain ownership of product scope, information architecture, and editorial policy.
+
+## Treat Documentation as an Executable Product Surface
+
+Build deterministic checks around the contracts that matter to users and agents.
+Syntax validation alone does not catch behavioral drift.
+
+| Gate | Defect it prevents | NemoClaw example |
+|---|---|---|
+| Source formatting | Unreadable diffs and inconsistent authoring. | Markdown linting, one sentence per source line, and copyable command rules. |
+| Guide variant scope | A page is omitted from an applicable guide or silently published for the wrong agent. | Source `agent-variants` declarations checked against navigation membership. |
+| Generated freshness | Stale prompts or guide variants. | Build-time generation followed by read-only freshness checks. |
+| Route graph | Links or redirects that target unpublished pages. | Published-route validation derived from `docs/index.yml`. |
+| Product parity | Reference documentation that disagrees with the product. | CLI command, flag, installer, and environment-variable parity checks. |
+| Pull-request preview | Layout or navigation failures hidden by source checks. | An isolated Fern preview for each docs pull request. |
+| Staging publish | A merge that cannot produce the deployed site. | Validation and publication from `main`. |
+| Public release gate | Public docs from an unapproved or detached revision. | Release-tag publication only when the tagged commit is reachable from `main`. |
+
+Run the narrowest checks on every relevant change and keep broader checks at integration or release boundaries.
+Tests should derive routes and behavior from the same source models used by the product instead of maintaining a second hard-coded catalog.
+
+## Govern What Agents May Publish
+
+Fast documentation automation needs a stronger scope gate, not a weaker one.
+Documentation can accidentally turn an experiment into an apparent supported product surface.
+
+Define the following controls:
+
+- Require an accepted product decision before documenting a new integration, recipe, or supported workflow as canonical behavior.
+- Maintain an explicit skip list for merged features that are not ready for public documentation.
+- Block restricted terms and private implementation details from generated output.
+- Separate public user guidance from contributor and maintainer procedures.
+- Require agent workflows to stop before handling secrets, changing accounts, or performing destructive operations without approval.
+- Assign an owner and lifecycle expectation to every canonical page and generated artifact.
+
+NemoClaw applies the same scope gate to code review and documentation review.
+A working example and a green build establish technical evidence, but they do not establish product approval.
+
+## Keep High-Judgment Work Human-Owned
+
+Agents execute documented rules well when the repository gives them accurate context and deterministic checks.
+People remain responsible for decisions that create or change those rules.
+
+Keep human ownership over the following work:
+
+- Decide whether a feature, integration, or workflow is a supported product surface.
+- Decide which user problem a page owns and where readers should encounter it.
+- Resolve conflicts between implementation details, product intent, security requirements, and user expectations.
+- Restructure sections when accumulated changes reveal a better organization.
+- Set the editorial voice, evidence standard, release narrative, and publication policy.
+- Review recurring agent mistakes and improve the instructions, skills, tests, or source structure that allowed them.
+
+Formal information-architecture terminology can help teams discuss this work, but the terminology is not the source of quality.
+If you can recognize that a page is doing too many jobs, decide where a user expects to find a topic, and give each topic one clear owner, you are already practicing the part of information architecture that this operating model needs.
+
+The durable division of labor is concise.
+Agents handle repeatable work close to the engineering source, while people own product meaning, system design, exceptions, and editorial judgment.
+
+## Measure Retrieval and Task Quality
+
+Measure whether agents can complete documentation-backed tasks, not only whether pages receive traffic.
+
+Track a small evaluation set across common and high-risk user journeys:
+
+- Retrieval accuracy, measured by whether the intended canonical page appears in the first results.
+- Variant accuracy, measured by whether the answer stays within the selected platform or product edition.
+- Citation coverage, measured by whether behavior claims point to the current source page.
+- Task completion, measured by whether the documented procedure reaches its success check.
+- Safety compliance, measured by whether the agent stops at approval, credential, and destructive-action boundaries.
+- Freshness, measured by the delay between a product change and its verified documentation update.
+- Editorial intervention, measured by how often routine documentation changes require a manual rewrite after the agent follows the repository workflow.
+- Drift detection, measured by which parity gate catches an intentionally stale fixture.
+
+Keep evaluation prompts versioned with the documentation system.
+Add a regression case when a user report or review reveals that an agent selected the wrong source, mixed variants, skipped a safety boundary, or failed to verify the outcome.
+
+## Adopt the Model in Phases
+
+Build the smallest complete loop first, then add sophistication where evidence shows a need.
+
+| Phase | Deliverable | Exit condition |
+|---|---|---|
+| Foundation | One canonical, task-oriented Markdown or MDX corpus. | Humans can complete one priority journey from the source docs. |
+| Machine delivery | Stable Markdown routes and a lightweight index. | An agent can retrieve and cite the same priority journey without scraping HTML. |
+| Routing | A starter prompt and thin routing skill. | The agent selects the correct page, variant, and verification step. |
+| Workflow | Repository instructions and an update-docs workflow. | A product change produces a traceable docs-impact decision. |
+| Assurance | Route, link, generation, parity, and preview gates. | A deliberately stale or broken fixture fails before merge. |
+| Scale | Variants, structured docs search, release automation, and evaluation suites. | Additional products or platforms do not create parallel content ownership. |
+
+Do not begin with a large generated skill catalog or autonomous publishing workflow.
+Begin with one high-value user journey and prove the complete source-to-retrieval-to-verification loop.
+
+## Map the NemoClaw Implementation
+
+The current NemoClaw repository provides concrete examples for each layer.
+
+| Concern | NemoClaw implementation |
+|---|---|
+| Canonical content | `docs/**/*.mdx`. |
+| Repository-wide documentation contract | `AGENTS.md`. |
+| Authoring and review policy | `docs/CONTRIBUTING.md` and `docs/AGENTS.md`. |
+| Navigation and published guide variants | `docs/index.yml`. |
+| Intentional partial guide variant scope | Source `agent-variants` frontmatter validated by `scripts/sync-agent-variant-docs.mts`. |
+| Site and redirect configuration | `fern/docs.yml` and `fern/fern.config.json`. |
+| Machine delivery | Published Markdown routes, `llms.txt`, and the read-only Model Context Protocol (MCP) docs server. |
+| Routing skill | `.agents/skills/nemoclaw-user-guide/SKILL.md`. |
+| Starter prompt | `docs/resources/starter-prompt.md` and `scripts/generate-starter-prompt.mts`. |
+| Product-owned generated facts | `ci/platform-matrix.json` and `scripts/generate-platform-docs.py`. |
+| Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
+| Route validation | `scripts/check-docs-published-routes.mts`. |
+| Update workflow | `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
+| Documentation review receipt | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/docs-review-receipt.yaml`, and `scripts/docs-review-receipt.mts`. |
+| Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
+| Pull-request assurance | Docs link, product parity, and preview workflows under `.github/workflows/`. |
+| Release history | Dated entries under `docs/changelog/` that land before the release tag. |
+| Release publication | Staging publication from `main` and public publication from release tags. |
+
+Use this map as a reference architecture, not a requirement to adopt the same vendor or repository layout.
+Preserve the contracts when adapting the implementation.
+
+## Review Readiness
+
+Before calling a documentation system agent-ready, confirm the following conditions:
+
+- One governed source produces the human and machine documentation experiences.
+- Every priority task has routing metadata, a stable machine-readable route, and a verification step.
+- Search, the docs index, and rendered navigation resolve to the same release and canonical owner.
+- Routing prompts and skills point to the source instead of copying it.
+- Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
+- Agent workflows define scope, approvals, stop conditions, and completion evidence.
+- Code-changing and documentation-only pull requests record a documentation-review result tied to the current head and instruction version.
+- New commits invalidate the recorded review until the documentation writer subagent runs again.
+- Pull requests validate generated output, routes, links, product parity, and rendered previews.
+- Release publication uses an approved immutable revision.
+- Retrieval, citation, task, guide variant, safety, and freshness regressions have repeatable evaluations.
+
+The first practical milestone is one product journey that passes every condition above.
+Expand the system only after that loop is reliable.
+
+## Related Topics
+
+- [Design Agent-Ready Documentation](design-agent-ready-documentation) defines the source, delivery, and routing architecture.
+- [Automate Documentation Workflows](automate-documentation-workflows) explains update, review, and curation workflows.
+- [Generate Documentation Variants](generate-documentation-variants) explains shared-source variant generation and route validation.
