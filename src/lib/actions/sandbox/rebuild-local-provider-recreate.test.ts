@@ -170,7 +170,7 @@ describe("rebuild local-provider recreation", () => {
     harness.session.provider = provider;
     harness.session.model = model;
     harness.runOpenshellSpy.mockImplementation((args: string[]) => {
-      if (args[0] === "sandbox" && args[1] === "delete") sourceDeleted = true;
+      sourceDeleted ||= args.join(" ") === "sandbox delete -g nemoclaw alpha";
       return args[0] === "sandbox" && args[1] === "get"
         ? {
             status: 1,
@@ -186,7 +186,7 @@ describe("rebuild local-provider recreation", () => {
     const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
     harness.captureOpenshellSpy.mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      return argv[0] === "sandbox" && argv[1] === "get" && !sourceDeleted
+      return argv.join(" ") === "sandbox get -g nemoclaw alpha" && !sourceDeleted
         ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" };
     });

@@ -223,6 +223,13 @@ function createStep(status: string): RebuildFlowStep {
   return { status, startedAt: null, completedAt: null, error: null };
 }
 
+function sourceSandboxGateway(argv: string[], verb: string): string | null {
+  const gatewayFlag = argv.indexOf("-g");
+  return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
+    ? (argv[gatewayFlag + 1] ?? null)
+    : null;
+}
+
 function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
   return {
     sessionId: "rebuild-flow-session",
@@ -557,8 +564,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       if (overrides.captureOpenshell) {
         return overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined);
       }
+      const probedGateway = sourceSandboxGateway(argv, "get");
       const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
-      return argv[0] === "sandbox" && argv[1] === "get" && !defaultSourceDeleted
+      return probedGateway && probedGateway !== deletedSourceGateway
         ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : {
             status: 1,
@@ -567,10 +575,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             stderr: "Error: sandbox alpha not found",
           };
     });
-  let defaultSourceDeleted = false;
+  let deletedSourceGateway: string | null = null;
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
-    if (argv[0] === "sandbox" && argv[1] === "delete") defaultSourceDeleted = true;
+    const deleteGateway = sourceSandboxGateway(argv, "delete");
+    if (deleteGateway) {
+      deletedSourceGateway = deleteGateway;
+      return { status: 0, output: "" };
+    }
     if (
       argv.join(" ") === "sandbox get alpha" ||
       argv.join(" ") === "sandbox get -g nemoclaw alpha"

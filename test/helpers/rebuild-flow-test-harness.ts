@@ -60,6 +60,13 @@ const mcpBridge = requireDist("./mcp-bridge.js");
 const messaging = requireDist("../../messaging/index.js");
 const shields = requireDist("../../shields/index.js");
 
+function sourceSandboxGateway(argv: string[], verb: string): string | null {
+  const gatewayFlag = argv.indexOf("-g");
+  return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
+    ? (argv[gatewayFlag + 1] ?? null)
+    : null;
+}
+
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
 
@@ -387,14 +394,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           failedFiles: [],
         })),
     );
-  let defaultSourceDeleted = false;
+  let deletedSourceGateway: string | null = null;
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
       const overrideResult = overrides.runOpenshell?.(argv);
       if (overrideResult) return overrideResult;
-      if (argv[0] === "sandbox" && argv[1] === "delete") defaultSourceDeleted = true;
+      const deleteGateway = sourceSandboxGateway(argv, "delete");
+      if (deleteGateway) {
+        deletedSourceGateway = deleteGateway;
+        return { status: 0, output: "" };
+      }
       if (
         argv.join(" ") === "sandbox get alpha" ||
         argv.join(" ") === "sandbox get -g nemoclaw alpha"
@@ -415,8 +426,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       if (overrides.captureOpenshell) {
         return overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined);
       }
+      const probedGateway = sourceSandboxGateway(argv, "get");
       const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
-      return argv[0] === "sandbox" && argv[1] === "get" && !defaultSourceDeleted
+      return probedGateway && probedGateway !== deletedSourceGateway
         ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
