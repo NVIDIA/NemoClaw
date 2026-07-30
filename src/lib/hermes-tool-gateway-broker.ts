@@ -699,9 +699,39 @@ function isHermesManagedToolGatewayEntry(entry) {
   return Boolean(enabled);
 }
 
+function matchesHermesToolGatewayProviderState(entry, state) {
+  if (!isHermesManagedToolGatewayEntry(entry) || !state || typeof state !== "object") {
+    return false;
+  }
+  const sandbox = validateName(entry.name, "sandbox name");
+  if (
+    state.sandbox !== sandbox ||
+    state.provider_name !== getHermesToolGatewayProviderName(sandbox)
+  ) {
+    return false;
+  }
+  const isolatedProvider =
+    typeof entry.hermesInferenceProvider === "string" ? entry.hermesInferenceProvider.trim() : "";
+  if (!isolatedProvider) {
+    return (
+      state.inference_provider_name === undefined ||
+      state.inference_provider_name === "hermes-provider"
+    );
+  }
+  return (
+    isolatedProvider === getHermesInferenceProviderName(sandbox) &&
+    state.inference_provider_name === isolatedProvider
+  );
+}
+
 function ensureHermesToolGatewayBrokerForSandboxEntry(entry, options = {}) {
   const enabled = isHermesManagedToolGatewayEntry(entry);
   if (!enabled) return false;
+  if (
+    !matchesHermesToolGatewayProviderState(entry, readHermesToolGatewayProviderState(entry.name))
+  ) {
+    return false;
+  }
   return ensureHermesToolGatewayBroker(options);
 }
 
@@ -730,5 +760,6 @@ module.exports = {
   killStaleHermesToolGatewayBroker,
   ensureHermesToolGatewayBroker,
   isHermesManagedToolGatewayEntry,
+  matchesHermesToolGatewayProviderState,
   ensureHermesToolGatewayBrokerForSandboxEntry,
 };

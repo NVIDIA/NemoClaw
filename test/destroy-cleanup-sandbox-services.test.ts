@@ -14,13 +14,24 @@ import type { CleanupSandboxServicesDeps } from "../src/lib/actions/sandbox/dest
 import { cleanupSandboxServices } from "../src/lib/actions/sandbox/destroy.js";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../src/lib/onboard/sandbox-provider-cleanup.js";
 
-type SandboxLike = { provider?: string | null } | null;
+type SandboxLike = {
+  provider?: string | null;
+  agent?: string | null;
+  hermesInferenceProvider?: string;
+  hermesToolGateways?: string[];
+} | null;
 
 function buildDeps(sandbox: SandboxLike): {
   deps: Required<
     Pick<
       CleanupSandboxServicesDeps,
-      "getSandbox" | "stopAll" | "unloadOllamaModels" | "runOpenshell" | "rmSync"
+      | "getSandbox"
+      | "stopAll"
+      | "unloadOllamaModels"
+      | "runOpenshell"
+      | "rmSync"
+      | "removeHermesToolGatewayProviderState"
+      | "warn"
     >
   >;
   stopAllCalls: Array<{ sandboxName: string }>;
@@ -43,6 +54,8 @@ function buildDeps(sandbox: SandboxLike): {
       }),
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
+      removeHermesToolGatewayProviderState: vi.fn(() => true),
+      warn: vi.fn(),
     },
   };
 }
@@ -97,6 +110,64 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(providerDeleteCalls.map((argv) => argv[2])).toEqual(
       SANDBOX_PROVIDER_SUFFIXES.map((suffix) => `regression-2717-${suffix}`),
     );
+  });
+
+  it("removes both Hermes providers and identity-bound broker state after terminal cleanup", () => {
+    const harness = buildDeps({
+      provider: "hermes-provider",
+      agent: "hermes",
+      hermesInferenceProvider: "hermes-clone-hermes-inference",
+      hermesToolGateways: ["nous-web"],
+    });
+
+    cleanupSandboxServices("hermes-clone", { stopHostServices: false }, harness.deps);
+
+    const providerDeleteCalls = vi
+      .mocked(harness.deps.runOpenshell)
+      .mock.calls.map((args) => args[0].join(" "));
+    expect(providerDeleteCalls).toContain("provider delete hermes-clone-hermes-inference");
+    expect(providerDeleteCalls).toContain("provider delete hermes-clone-hermes-tool-gateway");
+    expect(harness.deps.removeHermesToolGatewayProviderState).toHaveBeenCalledExactlyOnceWith(
+      "hermes-clone",
+    );
+  });
+
+  it("preserves Hermes broker state when provider cleanup fails", () => {
+    const harness = buildDeps({
+      provider: "hermes-provider",
+      agent: "hermes",
+      hermesInferenceProvider: "hermes-clone-hermes-inference",
+      hermesToolGateways: ["nous-web"],
+    });
+    vi.mocked(harness.deps.runOpenshell).mockImplementation((args) =>
+      args[2] === "hermes-clone-hermes-inference"
+        ? { status: 1, stderr: "gateway transport unavailable" }
+        : { status: 0 },
+    );
+
+    cleanupSandboxServices("hermes-clone", { stopHostServices: false }, harness.deps);
+
+    expect(harness.deps.removeHermesToolGatewayProviderState).not.toHaveBeenCalled();
+    expect(harness.deps.warn).toHaveBeenCalledWith(
+      expect.stringContaining("preserving broker state for recovery"),
+    );
+  });
+
+  it("preserves Hermes broker state when gateway deletion was not confirmed", () => {
+    const harness = buildDeps({
+      provider: "hermes-provider",
+      agent: "hermes",
+      hermesInferenceProvider: "hermes-clone-hermes-inference",
+      hermesToolGateways: ["nous-web"],
+    });
+
+    cleanupSandboxServices(
+      "hermes-clone",
+      { stopHostServices: false, removeIdentityBoundState: false },
+      harness.deps,
+    );
+
+    expect(harness.deps.removeHermesToolGatewayProviderState).not.toHaveBeenCalled();
   });
 
   it("rejects traversal-shaped sandbox names before any cleanup side effect", () => {

@@ -18,12 +18,14 @@ export type TestCommandHandler = (
 ) => TestCommandResult;
 
 const SUCCESSFUL_COMMAND: TestCommandResult = { status: 0, output: "" };
-const MISSING_COMMAND: TestCommandResult = {
-  status: 1,
-  stdout: "",
-  stderr: "",
-  output: "",
-};
+function missingProviderCommand(providerName: string): TestCommandResult {
+  return {
+    status: 1,
+    stdout: "",
+    stderr: `provider '${providerName}' not found`,
+    output: "",
+  };
+}
 
 export function providerMetadata(name: string, type: string, credentialEnv: string): string {
   return [
@@ -87,7 +89,7 @@ export function managedProviderCreationRunner(
             stderr: "",
             output: "",
           }
-        : MISSING_COMMAND;
+        : missingProviderCommand(providerName);
     }
     if (args[0] === "provider" && args[1] === "create") {
       createdProviders.add(args[3] ?? "");
@@ -121,7 +123,7 @@ export function createReplacementProviderHarness(
             stderr: "",
             output: "",
           }
-        : MISSING_COMMAND,
+        : missingProviderCommand("beta-telegram-bridge"),
     "sandbox provider detach beta beta-telegram-bridge": () => {
       events.push("detach");
       return SUCCESSFUL_COMMAND;
@@ -179,7 +181,7 @@ export function createFailedReplacementProviderHarness(
             stderr: "",
             output: "",
           }
-        : MISSING_COMMAND,
+        : missingProviderCommand("beta-telegram-bridge"),
     "sandbox provider detach beta beta-telegram-bridge": () => {
       telegramDetachCount += 1;
       if (telegramDetachCount === 2) {

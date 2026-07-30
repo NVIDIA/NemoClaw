@@ -11,6 +11,7 @@ import {
   ensureWebSearchProviderProfiles,
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
 } from "../../../onboard/brave-provider-profile";
+import { reportsExactProviderNotFound } from "../../../onboard/extra-provider-diagnostic-parser";
 import {
   matchesGatewayCredentialOnlyProviderBinding,
   parseGatewayProviderMetadata,
@@ -80,7 +81,20 @@ function inspectProvider(
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (inspection.status !== 0) return { kind: "missing" };
+  if (inspection.status !== 0) {
+    const output =
+      `${commandStreamText(inspection.stdout)}\n${commandStreamText(inspection.stderr)}`.trim();
+    if (
+      inspection.status === 1 &&
+      reportsExactProviderNotFound(output, provider.providerName, 64 * 1024)
+    ) {
+      return { kind: "missing" };
+    }
+    throw new Error(
+      `could not prove whether managed clone provider '${provider.providerName}' exists; ` +
+        "refusing destination mutation",
+    );
+  }
 
   const metadata = parseGatewayProviderMetadata(
     `${commandStreamText(inspection.stdout)}\n${commandStreamText(inspection.stderr)}`,
@@ -334,8 +348,15 @@ function cleanupCreatedProviders(
   authorizedSandboxName?: string,
   hermesToolGatewayBroker: HermesToolGatewayCloneBroker = getHermesToolGatewayCloneBroker(),
 ): void {
-  const hermesProviderSuffix = "-hermes-tool-gateway";
+  const hermesProviderSuffixes = ["-hermes-inference", "-hermes-tool-gateway"] as const;
+  const hermesBrokerSandboxes = new Set<string>();
+  const hermesCleanupFailures = new Set<string>();
   for (const providerName of [...providerNames].reverse()) {
+    const hermesSuffix = hermesProviderSuffixes.find((suffix) => providerName.endsWith(suffix));
+    const hermesSandboxName = hermesSuffix
+      ? providerName.slice(0, -hermesSuffix.length)
+      : undefined;
+    if (hermesSandboxName) hermesBrokerSandboxes.add(hermesSandboxName);
     const result = authorizedSandboxName
       ? deleteProviderWithRecovery(providerName, {
           runOpenshell,
@@ -350,15 +371,21 @@ function cleanupCreatedProviders(
       console.warn(
         `  Warning: could not clean up managed clone provider '${providerName}' after failure.`,
       );
+      if (hermesSandboxName) hermesCleanupFailures.add(hermesSandboxName);
       continue;
     }
-    if (providerName.endsWith(hermesProviderSuffix)) {
-      const sandboxName = providerName.slice(0, -hermesProviderSuffix.length);
-      if (!hermesToolGatewayBroker.removeHermesToolGatewayProviderState(sandboxName)) {
-        console.warn(
-          `  Warning: could not clean up Hermes tool-gateway broker state for '${sandboxName}'.`,
-        );
-      }
+  }
+  for (const sandboxName of hermesBrokerSandboxes) {
+    if (hermesCleanupFailures.has(sandboxName)) {
+      console.warn(
+        `  Warning: preserving Hermes tool-gateway broker state for '${sandboxName}' after provider cleanup failure.`,
+      );
+      continue;
+    }
+    if (!hermesToolGatewayBroker.removeHermesToolGatewayProviderState(sandboxName)) {
+      console.warn(
+        `  Warning: could not clean up Hermes tool-gateway broker state for '${sandboxName}'.`,
+      );
     }
   }
 }

@@ -351,14 +351,15 @@ Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/u
 
 </AgentOnly>
 
-On supported `amd64` and `arm64` hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
+On supported `amd64` and `arm64` Docker hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
 NemoClaw accepts the release catalog only when the same publication cohort contains OpenClaw, Hermes, and Deep Agents images.
 It resolves the selected image to an exact repository digest and builds a secret-free startup profile for the current sandbox configuration.
 The startup applicator verifies and materializes that profile when the sandbox starts.
 Managed rebuilds resolve the current CLI release to an exact digest, while managed clones retain the source image digest and prepare a target-specific profile.
 
-If catalog or registry resolution fails, stock onboarding stops before mutation.
-NemoClaw never silently falls back from a managed image to a Dockerfile.
+On those Docker hosts, catalog or registry resolution failures stop stock onboarding before mutation.
+The Docker managed-image path never silently falls back to a Dockerfile.
+Kubernetes drivers continue to use the trusted Dockerfile workflow until they advertise the managed-image startup-profile capability.
 An explicit `--from <Dockerfile>` request remains a separate local Dockerfile build.
 NemoClaw shows a Dockerfile build-time estimate only after that explicit local-build path is known.
 Stock managed-image launch does not show the estimate because it does not run a local Dockerfile build.
