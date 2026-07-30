@@ -286,6 +286,9 @@ describe("managed bootstrap adapter contract", () => {
       (primary as Error & { managedBootstrapRollbackError?: unknown })
         .managedBootstrapRollbackError,
     ).toBe(rollback);
+    expect(primary.message).toContain(
+      "Managed bootstrap rollback requires attention: rollback failed",
+    );
   });
 
   it.each([

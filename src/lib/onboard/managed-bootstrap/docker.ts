@@ -14,7 +14,6 @@ import {
   dockerRun as defaultDockerRun,
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
-import { hasSandboxListEntry } from "../../state/gateway";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
 import { buildDockerGpuCloneRunArgs, dockerContainerName } from "../docker-gpu-patch-clone";
 import {
@@ -48,11 +47,12 @@ import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
   assertManagedBootstrapIdentity,
   assertManagedBootstrapSafeProcessEnvironmentKey,
+  attachManagedBootstrapRollbackError,
   createManagedBootstrapIdentity,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
-  type ManagedBootstrapCompletionReceipt,
   ManagedBootstrapCommitStateIndeterminateError,
+  type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapDiscoveredWorkload,
   type ManagedBootstrapDiscoveryInput,
   ManagedBootstrapDurableCommitCleanupPendingError,
@@ -60,6 +60,7 @@ import {
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapIncompleteCreateCleanupInput,
   type ManagedBootstrapObservedSnapshot,
+  ManagedBootstrapOwnerCleanupRequiredError,
   type ManagedBootstrapReplacementHandle,
   type ManagedBootstrapReplacementOptions,
   type ManagedBootstrapSandboxIdentity,
@@ -903,6 +904,23 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
     suppressOutput: true,
     timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
   };
+  const originalBeforeReplacementRemoval = inspectExact(transaction.originalRuntimeId, deps);
+  const currentOriginalName = dockerContainerName(originalBeforeReplacementRemoval);
+  if (
+    currentOriginalName !== transaction.backupName &&
+    currentOriginalName !== transaction.originalName
+  ) {
+    throw new Error("Managed bootstrap original container has an unexpected rollback name.");
+  }
+  const originalSpecBeforeReplacementRemoval = normalizeDockerManagedBootstrapLaunchSpec({
+    ...originalBeforeReplacementRemoval,
+    Name: `/${transaction.originalName}`,
+  });
+  if (originalSpecBeforeReplacementRemoval.hash !== transaction.originalSpecHash) {
+    throw new Error(
+      "Managed bootstrap refused rollback because the exact original launch spec changed.",
+    );
+  }
   const replacement = tryInspectExact(transaction.replacementRuntimeId, deps);
   if (replacement) {
     deps.dockerStop(transaction.replacementRuntimeId, {
@@ -940,69 +958,170 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
   }
 }
 
-function removeOwnedWorkload(sandbox: ManagedBootstrapSandboxIdentity, deps: ResolvedDeps): void {
-  if (!deps.runOpenshell || !deps.runCaptureOpenshell) {
+function removeOwnedWorkload(
+  sandbox: ManagedBootstrapSandboxIdentity,
+  deps: ResolvedDeps,
+  expectedRuntimeId?: string,
+): never {
+  const expectedIdentity =
+    expectedRuntimeId === undefined
+      ? `sandbox ${sandbox.sandboxId} with no previously resolved runtime ID`
+      : `sandbox ${sandbox.sandboxId} expected runtime ${expectedRuntimeId}`;
+  let containers: DockerCommandResult;
+  try {
+    containers = deps.dockerRun(
+      [
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "--filter",
+        `label=${OPENSHELL_SANDBOX_ID_LABEL}=${sandbox.sandboxId}`,
+        "--format",
+        "{{.ID}}",
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      },
+    );
+  } catch (error) {
     throw new Error(
-      "Managed bootstrap cannot clean a post-create failure without its OpenShell owner.",
+      `Managed bootstrap owner cleanup could not enumerate the exact held runtime for ${expectedIdentity}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
-  const getBeforeDelete = deps.runCaptureOpenshell(["sandbox", "get", sandbox.sandboxName], {
-    ignoreError: false,
-  });
-  const sandboxIdBeforeDelete = parseOpenShellSandboxId(getBeforeDelete);
-  if (sandboxIdBeforeDelete !== sandbox.sandboxId) {
+  if (Number(containers.status ?? 1) !== 0) {
     throw new Error(
-      "Managed bootstrap owner cleanup refused to delete a same-name sandbox with a different durable ID.",
+      `Managed bootstrap owner cleanup could not verify the exact held runtime for ${expectedIdentity}: ${
+        commandDetail(containers) || "Docker enumeration failed"
+      }`,
     );
   }
-  deps.runOpenshell(["sandbox", "delete", sandbox.sandboxName], {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  const list = deps.runCaptureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-  });
-  const getAfterDelete = deps.runCaptureOpenshell(["sandbox", "get", sandbox.sandboxName], {
-    ignoreError: true,
-  });
-  const sandboxIdAfterDelete = parseOpenShellSandboxId(getAfterDelete);
+  const runtimeIds = String(containers.stdout ?? "")
+    .trim()
+    .split(/\r?\n/u)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
   if (
-    sandboxIdAfterDelete === sandbox.sandboxId ||
-    (sandboxIdAfterDelete === null && hasSandboxListEntry(list, sandbox.sandboxName))
+    runtimeIds.length !== 1 ||
+    !FULL_CONTAINER_ID_RE.test(runtimeIds[0] ?? "") ||
+    (expectedRuntimeId !== undefined && runtimeIds[0] !== expectedRuntimeId)
   ) {
     throw new Error(
-      "Managed bootstrap owner cleanup did not prove its exact durable sandbox ID was removed.",
+      `Managed bootstrap owner cleanup could not bind retention for ${expectedIdentity}; resolved runtime IDs: ${
+        runtimeIds.length === 0 ? "none" : runtimeIds.join(", ")
+      }.`,
     );
   }
-  const containers = deps.dockerRun(
-    [
-      "ps",
-      "-a",
-      "--no-trunc",
-      "--filter",
-      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-      "--filter",
-      `label=${OPENSHELL_SANDBOX_ID_LABEL}=${sandbox.sandboxId}`,
-      "--format",
-      "{{.ID}}",
-    ],
-    {
+  const runtimeId = runtimeIds[0] as string;
+  let inspect: DockerContainerInspect;
+  try {
+    inspect = inspectExact(runtimeId, deps);
+  } catch (error) {
+    throw new Error(
+      `Managed bootstrap could not inspect retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const labels = inspect.Config?.Labels ?? {};
+  if (
+    labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
+    labels[OPENSHELL_SANDBOX_NAME_LABEL] !== sandbox.sandboxName ||
+    labels[OPENSHELL_SANDBOX_ID_LABEL] !== sandbox.sandboxId
+  ) {
+    throw new Error(
+      `Managed bootstrap owner cleanup refused retention after exact runtime ${runtimeId} ownership changed for sandbox ${sandbox.sandboxId}.`,
+    );
+  }
+  let stopped: DockerCommandResult;
+  try {
+    stopped = deps.dockerStop(runtimeId, {
       ignoreError: true,
       suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    },
-  );
-  if (Number(containers.status ?? 1) !== 0 || String(containers.stdout ?? "").trim().length !== 0) {
+      timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+    });
+  } catch (error) {
     throw new Error(
-      "Managed bootstrap owner cleanup did not prove the exact held runtime was removed.",
+      `Managed bootstrap could not quiesce retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
+  assertZero(
+    stopped,
+    `Managed bootstrap could not quiesce retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}`,
+  );
+  let retained: DockerContainerInspect;
+  try {
+    retained = inspectExact(runtimeId, deps);
+  } catch (error) {
+    throw new Error(
+      `Managed bootstrap could not re-inspect quiesced sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (
+    retained.State?.Running !== false ||
+    retained.State.Paused !== false ||
+    retained.State.Restarting !== false
+  ) {
+    throw new Error(
+      `Managed bootstrap retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId} did not prove an explicitly quiescent state.`,
+    );
+  }
+  if (!deps.runCaptureOpenshell) {
+    throw new ManagedBootstrapOwnerCleanupRequiredError({
+      sandboxName: sandbox.sandboxName,
+      sandboxId: sandbox.sandboxId,
+      runtimeId,
+    });
+  }
+  let getBeforeDelete: string;
+  try {
+    getBeforeDelete = deps.runCaptureOpenshell(["sandbox", "get", sandbox.sandboxName], {
+      ignoreError: false,
+    });
+  } catch (error) {
+    throw new ManagedBootstrapOwnerCleanupRequiredError({
+      sandboxName: sandbox.sandboxName,
+      sandboxId: sandbox.sandboxId,
+      runtimeId,
+      detail: `OpenShell owner lookup also failed: ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+    });
+  }
+  const sandboxIdBeforeDelete = parseOpenShellSandboxId(getBeforeDelete);
+  if (sandboxIdBeforeDelete !== sandbox.sandboxId) {
+    throw new ManagedBootstrapOwnerCleanupRequiredError({
+      sandboxName: sandbox.sandboxName,
+      sandboxId: sandbox.sandboxId,
+      runtimeId,
+      detail: `The same mutable name now resolves to durable sandbox ID ${
+        sandboxIdBeforeDelete ?? "unknown"
+      } instead of ${sandbox.sandboxId}.`,
+    });
+  }
+  throw new ManagedBootstrapOwnerCleanupRequiredError({
+    sandboxName: sandbox.sandboxName,
+    sandboxId: sandbox.sandboxId,
+    runtimeId,
+  });
 }
 
 function resolveIncompleteCreateSandbox(
   input: ManagedBootstrapIncompleteCreateCleanupInput,
   deps: ResolvedDeps,
-): ManagedBootstrapSandboxIdentity {
+): {
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly runtimeId: string;
+} {
   if (
     input.plan.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
     input.plan.driverId !== DOCKER_DRIVER_ID
@@ -1037,7 +1156,7 @@ function resolveIncompleteCreateSandbox(
   assertImage(inspect, input.plan.image, deps);
   assertMetadata(inspect, sandbox, input.plan.metadata);
   assertHeldCommand(inspect, input.heldWorkloadArgv, input.bootstrapIdentity);
-  return sandbox;
+  return { sandbox, runtimeId };
 }
 
 function managedSharedStateTransaction(
@@ -1163,13 +1282,77 @@ export function createDockerManagedBootstrapAdapter(
     handle,
     snapshot,
     replacement,
+    sharedStateAlreadyRolledBack = false,
   }: {
     readonly handle: ManagedBootstrapHeldWorkloadHandle;
     readonly snapshot: ManagedBootstrapObservedSnapshot | null;
     readonly replacement: ManagedBootstrapReplacementHandle | null;
+    readonly sharedStateAlreadyRolledBack?: boolean;
   }): ManagedBootstrapFinalizationReceipt => {
     const finalized = priorRollback(handle);
     if (finalized) return finalized;
+    if (committedTransactions.has(handle.bootstrapIdentity)) {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: handle.bootstrapIdentity,
+        cleanupRuntimeId: snapshot?.runtimeId ?? "unknown",
+        detail: "rollback is no longer legal after completed managed-bootstrap commit",
+      });
+    }
+    if (snapshot && replacement) {
+      const reconstructed = reconstructDockerBootstrapTransaction(handle, snapshot, replacement);
+      const replacementStatus = probeExactDockerContainerAbsence(
+        reconstructed.replacementRuntimeId,
+        deps,
+      );
+      const originalStatus = probeExactDockerContainerAbsence(
+        reconstructed.originalRuntimeId,
+        deps,
+      );
+      if (replacementStatus === "unknown" || originalStatus === "unknown") {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: handle.bootstrapIdentity,
+          runtimeId:
+            replacementStatus === "unknown"
+              ? reconstructed.replacementRuntimeId
+              : reconstructed.originalRuntimeId,
+          detail:
+            "exact rollback runtime presence could not be proven before any destructive mutation",
+        });
+      }
+      if (replacementStatus === "absent" && originalStatus === "present") {
+        const original = inspectExact(reconstructed.originalRuntimeId, deps);
+        const originalName = dockerContainerName(original);
+        const normalizedOriginal = normalizeDockerManagedBootstrapLaunchSpec({
+          ...original,
+          Name: `/${reconstructed.originalName}`,
+        });
+        if (normalizedOriginal.hash !== reconstructed.originalSpecHash) {
+          throw new Error(
+            "Managed bootstrap refused recovery because the exact original launch spec changed.",
+          );
+        }
+        if (originalName === reconstructed.originalName) {
+          removeOwnedWorkload(handle.sandbox, deps, reconstructed.originalRuntimeId);
+        }
+        if (originalName !== reconstructed.backupName || !sharedStateAlreadyRolledBack) {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: handle.bootstrapIdentity,
+            runtimeId: reconstructed.originalRuntimeId,
+            detail:
+              "the replacement is absent, but completed shared-state rollback and exact original restoration were not both proven",
+          });
+        }
+        restoreOriginal(reconstructed, deps);
+        removeOwnedWorkload(handle.sandbox, deps, reconstructed.originalRuntimeId);
+      }
+      if (replacementStatus === "absent" && originalStatus === "absent") {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: handle.bootstrapIdentity,
+          runtimeId: reconstructed.replacementRuntimeId,
+          detail: "both exact rollback runtimes are absent",
+        });
+      }
+    }
     if (replacement && !durablyCommittedTransactions.has(handle.bootstrapIdentity)) {
       const sharedStatus = probeDockerManagedStartupSharedState(
         {
@@ -1184,6 +1367,63 @@ export function createDockerManagedBootstrapAdapter(
       );
       if (sharedStatus === "committed") {
         durablyCommittedTransactions.add(handle.bootstrapIdentity);
+      } else if (snapshot) {
+        const reconstructed = reconstructDockerBootstrapTransaction(handle, snapshot, replacement);
+        const originalStatus = probeExactDockerContainerAbsence(
+          reconstructed.originalRuntimeId,
+          deps,
+        );
+        if (originalStatus === "absent") {
+          if (sharedStatus === "pending") {
+            throw new ManagedBootstrapCommitStateIndeterminateError({
+              bootstrapIdentity: handle.bootstrapIdentity,
+              runtimeId: reconstructed.originalRuntimeId,
+              detail:
+                "the shared-state receipt is pending, but the exact rollback backup is absent",
+            });
+          }
+          committedTransactions.add(handle.bootstrapIdentity);
+          throw new ManagedBootstrapDurableCommitCleanupPendingError({
+            bootstrapIdentity: handle.bootstrapIdentity,
+            cleanupRuntimeId: reconstructed.originalRuntimeId,
+            detail:
+              "rollback is no longer legal after the exact rollback backup and durable commit receipt were retired",
+          });
+        }
+        if (originalStatus === "unknown") {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: handle.bootstrapIdentity,
+            runtimeId: reconstructed.originalRuntimeId,
+            detail:
+              "the exact rollback-backup identity could not be proven present; no rollback mutation was attempted",
+          });
+        }
+        let original: DockerContainerInspect;
+        try {
+          original = inspectExact(reconstructed.originalRuntimeId, deps);
+        } catch (error) {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: handle.bootstrapIdentity,
+            runtimeId: reconstructed.originalRuntimeId,
+            detail: `the exact rollback backup became unavailable during verification: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+        if (dockerContainerName(original) !== reconstructed.backupName) {
+          throw new Error(
+            "Managed bootstrap refused rollback because the exact original is not held under its transaction backup name.",
+          );
+        }
+        const normalizedOriginal = normalizeDockerManagedBootstrapLaunchSpec({
+          ...original,
+          Name: `/${reconstructed.originalName}`,
+        });
+        if (normalizedOriginal.hash !== reconstructed.originalSpecHash) {
+          throw new Error(
+            "Managed bootstrap refused rollback because the exact original backup launch spec changed.",
+          );
+        }
       }
     }
     if (durablyCommittedTransactions.has(handle.bootstrapIdentity)) {
@@ -1241,7 +1481,7 @@ export function createDockerManagedBootstrapAdapter(
     if (restoredSpec.hash !== snapshot.specHash) {
       throw new Error("Managed bootstrap Docker rollback receipt spec does not match.");
     }
-    removeOwnedWorkload(handle.sandbox, deps);
+    removeOwnedWorkload(handle.sandbox, deps, transaction.originalRuntimeId);
     return completedRollback(handle, alreadyRolledBack);
   };
   const commitBootstrapNow = (
@@ -1393,9 +1633,20 @@ export function createDockerManagedBootstrapAdapter(
         throw error;
       }
       if (!outcome.supervisorReady) {
-        const restored = rollbackBootstrapNow({ handle, snapshot, replacement });
         const failure =
           outcome.failure ?? new Error("Managed bootstrap shared-state commit did not complete.");
+        let restored: ManagedBootstrapFinalizationReceipt;
+        try {
+          restored = rollbackBootstrapNow({
+            handle,
+            snapshot,
+            replacement,
+            sharedStateAlreadyRolledBack: true,
+          });
+        } catch (rollbackError) {
+          attachManagedBootstrapRollbackError(failure, rollbackError);
+          throw failure;
+        }
         (
           failure as Error & {
             managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
@@ -1465,8 +1716,8 @@ export function createDockerManagedBootstrapAdapter(
     },
 
     async cleanupIncompleteCreate(input) {
-      const sandbox = resolveIncompleteCreateSandbox(input, deps);
-      removeOwnedWorkload(sandbox, deps);
+      const { sandbox, runtimeId } = resolveIncompleteCreateSandbox(input, deps);
+      removeOwnedWorkload(sandbox, deps, runtimeId);
       return Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox,
@@ -1716,9 +1967,7 @@ export function createDockerManagedBootstrapAdapter(
           restoreOriginal(partial, deps);
         } catch (rollbackError) {
           const failure = error instanceof Error ? error : new Error(String(error));
-          (
-            failure as Error & { managedBootstrapRollbackError?: unknown }
-          ).managedBootstrapRollbackError = rollbackError;
+          attachManagedBootstrapRollbackError(failure, rollbackError);
           throw failure;
         }
         throw error;

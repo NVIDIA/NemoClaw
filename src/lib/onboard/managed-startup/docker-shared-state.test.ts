@@ -21,6 +21,7 @@ import {
 
 const IMMUTABLE_IMAGE = `sha256:${"a".repeat(64)}`;
 const BOOTSTRAP_IDENTITY = "b".repeat(64);
+const CONTAINER_ID = "d".repeat(64);
 
 function result(): DockerGpuPatchResult {
   return {
@@ -42,7 +43,7 @@ function result(): DockerGpuPatchResult {
 function transaction(): DockerManagedStartupTransaction {
   return {
     agent: "openclaw",
-    containerId: "new",
+    containerId: CONTAINER_ID,
     image: IMMUTABLE_IMAGE,
     bootstrapIdentity: BOOTSTRAP_IDENTITY,
     profileFingerprint: "c".repeat(64),
@@ -58,7 +59,7 @@ function removeReceiptParents(...receiptPaths: readonly string[]): void {
 function exactMissingReceipt(sourcePath: string) {
   return {
     status: 1,
-    stderr: `Error response from daemon: Could not find the file ${sourcePath} in container new`,
+    stderr: `Error response from daemon: Could not find the file ${sourcePath} in container ${CONTAINER_ID}`,
   };
 }
 
@@ -136,6 +137,41 @@ function fakeSharedStateDocker(
 describe("Docker managed-startup shared-state finalization", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    ["agent", { ...transaction(), agent: "other" }],
+    ["container", { ...transaction(), containerId: "new" }],
+    ["image", { ...transaction(), image: "registry.example/nemoclaw:mutable" }],
+    ["bootstrap", { ...transaction(), bootstrapIdentity: null }],
+    ["profile", { ...transaction(), profileFingerprint: null }],
+  ] as const)("rejects an invalid %s identity before durable receipt cleanup mutates state", (_, value) => {
+    const dockerRun = vi.fn();
+
+    expect(() =>
+      clearDockerManagedStartupSharedStateCommitReceipt(value as DockerManagedStartupTransaction, {
+        dockerRun,
+      }),
+    ).toThrow(/transaction|identity|fingerprint/u);
+    expect(dockerRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects incomplete commit identity before any Docker operation", () => {
+    const dockerRun = vi.fn();
+    const dockerStop = vi.fn();
+
+    expect(() =>
+      finalizeDockerManagedStartupSharedState(
+        {
+          transaction: { ...transaction(), profileFingerprint: null },
+          patchResult: result(),
+          supervisorReady: true,
+        },
+        { dockerRun, dockerStop },
+      ),
+    ).toThrow(/profile fingerprint/u);
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(dockerStop).not.toHaveBeenCalled();
   });
 
   it("probes pending state through an explicit copied receipt without writable-layer access", () => {
@@ -356,7 +392,7 @@ describe("Docker managed-startup shared-state finalization", () => {
       calls.push("copy-absent");
       return {
         status: 1,
-        stderr: `Error response from daemon: Could not find the file ${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY} in container new`,
+        stderr: `Error response from daemon: Could not find the file ${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY} in container ${CONTAINER_ID}`,
       };
     });
 

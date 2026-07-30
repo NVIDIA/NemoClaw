@@ -14,9 +14,11 @@ import {
   DOCKER_GPU_PATCH_TIMEOUT_MS,
 } from "../docker-gpu-patch-constants";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../docker-gpu-patch-types";
+import { isImmutableDockerImageId } from "../openshell-docker-sandbox-containers";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import type { DockerManagedStartupTransaction } from "./docker-root-apply";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
+import { MANAGED_STARTUP_AGENTS } from "./profile";
 import {
   MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
@@ -24,6 +26,8 @@ import {
 } from "./shared-state-transaction";
 
 const RECEIPT_TEMP_PREFIX = "nemoclaw-managed-startup-receipt";
+const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
+const DURABLE_IDENTITY_RE = /^[a-f0-9]{64}$/u;
 const NEUTRALIZED_PROCESS_INJECTION_ENV = [
   "--env",
   "NODE_OPTIONS=",
@@ -73,8 +77,9 @@ export function probeDockerManagedStartupSharedState(
   deps: DockerGpuPatchDeps = {},
 ): "committed" | "none" | "pending" {
   const transaction = input.transaction;
-  if (!transaction.bootstrapIdentity) {
-    throw new Error("Managed bootstrap shared-state status identity is missing.");
+  assertValidManagedStartupTransaction(transaction);
+  if (input.profileFingerprint !== transaction.profileFingerprint) {
+    throw new Error("Managed bootstrap shared-state status fingerprint does not match.");
   }
   const committedReceiptPath = copyManagedStartupReceiptAt(
     transaction,
@@ -199,13 +204,39 @@ function cleanupReceiptBestEffort(receiptPath: string): void {
   }
 }
 
+function assertValidManagedStartupTransaction(
+  transaction: DockerManagedStartupTransaction,
+): asserts transaction is DockerManagedStartupTransaction & {
+  readonly bootstrapIdentity: string;
+  readonly profileFingerprint: string;
+} {
+  if (!(MANAGED_STARTUP_AGENTS as readonly string[]).includes(transaction.agent)) {
+    throw new Error("Managed bootstrap shared-state transaction agent is invalid.");
+  }
+  if (!FULL_CONTAINER_ID_RE.test(transaction.containerId)) {
+    throw new Error("Managed bootstrap shared-state transaction container identity is invalid.");
+  }
+  if (!isImmutableDockerImageId(transaction.image)) {
+    throw new Error("Managed bootstrap shared-state transaction image identity is not immutable.");
+  }
+  if (!transaction.bootstrapIdentity || !DURABLE_IDENTITY_RE.test(transaction.bootstrapIdentity)) {
+    throw new Error("Managed bootstrap shared-state transaction identity is missing or invalid.");
+  }
+  if (
+    !transaction.profileFingerprint ||
+    !DURABLE_IDENTITY_RE.test(transaction.profileFingerprint)
+  ) {
+    throw new Error(
+      "Managed bootstrap shared-state transaction profile fingerprint is missing or invalid.",
+    );
+  }
+}
+
 function transactionCommand(
   action: "clear-shared-state-commit-receipt" | "commit" | "rollback",
   transaction: DockerManagedStartupTransaction,
 ): string[] {
-  if (!transaction.bootstrapIdentity) {
-    throw new Error("Managed bootstrap shared-state transaction identity is missing.");
-  }
+  assertValidManagedStartupTransaction(transaction);
   return [
     MANAGED_STARTUP_RUNTIME_EXECUTABLE,
     action === "clear-shared-state-commit-receipt"
@@ -223,6 +254,8 @@ export function clearDockerManagedStartupSharedStateCommitReceipt(
   deps: DockerGpuPatchDeps = {},
 ): void {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
+  assertValidManagedStartupTransaction(transaction);
+  const command = transactionCommand("clear-shared-state-commit-receipt", transaction);
   const cleared = dockerRun(
     [
       "exec",
@@ -240,13 +273,10 @@ export function clearDockerManagedStartupSharedStateCommitReceipt(
       "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "/usr/local/bin/node",
-      ...transactionCommand("clear-shared-state-commit-receipt", transaction),
+      ...command,
     ],
     DOCKER_MUTATION_OPTIONS,
   );
-  if (!transaction.profileFingerprint) {
-    throw new Error("Managed bootstrap transaction profile fingerprint is missing.");
-  }
   // Accept a lost Docker acknowledgement only when both exact image-owned
   // receipt paths are independently proven absent by the immutable helper.
   let status: "committed" | "none" | "pending";
@@ -280,6 +310,8 @@ function commitManagedStartupSharedState(
   deps: DockerGpuPatchDeps,
 ): void {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
+  assertValidManagedStartupTransaction(transaction);
+  const command = transactionCommand("commit", transaction);
   const commit = dockerRun(
     [
       "exec",
@@ -297,13 +329,10 @@ function commitManagedStartupSharedState(
       "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "/usr/local/bin/node",
-      ...transactionCommand("commit", transaction),
+      ...command,
     ],
     DOCKER_MUTATION_OPTIONS,
   );
-  if (!transaction.profileFingerprint) {
-    throw new Error("Managed bootstrap transaction profile fingerprint is missing.");
-  }
   // The commit helper atomically renames the rollback receipt into a compact
   // identity-bound commit receipt before Docker returns. Always probe it
   // afterward so a lost daemon acknowledgement is accepted only when durable
@@ -514,6 +543,7 @@ export function finalizeDockerManagedStartupSharedState(
   if (!transaction) {
     return { supervisorReady: input.supervisorReady, failure: null };
   }
+  assertValidManagedStartupTransaction(transaction);
   if (input.supervisorReady) {
     // Preserve and validate an explicit writable-layer receipt before logical
     // commit. The helper receives the copy read-only and does not delete it;
@@ -541,9 +571,6 @@ export function finalizeDockerManagedStartupSharedState(
     }
     let commitFailure: Error | null = null;
     try {
-      if (!transaction.profileFingerprint) {
-        throw new Error("Managed bootstrap transaction profile fingerprint is missing.");
-      }
       verifyCopiedManagedStartupReceipt(
         transaction,
         transaction.profileFingerprint,

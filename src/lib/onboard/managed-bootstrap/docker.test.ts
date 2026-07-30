@@ -14,6 +14,7 @@ import {
   ManagedBootstrapCommitStateIndeterminateError,
   ManagedBootstrapDurableCommitCleanupPendingError,
   type ManagedBootstrapFinalizationReceipt,
+  ManagedBootstrapOwnerCleanupRequiredError,
   runManagedBootstrapSequence,
 } from "./adapter";
 import {
@@ -101,13 +102,19 @@ function runDefaultSequence(adapter: ReturnType<typeof createDockerManagedBootst
   });
 }
 
-async function captureSequenceFailure(
-  promise: ReturnType<typeof runDefaultSequence>,
-): Promise<Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }> {
+async function captureSequenceFailure(promise: ReturnType<typeof runDefaultSequence>): Promise<
+  Error & {
+    managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
+    managedBootstrapRollbackError?: unknown;
+  }
+> {
   try {
     await promise;
   } catch (error) {
-    return error as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt };
+    return error as Error & {
+      managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
+      managedBootstrapRollbackError?: unknown;
+    };
   }
   throw new Error("Expected managed bootstrap sequence to fail.");
 }
@@ -176,7 +183,13 @@ function fakeDocker(
     readonly failBackupRemovalAttempts?: number;
     readonly failCommitReceiptClearAttempts?: number;
     readonly failCommittedProbeAttempts?: number;
+    readonly failOwnerRetentionList?: "nonzero" | "throw";
+    readonly failOwnerRetentionStop?: boolean;
+    readonly failOriginalAbsenceProbeAttempts?: number;
     readonly failReplacementStart?: boolean;
+    readonly omitRetainedState?: boolean;
+    readonly ownerRetentionRuntimeIds?: readonly string[];
+    readonly sharedCommitWithoutDurableState?: boolean;
     readonly missingContainerMessage?: "daemon-container" | "error-container" | "error-object";
     readonly sharedStateStatus?: "committed" | "none" | "pending";
   } = {},
@@ -195,9 +208,11 @@ function fakeDocker(
   let backupRemovalFailuresRemaining = options.failBackupRemovalAttempts ?? 0;
   let commitReceiptClearFailuresRemaining = options.failCommitReceiptClearAttempts ?? 0;
   let committedProbeFailuresRemaining = options.failCommittedProbeAttempts ?? 0;
+  let originalAbsenceProbeFailuresRemaining = options.failOriginalAbsenceProbeAttempts ?? 0;
   let copiedEnvelope: ReturnType<typeof parseManagedBootstrapEnvelope> | null = null;
   let copiedMode: number | null = null;
   let copyDestination = "";
+  let psCalls = 0;
   const createArgs: string[][] = [];
   const events: string[] = [];
 
@@ -208,11 +223,15 @@ function fakeDocker(
     if (args[0] !== "inspect") throw new Error(`unexpected capture ${args.join(" ")}`);
     const id = String(args[3] ?? "");
     if (id === OLD_ID && originalPresent) {
+      const state =
+        !originalRunning && options.omitRetainedState
+          ? undefined
+          : { ...original.State, Running: originalRunning };
       return JSON.stringify([
         {
           ...original,
           Name: `/${originalName}`,
-          State: { ...original.State, Running: originalRunning },
+          State: state,
         },
       ]);
     }
@@ -222,6 +241,16 @@ function fakeDocker(
 
   const dockerRun: NonNullable<DockerManagedBootstrapDeps["dockerRun"]> = vi.fn((args) => {
     if (args[0] === "ps") {
+      psCalls += 1;
+      if (psCalls > 1 && options.failOwnerRetentionList === "throw") {
+        throw new Error("injected exact owner enumeration exception");
+      }
+      if (psCalls > 1 && options.failOwnerRetentionList === "nonzero") {
+        return { status: 1, stderr: "injected exact owner enumeration failure" };
+      }
+      if (psCalls > 1 && options.ownerRetentionRuntimeIds) {
+        return ok(options.ownerRetentionRuntimeIds.join("\n"));
+      }
       return ok(
         [originalPresent ? OLD_ID : null, replacement ? NEW_ID : null]
           .filter((id): id is string => id !== null)
@@ -315,6 +344,9 @@ function fakeDocker(
     }
     if (args[0] === "exec" && args.includes("--commit-shared-state-transaction")) {
       events.push("shared-state-commit");
+      if (options.sharedCommitWithoutDurableState) {
+        return { status: 1, stderr: "injected non-durable shared-state commit failure" };
+      }
       sharedStateStatus = "committed";
       return ok();
     }
@@ -328,6 +360,10 @@ function fakeDocker(
       return ok();
     }
     if (args[0] === "inspect" && args[1] === "--type" && args[3] === OLD_ID) {
+      if (originalAbsenceProbeFailuresRemaining > 0) {
+        originalAbsenceProbeFailuresRemaining -= 1;
+        return { status: 1, stderr: "injected exact original inspection failure" };
+      }
       if (originalPresent) return ok(`[{"Id":"${OLD_ID}"}]`);
       const missing =
         options.missingContainerMessage === "error-container"
@@ -336,6 +372,13 @@ function fakeDocker(
             ? `Error response from daemon: No such container: ${OLD_ID}`
             : `Error: No such object: ${OLD_ID}`;
       return { status: 1, stderr: missing };
+    }
+    if (args[0] === "inspect" && args[1] === "--type" && args[3] === NEW_ID) {
+      if (replacement) return ok(`[{"Id":"${NEW_ID}"}]`);
+      return {
+        status: 1,
+        stderr: `Error response from daemon: No such container: ${NEW_ID}`,
+      };
     }
     throw new Error(`unexpected docker run ${args.join(" ")}`);
   });
@@ -367,6 +410,9 @@ function fakeDocker(
     runCaptureOpenshell,
     runOpenshell,
     dockerStop: vi.fn((id) => {
+      if (id === OLD_ID && options.failOwnerRetentionStop) {
+        return { status: 1, stderr: "injected exact owner stop failure" };
+      }
       if (id === OLD_ID) originalRunning = false;
       if (id === NEW_ID && replacement) {
         replacement.State = { ...replacement.State, Running: false };
@@ -428,6 +474,12 @@ function fakeDocker(
       },
       get originalRunning() {
         return originalRunning;
+      },
+      mutateOriginalEnvironment(entry: string) {
+        original.Config = {
+          ...original.Config,
+          Env: [...(original.Config?.Env ?? []), entry],
+        };
       },
       get replacementEnvironment() {
         return replacement?.Config?.Env ?? null;
@@ -608,7 +660,7 @@ describe("Docker managed bootstrap adapter", () => {
     const fake = fakeDocker(heldArgv, { extraEnvironment: [entry] });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
 
-    await expect(
+    const failure = await captureSequenceFailure(
       runManagedBootstrapSequence(adapter, {
         create: {
           plan: plan(),
@@ -628,11 +680,27 @@ describe("Docker managed bootstrap adapter", () => {
         replacementOptions: { values: {} },
         timeoutSecs: 30,
       }),
-    ).rejects.toThrow("root-process injection environment");
-    expect(fake.deps.dockerStop).not.toHaveBeenCalled();
+    );
+    expect(failure.message).toContain("root-process injection environment");
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(failure.message).toContain(`ID sandbox-alpha, runtime ${OLD_ID}`);
+    expect(fake.deps.dockerStop).toHaveBeenCalledWith(
+      OLD_ID,
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
     expect(fake.deps.dockerStart).not.toHaveBeenCalled();
-    expect(fake.state.sandboxId).toBeNull();
-    expect(fake.state.containerIds).toEqual([]);
+    expect(
+      vi
+        .mocked(fake.deps.runOpenshell!)
+        .mock.calls.some(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
+        ),
+    ).toBe(false);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
   });
 
   it.each([
@@ -677,32 +745,116 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toThrow(`found ${String(count)}`);
   });
 
-  it("removes an identity-bound incomplete create and proves its owner and runtime absent", async () => {
+  it("retains an identity-bound incomplete create when deletion cannot require its durable ID", async () => {
     const fake = fakeDocker(heldArgv());
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
 
-    const receipt = await adapter.cleanupIncompleteCreate({
-      plan: plan(),
-      bootstrapIdentity: IDENTITY,
-      heldWorkloadArgv: heldArgv(),
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toMatchObject({
+      name: "ManagedBootstrapOwnerCleanupRequiredError",
+      sandboxId: "sandbox-alpha",
+      runtimeId: OLD_ID,
     });
-
-    expect(receipt).toMatchObject({
-      sandbox: {
-        sandboxName: "alpha",
-        sandboxId: "sandbox-alpha",
-        driverId: "docker",
-      },
-      bootstrapIdentity: IDENTITY,
-      outcome: "rolled-back",
-      heldWorkloadRemoved: true,
-    });
-    expect(fake.state.events).toEqual(["sandbox-delete"]);
-    expect(fake.state.sandboxId).toBeNull();
-    expect(fake.state.containerIds).toEqual([]);
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+    expect(fake.state.events).toEqual([]);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
   });
 
-  it("refuses owner cleanup when the same name now resolves to another durable sandbox ID", async () => {
+  it("surfaces exact identity when retained owner quiescence fails", async () => {
+    const fake = fakeDocker(heldArgv(), { failOwnerRetentionStop: true });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(`sandbox sandbox-alpha exact runtime ${OLD_ID}`);
+    expect(fake.state.originalRunning).toBe(true);
+  });
+
+  it.each([
+    "throw",
+    "nonzero",
+  ] as const)("surfaces expected identity when retained owner enumeration returns %s", async (failOwnerRetentionList) => {
+    const fake = fakeDocker(heldArgv(), { failOwnerRetentionList });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(`sandbox sandbox-alpha expected runtime ${OLD_ID}`);
+    expect(fake.state.originalRunning).toBe(true);
+  });
+
+  it.each([
+    ["no", []],
+    ["multiple", [OLD_ID, NEW_ID]],
+    ["an invalid", ["short"]],
+    ["a mismatched", ["f".repeat(64)]],
+  ] as const)("surfaces expected identity when owner enumeration resolves %s runtime", async (_, ids) => {
+    const fake = fakeDocker(heldArgv(), { ownerRetentionRuntimeIds: ids });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(`sandbox sandbox-alpha expected runtime ${OLD_ID}`);
+    expect(fake.state.originalRunning).toBe(true);
+  });
+
+  it("fails closed when the retained runtime does not prove its stopped state", async () => {
+    const fake = fakeDocker(heldArgv(), { omitRetainedState: true });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(
+      `retained sandbox sandbox-alpha exact runtime ${OLD_ID} did not prove an explicitly quiescent state`,
+    );
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("surfaces exact retained identity when OpenShell owner lookup fails", async () => {
+    const fake = fakeDocker(heldArgv());
+    const adapter = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      runCaptureOpenshell: vi.fn(() => {
+        throw new Error("injected owner lookup failure");
+      }),
+    });
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan: plan(),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv(),
+      }),
+    ).rejects.toThrow(
+      `ID sandbox-alpha, runtime ${OLD_ID}) because OpenShell deletion is name-only`,
+    );
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("quiesces an unsafe exact runtime before refusing a recreated same-name owner", async () => {
     const intendedArgv = ["env", "nemoclaw-start"] as const;
     const heldArgv = [
       "env",
@@ -714,7 +866,9 @@ describe("Docker managed bootstrap adapter", () => {
       "--bootstrap-identity",
       IDENTITY,
     ];
-    const fake = fakeDocker(heldArgv);
+    const fake = fakeDocker(heldArgv, {
+      extraEnvironment: ["BASH_ENV=/sandbox/attacker"],
+    });
     const runOpenshell = vi.fn();
     const runCaptureOpenshell = vi.fn((args: string[]) => {
       if (args[0] === "sandbox" && args[1] === "get") {
@@ -742,36 +896,52 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     });
 
-    await expect(
-      adapter.finalizeBootstrap({
+    let failure: unknown;
+    try {
+      await adapter.finalizeBootstrap({
         outcome: "rollback",
         handle,
         snapshot: null,
         replacement: null,
         completion: null,
-      }),
-    ).rejects.toThrow("same-name sandbox with a different durable ID");
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(failure).toMatchObject({
+      sandboxId: "sandbox-alpha",
+      runtimeId: OLD_ID,
+    });
+    expect((failure as Error).message).toContain(
+      "same mutable name now resolves to durable sandbox ID sandbox-alpha-replacement",
+    );
     expect(runOpenshell).not.toHaveBeenCalled();
+    expect(fake.deps.dockerStop).toHaveBeenCalledWith(
+      OLD_ID,
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+    expect(fake.state.originalRunning).toBe(false);
   });
 
-  it("removes the held workload after a partial replacement catch restores the original", async () => {
+  it("retains the held workload after a partial replacement catch restores the original", async () => {
     const fake = fakeDocker(heldArgv(), { failReplacementStart: true });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const failure = await captureSequenceFailure(runDefaultSequence(adapter));
 
     expect(failure.message).toContain("could not start the Docker replacement");
-    expect(failure.managedBootstrapRollback).toMatchObject({
-      heldWorkloadRemoved: true,
-      restoredRuntimeId: null,
-      restoredSpecHash: null,
-      alreadyRolledBack: true,
-    });
-    expect(fake.state.events).toEqual(["sandbox-delete"]);
-    expect(fake.state.sandboxId).toBeNull();
-    expect(fake.state.containerIds).toEqual([]);
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+    expect(fake.state.events).toEqual([]);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
   });
 
-  it("rolls back shared state before deleting a post-snapshot failed workload", async () => {
+  it("rolls back shared state before retaining a post-snapshot failed workload", async () => {
     const fake = fakeDocker(heldArgv(), {
       completionBootstrapIdentity: "9".repeat(64),
       completionTransactionPending: true,
@@ -781,18 +951,57 @@ describe("Docker managed bootstrap adapter", () => {
     const failure = await captureSequenceFailure(runDefaultSequence(adapter));
 
     expect(failure.message).toContain("completion identities do not match");
-    expect(failure.managedBootstrapRollback).toMatchObject({
-      outcome: "rolled-back",
-      heldWorkloadRemoved: true,
-      restoredRuntimeId: null,
-      restoredSpecHash: null,
-    });
-    expect(fake.state.events).toEqual(["shared-state-rollback", "sandbox-delete"]);
-    expect(fake.state.sandboxId).toBeNull();
-    expect(fake.state.containerIds).toEqual([]);
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(
+      vi
+        .mocked(fake.deps.runOpenshell!)
+        .mock.calls.some(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
+        ),
+    ).toBe(false);
+    expect(fake.state.events).toEqual(["shared-state-rollback"]);
+    expect(fake.state.sandboxId).toBe("sandbox-alpha");
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
   });
 
-  it("tombstones a completed rollback without deleting a future same-name durable sandbox", async () => {
+  it("restores and quiesces the original after a proven non-durable shared-state commit failure", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      sharedCommitWithoutDurableState: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    let failure: unknown;
+    try {
+      await adapter.finalizeBootstrap({
+        outcome: "commit",
+        ...result,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const commitFailure = failure as Error & { managedBootstrapRollbackError?: unknown };
+    expect(commitFailure.message).toContain("logical commit validation failed");
+    expect(commitFailure.message).toContain("injected non-durable shared-state commit failure");
+    expect(commitFailure.message).toContain(`ID sandbox-alpha, runtime ${OLD_ID}`);
+    expect(commitFailure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(fake.state.sharedStateStatus).toBe("none");
+    expect(fake.state.events).toEqual(["shared-state-commit", "shared-state-rollback"]);
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalName).toBe("openshell-alpha");
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("retries retained rollback without probing the already-removed replacement", async () => {
     const fake = fakeDocker(heldArgv(), {
       completionTransactionPending: true,
       sharedStateStatus: "pending",
@@ -800,39 +1009,68 @@ describe("Docker managed bootstrap adapter", () => {
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const result = await runDefaultSequence(adapter);
 
-    const first = await adapter.finalizeBootstrap({
-      outcome: "rollback",
-      ...result,
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+
+    expect(fake.state.events.filter((event) => event === "shared-state-rollback")).toHaveLength(1);
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalName).toBe("openshell-alpha");
+    expect(fake.state.originalRunning).toBe(false);
+  });
+
+  it("does not issue name-only deletion when a same-name sandbox is recreated after lookup", async () => {
+    const fake = fakeDocker(heldArgv());
+    const runOpenshell = vi.fn();
+    const runCaptureOpenshell = vi.fn((args: string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        fake.state.replaceSandboxIdentity("sandbox-future");
+        return "Name: alpha\nID: sandbox-alpha\n";
+      }
+      return "alpha Ready\n";
     });
-    fake.state.replaceSandboxIdentity("sandbox-future");
-    const repeated = await adapter.finalizeBootstrap({
-      outcome: "rollback",
-      ...result,
+    const adapter = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      runCaptureOpenshell,
+      runOpenshell,
+    });
+    const handle = await adapter.createHeldWorkload({
+      plan: plan(),
+      request,
+      bootstrapIdentity: IDENTITY,
+      launch: async () => ({
+        sandbox: {
+          sandboxName: "alpha",
+          sandboxId: "sandbox-alpha",
+          driverId: "docker",
+        },
+        ready: true,
+        readyAt: "2026-07-29T11:59:00.000Z",
+      }),
     });
 
-    expect(first).toMatchObject({
-      outcome: "rolled-back",
-      heldWorkloadRemoved: true,
-      restoredRuntimeId: null,
-      restoredSpecHash: null,
-      alreadyRolledBack: false,
-    });
-    expect(repeated).toMatchObject({
-      outcome: "rolled-back",
-      heldWorkloadRemoved: true,
-      restoredRuntimeId: null,
-      restoredSpecHash: null,
-      alreadyRolledBack: true,
-    });
-    expect(fake.state.events).toEqual(["shared-state-rollback", "sandbox-delete"]);
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot: null,
+        replacement: null,
+        completion: null,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(runOpenshell).not.toHaveBeenCalled();
     expect(fake.state.sandboxId).toBe("sandbox-future");
-    expect(
-      vi
-        .mocked(fake.deps.runOpenshell!)
-        .mock.calls.filter(
-          ([args]) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
-        ),
-    ).toHaveLength(1);
+    expect(fake.state.containerIds).toEqual([OLD_ID]);
+    expect(fake.state.originalRunning).toBe(false);
   });
 
   it("fails closed with the original stopped when a pending replacement disappears", async () => {
@@ -878,7 +1116,7 @@ describe("Docker managed bootstrap adapter", () => {
         outcome: "rollback",
         ...result,
       }),
-    ).rejects.toThrow("replacement disappeared before shared-state rollback could be proven");
+    ).rejects.toBeInstanceOf(ManagedBootstrapCommitStateIndeterminateError);
     expect(fake.state.originalRunning).toBe(false);
     expect(fake.state.originalName).not.toBe("openshell-alpha");
   });
@@ -943,10 +1181,22 @@ describe("Docker managed bootstrap adapter", () => {
     );
     expect(fake.state.events).not.toContain("shared-state-rollback");
     expect(fake.state.events).not.toContain("sandbox-delete");
+    await expect(
+      freshAdapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
 
     // A second restart after both irreversible cleanup steps accepts `none`
     // only together with exact proof that the old runtime ID is absent.
     const afterCleanupRestart = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(
+      afterCleanupRestart.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
     await expect(
       afterCleanupRestart.finalizeBootstrap({
         outcome: "commit",
@@ -956,6 +1206,48 @@ describe("Docker managed bootstrap adapter", () => {
     expect(
       vi.mocked(fake.deps.dockerRm!).mock.calls.filter(([runtimeId]) => runtimeId === OLD_ID),
     ).toHaveLength(2);
+  });
+
+  it("refuses rollback before mutation when exact backup presence is indeterminate", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      failOriginalAbsenceProbeAttempts: 1,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapCommitStateIndeterminateError);
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("rollback-backup-remove");
+    expect(fake.state.events).not.toContain("sandbox-delete");
+  });
+
+  it("refuses rollback before mutation when the exact backup launch spec changed", async () => {
+    const fake = fakeDocker(heldArgv(), {
+      completionTransactionPending: true,
+      sharedStateStatus: "pending",
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const result = await runDefaultSequence(adapter);
+    fake.state.mutateOriginalEnvironment("UNEXPECTED=drift");
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...result,
+      }),
+    ).rejects.toThrow("exact original backup launch spec changed");
+    expect(fake.state.containerIds).toEqual([OLD_ID, NEW_ID]);
+    expect(fake.state.events).not.toContain("shared-state-rollback");
+    expect(fake.state.events).not.toContain("rollback-backup-remove");
+    expect(fake.state.events).not.toContain("sandbox-delete");
   });
 
   it("forbids rollback when image commit succeeds but its immutable status probe is unavailable", async () => {

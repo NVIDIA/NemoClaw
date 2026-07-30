@@ -2770,9 +2770,7 @@ async function createSandboxWithBaseImageResolution(
       try {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       } catch (rollbackError) {
-        (
-          failure as Error & { managedBootstrapRollbackError?: unknown }
-        ).managedBootstrapRollbackError = rollbackError;
+        dockerGpuSandboxCreate.attachManagedBootstrapRollbackError(failure, rollbackError);
       }
       throw failure;
     }

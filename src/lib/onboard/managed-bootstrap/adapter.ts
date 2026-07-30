@@ -217,6 +217,45 @@ export class ManagedBootstrapCommitStateIndeterminateError extends Error {
   }
 }
 
+/**
+ * OpenShell currently exposes sandbox deletion by mutable name only. When an
+ * exact immutable owner precondition cannot be enforced atomically, retain the
+ * bounded held workload and require an operator-coordinated cleanup instead of
+ * risking deletion of a same-name replacement.
+ */
+export class ManagedBootstrapOwnerCleanupRequiredError extends Error {
+  readonly sandboxName: string;
+  readonly sandboxId: string;
+  readonly runtimeId: string;
+
+  constructor(input: {
+    readonly sandboxName: string;
+    readonly sandboxId: string;
+    readonly runtimeId: string;
+    readonly detail?: string;
+  }) {
+    super(
+      `Managed bootstrap quiesced and retained sandbox '${input.sandboxName}' (ID ${input.sandboxId}, runtime ${input.runtimeId}) because OpenShell deletion is name-only and cannot atomically require this durable ID.${input.detail ? ` ${input.detail}` : ""} Confirm that no same-name recreation is in progress, verify this exact ID with 'openshell sandbox get', then coordinate removal with 'openshell sandbox delete'.`,
+    );
+    this.name = "ManagedBootstrapOwnerCleanupRequiredError";
+    this.sandboxName = input.sandboxName;
+    this.sandboxId = input.sandboxId;
+    this.runtimeId = input.runtimeId;
+  }
+}
+
+export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): void {
+  (
+    failure as Error & {
+      managedBootstrapRollbackError?: unknown;
+    }
+  ).managedBootstrapRollbackError = rollbackError;
+  const detail = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+  if (!failure.message.includes(detail)) {
+    failure.message = `${failure.message}\nManaged bootstrap rollback requires attention: ${detail}`;
+  }
+}
+
 export interface ManagedBootstrapAdapter {
   /**
    * Launch OpenShell with a bounded hold and return only after OpenShell
@@ -230,7 +269,9 @@ export interface ManagedBootstrapAdapter {
    * Remove a create that returned after materializing the held workload but
    * before a Ready durable sandbox receipt could be established. The adapter
    * must bind cleanup to the one-time bootstrap identity and prove both the
-   * sandbox owner record and its runtime are absent before returning.
+   * sandbox owner record and its runtime are absent before returning. If the
+   * runtime owner exposes only mutable-name deletion, the adapter must retain
+   * the bounded workload and throw ManagedBootstrapOwnerCleanupRequiredError.
    */
   cleanupIncompleteCreate(
     input: ManagedBootstrapIncompleteCreateCleanupInput,
@@ -428,9 +469,7 @@ export async function runManagedBootstrapSequence(
           failure as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }
         ).managedBootstrapRollback = rollback;
       } catch (rollbackError) {
-        (
-          failure as Error & { managedBootstrapRollbackError?: unknown }
-        ).managedBootstrapRollbackError = rollbackError;
+        attachManagedBootstrapRollbackError(failure, rollbackError);
       }
       throw failure;
     }

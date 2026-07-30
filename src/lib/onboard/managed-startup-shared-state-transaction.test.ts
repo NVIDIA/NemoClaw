@@ -257,6 +257,27 @@ describe("managed startup shared-state transaction", () => {
     expect(commitManagedStartupSharedStateTransaction("openclaw", options)).toBe(false);
   });
 
+  it("fsyncs every transaction namespace before exposing a pending receipt", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "before\n");
+    const open = vi.spyOn(fs, "openSync");
+    const fsync = vi.spyOn(fs, "fsyncSync");
+
+    expect(
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options),
+    ).toBe(true);
+
+    const transactionParent = path.dirname(transactionDirectory);
+    const backupDirectory = path.join(transactionDirectory, "backups");
+    expect(open).toHaveBeenCalledWith(transactionParent, fs.constants.O_RDONLY);
+    expect(open).toHaveBeenCalledWith(transactionDirectory, fs.constants.O_RDONLY);
+    expect(open).toHaveBeenCalledWith(backupDirectory, fs.constants.O_RDONLY);
+    // File contents plus parent, backup, and manifest directory entries all
+    // reach stable storage before the transaction is returned as pending.
+    expect(fsync.mock.calls.length).toBeGreaterThanOrEqual(6);
+  });
+
   it.each([
     "openclaw",
     "hermes",
@@ -346,7 +367,13 @@ describe("managed startup shared-state transaction", () => {
     expect(rollbackManagedStartupSharedStateTransaction(agent, nextOptions)).toBe(true);
   });
 
-  it("recovers and compacts an atomically established commit after cleanup interruption", () => {
+  it.each([
+    "during-compact-receipt-write",
+    "before-backup-removal",
+    "during-backup-removal",
+    "after-backup-removal",
+    "after-manifest-removal",
+  ] as const)("recovers an atomically established commit interrupted %s", (interruption) => {
     const profile = managedStartupE2eProfile("openclaw");
     const bootstrapIdentity = "b".repeat(64);
     const boundOptions = { ...options, bootstrapIdentity };
@@ -372,6 +399,23 @@ describe("managed startup shared-state transaction", () => {
     rm.mockRestore();
 
     expect(fs.existsSync(transactionDirectory)).toBe(false);
+    const committedDirectory = commitReceiptDirectory();
+    const backups = path.join(committedDirectory, "backups");
+    const manifest = path.join(committedDirectory, "manifest.json");
+    if (interruption === "during-compact-receipt-write") {
+      fs.renameSync(
+        path.join(committedDirectory, "receipt.json"),
+        path.join(committedDirectory, ".receipt.json.1234567890abcdef12345678"),
+      );
+    } else if (interruption === "during-backup-removal") {
+      const [firstBackup] = fs.readdirSync(backups);
+      expect(firstBackup).toBeTruthy();
+      fs.unlinkSync(path.join(backups, firstBackup!));
+    } else if (interruption === "after-backup-removal") {
+      originalRmSync(backups, { force: false, recursive: true });
+    } else if (interruption === "after-manifest-removal") {
+      fs.unlinkSync(manifest);
+    }
     expect(
       getManagedStartupSharedStateTransactionStatus(
         {
@@ -383,7 +427,7 @@ describe("managed startup shared-state transaction", () => {
       ),
     ).toBe("committed");
     expect(commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toBe(true);
-    expect(fs.readdirSync(commitReceiptDirectory())).toEqual(["receipt.json"]);
+    expect(fs.readdirSync(committedDirectory)).toEqual(["receipt.json"]);
     expect(clearManagedStartupSharedStateCommitReceipt("openclaw", boundOptions)).toBe(true);
   });
 

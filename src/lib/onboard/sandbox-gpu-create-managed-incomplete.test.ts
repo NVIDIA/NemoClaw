@@ -35,6 +35,7 @@ import type {
 } from "./managed-bootstrap/adapter";
 import {
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  ManagedBootstrapOwnerCleanupRequiredError,
   renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
 import { resolveCurrentManagedBootstrapRuntimeProvider } from "./managed-bootstrap/runtime-providers";
@@ -353,5 +354,36 @@ describe("managed bootstrap incomplete create recovery", () => {
     expect(fixture.ownedWorkloadPresent).toBe(false);
     const patch = mocks.createDockerGpuSandboxCreatePatch.mock.results[0]?.value;
     expect(patch?.ensureApplied).not.toHaveBeenCalled();
+  });
+
+  it("surfaces exact retained owner identity when safe incomplete-create cleanup is unavailable", async () => {
+    mocks.streamSandboxCreate.mockResolvedValue({
+      status: 17,
+      output: "Created sandbox: alpha",
+      sawProgress: true,
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: false,
+      reason: "timeout",
+      failurePhase: null,
+    });
+    const fixture = createAdapterFixture();
+    vi.mocked(fixture.adapter.cleanupIncompleteCreate).mockRejectedValueOnce(
+      new ManagedBootstrapOwnerCleanupRequiredError({
+        sandboxName: "alpha",
+        sandboxId: SANDBOX_ID,
+        runtimeId: RUNTIME_ID,
+      }),
+    );
+    const { deps, input } = createFlowFixture({
+      adapter: fixture.adapter,
+      listOutput: "alpha Pending\n",
+      getOutput: `Name: alpha\nID: ${SANDBOX_ID}\n`,
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      `ID ${SANDBOX_ID}, runtime ${RUNTIME_ID}`,
+    );
+    expect(fixture.adapter.cleanupIncompleteCreate).toHaveBeenCalledOnce();
   });
 });

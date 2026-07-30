@@ -24,6 +24,7 @@ const MAX_COMMIT_RECEIPT_BYTES = 4096;
 const TRANSACTION_PARENT_DIRECTORY_MODE = 0o755;
 const TRANSACTION_DIRECTORY_MODE = 0o700;
 const TRANSACTION_FILE_MODE = 0o400;
+const ATOMIC_TEMPORARY_FILE_MODE = 0o600;
 
 export const MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY =
   "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1";
@@ -915,6 +916,68 @@ function assertCommitReceiptMatches(
   }
 }
 
+function loadCommitStagingManifest(options: ResolvedOptions): TransactionManifest | null {
+  if (!pathExistsNoFollow(options.manifestFile)) return null;
+  requireTrustedTransactionPath(options.manifestFile, TRANSACTION_FILE_MODE, options);
+  const stable = readStableFile(options.manifestFile, MAX_MANIFEST_BYTES);
+  if (
+    Number(stable.stat.uid) !== options.trustedUid ||
+    Number(stable.stat.gid) !== options.trustedGid ||
+    Number(stable.stat.mode & 0o7777n) !== TRANSACTION_FILE_MODE
+  ) {
+    fail("durable commit staging manifest ownership changed while it was read");
+  }
+  return parseManifest(stable.bytes.toString("utf8"));
+}
+
+function retireInterruptedCommitReceiptWrites(
+  receipt: CommitReceipt,
+  options: ResolvedOptions,
+): void {
+  const temporaryPattern = new RegExp(
+    `^\\.${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE.replace(".", "\\.")}\\.[a-f0-9]{24}$`,
+    "u",
+  );
+  for (const entry of fs.readdirSync(options.commitReceiptDirectory)) {
+    if (!temporaryPattern.test(entry)) continue;
+    const target = path.join(options.commitReceiptDirectory, entry);
+    const stat = fs.lstatSync(target);
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.uid !== options.trustedUid ||
+      stat.gid !== options.trustedGid ||
+      ![ATOMIC_TEMPORARY_FILE_MODE, TRANSACTION_FILE_MODE].includes(modeOf(stat))
+    ) {
+      fail("interrupted durable commit receipt write has unsafe metadata");
+    }
+    const stable = readStableFile(target, MAX_COMMIT_RECEIPT_BYTES);
+    const mode = Number(stable.stat.mode & 0o7777n);
+    if (
+      Number(stable.stat.uid) !== options.trustedUid ||
+      Number(stable.stat.gid) !== options.trustedGid ||
+      ![ATOMIC_TEMPORARY_FILE_MODE, TRANSACTION_FILE_MODE].includes(mode)
+    ) {
+      fail("interrupted durable commit receipt write changed during verification");
+    }
+    if (stable.bytes.length > 0) {
+      let interruptedReceipt: CommitReceipt | null = null;
+      try {
+        interruptedReceipt = parseCommitReceipt(stable.bytes.toString("utf8"));
+      } catch {
+        // The atomic writer may have crashed after any partial write. The
+        // trusted 0700 directory and exact random temp-name shape bind this
+        // artifact to that interrupted write; the established receipt is now
+        // authoritative.
+      }
+      if (interruptedReceipt) assertCommitReceiptMatches(interruptedReceipt, receipt);
+    }
+    fs.unlinkSync(target);
+    fsyncDirectory(options.commitReceiptDirectory);
+  }
+}
+
 function compactDurableCommitReceipt(
   state: { readonly receipt: CommitReceipt; readonly compact: boolean },
   options: ResolvedOptions,
@@ -929,11 +992,28 @@ function compactDurableCommitReceipt(
     );
     fsyncDirectory(options.commitReceiptDirectory);
   }
+  retireInterruptedCommitReceiptWrites(state.receipt, options);
   const stagedOptions = transactionOptionsAt(options, options.commitReceiptDirectory);
   const manifestExists = pathExistsNoFollow(stagedOptions.manifestFile);
   const backupsExist = pathExistsNoFollow(stagedOptions.backupDirectory);
+  const unexpectedBeforeCleanup = fs
+    .readdirSync(options.commitReceiptDirectory)
+    .filter(
+      (entry) =>
+        ![
+          MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE,
+          path.basename(stagedOptions.backupDirectory),
+          path.basename(stagedOptions.manifestFile),
+        ].includes(entry),
+    );
+  if (unexpectedBeforeCleanup.length !== 0) {
+    fail("durable commit receipt directory contains unexpected artifacts");
+  }
   if (manifestExists) {
-    const staged = loadManifest(stagedOptions);
+    // The fsynced compact receipt is authoritative after commit. Validate the
+    // remaining manifest identity without requiring a complete backup tree:
+    // recursive backup deletion may have been interrupted at any point.
+    const staged = loadCommitStagingManifest(stagedOptions);
     if (!staged || staged.bootstrapIdentity === null) {
       fail("durable commit staging receipt disappeared during cleanup");
     }
@@ -942,9 +1022,6 @@ function compactDurableCommitReceipt(
       profileFingerprint: staged.profileFingerprint,
       bootstrapIdentity: staged.bootstrapIdentity,
     });
-    verifyAllBackups(staged.files, stagedOptions);
-  } else if (backupsExist) {
-    fail("durable commit staging backups lost their identity manifest");
   }
   if (backupsExist) {
     requireTrustedTransactionPath(
@@ -953,12 +1030,13 @@ function compactDurableCommitReceipt(
       options,
     );
     fs.rmSync(stagedOptions.backupDirectory, { force: false, recursive: true });
+    fsyncDirectory(options.commitReceiptDirectory);
   }
   if (manifestExists) {
     requireTrustedTransactionPath(stagedOptions.manifestFile, TRANSACTION_FILE_MODE, options);
     fs.unlinkSync(stagedOptions.manifestFile);
+    fsyncDirectory(options.commitReceiptDirectory);
   }
-  fsyncDirectory(options.commitReceiptDirectory);
   const unexpected = fs
     .readdirSync(options.commitReceiptDirectory)
     .filter((entry) => entry !== MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE);
@@ -1041,9 +1119,11 @@ export function beginManagedStartupSharedStateTransaction(
     };
     fs.chownSync(options.transactionDirectory, options.trustedUid, options.trustedGid);
     fs.chmodSync(options.transactionDirectory, TRANSACTION_DIRECTORY_MODE);
+    fsyncDirectory(options.transactionParentDirectory);
     fs.mkdirSync(options.backupDirectory, { mode: TRANSACTION_DIRECTORY_MODE });
     fs.chownSync(options.backupDirectory, options.trustedUid, options.trustedGid);
     fs.chmodSync(options.backupDirectory, TRANSACTION_DIRECTORY_MODE);
+    fsyncDirectory(options.transactionDirectory);
     for (const snapshot of snapshots) {
       if (snapshot.receipt.state !== "file" || snapshot.bytes === null) continue;
       atomicWriteTrustedFile(
@@ -1054,6 +1134,7 @@ export function beginManagedStartupSharedStateTransaction(
         options.trustedGid,
       );
     }
+    fsyncDirectory(options.backupDirectory);
     atomicWriteTrustedFile(
       options.manifestFile,
       canonicalManifest(manifest),
@@ -1061,6 +1142,7 @@ export function beginManagedStartupSharedStateTransaction(
       options.trustedUid,
       options.trustedGid,
     );
+    fsyncDirectory(options.transactionDirectory);
     loadManifest(options);
   } catch (error) {
     try {

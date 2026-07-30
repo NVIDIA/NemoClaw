@@ -29,9 +29,13 @@ import {
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
 import {
+  attachManagedBootstrapRollbackError,
   ManagedBootstrapCommitStateIndeterminateError,
   ManagedBootstrapDurableCommitCleanupPendingError,
 } from "./managed-bootstrap/adapter";
+
+export { attachManagedBootstrapRollbackError };
+
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 export type {
@@ -439,9 +443,7 @@ export function createDockerGpuSandboxCreatePatch(
                 rollbackFailure instanceof Error
                   ? rollbackFailure
                   : new Error(String(rollbackFailure));
-              (
-                failure as Error & { managedBootstrapRollbackError?: unknown }
-              ).managedBootstrapRollbackError = rollbackError;
+              attachManagedBootstrapRollbackError(failure, rollbackError);
             }
             onPatchFailureExit(options.sandboxName, failure, {
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
@@ -529,9 +531,7 @@ export function createDockerGpuSandboxCreatePatch(
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
-            (
-              failure as Error & { managedBootstrapRollbackError?: unknown }
-            ).managedBootstrapRollbackError = rollbackError;
+            attachManagedBootstrapRollbackError(failure, rollbackError);
           }
           throw failure;
         }
@@ -554,9 +554,7 @@ export function createDockerGpuSandboxCreatePatch(
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {
-          (
-            failure as Error & { managedBootstrapRollbackError?: unknown }
-          ).managedBootstrapRollbackError = rollbackError;
+          attachManagedBootstrapRollbackError(failure, rollbackError);
         }
         throw failure;
       }

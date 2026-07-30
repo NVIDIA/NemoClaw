@@ -15,7 +15,11 @@ import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "../openshell-docker-sandbox-containers";
 import * as sandboxGpuCreateAttempt from "../sandbox-gpu-create-attempt";
-import { MANAGED_BOOTSTRAP_SCHEMA_VERSION, runManagedBootstrapSequence } from "./adapter";
+import {
+  attachManagedBootstrapRollbackError,
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  runManagedBootstrapSequence,
+} from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import {
   type ManagedBootstrapRuntimeCompatibilityLaunchInput,
@@ -190,9 +194,7 @@ function createDockerCreateLifecycle(
             }
           ).managedBootstrapRollback = rollback;
         } catch (cleanupError) {
-          (
-            failure as Error & { managedBootstrapRollbackError?: unknown }
-          ).managedBootstrapRollbackError = cleanupError;
+          attachManagedBootstrapRollbackError(failure, cleanupError);
         }
         throw failure;
       }
