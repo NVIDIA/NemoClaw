@@ -124,4 +124,16 @@ describe("managed image registry transport", () => {
       }),
     ).toThrow("not a supported HTTP(S) proxy URL");
   });
+
+  it("preserves uppercase-only NO_PROXY exclusions in the normalized transport", () => {
+    const options = resolveManagedImageRegistryDispatcherOptions({
+      environment: {
+        HTTPS_PROXY: "http://proxy.example:8080",
+        NO_PROXY: "corp.internal",
+        NEMOCLAW_CORPORATE_CA_IMPORT: "0",
+      },
+    });
+
+    expect(options.noProxy?.split(",")).toContain("corp.internal");
+  });
 });
