@@ -130,9 +130,8 @@ function requireCompleteManagedImageCatalog(
  * Resolve a stock workload to an immutable managed image without fetching a
  * catalog for custom, unshipped, or incapable runtime paths.
  *
- * The public catalog is resolved as one all-agent unit. A release cannot
- * accidentally advertise buildless support for only OpenClaw while Hermes or
- * DCode is missing.
+ * The public catalog is resolved as one all-agent unit. The resolver rejects a
+ * release catalog that omits Hermes or LangChain Deep Agents Code.
  */
 export async function prepareSandboxWorkloadSource(
   input: PrepareSandboxWorkloadSourceInput,
