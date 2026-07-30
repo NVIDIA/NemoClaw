@@ -77,6 +77,10 @@ describe("managed image registry transport package contract", () => {
         installedProductionTree.status,
         `${installedProductionTree.stdout}${installedProductionTree.stderr}`,
       ).toBe(0);
+      const installedProductionDependencies = JSON.parse(installedProductionTree.stdout) as {
+        dependencies?: { undici?: { version?: string } };
+      };
+      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.5.0");
 
       const probe = spawnSync(
         process.execPath,
