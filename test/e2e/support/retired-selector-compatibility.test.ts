@@ -34,6 +34,10 @@ const REPLACEMENT_FILES = [
   "test/install-openshell-version-pin.test.ts",
   "test/rebuild-stale-recovery.test.ts",
 ] as const;
+const TRANSITION_ENTRYPOINTS = {
+  "sandbox-rebuild": "test/e2e/live/sandbox-rebuild.test.ts",
+  "upgrade-stale-sandbox": "test/e2e/live/upgrade-stale-sandbox.test.ts",
+} as const;
 
 function workspace(): { artifactRoot: string; output: string; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retired-selector-"));
@@ -41,6 +45,19 @@ function workspace(): { artifactRoot: string; output: string; root: string } {
     const fullPath = path.join(root, file);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, "export {};\n", "utf8");
+  }
+  for (const [id, file] of Object.entries(TRANSITION_ENTRYPOINTS)) {
+    const fullPath = path.join(root, file);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(
+      fullPath,
+      [
+        `// @retired-selector-compatibility-entrypoint ${id}`,
+        `prepareRetiredRebuildSelectorCompatibility("${id}");`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
   }
   return {
     artifactRoot: path.join(root, "artifacts"),
@@ -222,6 +239,26 @@ describe("retired E2E selector compatibility", () => {
           },
         ),
       ).toThrow("requires its live E2E file to remain retired");
+    } finally {
+      fs.rmSync(target.root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a rebuild transition entrypoint that stops delegating (#7615)", () => {
+    const target = workspace();
+    fs.writeFileSync(
+      path.join(target.root, TRANSITION_ENTRYPOINTS["sandbox-rebuild"]),
+      "export {};\n",
+      "utf8",
+    );
+    try {
+      expect(() =>
+        runRetiredSelectorCompatibility(environment(target, "sandbox-rebuild"), {
+          allowedJobs: ["cloud-onboard"],
+          repositoryRoot: target.root,
+          runCommand: () => undefined,
+        }),
+      ).toThrow("sandbox-rebuild transition entrypoint must remain a thin canonical delegate");
     } finally {
       fs.rmSync(target.root, { force: true, recursive: true });
     }

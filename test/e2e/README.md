@@ -108,7 +108,9 @@ mode.
 PR gate requests using the retired `sandbox-rebuild` and
 `upgrade-stale-sandbox` job or target selectors run focused replacement tests
 through the compatibility controller. `rebuild-openclaw` is the canonical live
-rebuild and upgrade target.
+rebuild and upgrade target. Thin entrypoints at the two former test paths
+delegate to that canonical target only while trusted `main` can still execute
+the pre-retirement workflow graph; they do not restore either retired lane.
 
 ## Current OpenClaw plugin EXDEV lifecycle
 

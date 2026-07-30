@@ -218,6 +218,22 @@ describe("semantic E2E phase checker", () => {
     );
   });
 
+  test.each([
+    "sandbox-rebuild",
+    "upgrade-stale-sandbox",
+  ])("accepts the %s rollout entrypoint as an exact rebuild forwarder (#7615)", (selector) => {
+    const relativeModuleId = `test/e2e/live/${selector}.test.ts`;
+    expect(
+      validateCollectedSemanticPhaseModule({
+        relativeModuleId,
+        project: "e2e-live",
+        errors: [],
+        tests: [],
+        source: scanLiveSourceGraph(path.join(REPO_ROOT, relativeModuleId)),
+      }),
+    ).toEqual([]);
+  });
+
   test("rejects each direct child-process boundary that can hide a heartbeat", () => {
     const source = scanLiveSourceGraph(CHILD_PROCESS_SOURCE_FIXTURE);
     const failures = validateCollectedSemanticPhaseModule({

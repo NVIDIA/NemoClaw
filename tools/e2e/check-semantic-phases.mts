@@ -97,6 +97,8 @@ const E2E_RUNTIME_OBSERVABILITY_FILES = [path.join(E2E_ROOT, "risk-signal-report
 const REGISTRY_TARGET_TEST = "test/e2e/live/registry-targets.test.ts";
 const LIVE_TEST_FORWARDERS = new Map([
   ["test/e2e/live/bootstrap-install-smoke.test.ts", "test/e2e/live/launchable-smoke.test.ts"],
+  ["test/e2e/live/sandbox-rebuild.test.ts", "test/e2e/live/rebuild-openclaw.test.ts"],
+  ["test/e2e/live/upgrade-stale-sandbox.test.ts", "test/e2e/live/rebuild-openclaw.test.ts"],
 ]);
 const LIVE_TEST_FIXTURE_SUFFIX = "/fixtures/e2e-test.ts";
 const WORKFLOW_TEST_FIXTURE_SUFFIX = "/e2e/fixtures/workflow-e2e-test.ts";

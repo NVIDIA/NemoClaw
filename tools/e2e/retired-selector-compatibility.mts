@@ -34,6 +34,7 @@ type ReplacementTest = {
 };
 type Replacement = {
   legacyFile?: string;
+  transitionEntrypoint?: string;
   tests: readonly ReplacementTest[];
 };
 
@@ -103,7 +104,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     ],
   },
   "sandbox-rebuild": {
-    legacyFile: "test/e2e/live/sandbox-rebuild.test.ts",
+    transitionEntrypoint: "test/e2e/live/sandbox-rebuild.test.ts",
     tests: [
       {
         files: [
@@ -128,7 +129,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     ],
   },
   "upgrade-stale-sandbox": {
-    legacyFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
+    transitionEntrypoint: "test/e2e/live/upgrade-stale-sandbox.test.ts",
     tests: [
       {
         files: [
@@ -242,6 +243,20 @@ function verifyReplacementBoundary(
       fs.existsSync(path.join(repositoryRoot, replacement.legacyFile))
     ) {
       throw new Error(`${id} compatibility requires its live E2E file to remain retired`);
+    }
+    if (replacement.transitionEntrypoint) {
+      const entrypoint = path.join(repositoryRoot, replacement.transitionEntrypoint);
+      if (!fs.existsSync(entrypoint)) {
+        throw new Error(
+          `${id} transition entrypoint is missing: ${replacement.transitionEntrypoint}`,
+        );
+      }
+      const source = fs.readFileSync(entrypoint, "utf8");
+      const marker = `@retired-selector-compatibility-entrypoint ${id}`;
+      const registration = `prepareRetiredRebuildSelectorCompatibility("${id}")`;
+      if (!source.includes(marker) || !source.includes(registration)) {
+        throw new Error(`${id} transition entrypoint must remain a thin canonical delegate`);
+      }
     }
     for (const test of replacement.tests) {
       for (const file of test.files) {
