@@ -144,15 +144,12 @@ Malformed or unsafe evidence is a terminal controller error.
 Schema mismatches, identity mismatches, and traversal-limit errors are also terminal.
 The coordination check, required job, and controller must fail closed.
 
-### Approve fork credentialed E2E
+### Approve credentialed E2E
 
-For a PR whose head repository is `NVIDIA/NemoClaw`, the trusted controller automatically
-dispatches the deterministic selected E2E plan after eligible PR CI passes. Do not run
-`approve-e2e` for this path.
+Use the maintainer workflow when coordination reports either of these states:
 
-Use the maintainer workflow only when fork coordination reports
-`Maintainer approval required to run fork E2E`. For agent-operated dispatches, follow the shared
-[PR follow-up authorization](../_shared/pr-follow-up.md#follow-credentialed-pr-e2e).
+- `Maintainer approval required to run E2E`
+- `Maintainer approval required to run fork E2E`
 
 1. Follow the `E2E / PR Gate Controller run <id>` link in the coordination summary.
 2. Verify the exact head repository, PR SHA, base SHA, selected jobs and targets, and risk-plan artifact.
@@ -161,8 +158,7 @@ Use the maintainer workflow only when fork coordination reports
 5. Enter the exact `pr_number`, 40-character `expected_head_sha`, 40-character `expected_base_sha`, and a specific `review_reason` of 10 to 500 characters.
 6. Run the workflow.
 
-The fork approval attempt requires the triggering actor to have current `maintain` or `admin`
-access.
+The first attempt requires the triggering actor to have current `maintain` or `admin` access.
 The controller checks the PR number, head repository, PR SHA, base SHA, deterministic plan, matching pending coordination check, compatible `main`, and open PR state.
 Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.
 It fails closed if any value changed or does not match.
@@ -187,16 +183,20 @@ The `e2e-control-plane` path group includes these areas:
 - Non-documentation files under `tools/e2e/` and `test/e2e/`.
 - Shell and Python support files in those directories.
 
-After eligible PR CI passes, every internal PR with selected jobs or targets automatically
-dispatches its deterministic plan. This behavior includes all internal control-plane changes.
-Only a fork PR waits for the exact-revision approval described above.
+An internal PR can run automatically when it changes only these files:
+
+- `.github/workflows/pr-e2e-gate.yaml`
+- `tools/e2e/pr-e2e-gate.mts`
+- `tools/e2e/pr-e2e-required.mts`
+
+Another control-plane change waits with `Maintainer approval required to run E2E`.
+The gate must not run selected jobs or expose secrets before authorization.
 
 ### Authorize a typed target
 
 The risk plan can select a target from the allowlist for a workflow check.
 It can dispatch jobs and targets in one child run.
-Apply all selection, credential, skip, evidence, and finish rules to jobs and targets.
-For a fork PR, also apply the exact-revision approval rules.
+Apply all authorization, selection, secret, skip, evidence, and finish rules to jobs and targets.
 
 ### Roll out a required E2E context
 

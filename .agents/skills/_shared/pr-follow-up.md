@@ -61,24 +61,6 @@ When the checks stop, inspect their status:
 gh pr view "$PR_NUMBER" --json url,statusCheckRollup,comments,reviews,reviewDecision
 ```
 
-### Follow credentialed PR E2E
-
-After eligible PR CI passes for a PR from `NVIDIA/NemoClaw`, the trusted controller automatically
-dispatches the gate-selected credential-bearing E2E plan. Do not request user confirmation or run
-`approve-e2e` for this path. Monitor an active child run or accepted evidence for the same PR SHA,
-base SHA, and plan.
-
-A fork PR with selected jobs or targets waits for exact-revision maintainer approval. Before an
-agent dispatches `approve-e2e`, review the exact head repository, PR SHA, base SHA, risk plan,
-selected work, and PR-controlled code that executes with credentials. An explicit user request to
-run the fork PR E2E, make its required checks pass, or make it ready for review authorizes the
-dispatch without a second confirmation or prescribed reply.
-
-If the fork PR SHA, base SHA, or plan changes during the task, review the new inputs and dispatch the
-new exact plan under the original task authorization. The trusted workflow still enforces the
-maintainer role, exact revision, plan, coordination state, and live PR state. Report the plan, both
-SHAs, and workflow run URL.
-
 ## Review feedback
 
 Check PR comments and inline review comments from CodeRabbit and the PR Review Advisor:
