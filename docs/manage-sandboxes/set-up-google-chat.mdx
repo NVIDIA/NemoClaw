@@ -8,6 +8,7 @@ description-agent: "Explains the experimental OpenClaw-only Google Chat setup, i
 keywords: ["nemoclaw google chat", "google chat api bot", "google chat webhook", "google chat service account"]
 content:
   type: "how_to"
+agent-variants: ["openclaw"]
 ---
 Google Chat support is experimental and available only for OpenClaw sandboxes.
 It receives events at `/googlechat` on the OpenClaw dashboard port and sends replies through the Google Chat API.
@@ -45,7 +46,7 @@ If `GOOGLECHAT_AUDIENCE` already contains the public webhook URL, NemoClaw uses 
 That operator-managed endpoint must preserve `/googlechat` and deny every other dashboard or control path before forwarding to OpenClaw.
 
 Google Chat enrollment always requires an interactive terminal.
-Supported non-interactive onboarding skips the channel, because the Console endpoint and appPrincipal steps need an operator.
+Supported non-interactive onboarding skips the channel, because the Console endpoint and app principal steps need an operator.
 
 ## Configure Access
 
