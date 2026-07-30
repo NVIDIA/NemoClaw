@@ -263,10 +263,28 @@ describe("host readiness projection (#7408)", () => {
     expect(result.status).toBe("supported");
   });
 
-  it("projects nested overlay conflicts as incompatible storage", () => {
-    const result = report({ hasNestedOverlayConflict: true });
+  it("reports supported remediation for the containerd overlay conflict (#7770)", () => {
+    const result = report({
+      dockerStorageDriver: "overlayfs",
+      dockerUsesContainerdSnapshotter: true,
+      hasNestedOverlayConflict: true,
+    });
 
     expect(state(result, "host.docker.storage_compatible")).toBe("absent");
+    expect(state(result, "host.docker.storage_remediation_available")).toBe("present");
+    expect(findingIds(result)).toContain("host.docker.storage_incompatible");
+    expect(result).toMatchObject({ status: "incompatible", exitCode: 2 });
+  });
+
+  it("reports no remediation when the containerd snapshotter is absent (#7770)", () => {
+    const result = report({
+      dockerStorageDriver: "overlayfs",
+      dockerUsesContainerdSnapshotter: false,
+      hasNestedOverlayConflict: true,
+    });
+
+    expect(state(result, "host.docker.storage_compatible")).toBe("absent");
+    expect(state(result, "host.docker.storage_remediation_available")).toBe("absent");
     expect(findingIds(result)).toContain("host.docker.storage_incompatible");
     expect(result).toMatchObject({ status: "incompatible", exitCode: 2 });
   });
@@ -300,6 +318,7 @@ describe("host readiness projection (#7408)", () => {
 
     expect(state(result, "host.docker.runtime_supported")).toBe("unknown");
     expect(state(result, "host.docker.resources_sufficient")).toBe("unknown");
+    expect(state(result, "host.docker.storage_remediation_available")).toBe("unknown");
     expect(result.observations.find(({ id }) => id === "host.docker.runtime")?.state).toBe(
       "unknown",
     );

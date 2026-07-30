@@ -13,7 +13,6 @@ import {
   chatContent,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
-  ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
   expectAuthenticatedBaselineInventoryRequest,
@@ -36,6 +35,7 @@ import {
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
   parseInferenceRoute,
+  prepareCompatibleAnthropicSwitchBinding,
   prepareProxyResolutionRoute,
   RUNTIME_SWITCH_API,
   registryState,
@@ -180,13 +180,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, env())
     : null;
   publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
-  const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
-  switchEndpointUrl &&
-    (await expectOpenAiProvider(
-      host,
-      "compatible-anthropic-endpoint",
-      "COMPATIBLE_ANTHROPIC_API_KEY",
-    ));
+  const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
+  const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
+  switchBinding && redactionValues.push(switchBinding.credentialValue);
 
   const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
   const envHashBefore = await envHash(sandbox, "env-hash-before");
@@ -197,10 +193,17 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     host,
     redactionValues,
     compatibleMetadataArgs,
+    { compatibleBinding: switchBinding },
   );
   expect(switched.exitCode, resultText(switched)).toBe(0);
   expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
   expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
+  switchBinding &&
+    (await expectOpenAiProvider(
+      host,
+      "compatible-anthropic-endpoint",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ));
 
   progress.phase("validate switched route and locked config");
   const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
@@ -256,6 +259,15 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
   expect(dashboardModel.base_url).toBe(expectedBaseUrl());
   expect(dashboardModel.api_mode).toBe(expectedApiMode());
+  for (const reviewedPolicySection of [
+    "approvals",
+    "browser",
+    "session_reset",
+    "display",
+    "updates",
+  ]) {
+    expect(dashboardConfig.stdout).toMatch(new RegExp(`^${reviewedPolicySection}:`, "mu"));
+  }
 
   const dashboardModelInfo = await sandbox.exec(
     SANDBOX_NAME,

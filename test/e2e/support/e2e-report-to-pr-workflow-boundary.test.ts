@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { testTimeout } from "../../helpers/timeouts";
 import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
@@ -856,55 +857,59 @@ it("does not claim child success when complete API results contradict the aggreg
   expect(body).not.toContain("| alpha | ✅ success |");
 });
 
-it("carries the generated planner matrix through the workflow output and PR report", async () => {
-  const [selected] = discoverCredentialFreeTests();
-  expect(selected).toBeDefined();
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-e2e-integration-"));
-  const outputPath = path.join(directory, "github-output");
-  const summaryPath = path.join(directory, "summary.md");
-  try {
-    const generated = spawnSync("bash", ["-c", generateMatrixScript()], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        CHECKOUT_SHA: "",
-        GITHUB_OUTPUT: outputPath,
-        GITHUB_STEP_SUMMARY: summaryPath,
-        INFERENCE_MODE: "mock",
-        JOBS: selected.id,
-        TARGETS: "",
-      },
-      timeout: 30_000,
-    });
-    expect(generated.status, generated.stderr || generated.stdout).toBe(0);
-    const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
-    const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
-    expect(testMatrix).toEqual([selected]);
-
-    const { body, setFailed } = await executeReport({
-      apiJobs: [
-        {
-          conclusion: "success",
-          name: `Shared E2E (${selected.id})`,
-          status: "completed",
+it(
+  "carries the generated planner matrix through the workflow output and PR report",
+  async () => {
+    const [selected] = discoverCredentialFreeTests();
+    expect(selected).toBeDefined();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-e2e-integration-"));
+    const outputPath = path.join(directory, "github-output");
+    const summaryPath = path.join(directory, "summary.md");
+    try {
+      const generated = spawnSync("bash", ["-c", generateMatrixScript()], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CHECKOUT_SHA: "",
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_STEP_SUMMARY: summaryPath,
+          INFERENCE_MODE: "mock",
+          JOBS: selected.id,
+          TARGETS: "",
         },
-      ],
-      testMatrix,
-      jobs: selected.id,
-      needs: {
-        "generate-matrix": { result: "success" },
-        "shared-e2e": { result: "success" },
-      },
-    });
+        timeout: 30_000,
+      });
+      expect(generated.status, generated.stderr || generated.stdout).toBe(0);
+      const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
+      const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
+      expect(testMatrix).toEqual([selected]);
 
-    expect(setFailed).not.toHaveBeenCalled();
-    expect(body).toContain("All requested tests passed");
-    expect(body).toContain(`| ${selected.id} | ✅ success |`);
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
-}, 30_000);
+      const { body, setFailed } = await executeReport({
+        apiJobs: [
+          {
+            conclusion: "success",
+            name: `Shared E2E (${selected.id})`,
+            status: "completed",
+          },
+        ],
+        testMatrix,
+        jobs: selected.id,
+        needs: {
+          "generate-matrix": { result: "success" },
+          "shared-e2e": { result: "success" },
+        },
+      });
+
+      expect(setFailed).not.toHaveBeenCalled();
+      expect(body).toContain("All requested tests passed");
+      expect(body).toContain(`| ${selected.id} | ✅ success |`);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  },
+  testTimeout(40_000),
+);
 
 it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
   const target = "ubuntu-repo-cloud-langchain-deepagents-code";
