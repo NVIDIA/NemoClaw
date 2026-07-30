@@ -732,10 +732,10 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(stoppedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
   expect(stoppedBackupManifest.backedUpDirs).toEqual(expect.arrayContaining(["workspace"]));
 
-  // Recreate through the canonical recovery path before mutating and restoring the stopped backup.
+  // The stopped backup above is the recovery source, so recreate without taking another live backup.
   const rebuildAfterStoppedBackup = await host.command(
     "nemoclaw",
-    [SANDBOX_NAME, "rebuild", "--yes"],
+    [SANDBOX_NAME, "rebuild", "--yes", "--force"],
     {
       artifactName: "phase-10-rebuild-for-stopped-snapshot-restore",
       env: commandEnv(),
