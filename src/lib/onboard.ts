@@ -122,9 +122,8 @@ const {
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
-const {
-  isLinuxDockerDriverGatewayEnabled,
-}: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
+const dockerDriverPlatform: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
+const { isLinuxDockerDriverGatewayEnabled } = dockerDriverPlatform;
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
@@ -2207,7 +2206,8 @@ async function recoverGatewayRuntime() {
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
-    isLinuxDockerDriverGatewayEnabled,
+    getOpenShellComputeDriverName: () =>
+      dockerDriverPlatform.resolveCurrentOpenShellComputePlan().driverName,
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });

@@ -2689,6 +2689,51 @@ nemohermes <name> start
 Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model.
 If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
+### Shields Reports Drift for the Hermes Configuration Root
+
+The Hermes configuration root holds the agent's top-level runtime state, not only its configuration: `auth.json`, the drain request, and the temporary files that back every atomic `gateway_state.json` and `gateway.pid` replace are created directly in `/sandbox/.hermes`.
+Lockdown therefore moves that directory to `root:sandbox` mode `3770`, keeping the set-id and sticky bits, so the gateway can still manage its own runtime files while the sticky bit stops the sandbox identity from unlinking or renaming the sealed root-owned configuration.
+Run the following command to inspect a locked root:
+
+```bash
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+```
+
+Expected output:
+
+```text
+3770 root:sandbox
+```
+
+A sandbox locked by an older release carries a `755 root:root` root instead.
+The gateway cannot write its runtime state there.
+`$$nemoclaw <name> shields status` reports the stale posture as drift.
+Before restarting the gateway, repair the posture:
+
+```bash
+$$nemoclaw <name> shields up
+```
+
+If the command refuses the repair, follow its recovery guidance and do not restart the gateway.
+Otherwise, verify the repaired posture:
+
+```bash
+$$nemoclaw <name> shields status
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+```
+
+Continue only when status no longer reports drift and `stat` prints the expected output above.
+Then restart the gateway:
+
+```bash
+$$nemoclaw <name> gateway restart
+```
+
+The restart must exit zero and report that the health check passed.
+If restart or recovery already reports `relaunch quarantined`, repairing the directory cannot clear the supervisor quarantine.
+Follow [Restart or recovery reports `relaunch quarantined`](#restart-or-recovery-reports-relaunch-quarantined) to rebuild the sandbox.
+The sealed files are unchanged by the repair and stay `444 root:root`.
+
 ### Hermes restart reports `config hash mismatch`
 
 A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it.
@@ -2712,6 +2757,21 @@ Replace them through the supported credential flow so the file contains `openshe
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
 The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
+
+### Restart or recovery reports `relaunch quarantined`
+
+In the OpenShell-managed topology the strict root-owned hash is not a trust anchor for mutable config, so a direct edit of `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` is not refused by the host controller.
+The in-sandbox supervisor still refuses to start a gateway on configuration it cannot match to the persisted managed state, and it stops attempting relaunch once that refusal or repeated gateway exits exhaust its crash budget.
+`$$nemoclaw <name> gateway restart`, `$$nemoclaw <name> recover`, and `$$nemoclaw <name> connect` then report the `relaunch quarantined` failure layer.
+
+The refusal is deterministic, so retrying any of those commands cannot clear it.
+Restore the registered configuration and refresh its integrity metadata in one transaction:
+
+```bash
+nemohermes <name> rebuild --yes
+```
+
+After the rebuild, make the intended change through a supported command such as `$$nemoclaw <name> config set` or `$$nemoclaw inference set`, which update the configuration and its hashes together.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 

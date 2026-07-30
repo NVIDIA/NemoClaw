@@ -100,11 +100,11 @@ state_files:
   - path: runtime/state.db
     strategy: sqlite_backup
   # Hermes 0.19 records default-profile cron execution history in a separate
-  # SQLite ledger. Keep the cron directory for job definitions and back up this
-  # database online. Named profiles live below profiles/<name>/ and remain part
-  # of the raw profiles state-dir capture until dynamic profile-local SQLite
-  # discovery is supported.
-  - path: cron/executions.db
+  # SQLite ledger. NemoClaw relocates only this mutable database below runtime
+  # so Shields up can keep cron job definitions sealed. Named profiles live
+  # below profiles/<name>/ and remain part of the raw profiles state-dir
+  # capture until dynamic profile-local SQLite discovery is supported.
+  - path: runtime/cron-executions.db
     strategy: sqlite_backup
   # Hermes 0.19 uses this default-profile ledger to replay Discord messages
   # after reconnects. Named-profile copies have the same raw-capture limitation

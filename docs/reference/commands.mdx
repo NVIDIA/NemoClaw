@@ -40,7 +40,8 @@ For guidance on choosing between the agent CLIs and the underlying `openshell` C
 <AgentOnly variant="openclaw">
 
 Use `$$nemoclaw` for the OpenClaw variant.
-OpenClaw is the default agent for `$$nemoclaw onboard` unless you pass `--agent hermes` or set `NEMOCLAW_AGENT=hermes`.
+OpenClaw is the default agent for `$$nemoclaw onboard` unless you select another installed agent with `--agent <name>` or set `NEMOCLAW_AGENT=<name>`.
+Run `$$nemoclaw agents list` to see the installed agent names; for example, use `hermes` for Hermes or `langchain-deepagents-code` for LangChain Deep Agents Code.
 OpenClaw-specific sections below describe the `/nemoclaw` slash command, the OpenClaw dashboard URL, the OpenClaw gateway token, and OpenClaw config paths under `/sandbox/.openclaw`.
 
 </AgentOnly>
@@ -371,7 +372,9 @@ After a cache miss, source checkouts require a fresh local build before candidat
 For a clean release checkout or versioned install, NemoClaw first accepts the exact release-version image.
 If that tag exists locally but fails compatibility validation, NemoClaw refreshes the same tag from the registry once and validates it again.
 If the release-version image is missing or still incompatible, NemoClaw builds a compatible local base instead of falling back to mutable `:latest`.
-For unversioned development checkouts, NemoClaw tries the image tagged with the newest reachable release version from `origin` before source-commit images, and only uses `:latest` when no version tag is discoverable.
+For clean unversioned development checkouts, NemoClaw first tries the image tagged with the exact source commit.
+If that image is unavailable and committed base-image inputs differ from `main`, NemoClaw requires a compatible local build.
+When committed base-image inputs match `main`, NemoClaw tries the image tagged with the newest reachable release version from `origin` and only uses `:latest` when no version tag is discoverable.
 When a stable tag and a prerelease tag share the same version, NemoClaw prefers the stable tag.
 If `origin` tag lookup is unavailable, NemoClaw uses the newest reachable local release tag as a fallback.
 If that nearest release-version image is missing or incompatible, NemoClaw builds a compatible local base instead of falling back to mutable `:latest`.
@@ -1162,8 +1165,12 @@ In a direct root-entrypoint container, the request reaches the root PID 1 superv
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaunch as a fallback.
 When the root-owned managed controller attests two unchanged zero-supervisor process scans with a stable PID 1 and reports `SUPERVISOR_NOT_RUNNING`, a local Docker-driver sandbox with the legacy keepalive startup can enter a transactional container recreation.
-The recreation uses a credential-free managed startup command, pins the registered container identity, retains the previous container for rollback, and commits only after managed gateway health and the settle check pass.
-The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+The recreation uses a credential-free managed startup command, pins the registered container identity, and retains the previous container for rollback.
+Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
+It commits only after managed gateway health, the settle check, exact replacement identity, and state restoration pass.
+NemoClaw removes the temporary state backup after a successful restore or rollback.
+If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
+Mounted state remains available, but a committed swap does not retain other writable-layer changes.
 It is idempotent.
 When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
 The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
@@ -1241,7 +1248,8 @@ Run `$$nemoclaw <name> shields down` before a Hermes config or inference change;
 
 <AgentOnly variant="openclaw,hermes">
 
-The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when a strict hash is available, launch failure, health timeout, or forward recovery failure.
+The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when a strict hash is available, MCP reconciliation refusal, relaunch quarantined, launch failure, health timeout, or forward recovery failure.
+`relaunch quarantined` means the in-sandbox supervisor stopped attempting relaunch after a startup refusal or repeated gateway exits, so restart and recovery report the supported repair, `$$nemoclaw <name> rebuild --yes`, instead of a retry.
 An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `$$nemoclaw <name> rebuild --yes`.
 Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths.
 Terminal agents do not have a gateway runtime and fail as unsupported.
@@ -2717,6 +2725,11 @@ Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
 The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values.
+When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration.
+The target update and peer metadata migration use one registry update.
+Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild.
+Incomplete routes and invalid gateway bindings also stop the rebuild.
+NemoClaw checks the shared route again immediately before deleting the original sandbox.
 Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
 It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
@@ -2906,7 +2919,7 @@ $$nemoclaw my-assistant snapshot list
 ### `$$nemoclaw <name> snapshot restore [selector] [--to <dst>] [--force] [--yes|-y]`
 
 Restore sandbox state from a snapshot.
-The sandbox must be running before you restore.
+For an in-place restore, the sandbox must be running.
 If no selector is provided, the latest snapshot is used.
 Restore removes files added after the snapshot only from state directories selected for cleanup.
 It preserves directories that exist only in the target manifest or whose backup failed.
@@ -2920,8 +2933,10 @@ The selector accepts any of:
 - An exact timestamp.
 
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
-When `dst` does not exist, it is auto-created by reusing the source sandbox's container image.
-No re-onboarding is needed.
+When `dst` does not exist, it is auto-created from the source image.
+For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route.
+For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
+No re-onboarding is needed when those prerequisites are present.
 A cross-sandbox restore refuses to clone a source or replace an existing destination whose baseline exclusion transaction needs repair, before it creates or deletes anything.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
@@ -2929,7 +2944,7 @@ If the existing destination has an active shields timer, the force path restores
 It clears the remaining local shields state only after deletion succeeds.
 The `--force` path prompts interactively to confirm the destination name before deleting.
 Pass `--yes` (or set `NEMOCLAW_NON_INTERACTIVE=1`) to skip the prompt.
-The snapshot selector and source pod image are both validated before any deletion, so a bad selector or unresolvable image cannot destroy `dst` and only fail afterwards.
+The snapshot selector, source image, and durable inference route are validated before any deletion. If any prerequisite is invalid, restore stops before it deletes `dst`.
 
 ```bash
 # restore latest snapshot in-place
