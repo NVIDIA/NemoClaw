@@ -78,8 +78,9 @@ function runLoggedShell(command: string, tmp: string, functionDefs: string[] = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `call_log=${JSON.stringify(logPath)}`,
-    "perl_packages_installed=0",
-    'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_packages_installed=1; }',
+    "perl_base_installed=0",
+    "perl_installed=0",
+    'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
     ...functionDefs,
     command,
   ].join("\n");
