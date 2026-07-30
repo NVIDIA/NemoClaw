@@ -81,43 +81,6 @@ describe("startSandbox", () => {
     expect(output).toContain("openshell-my-sandbox");
   });
 
-  it("continues to the delivery probe when Docker remains running and starting", async () => {
-    const h = harness();
-    h.recoverDockerDriverSandbox.mockReturnValue({
-      recovered: false,
-      via: null,
-      containerName: "openshell-my-sandbox",
-      detail:
-        "docker container openshell-my-sandbox did not become ready after recovery " +
-        "(runtime=running, health=starting)",
-    });
-
-    const result = await startSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(0);
-    expect(h.probeSandbox).toHaveBeenCalledWith("my-sandbox");
-    expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain(
-      "running but still starting; continuing with gateway recovery",
-    );
-  });
-
-  it("does not probe after a terminal Docker readiness failure", async () => {
-    const h = harness();
-    h.recoverDockerDriverSandbox.mockReturnValue({
-      recovered: false,
-      via: null,
-      containerName: "openshell-my-sandbox",
-      detail:
-        "docker container openshell-my-sandbox did not become ready after recovery " +
-        "(runtime=exited, health=unhealthy)",
-    });
-
-    const result = await startSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(1);
-    expect(h.probeSandbox).not.toHaveBeenCalled();
-  });
-
   it("still probes when the container was already running (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([

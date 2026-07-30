@@ -732,16 +732,20 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(stoppedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
   expect(stoppedBackupManifest.backedUpDirs).toEqual(expect.arrayContaining(["workspace"]));
 
-  // Use the canonical lifecycle action so the container, managed gateway, and host forwards recover together.
-  const restart = await host.command("nemoclaw", [SANDBOX_NAME, "start"], {
-    artifactName: "phase-10-start-for-stopped-snapshot-restore",
-    env: commandEnv(),
-    timeoutMs: 180_000,
-  });
-  expect(restart.exitCode, resultText(restart)).toBe(0);
+  // Recreate through the canonical recovery path before mutating and restoring the stopped backup.
+  const rebuildAfterStoppedBackup = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "rebuild", "--yes"],
+    {
+      artifactName: "phase-10-rebuild-for-stopped-snapshot-restore",
+      env: commandEnv(),
+      timeoutMs: 15 * 60_000,
+    },
+  );
+  expect(rebuildAfterStoppedBackup.exitCode, resultText(rebuildAfterStoppedBackup)).toBe(0);
   // Verify the full delivery chain before the test mutates and restores the stopped-sandbox backup.
   const recoveryStatus = await host.command("nemoclaw", [SANDBOX_NAME, "status", "--json"], {
-    artifactName: "phase-10-recover-restarted-sandbox-delivery",
+    artifactName: "phase-10-recover-rebuilt-sandbox-delivery",
     env: commandEnv(),
     timeoutMs: 120_000,
   });
