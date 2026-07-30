@@ -106,6 +106,21 @@ describe("inference switch workflow boundary", () => {
     );
   });
 
+  it("rejects a step-scoped hosted inference override in a local switch job", () => {
+    const hostedInference = readInferenceSwitchWorkflow();
+    const runStep = hostedInference.jobs["openclaw-inference-switch"].steps!.find(
+      (step) => step.name === "Run OpenClaw inference switch live test",
+    )!;
+    runStep.env = {
+      ...runStep.env,
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    };
+
+    expect(validateInferenceSwitchWorkflow(hostedInference)).toContain(
+      "openclaw-inference-switch must not define NEMOCLAW_E2E_USE_HOSTED_INFERENCE at step scope for its Anthropic-compatible mode",
+    );
+  });
+
   it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
     const workflow = readInferenceSwitchWorkflow();
     const steps = workflow.jobs["openclaw-inference-switch"].steps!;
