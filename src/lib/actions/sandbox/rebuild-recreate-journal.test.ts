@@ -95,12 +95,15 @@ describe("rebuild replacement target fingerprint", () => {
   });
 
   it("changes when a recorded replacement input changes", () => {
-    expect(
-      fingerprintRebuildRecreateTargetIntent({
-        ...recreateOptions,
-        dcodeAutoApprovalMode: "thread-opt-in",
-      }),
-    ).not.toBe(fingerprintRebuildRecreateTargetIntent(recreateOptions));
+    for (const drift of [
+      { dcodeAutoApprovalMode: "thread-opt-in" },
+      { endpointSource: "onboard" },
+      { policyTier: "balanced" },
+    ] as const) {
+      expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
+        fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      );
+    }
   });
 
   it("changes when the replacement targets another gateway", () => {
@@ -314,6 +317,22 @@ describe("rebuild replacement journal", () => {
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
           dcodeAutoApprovalMode: "thread-opt-in",
+        }),
+        log: vi.fn(),
+      }),
+    ).toThrow(/different recreate transaction in progress/);
+  });
+
+  it("refuses to resume a journal whose endpoint provenance changed (#7734)", () => {
+    open();
+
+    expect(() =>
+      openRebuildRecreateJournal({
+        target: NON_DEFAULT_TARGET,
+        agentName: "langchain-deepagents-code",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
+          ...recreateOptions,
+          endpointSource: "onboard",
         }),
         log: vi.fn(),
       }),

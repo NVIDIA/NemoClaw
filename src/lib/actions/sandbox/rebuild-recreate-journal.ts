@@ -41,6 +41,7 @@ export function fingerprintRebuildRecreateTargetIntent(
   options: Pick<
     RebuildRecreateOnboardOpts,
     | "agent"
+    | "endpointSource"
     | "fromDockerfile"
     | "sandboxGpu"
     | "sandboxGpuDevice"
@@ -56,6 +57,7 @@ export function fingerprintRebuildRecreateTargetIntent(
   return fingerprintSandboxRecreateValue({
     version: 1,
     agent: options.agent ?? null,
+    endpointSource: options.endpointSource ?? null,
     fromDockerfile: options.fromDockerfile,
     sandboxGpu: options.sandboxGpu,
     sandboxGpuDevice: options.sandboxGpuDevice,
