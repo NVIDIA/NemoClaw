@@ -984,8 +984,11 @@ RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtim
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$discovery_unsafe"
 
-# Copy startup script and shared sandbox initialisation library
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+# Copy startup script and shared sandbox initialisation library. Precreate the
+# root-owned managed-startup handoff so Landlock can bind its read-only rule
+# before the host applies the profile.
+RUN install -d -o root -g root -m 0755 /run/nemoclaw \
+    && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/bin/nemoclaw-managed-startup-hold \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
 import {
+  managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
@@ -693,7 +694,9 @@ describe("complete managed-image publication workflow", () => {
       "createChild.signalCode",
       'killSignal: "SIGKILL"',
       "prepareSandboxCreateManagedImageLaunch",
-      'createArgs: ["--from", input.image, "--name", input.sandbox]',
+      "prepareInitialSandboxCreatePolicy(",
+      '"--policy",',
+      "initialSandboxPolicy.policyPath",
       "openshellArgv: onboard.openshellArgv",
       '"sandbox",\n        "exec"',
       'commandResult(["docker", "inspect", candidate], env)',
@@ -706,6 +709,8 @@ describe("complete managed-image publication workflow", () => {
       '["docker", "network", "inspect", networkName]',
       "15_000",
       "managedStartupE2eProfile(input.agent, false, true, true)",
+      "collectDockerGpuPatchDiagnostics(",
+      "collectSandboxCreateFailureDiagnostics(",
     ]) {
       expect(harness).toContain(marker);
     }
@@ -724,11 +729,17 @@ describe("complete managed-image publication workflow", () => {
       "startupPatch.rollbackManagedStartupAfterCreateFailure();",
       transactionAbsenceProbe,
     );
+    const failureDiagnosticCapture = harness.indexOf(
+      "captureFailureDiagnosticsBeforeRollback(onboard, input, createLog, startupPatch, error);",
+      transactionAbsenceProbe,
+    );
     expect(probeFunctionStart).toBeGreaterThanOrEqual(0);
     expect(supervisorReconnect).toBeGreaterThan(probeFunctionStart);
     expect(exactHealthProbe).toBeGreaterThan(supervisorReconnect);
     expect(transactionCommit).toBeGreaterThan(exactHealthProbe);
     expect(transactionAbsenceProbe).toBeGreaterThan(transactionCommit);
+    expect(failureDiagnosticCapture).toBeGreaterThan(transactionAbsenceProbe);
+    expect(failureDiagnosticCapture).toBeLessThan(rollback);
     expect(rollback).toBeGreaterThan(transactionAbsenceProbe);
     expect(harness).not.toContain("Dockerfile");
     expect(harness).not.toContain("packages: write");
@@ -770,6 +781,16 @@ describe("complete managed-image publication workflow", () => {
         "nemoclaw-pr-unshipped",
       ]),
     ).toThrow("--agent must identify a shipped managed-image agent");
+
+    expect(managedImageOpenShellBasePolicyPath("openclaw")).toBe(
+      path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+    );
+    expect(managedImageOpenShellBasePolicyPath("hermes")).toBe(
+      path.join(repoRoot, "agents", "hermes", "policy-additions.yaml"),
+    );
+    expect(managedImageOpenShellBasePolicyPath("langchain-deepagents-code")).toBe(
+      path.join(repoRoot, "agents", "langchain-deepagents-code", "policy-additions.yaml"),
+    );
 
     const probes = {
       openclaw: managedImageOpenShellProbe("openclaw"),

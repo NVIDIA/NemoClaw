@@ -9,6 +9,10 @@ import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-
 import { isCredentialField } from "../../src/lib/security/credential-filter.ts";
 
 const EXPORTED_DIAGNOSTIC_FILES = new Set([
+  // Docker patch diagnostics redact logs at their source boundary after
+  // learning opaque credential values from the exact inspected containers.
+  // Redact them again here before they cross the CI artifact boundary.
+  "docker-logs.txt",
   "openshell-gateway-relevant.log",
   "openshell-gateway-tail.log",
   "rootfs-console.log",

@@ -6,12 +6,18 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { collectDockerGpuPatchDiagnostics } from "../../src/lib/onboard/docker-gpu-patch.ts";
 import { createDockerGpuSandboxCreatePatch } from "../../src/lib/onboard/docker-gpu-sandbox-create.ts";
 import { resolveDockerStartupCommandPatch } from "../../src/lib/onboard/docker-startup-command-agent.ts";
+import {
+  type InitialSandboxPolicy,
+  prepareInitialSandboxCreatePolicy,
+} from "../../src/lib/onboard/initial-policy.ts";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupAgent,
 } from "../../src/lib/onboard/managed-startup/profile.ts";
+import { collectSandboxCreateFailureDiagnostics } from "../../src/lib/onboard/sandbox-create-failure.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -24,6 +30,11 @@ const MANAGED_AGENTS = new Set<ManagedStartupAgent>([
 ]);
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_PORT = 8080;
+const MANAGED_AGENT_BASE_POLICIES: Record<ManagedStartupAgent, readonly string[]> = {
+  openclaw: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+  hermes: ["agents", "hermes", "policy-additions.yaml"],
+  "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+};
 
 type Inputs = {
   agent: ManagedStartupAgent;
@@ -83,6 +94,10 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
     throw new Error("--sandbox must be a valid RFC 1123 label");
   }
   return { agent: agentValue as ManagedStartupAgent, image, sandbox };
+}
+
+export function managedImageOpenShellBasePolicyPath(agent: ManagedStartupAgent): string {
+  return path.resolve(import.meta.dirname, "..", "..", ...MANAGED_AGENT_BASE_POLICIES[agent]);
 }
 
 function commandResult(argv: readonly string[], env: NodeJS.ProcessEnv, timeout = 20_000) {
@@ -252,6 +267,40 @@ function printLogTail(file: string): void {
   }
 }
 
+function captureFailureDiagnosticsBeforeRollback(
+  onboard: OnboardModule,
+  input: Inputs,
+  createLog: string,
+  startupPatch: ManagedStartupPatch,
+  error: unknown,
+): void {
+  const diagnosticDirectories: string[] = [];
+  try {
+    const dockerDiagnostics = collectDockerGpuPatchDiagnostics(
+      input.sandbox,
+      {
+        error,
+        selectedMode: startupPatch.selectedMode(),
+      },
+      { runCaptureOpenshell: onboard.runCaptureOpenshell },
+    );
+    if (dockerDiagnostics) diagnosticDirectories.push(dockerDiagnostics.dir);
+  } catch {
+    // Diagnostics must never mask the primary live failure or block rollback.
+  }
+  try {
+    const gatewayDiagnostics = collectSandboxCreateFailureDiagnostics(input.sandbox, {
+      gatewayLogPath: path.join(path.dirname(createLog), "openshell-gateway.log"),
+    });
+    if (gatewayDiagnostics) diagnosticDirectories.push(gatewayDiagnostics.dir);
+  } catch {
+    // The Docker snapshot above remains useful when gateway collection fails.
+  }
+  for (const directory of diagnosticDirectories) {
+    process.stderr.write(`Managed-image OpenShell failure diagnostics staged: ${directory}\n`);
+  }
+}
+
 async function waitForSandboxProbe(
   onboard: OnboardModule,
   input: Inputs,
@@ -333,6 +382,9 @@ async function waitForSandboxProbe(
     printLogTail(createLog);
     throw new Error("OpenShell sandbox did not pass the exact-image startup probe within 240s");
   } catch (error) {
+    // Capture the recreated container and gateway while they still exist. The
+    // rollback below intentionally destroys that transient failure evidence.
+    captureFailureDiagnosticsBeforeRollback(onboard, input, createLog, startupPatch, error);
     startupPatch.rollbackManagedStartupAfterCreateFailure();
     throw error;
   }
@@ -422,6 +474,7 @@ async function run(input: Inputs): Promise<void> {
   let createChild: ChildProcess | null = null;
   let createLogFd: number | null = null;
   let ownedContainerId: string | null = null;
+  let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   try {
     await assertGatewayPortAvailable();
     const localImage = commandResult(
@@ -448,6 +501,19 @@ async function run(input: Inputs): Promise<void> {
     const profile = encodeManagedStartupProfile(
       managedStartupE2eProfile(input.agent, false, true, true),
     );
+    initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
+      managedImageOpenShellBasePolicyPath(input.agent),
+      [],
+      { agentName: input.agent },
+    );
+    const createArgs = [
+      "--from",
+      input.image,
+      "--name",
+      input.sandbox,
+      "--policy",
+      initialSandboxPolicy.policyPath,
+    ];
     const launch = launchModule.prepareSandboxCreateManagedImageLaunch({
       agent: {
         name: input.agent,
@@ -455,7 +521,7 @@ async function run(input: Inputs): Promise<void> {
       },
       sandboxName: input.sandbox,
       chatUiUrl: "",
-      createArgs: ["--from", input.image, "--name", input.sandbox],
+      createArgs,
       env: {},
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
@@ -473,10 +539,12 @@ async function run(input: Inputs): Promise<void> {
     if (
       launch.prebuild.imageId !== null ||
       launch.prebuild.imageRef !== null ||
-      launch.prebuild.createArgs.join("\0") !==
-        ["--from", input.image, "--name", input.sandbox].join("\0") ||
+      launch.prebuild.createArgs.join("\0") !== createArgs.join("\0") ||
       launch.createArgv.filter((value) => value === "--from").length !== 1 ||
-      launch.createArgv[launch.createArgv.indexOf("--from") + 1] !== input.image
+      launch.createArgv[launch.createArgv.indexOf("--from") + 1] !== input.image ||
+      launch.createArgv.filter((value) => value === "--policy").length !== 1 ||
+      launch.createArgv[launch.createArgv.indexOf("--policy") + 1] !==
+        initialSandboxPolicy.policyPath
     ) {
       throw new Error("managed-image launch renderer altered the exact PR image identity");
     }
@@ -503,9 +571,9 @@ async function run(input: Inputs): Promise<void> {
     });
 
     createLogFd = fs.openSync(createLog, "a", 0o600);
-    const [createExecutable, ...createArgs] = launch.createArgv;
+    const [createExecutable, ...renderedCreateArgs] = launch.createArgv;
     if (!createExecutable) throw new Error("managed-image launch renderer returned empty argv");
-    createChild = spawn(createExecutable, createArgs, {
+    createChild = spawn(createExecutable, renderedCreateArgs, {
       env: launch.sandboxEnv,
       stdio: ["ignore", createLogFd, createLogFd],
     });
@@ -596,6 +664,11 @@ async function run(input: Inputs): Promise<void> {
       cleanupErrors.push(
         `harness network ${networkName} was not removed: ${commandDetail(removeNetwork)} ${commandDetail(verifyNetwork)}`.trim(),
       );
+    }
+    try {
+      initialSandboxPolicy?.cleanup?.();
+    } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
     fs.rmSync(stateDir, { recursive: true, force: true });
     if (cleanupErrors.length > 0) {

@@ -173,7 +173,7 @@ describe("OpenClaw final image layout", () => {
       finalStage,
       "RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0",
     );
-    const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
+    const runtimeChmod = indexOfRequired(finalStage, "&& chmod 755 /usr/local/bin/nemoclaw-start");
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
 
     expect(dependency).toBeLessThan(tarPatch);

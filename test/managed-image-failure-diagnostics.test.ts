@@ -73,6 +73,10 @@ describe("managed-image failure diagnostic export", () => {
       "managed startup exited before the supervisor reconnected\n",
     );
     fs.writeFileSync(
+      path.join(diagnosticBundle, "docker-logs.txt"),
+      `recreated container exited while using ${opaqueCanary}\n`,
+    );
+    fs.writeFileSync(
       path.join(diagnosticBundle, "unrelated.raw"),
       "this raw file must never enter the artifact\n",
     );
@@ -86,10 +90,11 @@ describe("managed-image failure diagnostic export", () => {
       sourceRoot,
     });
 
-    expect(result).toMatchObject({ bundles: 1, files: 3 });
+    expect(result).toMatchObject({ bundles: 1, files: 4 });
     const exported = outputText(outputRoot);
     expect(exported).toContain("<REDACTED>");
     expect(exported).toContain("managed startup exited before the supervisor reconnected");
+    expect(exported).toContain("recreated container exited while using <REDACTED>");
     for (const secret of [opaqueCanary, dockerCanary, knownCanary, "bearer-known-canary-123456"]) {
       expect(exported).not.toContain(secret);
     }
