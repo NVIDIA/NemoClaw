@@ -387,9 +387,12 @@ describe("agents/hermes/generate-config.ts", () => {
 
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
+    const configYaml = fs.readFileSync(path.join(tmpDir, ".hermes", "config.yaml"), "utf-8");
 
     expect(config._config_version).toBe(33);
     expect(config.agent?.verify_on_stop).toBe(false);
+    expect(config.agent?.reasoning_effort).toBeUndefined();
+    expect(configYaml).not.toContain("reasoning_effort:");
     expect(config.approvals).toEqual({ mode: "manual" });
     expect(config.session_reset).toEqual({
       mode: "both",
