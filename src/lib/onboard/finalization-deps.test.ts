@@ -4,27 +4,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../verify-deployment";
-import {
-  createWaitForSandboxControlPlaneReady,
-  finalizationHandlerDeps,
-} from "./finalization-deps";
+import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
 
 describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
   it("delegates timeout selection to the recovery readiness helper", () => {
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "120");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "75");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "180");
-    const waitForRecreatedSandboxOpenShellReady = vi.fn(() => true);
-    const waitForSandboxControlPlaneReady = createWaitForSandboxControlPlaneReady(() => ({
+    let effectiveTimeoutSeconds: number | undefined;
+    const waitForRecreatedSandboxOpenShellReady = vi.fn(
+      (_name: string, options: { timeoutSeconds?: number } = {}) => {
+        const requestedTimeoutSeconds = options.timeoutSeconds ?? 120;
+        effectiveTimeoutSeconds = Number(
+          process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS ?? requestedTimeoutSeconds,
+        );
+        return true;
+      },
+    );
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(),
       waitForRecreatedSandboxOpenShellReady,
-    }));
+    });
 
-    expect(waitForSandboxControlPlaneReady("policy-box")).toBe(true);
+    expect(finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box")).toBe(true);
     expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box");
+    expect(effectiveTimeoutSeconds).toBe(75);
   });
 });
 
