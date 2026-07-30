@@ -44,12 +44,25 @@ if (!Number.isSafeInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65
   process.exit(1);
 }
 
-function filteredHeaders(headers) {
+function requestHeaders(headers) {
   const filtered = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (!hopByHop.has(name.toLowerCase()) && value !== undefined) filtered[name] = value;
+    const lowerName = name.toLowerCase();
+    if (
+      hopByHop.has(lowerName) ||
+      lowerName === "forwarded" ||
+      lowerName === "x-real-ip" ||
+      lowerName.startsWith("x-forwarded-") ||
+      value === undefined
+    ) continue;
+    filtered[name] = value;
   }
   return filtered;
+}
+
+function responseHeaders(headers) {
+  const contentType = headers["content-type"];
+  return contentType === undefined ? {} : { "content-type": contentType };
 }
 
 function send(res, status, message) {
@@ -59,7 +72,7 @@ function send(res, status, message) {
 }
 
 function forward(req, res, body) {
-  const headers = filteredHeaders(req.headers);
+  const headers = requestHeaders(req.headers);
   headers.host = "127.0.0.1:" + String(upstreamPort);
   headers["content-length"] = String(body.length);
   const upstream = http.request({
@@ -70,7 +83,7 @@ function forward(req, res, body) {
     headers,
     agent: false,
   }, (upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode || 502, filteredHeaders(upstreamRes.headers));
+    res.writeHead(upstreamRes.statusCode || 502, responseHeaders(upstreamRes.headers));
     upstreamRes.pipe(res);
   });
   upstream.setTimeout(15000, () => upstream.destroy(new Error("upstream timeout")));

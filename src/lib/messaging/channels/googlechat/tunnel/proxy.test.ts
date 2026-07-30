@@ -162,4 +162,49 @@ describe("Google Chat webhook route proxy", () => {
     expect(response.status).toBe(413);
     expect(upstreamRequests).toBe(0);
   });
+
+  it("strips spoofable forwarding metadata and exposes only safe upstream headers", async () => {
+    let forwardedHeaders: Record<string, string | string[] | undefined> = {};
+    const upstream = createServer((request, response) => {
+      forwardedHeaders = request.headers;
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(202, {
+          "content-type": "application/json",
+          "set-cookie": "session=private",
+          server: "internal-dashboard",
+          "x-debug-token": "internal-only",
+        });
+        response.end('{"accepted":true}');
+      });
+    });
+    cleanupServers.add(upstream);
+    const upstreamPort = await listen(upstream);
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));
+    cleanupDirs.add(pidDir);
+    const proxyPort = await startGooglechatWebhookProxy(pidDir, upstreamPort);
+
+    const response = await fetch(`http://127.0.0.1:${String(proxyPort)}/googlechat`, {
+      method: "POST",
+      headers: {
+        forwarded: "for=203.0.113.10;proto=https",
+        "x-forwarded-for": "203.0.113.10",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "https",
+        "x-real-ip": "203.0.113.10",
+      },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(202);
+    expect(forwardedHeaders.forwarded).toBeUndefined();
+    expect(forwardedHeaders["x-forwarded-for"]).toBeUndefined();
+    expect(forwardedHeaders["x-forwarded-host"]).toBeUndefined();
+    expect(forwardedHeaders["x-forwarded-proto"]).toBeUndefined();
+    expect(forwardedHeaders["x-real-ip"]).toBeUndefined();
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.has("set-cookie")).toBe(false);
+    expect(response.headers.has("server")).toBe(false);
+    expect(response.headers.has("x-debug-token")).toBe(false);
+  });
 });
