@@ -347,12 +347,30 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(followUp).toContain(
       "Do not ask the user for a second confirmation or a prescribed reply.",
     );
+    expect(followUp).toContain("Before dispatch, review these exact inputs:");
+    expect(followUp).toContain("Head repository.");
+    expect(followUp).toContain("PR SHA and base SHA.");
+    expect(followUp).toContain("Risk plan artifact, selected jobs, and selected targets.");
     expect(followUp).toContain(
       "PR-controlled code that the selected jobs or targets execute with credentials.",
     );
     expect(followUp).toContain(
+      "Do not dispatch when the coordination check already identifies an active child run or accepted",
+    );
+    expect(followUp).toContain(
+      "evidence for the same PR SHA, base SHA, and plan. Monitor that run instead.",
+    );
+    expect(followUp).toContain(
+      "If the PR SHA, base SHA, or plan changes during the task, review the new inputs and dispatch the",
+    );
+    expect(followUp).toContain("new exact plan when the gate requires it.");
+    expect(followUp).toContain("The original user request remains the authorization for");
+    expect(followUp).toContain("that task. Do not request another confirmation.");
+    expect(followUp).toContain(
       "The trusted workflow must continue to enforce the maintainer role, exact revision, plan,",
     );
+    expect(followUp).toContain("coordination state, and live PR state.");
+    expect(followUp).toContain("Report the dispatched plan, both SHAs, and workflow run URL.");
     expect(mergeGate).toContain(
       "[PR follow-up authorization](../_shared/pr-follow-up.md#dispatch-credentialed-pr-e2e)",
     );
