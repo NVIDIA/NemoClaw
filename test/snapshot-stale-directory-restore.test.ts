@@ -159,7 +159,7 @@ if (
   cmd.includes("/sandbox/.hermes/SOUL.md") ||
   cmd.includes("/sandbox/.hermes/.hermes_history") ||
   cmd.includes("/sandbox/.hermes/runtime/state.db") ||
-  cmd.includes("/sandbox/.hermes/cron/executions.db") ||
+  cmd.includes("/sandbox/.hermes/runtime/cron-executions.db") ||
   cmd.includes("/sandbox/.hermes/gateway/discord_message_recovery.db") ||
   cmd.includes("/sandbox/.hermes/kanban.db")
 ) {
