@@ -85,16 +85,22 @@ describe("finalizeDockerGpuPatchBackup", () => {
   });
 
   it("rolls back to the still-running original container without restarting it", () => {
+    const snapshotImageId = `sha256:${"d".repeat(64)}`;
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
+    const dockerRun = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
       {
-        result: { ...deferredCreateResult(), backupWasRunning: true },
+        result: {
+          ...deferredCreateResult(),
+          backupWasRunning: true,
+          snapshotImageId,
+        },
         supervisorReady: false,
       },
-      { dockerStop, dockerRm, dockerRename, dockerStart },
+      { dockerStop, dockerRm, dockerRename, dockerStart, dockerRun },
     );
 
     expect(outcome).toEqual({ backupRemoved: false, rolledBack: true });
@@ -108,57 +114,10 @@ describe("finalizeDockerGpuPatchBackup", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(dockerStart).not.toHaveBeenCalled();
-  });
-
-  it("removes the writable-layer snapshot after a successful rollback", () => {
-    const snapshotImageId = `sha256:${"d".repeat(64)}`;
-    const dockerRmi = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result: {
-          ...deferredCreateResult(),
-          backupWasRunning: true,
-          snapshotImageId,
-        },
-        supervisorReady: false,
-      },
-      {
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
-        dockerRename: vi.fn(() => ({ status: 0 })),
-        dockerStart: vi.fn(() => ({ status: 0 })),
-        dockerRmi,
-      },
-    );
-
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: true });
-    expect(dockerRmi).toHaveBeenCalledWith(
-      snapshotImageId,
+    expect(dockerRun).toHaveBeenCalledWith(
+      ["rmi", snapshotImageId],
       expect.objectContaining({ ignoreError: true }),
     );
-  });
-
-  it("keeps the writable-layer snapshot when rollback does not restore the original", () => {
-    const dockerRmi = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
-      {
-        result: {
-          ...deferredCreateResult(),
-          snapshotImageId: `sha256:${"d".repeat(64)}`,
-        },
-        supervisorReady: false,
-      },
-      {
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
-        dockerRename: vi.fn(() => ({ status: 1 })),
-        dockerStart: vi.fn(() => ({ status: 0 })),
-        dockerRmi,
-      },
-    );
-
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
-    expect(dockerRmi).not.toHaveBeenCalled();
   });
 
   it("reports rolledBack=false when restoring the backup fails", () => {

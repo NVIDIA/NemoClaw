@@ -27,7 +27,6 @@ export type DockerGpuPatchDeps = {
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;
   dockerRename?: DockerRenameFn;
-  dockerRmi?: DockerContainerFn;
   dockerForceRm?: DockerContainerFn;
   dockerRm?: DockerContainerFn;
   dockerStart?: DockerContainerFn;
@@ -81,7 +80,6 @@ export type DockerGpuPatchFailureContext = {
   oldContainerId?: string | null;
   newContainerId?: string | null;
   backupContainerName?: string | null;
-  snapshotImageId?: string | null;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
   rolledBack?: boolean;

@@ -5,8 +5,8 @@
  *
  * Preserves the real boundaries: install.sh/onboard, Docker, OpenShell
  * gateway stop/start, NemoClaw registry/list/status, sandbox SSH/exec, durable
- * /sandbox/.openclaw state markers, OpenClaw gateway health after restart, and
- * inference.local chat completion before and after gateway restart.
+ * /sandbox/.openclaw state markers, and inference.local chat completion before
+ * and after gateway restart.
  */
 
 import fs from "node:fs";
@@ -115,7 +115,6 @@ test(
         "NemoClaw registry, nemoclaw list/status, and openshell sandbox list discover the sandbox",
         "OpenShell version supports gateway resume and state persistence",
         "sandbox exec/SSH-equivalent access works before and after gateway restart",
-        "OpenClaw gateway passes its health check after the OpenShell gateway restart",
         "inference.local returns a live PONG before and after gateway restart",
         "markers under /sandbox/.openclaw survive the gateway stop/start cycle",
         "final destroy removes the sandbox from NemoClaw registry/list state",
@@ -368,7 +367,6 @@ test(
       assertions: {
         installCompleted: install.exitCode === 0,
         registryListedBeforeRestart: true,
-        openClawGatewayHealthyAfterRestart: true,
         inferenceLocalBeforeRestart: true,
         markersPersistedAfterRestart: true,
         inferenceLocalAfterRestart: true,

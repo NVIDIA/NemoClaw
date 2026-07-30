@@ -23,7 +23,7 @@
 // and delete this module along with its callers in docker-gpu-patch.ts and
 // docker-gpu-sandbox-create.ts.
 
-import { dockerRmi } from "../adapters/docker/image";
+import { dockerRun } from "../adapters/docker/run";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
@@ -80,8 +80,8 @@ export function finalizeDockerGpuPatchBackup(
     },
     resolved,
   );
-  if (rolledBack && options.result.snapshotImageId) {
-    (deps.dockerRmi ?? dockerRmi)(options.result.snapshotImageId, containerOpts);
+  if (options.result.snapshotImageId) {
+    (deps.dockerRun ?? dockerRun)(["rmi", options.result.snapshotImageId], containerOpts);
   }
   return { backupRemoved: false, rolledBack };
 }

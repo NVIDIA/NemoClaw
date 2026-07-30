@@ -43,49 +43,7 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("Docker startup-command patch", () => {
-  it("keeps the registered supervisor running until deferred recovery finalizes", () => {
-    const dockerCapture = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
-        ? "old-container-id\n"
-        : args[0] === "inspect"
-          ? JSON.stringify([inspectFixture()])
-          : "",
-    );
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
-      status: 0,
-      stdout: "new-container-id\n",
-    }));
-
-    const result = recreateStartupCommandForTest(
-      {
-        sandboxName: "alpha",
-        keepOriginalRunningUntilFinalize: true,
-        waitForSupervisor: false,
-        openshellSandboxCommand: ["env", "nemoclaw-start"],
-      },
-      {
-        dockerCapture,
-        dockerRunDetached,
-        dockerRename,
-        dockerStop,
-        now: () => new Date("2026-07-10T00:00:00Z"),
-      },
-    );
-
-    expect(result).toMatchObject({
-      newContainerId: "new-container-id",
-      backupWasRunning: true,
-      backupRemoved: false,
-    });
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRename.mock.invocationCallOrder[0]).toBeLessThan(
-      dockerRunDetached.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-  });
-
-  it("starts recovery from a paused snapshot of the sandbox writable layer", () => {
+  it("preserves the registered supervisor and writable layer until recovery finalizes", () => {
     const snapshotImageId = `sha256:${"d".repeat(64)}`;
     const dockerCapture = vi.fn((args: readonly string[]) =>
       args[0] === "ps"
@@ -94,6 +52,7 @@ describe("Docker startup-command patch", () => {
           ? JSON.stringify([inspectFixture()])
           : "",
     );
+    const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRun = vi.fn(() => ({
       status: 0,
       stdout: `Docker informational output\n${snapshotImageId}\n`,
@@ -108,7 +67,6 @@ describe("Docker startup-command patch", () => {
       {
         sandboxName: "alpha",
         keepOriginalRunningUntilFinalize: true,
-        preserveWritableLayer: true,
         waitForSupervisor: false,
         openshellSandboxCommand: ["env", "nemoclaw-start"],
       },
@@ -117,10 +75,18 @@ describe("Docker startup-command patch", () => {
         dockerRun,
         dockerRunDetached,
         dockerRename,
+        dockerStop,
         now: () => new Date("2026-07-10T00:00:00Z"),
       },
     );
 
+    expect(result).toMatchObject({
+      newContainerId: "new-container-id",
+      backupWasRunning: true,
+      snapshotImageId,
+      backupRemoved: false,
+    });
+    expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRun).toHaveBeenCalledWith(
       ["commit", "old-container-id"],
       expect.objectContaining({ ignoreError: true }),
@@ -134,7 +100,6 @@ describe("Docker startup-command patch", () => {
     const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
     expect(cloneArgs).toContain(snapshotImageId);
     expect(cloneArgs).not.toContain(`sha256:${"c".repeat(64)}`);
-    expect(result.snapshotImageId).toBe(snapshotImageId);
   });
 
   it("does not mutate the container when its writable-layer snapshot fails", () => {
@@ -145,7 +110,7 @@ describe("Docker startup-command patch", () => {
       recreateStartupCommandForTest(
         {
           sandboxName: "alpha",
-          preserveWritableLayer: true,
+          keepOriginalRunningUntilFinalize: true,
           waitForSupervisor: false,
           openshellSandboxCommand: ["env", "nemoclaw-start"],
         },
