@@ -346,10 +346,22 @@ describe("maintainer skills follow canonical workflow policy", () => {
 After eligible PR CI passes for a PR from \`NVIDIA/NemoClaw\`, the trusted controller automatically
 dispatches the gate-selected credential-bearing E2E plan. Do not request user confirmation or run
 \`approve-e2e\` for this path.`);
-    expect(followUp).toContain("dispatch without a second confirmation or prescribed reply.");
+    expect(
+      followUp,
+    ).toContain(`A fork PR with selected jobs or targets waits for exact-revision maintainer approval. Before an
+agent dispatches \`approve-e2e\`, review the exact head repository, PR SHA, base SHA, risk plan,
+selected work, and PR-controlled code that executes with credentials. An explicit user request to
+run the fork PR E2E, make its required checks pass, or make it ready for review authorizes the
+dispatch without a second confirmation or prescribed reply.
+
+If the fork PR SHA, base SHA, or plan changes during the task, review the new inputs and dispatch the
+new exact plan under the original task authorization. The trusted workflow still enforces the
+maintainer role, exact revision, plan, coordination state, and live PR state. Report the plan, both
+SHAs, and workflow run URL.`);
     expect(mergeGate).toContain(
       "[PR follow-up authorization](../_shared/pr-follow-up.md#follow-credentialed-pr-e2e)",
     );
+    expect(mergeGate).not.toContain("`Maintainer approval required to run E2E`");
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
     expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
     expect(salvage).toContain("If `maintainerCanModify` is false, do not push");
