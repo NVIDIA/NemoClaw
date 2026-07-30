@@ -295,7 +295,44 @@ jobs:
             exit 1
           fi
           reference="${IMAGE}@${DIGEST}"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          raw_manifest="$RUNNER_TEMP/managed-base-manifest.raw"
+          docker buildx imagetools inspect "$reference" --raw > "$raw_manifest"
+          platform_digests="$(
+            jq -ce '
+              if (
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+              ) then
+                [
+                  .manifests[]
+                  | select(
+                      .platform.os == "linux" and
+                      (
+                        .platform.architecture == "amd64" or
+                        .platform.architecture == "arm64"
+                      )
+                    )
+                  | {key: ("linux/" + .platform.architecture), value: .digest}
+                ]
+                | if (
+                    length == 2 and
+                    (map(.key) | sort) == ["linux/amd64", "linux/arm64"] and
+                    (map(.value) | all(test("^sha256:[0-9a-f]{64}$")))
+                  )
+                  then from_entries
+                  else error("base manifest does not contain one exact descriptor per platform")
+                  end
+              else
+                error("base reference is not a multi-platform image index")
+              end
+            ' "$raw_manifest"
+          )"
+          platform_references="$(
+            jq -cn \
+              --arg image "$IMAGE" \
+              --argjson digests "$platform_digests" \
+              '$digests | with_entries(.value = ($image + "@" + .value))'
+          )"
 
           contract_dir="$RUNNER_TEMP/managed-base-contract"
           mkdir -p "$contract_dir"
@@ -305,6 +342,8 @@ jobs:
             --arg image "$IMAGE" \
             --arg reference "$reference" \
             --arg revision "$GITHUB_SHA" \
+            --argjson platformDigests "$platform_digests" \
+            --argjson platformReferences "$platform_references" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
             '{
@@ -314,6 +353,8 @@ jobs:
               digest: $digest,
               reference: $reference,
               platforms: ["linux/amd64", "linux/arm64"],
+              platformDigests: $platformDigests,
+              platformReferences: $platformReferences,
               sourceRevision: $revision,
               run: {
                 id: $runId,
@@ -325,7 +366,17 @@ jobs:
              and (.sourceRevision | test("^[0-9a-f]{40}$"))
              and (.digest | test("^sha256:[0-9a-f]{64}$"))
              and .reference == (.image + "@" + .digest)
-             and .platforms == ["linux/amd64", "linux/arm64"]' \
+             and .platforms == ["linux/amd64", "linux/arm64"]
+             and (.platformDigests | keys | sort) == .platforms
+             and (.platformReferences | keys | sort) == .platforms
+             and ([
+               .platforms[] as $platform
+               | (
+                   (.platformDigests[$platform] | test("^sha256:[0-9a-f]{64}$"))
+                   and .platformReferences[$platform] ==
+                     (.image + "@" + .platformDigests[$platform])
+                 )
+             ] | all)' \
             "$contract_dir/contract.json" >/dev/null
 
       - name: Upload managed base image contract
@@ -446,7 +497,44 @@ jobs:
             exit 1
           fi
           reference="${IMAGE}@${DIGEST}"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          raw_manifest="$RUNNER_TEMP/managed-openclaw-base-manifest.raw"
+          docker buildx imagetools inspect "$reference" --raw > "$raw_manifest"
+          platform_digests="$(
+            jq -ce '
+              if (
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+              ) then
+                [
+                  .manifests[]
+                  | select(
+                      .platform.os == "linux" and
+                      (
+                        .platform.architecture == "amd64" or
+                        .platform.architecture == "arm64"
+                      )
+                    )
+                  | {key: ("linux/" + .platform.architecture), value: .digest}
+                ]
+                | if (
+                    length == 2 and
+                    (map(.key) | sort) == ["linux/amd64", "linux/arm64"] and
+                    (map(.value) | all(test("^sha256:[0-9a-f]{64}$")))
+                  )
+                  then from_entries
+                  else error("OpenClaw base manifest does not contain one exact descriptor per platform")
+                  end
+              else
+                error("OpenClaw base reference is not a multi-platform image index")
+              end
+            ' "$raw_manifest"
+          )"
+          platform_references="$(
+            jq -cn \
+              --arg image "$IMAGE" \
+              --argjson digests "$platform_digests" \
+              '$digests | with_entries(.value = ($image + "@" + .value))'
+          )"
 
           contract_dir="$RUNNER_TEMP/managed-base-contract"
           mkdir -p "$contract_dir"
@@ -455,6 +543,8 @@ jobs:
             --arg image "$IMAGE" \
             --arg reference "$reference" \
             --arg revision "$GITHUB_SHA" \
+            --argjson platformDigests "$platform_digests" \
+            --argjson platformReferences "$platform_references" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
             '{
@@ -464,6 +554,8 @@ jobs:
               digest: $digest,
               reference: $reference,
               platforms: ["linux/amd64", "linux/arm64"],
+              platformDigests: $platformDigests,
+              platformReferences: $platformReferences,
               sourceRevision: $revision,
               run: {
                 id: $runId,
@@ -476,7 +568,17 @@ jobs:
              and (.sourceRevision | test("^[0-9a-f]{40}$"))
              and (.digest | test("^sha256:[0-9a-f]{64}$"))
              and .reference == (.image + "@" + .digest)
-             and .platforms == ["linux/amd64", "linux/arm64"]' \
+             and .platforms == ["linux/amd64", "linux/arm64"]
+             and (.platformDigests | keys | sort) == .platforms
+             and (.platformReferences | keys | sort) == .platforms
+             and ([
+               .platforms[] as $platform
+               | (
+                   (.platformDigests[$platform] | test("^sha256:[0-9a-f]{64}$"))
+                   and .platformReferences[$platform] ==
+                     (.image + "@" + .platformDigests[$platform])
+                 )
+             ] | all)' \
             "$contract_dir/contract.json" >/dev/null
 
       - name: Upload managed base image contract
