@@ -61,14 +61,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Send the Pin Diesel Slack brief
+      - name: Send Pin Diesel through the situation-room webhook
         if: >-
           always() &&
           steps.drift.outputs.ready == 'true' &&
           github.ref == 'refs/heads/main'
         env:
+          EXPECTED_SLACK_CHANNEL_ID: C0ALN454EH4
+          EXPECTED_SLACK_CHANNEL_NAME: nemoclaw-situation-room
           SLACK_PAYLOAD_PATH: ${{ runner.temp }}/upstream-runtime-drift/slack.json
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -76,7 +78,10 @@ jobs:
           const webhook = process.env.SLACK_WEBHOOK_URL;
           if (!webhook) {
             process.stdout.write(
-              "::notice::SLACK_WEBHOOK_URL_DAILY is not configured; the GitHub report remains available.\n",
+              `::notice::SLACK_WEBHOOK_URL_SITUATION_ROOM is not configured; ` +
+                `Pin Diesel cannot use the intended #${process.env.EXPECTED_SLACK_CHANNEL_NAME} ` +
+                `(${process.env.EXPECTED_SLACK_CHANNEL_ID}) binding. The webhook configuration ` +
+                `controls the actual destination. The GitHub report remains available.\n`,
             );
             process.exit(0);
           }

@@ -38,7 +38,9 @@ describe("nightly upstream runtime drift workflow", () => {
     const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"));
     const report = job?.steps?.find((step) => step.id === "drift");
     const upload = job?.steps?.find((step) => step.name === "Upload Pin Diesel report");
-    const slack = job?.steps?.find((step) => step.name === "Send the Pin Diesel Slack brief");
+    const slack = job?.steps?.find(
+      (step) => step.name === "Send Pin Diesel through the situation-room webhook",
+    );
     expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
     expect(report?.env).toHaveProperty("GITHUB_TOKEN");
@@ -52,16 +54,32 @@ describe("nightly upstream runtime drift workflow", () => {
     expect(upload?.with?.["retention-days"]).toBe(30);
     expect(slack?.uses).toBeUndefined();
     expect(slack?.if).toContain("github.ref == 'refs/heads/main'");
-    expect(slack?.env).toHaveProperty("SLACK_WEBHOOK_URL");
+    expect(slack?.env).toMatchObject({
+      EXPECTED_SLACK_CHANNEL_ID: "C0ALN454EH4",
+      EXPECTED_SLACK_CHANNEL_NAME: "nemoclaw-situation-room",
+      SLACK_WEBHOOK_URL: "${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}",
+    });
     expect(slack?.env).not.toHaveProperty("GITHUB_TOKEN");
-    expect(slack?.run).toContain("SLACK_WEBHOOK_URL_DAILY is not configured");
+    expect(slack?.run).toContain("SLACK_WEBHOOK_URL_SITUATION_ROOM is not configured");
+    expect(slack?.run).not.toContain("SLACK_WEBHOOK_URL_DAILY");
     expect(slack?.run).toContain('encoded.includes("<!")');
 
     const missingWebhook = spawnSync("bash", ["-euo", "pipefail", "-c", slack?.run ?? ""], {
       encoding: "utf8",
-      env: { ...process.env, SLACK_WEBHOOK_URL: "" },
+      env: {
+        ...process.env,
+        EXPECTED_SLACK_CHANNEL_ID: "C0ALN454EH4",
+        EXPECTED_SLACK_CHANNEL_NAME: "nemoclaw-situation-room",
+        SLACK_WEBHOOK_URL: "",
+      },
     });
     expect(missingWebhook.status, missingWebhook.stderr).toBe(0);
-    expect(missingWebhook.stdout).toContain("the GitHub report remains available");
+    expect(missingWebhook.stdout).toContain(
+      "Pin Diesel cannot use the intended #nemoclaw-situation-room (C0ALN454EH4) binding",
+    );
+    expect(missingWebhook.stdout).toContain(
+      "webhook configuration controls the actual destination",
+    );
+    expect(missingWebhook.stdout).toContain("The GitHub report remains available");
   });
 });
