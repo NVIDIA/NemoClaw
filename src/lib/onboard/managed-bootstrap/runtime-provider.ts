@@ -61,7 +61,12 @@ export interface ManagedBootstrapRuntimeReplacementIntent {
  * needs the runtime's mutation handle.
  */
 export interface ManagedBootstrapRuntimePatch {
-  maybeApplyDuringCreate(): void | Promise<void>;
+  /**
+   * The sandbox create stream invokes polling synchronously. Providers retain
+   * any asynchronous work internally and expose its terminal state through
+   * createFailureMessage/exitOnPatchError.
+   */
+  maybeApplyDuringCreate(): void;
   createFailureMessage(): string | null;
   exitOnPatchError(): void | Promise<void>;
   rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;
