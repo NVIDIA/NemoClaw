@@ -108,7 +108,10 @@ describe("LangChain Deep Agents Code profile build gate", () => {
   it.each([
     "NEMOCLAW_CORPORATE_CA_B64",
     "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
-  ])("accepts %s as a reviewed source-gate ARG (#6901)", (reviewedArg) => {
+    "PERL_VERSION",
+    "PERL_SHA256",
+    "PERL_PACKAGE_REVISION",
+  ])("accepts %s as a reviewed public build ARG", (reviewedArg) => {
     const result = runGateWithFakeDocker("expected-failure-with-marker", (fixtureRoot) =>
       fs.appendFileSync(path.join(fixtureRoot, reviewedDockerfiles[0]), `\nARG ${reviewedArg}\n`),
     );
