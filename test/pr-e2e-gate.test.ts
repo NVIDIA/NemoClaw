@@ -71,8 +71,8 @@ const BROAD_JOBS = [
   "network-policy",
   "onboard-repair",
   "onboard-resume",
+  "rebuild-openclaw",
   "state-backup-restore",
-  "upgrade-stale-sandbox",
 ] as const;
 
 afterEach(() => {
@@ -1397,7 +1397,7 @@ describe("PR E2E controller", () => {
         status: "in_progress",
         output: {
           title: "Running 13 E2E checks",
-          summary: expect.stringContaining("upgrade-stale-sandbox"),
+          summary: expect.stringContaining("rebuild-openclaw"),
         },
       });
       expect(checkUpdates[2]?.body).toMatchObject({

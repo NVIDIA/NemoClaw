@@ -49,7 +49,10 @@ import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
-import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  UPLOAD_E2E_ARTIFACTS_ACTION,
+  validateUploadE2eArtifactsWorkflowBoundary,
+} from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -129,7 +132,13 @@ export const RETIRED_CONTROLLER_SELECTOR_IDS = [
   "gateway-health-honest",
   "onboard-negative-paths",
   "openshell-version-pin",
+  "sandbox-rebuild",
   "ubuntu-repo-cli-smoke",
+  "upgrade-stale-sandbox",
+] as const;
+export const RETIRED_CONTROLLER_TARGET_SELECTOR_IDS = [
+  "sandbox-rebuild",
+  "upgrade-stale-sandbox",
 ] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
@@ -1048,6 +1057,61 @@ function validateFreeStandingJobSelector(
     : freeStandingJobIf(jobName, targetName);
   if (job.if !== expected) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
+  }
+}
+
+const CANDIDATE_SELECTOR_ACTIVE_IF =
+  "${{ steps.selector_compatibility.outputs.retired != 'true' }}";
+const CANDIDATE_SELECTOR_CLASSIFIER = [
+  "set -euo pipefail",
+  'if [[ -f "$LEGACY_TEST_FILE" ]]; then',
+  "  retired=false",
+  "else",
+  "  retired=true",
+  "fi",
+  `printf 'retired=%s\\n' "$retired" >> "$GITHUB_OUTPUT"`,
+].join("\n");
+
+function validateCandidateSelectorCompatibility(
+  errors: string[],
+  options: {
+    installStep: string;
+    jobName: string;
+    legacyTestFile: string;
+    runStep: string;
+    steps: readonly WorkflowStep[];
+  },
+): void {
+  const classifierName = `Classify ${options.jobName} candidate selector`;
+  const classifier = namedStep(options.steps, classifierName);
+  if (
+    stringValue(classifier?.id) !== "selector_compatibility" ||
+    asRecord(classifier?.env).LEGACY_TEST_FILE !== options.legacyTestFile ||
+    stringValue(classifier?.run).trim() !== CANDIDATE_SELECTOR_CLASSIFIER
+  ) {
+    errors.push(`${options.jobName} job must classify candidate selector retirement`);
+  }
+
+  const dockerAuthIndex = options.steps.findIndex(
+    (step) => step.name === "Authenticate to Docker Hub",
+  );
+  const classifierIndex = options.steps.indexOf(classifier ?? {});
+  const prepareIndex = options.steps.findIndex((step) => step.name === "Prepare E2E workspace");
+  if (
+    dockerAuthIndex < 0 ||
+    classifierIndex <= dockerAuthIndex ||
+    prepareIndex < 0 ||
+    classifierIndex >= prepareIndex
+  ) {
+    errors.push(
+      `${options.jobName} candidate selector classifier must follow Docker Hub authentication`,
+    );
+  }
+
+  for (const stepName of [options.installStep, options.runStep]) {
+    if (namedStep(options.steps, stepName)?.if !== CANDIDATE_SELECTOR_ACTIVE_IF) {
+      errors.push(`${options.jobName} step '${stepName}' must skip a retired candidate selector`);
+    }
   }
 }
 
@@ -2015,6 +2079,13 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
   }
 
   const steps = asSteps(job.steps);
+  validateCandidateSelectorCompatibility(errors, {
+    installStep: "Install OpenShell",
+    jobName,
+    legacyTestFile: "test/e2e/live/sandbox-rebuild.test.ts",
+    runStep: "Run sandbox rebuild live test",
+    steps,
+  });
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
     const stepName = `sandbox-rebuild step '${step.name ?? step.uses ?? "<unnamed>"}'`;
@@ -2192,6 +2263,13 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
   }
 
   const steps = asSteps(job.steps);
+  validateCandidateSelectorCompatibility(errors, {
+    installStep: "Install OpenShell CLI",
+    jobName,
+    legacyTestFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
+    runStep: "Run upgrade stale sandbox live Vitest test",
+    steps,
+  });
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
     const stepName = `upgrade-stale-sandbox step '${step.name ?? step.uses ?? "<unnamed>"}'`;
@@ -3881,8 +3959,8 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     errors.push("bedrock-runtime-compatible-anthropic strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
-    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw,hermes");
+  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw") {
+    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw");
   }
 
   const jobEnv = asRecord(job.env);
@@ -4330,14 +4408,56 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
     errors.push("workflow missing retired-selector-compatibility job");
     return;
   }
-  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+  const jobSelectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
     (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
   ).join(" || ");
-  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
+  const targetSelectorGate = RETIRED_CONTROLLER_TARGET_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.targets), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${jobSelectorGate} || ${targetSelectorGate}) }}`;
   if (job.if !== expectedIf) {
     errors.push(
       "retired-selector-compatibility job selector gate must match retired selector contract",
     );
+  }
+
+  const steps = asSteps(job.steps);
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("retired-selector-compatibility job must check out the candidate revision");
+  } else {
+    requireFullShaAction(errors, checkout, "retired-selector-compatibility checkout");
+    const checkoutWith = asRecord(checkout.with);
+    if (
+      checkoutWith.repository !== "${{ inputs.checkout_repository || github.repository }}" ||
+      checkoutWith.ref !== "${{ inputs.checkout_sha || github.sha }}" ||
+      checkoutWith["persist-credentials"] !== false
+    ) {
+      errors.push("retired-selector-compatibility job must check out the candidate revision");
+    }
+  }
+
+  const verify = namedStep(steps, "Verify retired selector replacements");
+  if (
+    stringValue(verify?.run) !== "npx tsx tools/e2e/retired-selector-compatibility.mts" ||
+    asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
+  ) {
+    errors.push("retired-selector-compatibility job must invoke the replacement helper");
+  }
+  if (asRecord(verify?.env).TARGETS !== "${{ inputs.targets }}") {
+    errors.push("retired-selector-compatibility job must forward target selectors");
+  }
+
+  const upload = namedStep(steps, "Upload retired selector compatibility evidence");
+  if (
+    upload?.if !== "always()" ||
+    upload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
+    !isDeepStrictEqual(asRecord(upload?.with), {
+      name: "e2e-retired-selector-compatibility",
+      path: "e2e-artifacts/live/retired-selector-compatibility/",
+    })
+  ) {
+    errors.push("retired-selector-compatibility job must upload compatibility evidence");
   }
 }
 
