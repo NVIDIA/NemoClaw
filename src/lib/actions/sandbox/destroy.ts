@@ -164,6 +164,22 @@ export function cleanupSandboxServices(
       return lifecycle.googlechatWebhookTunnelPidDir(servicePidDir);
     });
 
+  const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
+  try {
+    stopGooglechatWebhookTunnel(validatedSandboxName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`  ${YW}⚠${R} Failed to stop Google Chat webhook tunnel: ${message}`);
+    console.warn(
+      `  ${YW}⚠${R} Keeping ${googlechatServicesPidDir} so a repeated destroy can stop the` +
+        " orphaned cloudflared and webhook-proxy processes recorded there.",
+    );
+    throw new Error(
+      "Refusing to finish sandbox cleanup while its public Google Chat webhook endpoint may still be running. Retry destroy after fixing the tunnel-stop failure.",
+      { cause: error },
+    );
+  }
+
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/tunnel/services.ts. Don't double-call here.
@@ -178,20 +194,6 @@ export function cleanupSandboxServices(
     }
   }
 
-  let googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
-  let googlechatTunnelStopped = true;
-  try {
-    googlechatServicesPidDir = stopGooglechatWebhookTunnel(validatedSandboxName);
-  } catch (error) {
-    googlechatTunnelStopped = false;
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`  ${YW}⚠${R} Failed to stop Google Chat webhook tunnel: ${message}`);
-    console.warn(
-      `  ${YW}⚠${R} Keeping ${googlechatServicesPidDir} so a repeated destroy can stop the` +
-        " orphaned cloudflared and webhook-proxy processes recorded there.",
-    );
-  }
-
   try {
     rmSync(servicesPidDir, {
       recursive: true,
@@ -200,19 +202,13 @@ export function cleanupSandboxServices(
   } catch {
     // PID directory may not exist — ignore.
   }
-  // Only discard the Google Chat PID state once the tunnel actually stopped.
-  // Removing it after a failed stop would orphan the public cloudflared
-  // endpoint and the webhook proxy with no PID handle for a later destroy to
-  // find and stop them.
-  if (googlechatTunnelStopped) {
-    try {
-      rmSync(googlechatServicesPidDir, {
-        recursive: true,
-        force: true,
-      });
-    } catch {
-      // Dedicated Google Chat service directory may not exist — ignore.
-    }
+  try {
+    rmSync(googlechatServicesPidDir, {
+      recursive: true,
+      force: true,
+    });
+  } catch {
+    // Dedicated Google Chat service directory may not exist — ignore.
   }
 
   // Delete every per-sandbox messaging and search provider created during
