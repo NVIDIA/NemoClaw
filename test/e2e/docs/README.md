@@ -17,11 +17,59 @@ YAML/bash runner shape.
 Direct E2E implementations now live in Vitest. The former
 `test/e2e/test-*.sh` entry points have been removed.
 
+## Runtime Policy
+
+`test/e2e/runtime-policy.ts` is the admission and planning contract for retained
+live coverage. It covers both typed registry targets and selectable workflow or
+shared-job targets. The current inventory is exact: 26 registry targets and 70
+workflow or shared-job targets, for 96 policy entries. Every entry must name one
+unique live boundary and declare:
+
+- an expected wall runtime, hard runtime budget, and expected aggregate runner
+  minutes for matrix expansion;
+- a runner class and earliest eligible `pr`, `nightly`, `weekly`, or `release`
+  tier;
+- the owning-file mappings that drive changed-area selection;
+- required telemetry and artifacts; and
+- the condition for review, consolidation, or retirement.
+
+The tiers are cumulative planning eligibility: `pr` entries are also eligible
+for nightly, weekly, and release runs; `nightly` entries are also eligible for
+weekly and release runs. The policy does not replace the trusted PR gate or its
+authorization logic.
+
+Run `npx tsx tools/e2e/runtime-policy.mts` for the dedicated policy check. It
+runs through `npm run checks:repository` without launching a live target and
+reports policy failures separately from live-target failures with the
+`E2E runtime policy violation` prefix. The validator requires exact coverage of
+the current registry and workflow inventory, so a new live selector cannot land
+with missing policy metadata and a removed selector cannot leave stale policy
+behind.
+
+The initial plan admits two canonical `pr` journeys and 13 additional
+`nightly` journeys. Those 15 combined PR/nightly entries total 121 planned
+runner-minutes. Its limits preserve the #7912 goals: 15 minutes for PR-selected
+E2E, 20 minutes and fewer than 300 runner-minutes for nightly coverage, and 45
+minutes for weekly compatibility coverage.
+
+Exceptions require a rationale, an expiry date, and a concrete review
+condition. Three explicit exceptions expire on 2026-08-31:
+
+- the provisional baseline remains pending both the #7665 retirements and the
+  exact-commit artifact optimization in #7915; and
+- `sandbox-rebuild` and `upgrade-stale-sandbox` remain only until #7665 retires
+  those duplicate selectors.
+
+After #7665 and #7915 land, replace the provisional source run with five
+comparable passing runs and remove the two retired selector entries instead of
+renewing their exceptions.
+
 ## Sources Of Truth
 
 | Task | Source |
 | --- | --- |
 | Live target IDs and metadata | `test/e2e/registry/registry.ts`, `test/e2e/registry/definitions/baseline.ts` |
+| Live admission, tiers, and runtime budgets | `test/e2e/runtime-policy.ts` |
 | GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |

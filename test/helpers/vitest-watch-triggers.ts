@@ -13,6 +13,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
   "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
   "test/e2e/support/e2e-report-to-pr-workflow-boundary.test.ts",
+  "test/e2e/support/e2e-runtime-policy.test.ts",
   "test/e2e/support/e2e-workflow.test.ts",
   "test/e2e/support/e2e-workflow-trace.test.ts",
   "test/e2e/support/gateway-guard-workflow-boundary.test.ts",

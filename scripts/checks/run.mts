@@ -98,6 +98,11 @@ export const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/no-unit-blocks-in-live-e2e.mts"],
   },
+  {
+    name: "e2e-runtime-policy",
+    command: TSX,
+    args: ["tools/e2e/runtime-policy.mts"],
+  },
 ];
 
 type RunChecksOptions = {

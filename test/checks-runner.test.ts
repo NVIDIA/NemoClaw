@@ -25,6 +25,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the live E2E runtime policy check separately from live execution", () => {
+    expect(CHECKS).toContainEqual({
+      name: "e2e-runtime-policy",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["tools/e2e/runtime-policy.mts"],
+    });
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {
