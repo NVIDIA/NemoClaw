@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
+  CLI_ARTIFACT_RESTORE_STEP,
+  validateCliArtifactWorkflowBoundary,
+} from "./cli-artifact-workflow-boundary.mts";
+import {
   CREDENTIAL_FREE_TEST_TAG,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
@@ -1813,9 +1817,10 @@ export function validateRebuildHermesBootstrapBoundary(
 
   const steps = asSteps(job.steps);
   const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  if (Object.keys(asRecord(prepareWorkspace?.with)).length !== 0) {
-    errors.push(`${jobName} workspace preparation must use the default checked-out CLI build`);
+  if (!isDeepStrictEqual(asRecord(prepareWorkspace?.with), { "build-cli": "false" })) {
+    errors.push(`${jobName} workspace preparation must defer to the exact-commit CLI artifact`);
   }
+  const restoreCli = requireJobStep(errors, jobName, steps, CLI_ARTIFACT_RESTORE_STEP);
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -1867,14 +1872,18 @@ export function validateRebuildHermesBootstrapBoundary(
 
   if (
     prepareWorkspace &&
+    restoreCli &&
     installOpenShell &&
     runVitest &&
     !(
-      steps.indexOf(prepareWorkspace) < steps.indexOf(installOpenShell) &&
+      steps.indexOf(prepareWorkspace) < steps.indexOf(restoreCli) &&
+      steps.indexOf(restoreCli) < steps.indexOf(installOpenShell) &&
       steps.indexOf(installOpenShell) < steps.indexOf(runVitest)
     )
   ) {
-    errors.push(`${jobName} must build the CLI before installing OpenShell and running Vitest`);
+    errors.push(
+      `${jobName} must restore the exact-commit CLI before installing OpenShell and running Vitest`,
+    );
   }
   return errors;
 }
@@ -4388,6 +4397,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
   errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
+  errors.push(...validateCliArtifactWorkflowBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));

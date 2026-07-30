@@ -21,11 +21,11 @@ export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
+export const CLI_ARTIFACT_PRODUCER_JOB = "generate-matrix";
 const PREINSTALLED_E2E_JOBS = new Set(["staging-brev-launchable"]);
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 
-const NO_BUILD_JOBS = new Set([
-  "generate-matrix",
+export const PREPARE_E2E_NO_BUILD_JOBS = new Set([
   "bootstrap-install-smoke",
   "ollama-auth-proxy",
   "security-posture",
@@ -116,7 +116,6 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       })
       .map(([jobName]) => jobName),
   );
-
   const sharedE2eJob = jobs[SHARED_E2E_JOB_ID];
   if (sharedE2eJob === undefined) {
     errors.push(`prepare-e2e shared job is missing: ${SHARED_E2E_JOB_ID}`);
@@ -151,9 +150,9 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} prepare-e2e step must be named '${PREPARE_E2E_STEP}'`);
     }
     const withInputs = record(prepare.with);
-    const shouldBuild = !NO_BUILD_JOBS.has(jobName);
+    const shouldBuild = jobName === CLI_ARTIFACT_PRODUCER_JOB;
     if (shouldBuild && Object.keys(withInputs).length !== 0) {
-      errors.push(`${jobName} prepare-e2e must use the default CLI build`);
+      errors.push(`${jobName} prepare-e2e must own the only default CLI build`);
     }
     if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
       errors.push(`${jobName} prepare-e2e must set build-cli to false`);
@@ -179,7 +178,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     }
   }
 
-  for (const jobName of NO_BUILD_JOBS) {
+  for (const jobName of PREPARE_E2E_NO_BUILD_JOBS) {
     if (!expectedJobs.has(jobName)) errors.push(`prepare-e2e no-build job is missing: ${jobName}`);
   }
   return errors;

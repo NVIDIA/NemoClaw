@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
+import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
@@ -241,13 +242,15 @@ if ! @run restore`;
   }
   const run = stringValue(runStep.run);
   const pi = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+  const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
-    ni !== pi + 1 ||
+    restoreI <= pi ||
+    ni !== restoreI + 1 ||
     ni + 1 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     asRecord(node?.with)["node-version"] !== "22" ||

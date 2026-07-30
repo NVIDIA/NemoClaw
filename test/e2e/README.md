@@ -25,6 +25,61 @@ before those targets run; local runners must provide it themselves.
 
 ## CI execution shape
 
+### Exact-Commit CLI Artifact
+
+The `generate-matrix` job owns the workflow's authoritative `npm run build:cli` invocation.
+It packages `dist/` once and publishes a content-addressed artifact for 65 current consumers.
+Those jobs still run the pinned preparation action for Node.js and dependency installation, but they set `build-cli: "false"`.
+
+For a pull request (PR) dispatch, `checkout_sha` identifies the candidate source that the live jobs test.
+The trusted workflow still runs from `github.workflow_sha`.
+Direct scheduled and manual runs use `github.sha` as the candidate when `checkout_sha` is empty.
+The artifact manifest records both identities, the source tree, lockfile digest, workflow run and attempt, Node.js and npm versions, runner platform, build command, and payload digest.
+The artifact name contains the candidate commit SHA and payload SHA-256 digest.
+The producer emits one `nemoclaw-e2e-cli-provenance-v1` JSON object through the `cli_artifact_provenance` job output.
+Each consumer passes that object as the restore action's only `provenance-json` input.
+
+Each consumer invokes the repository-owned `restore-e2e-cli-artifact` composite action at full commit SHA `01f9a8da96e349717bfcd8c457e8380cf6bf3ff3`.
+The workflow does not load the action implementation from the candidate checkout.
+The pinned action rejects extra or missing provenance fields and compares the candidate checkout, repository, workflow SHA, run ID, and attempt before download.
+It then downloads by immutable artifact ID with digest mismatch handling set to `error`.
+It rejects a missing or malformed upload digest, a different candidate SHA, or a manifest that does not match the current source, workflow, run, toolchain contract, and payload.
+It also rejects an unsafe archive member, link, special file, or preexisting `dist/` directory before extraction.
+The restored CLI must report its version through `bin/nemoclaw.js`.
+These checks keep the candidate source identity separate from the trusted workflow identity and fail closed before a live test runs.
+
+The pre-change baseline uses GitHub Actions composite-step timings from these workflow runs:
+
+| Workflow run | Job | Tested candidate | `Build CLI` duration |
+| --- | --- | --- | --- |
+| [30574154335](https://github.com/NVIDIA/NemoClaw/actions/runs/30574154335) | `cloud-inference` | `385f598` | 18.740 seconds |
+| [30574154335](https://github.com/NVIDIA/NemoClaw/actions/runs/30574154335) | `cloud-onboard` | `385f598` | 18.793 seconds |
+| [30503498077](https://github.com/NVIDIA/NemoClaw/actions/runs/30503498077) | `Shared E2E (vllm-docker-storage)` | `d52d459` | 18.756 seconds |
+
+The observed sample median is 18.756 seconds.
+The implementation removes 64 duplicate build invocations from the pre-change inventory.
+At the sample median, the theoretical gross reduction is `(64 × 18.756) / 60 = 20.01` runner-minutes before artifact transfer overhead.
+This estimate does not predict workflow wall time because the producer dependency, runner queues, and transfer steps affect the critical path.
+
+Record post-change measurements only from passing CI runs.
+Use comparable job selections, runner labels, and first attempts.
+Record the producer build, upload, consumer download, verification, restoration, job, and workflow durations.
+Sum the affected step durations for runner-minute comparison, and compare matched job and workflow elapsed times for wall-time comparison.
+Identify each result by workflow run, tested commit SHA, trusted workflow SHA, and attempt.
+Do not substitute a theoretical value for post-change CI evidence.
+
+The retained historical fixtures have this artifact disposition:
+
+| Fixture | Disposition |
+| --- | --- |
+| `openshell-gateway-upgrade` | Keep the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity in the target. The target must install the historical package before it exercises the current upgrade path. |
+| `upgrade-stale-sandbox` | Keep construction of the old OpenClaw image and stale registry state inside the target. A published old image would bypass the legacy-state construction boundary. |
+| `rebuild-openclaw` | Keep the reviewed old-base build inside the target. The target must build and create the old sandbox before it exercises the current rebuild path. |
+
+These targets can consume the shared artifact for the current candidate CLI.
+They must not use it to replace a historical installer, package, image, or version boundary that the target tests.
+The gateway fixture's remote historical inputs are already bound to immutable commits and cryptographic digests, so this change does not republish them as workflow artifacts.
+
 The sandbox image workflow builds the Hermes production image in the dedicated
 30-minute `build-hermes-sandbox-image` job. It uses full-SHA-pinned Buildx
 actions and a GitHub Actions cache scoped to the runner OS and architecture.
