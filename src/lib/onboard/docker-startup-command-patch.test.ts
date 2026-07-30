@@ -55,7 +55,6 @@ describe("Docker startup-command patch", () => {
       status: 0,
       stdout: "new-container-id\n",
     }));
-    const dockerStop = vi.fn(() => ({ status: 0 }));
 
     const result = recreateStartupCommandForTest(
       {
@@ -68,7 +67,7 @@ describe("Docker startup-command patch", () => {
         dockerCapture,
         dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
-        dockerStop,
+        dockerStop: vi.fn(() => ({ status: 0 })),
         sleep: vi.fn(),
         now: () => new Date("2026-07-10T00:00:00Z"),
       },
@@ -94,9 +93,6 @@ describe("Docker startup-command patch", () => {
     expect(dockerCapture).toHaveBeenCalledWith(
       expect.arrayContaining(["ps", "-a", "--no-trunc"]),
       expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
-      dockerRunDetached.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });
 
