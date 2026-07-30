@@ -29,6 +29,11 @@ function firstId<T extends { id: string }>(rows: readonly T[], label: string): s
   return rows[0]!.id;
 }
 
+function retiredControllerSelectorIds(): string[] {
+  const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
+  return RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
+}
+
 describe("E2E workflow plan", () => {
   it("defaults to every supported registry target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
@@ -157,7 +162,7 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
-          JOBS: [activeJobs, ...RETIRED_CONTROLLER_SELECTOR_IDS].join(","),
+          JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -191,7 +196,7 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: path.join(directory, "github-output"),
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
-          JOBS: RETIRED_CONTROLLER_SELECTOR_IDS.join(","),
+          JOBS: retiredControllerSelectorIds().join(","),
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -202,6 +207,48 @@ describe("E2E workflow plan", () => {
       expect(result.stderr).toContain(
         "::error::retired selector compatibility requires another controller-selected job",
       );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("emits an empty matrix for free-standing rebuild selectors during transition (#7615)", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const plan = {
+      matrix: [],
+      testMatrix: [],
+      hermesSelected: false,
+      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+    };
+    try {
+      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          JOBS: "",
+          TARGETS: "sandbox-rebuild,upgrade-stale-sandbox",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(
+        [
+          "matrix=[]",
+          "test_matrix=[]",
+          "hermes_selected=false",
+          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          "",
+        ].join("\n"),
+      );
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

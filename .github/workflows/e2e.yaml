@@ -440,7 +440,7 @@ jobs:
 
   retired-selector-compatibility:
     needs: generate-matrix
-    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,')) }}
+    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -458,6 +458,7 @@ jobs:
       - name: Verify retired selector replacements
         env:
           JOBS: ${{ inputs.jobs }}
+          TARGETS: ${{ inputs.targets }}
         run: npx tsx tools/e2e/retired-selector-compatibility.mts
 
       - name: Upload retired selector compatibility evidence
@@ -1846,12 +1847,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - mode: hosted
-            sandbox_name: e2e-hermes-inference-switch
-            switch_provider: nvidia-prod
-            switch_model: nvidia/nemotron-3-super-120b-a12b
-            switch_inference_api: openai-completions
-            switch_mock_anthropic: "0"
           - mode: anthropic
             sandbox_name: e2e-hermes-anthropic-inference-switch
             switch_provider: compatible-anthropic-endpoint
@@ -1864,7 +1859,6 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "hermes"
@@ -1913,9 +1907,6 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Hermes inference switch live Vitest test
-        env:
-          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -3383,10 +3374,25 @@ jobs:
 
       - *dockerhub-auth
 
+      - id: selector_compatibility
+        name: Classify sandbox-rebuild candidate selector
+        env:
+          LEGACY_TEST_FILE: test/e2e/live/sandbox-rebuild.test.ts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$LEGACY_TEST_FILE" ]]; then
+            retired=false
+          else
+            retired=true
+          fi
+          printf 'retired=%s\n' "$retired" >> "$GITHUB_OUTPUT"
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
+        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
@@ -3394,6 +3400,7 @@ jobs:
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run sandbox rebuild live test
+        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
@@ -3420,6 +3427,7 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
+
 
   sandbox-rlimits-connect:
     needs: generate-matrix
@@ -3618,16 +3626,32 @@ jobs:
 
       - *dockerhub-auth
 
+      - id: selector_compatibility
+        name: Classify upgrade-stale-sandbox candidate selector
+        env:
+          LEGACY_TEST_FILE: test/e2e/live/upgrade-stale-sandbox.test.ts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$LEGACY_TEST_FILE" ]]; then
+            retired=false
+          else
+            retired=true
+          fi
+          printf 'retired=%s\n' "$retired" >> "$GITHUB_OUTPUT"
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
+        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
       - name: Run upgrade stale sandbox live Vitest test
+        if: ${{ steps.selector_compatibility.outputs.retired != 'true' }}
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
@@ -3654,6 +3678,7 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
+
 
   double-onboard:
     needs: generate-matrix
@@ -5158,12 +5183,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - mode: hosted
-            sandbox_name: e2e-openclaw-inference-switch
-            switch_provider: nvidia-prod
-            switch_model: nvidia/nemotron-3-super-120b-a12b
-            switch_inference_api: openai-completions
-            switch_mock_anthropic: "0"
           - mode: anthropic
             sandbox_name: e2e-openclaw-anthropic-inference-switch
             switch_provider: compatible-anthropic-endpoint
@@ -5176,7 +5195,6 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "openclaw"
@@ -5200,13 +5218,9 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw inference switch live test
-        # Preserves
-        # the real install.sh/OpenShell/Docker/live-provider boundary while
+        # Preserves the real install.sh/OpenShell/Docker/managed-proxy boundary while
         # Vitest owns the route, config, registry, inference.local, and agent
         # assertions.
-        env:
-          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-inference-switch.test.ts
@@ -5232,7 +5246,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [openclaw, hermes]
+        agent: [openclaw]
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic"
@@ -5247,26 +5261,6 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -5278,27 +5272,13 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
       - name: Run Bedrock Runtime compatible Anthropic live test
-        # Direct Vitest coverage for
-        # Preserves the
-        # fake Bedrock Runtime endpoint, /etc/hosts mapping, source CLI
-        # onboard, OpenShell adapter route, agent-specific runtime probes, and
-        # leak-scan contract for both OpenClaw and Hermes.
+        # Preserves the fake Bedrock Runtime endpoint, /etc/hosts mapping,
+        # source CLI onboard, OpenShell adapter route, OpenClaw runtime probe,
+        # and leak-scan contract.
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()

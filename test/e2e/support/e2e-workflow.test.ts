@@ -1132,12 +1132,15 @@ jobs:
     );
     fs.writeFileSync(
       workflowPath,
-      workflow.replace(" || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,')", ""),
+      workflow.replace(
+        " || contains(format(',{0},', inputs.targets), ',state-backup-restore,')",
+        "",
+      ),
     );
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild must match the workflow job selector",
+        "free-standing inventory mapping state-backup-restore:state-backup-restore must match the workflow job selector",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -174,7 +174,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Upgrade, rebuild, snapshot, and restore operations must preserve user state while replacing stale runtime state.",
     tier: 2,
-    requiredJobs: ["upgrade-stale-sandbox", "state-backup-restore"],
+    requiredJobs: ["rebuild-openclaw", "state-backup-restore"],
     invariants: [
       "host and in-sandbox runtime versions agree after mutation",
       "credentials, policy, messaging, and workspace state survive intended preservation paths",
