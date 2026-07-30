@@ -10,6 +10,7 @@ import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import {
   type PolicyAddOptions,
+  type PolicyBaselineOptions,
   type PolicyRemoveOptions,
   parsePolicyAddOptions,
 } from "../../domain/policy-channel";
@@ -39,7 +40,15 @@ import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-pre
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
+import {
+  digestBaselineEntry,
+  getBaselineExclusionFeatureImpact,
+  isProtectedBaselineExclusionKey,
+  listBaselineEntryKeys,
+  renderBaselineEntryScope,
+} from "../../policy/baseline-exclusion";
 import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
+import type { PolicyObject } from "../../policy/preset-parsing";
 import { shellQuote } from "../../runner";
 import {
   type ChannelDef,
@@ -62,6 +71,52 @@ import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 
 const isNonInteractive = isNonInteractiveEnv;
+
+/**
+ * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
+ * exit non-zero.
+ */
+function exitPresetNameRequired(usage: string): never {
+  console.error("  Non-interactive mode requires a preset name.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Report that the picker prompt reached stdin EOF, and exit non-zero.
+ *
+ * Separate from `exitPresetNameRequired` because the conditions differ. That
+ * one means the operator set `NEMOCLAW_NON_INTERACTIVE=1`. This one means
+ * stdin closed while that variable was unset, so naming the variable would
+ * misdirect whoever reads the boot-unit log.
+ */
+function exitPromptStdinClosed(usage: string): never {
+  console.error("  No input available on stdin, so the preset picker cannot prompt.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Await an interactive preset picker and convert a prompt EOF into exit 1.
+ *
+ * A boot unit that pipes or closes stdin without setting
+ * `NEMOCLAW_NON_INTERACTIVE=1` reaches the picker, and the prompt then hits
+ * EOF. Before #7418 the picker promise never settled, so the command exited 0
+ * having changed nothing. Automation could not distinguish an applied preset
+ * from a no-op. Any other failure propagates unchanged.
+ */
+async function pickPresetOrExit(
+  pick: () => Promise<string | null>,
+  usage: string,
+): Promise<string | null> {
+  try {
+    return await pick();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code !== "EOF") throw error;
+    exitPromptStdinClosed(usage);
+  }
+}
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -178,7 +233,7 @@ async function addSandboxPolicyUnlocked(
         // policy and double-register the name.
         console.error(`  Preset '${preset.name}' was applied as a custom preset (--from-file).`);
         console.error(
-          `  Edit and re-apply it with --from-file, or run '${CLI_NAME} ${sandboxName} policy-remove ${preset.name}' first.`,
+          `  Edit and re-apply it with --from-file, or run '${CLI_NAME} ${sandboxName} policy remove ${preset.name}' first.`,
         );
         process.exit(1);
       }
@@ -190,7 +245,7 @@ async function addSandboxPolicyUnlocked(
       const appliedState = policies.getPresetContentGatewayState(sandboxName, appliedContent);
       if (appliedState === "match") {
         // The desired state already holds: exit 0 so converging scripts can
-        // call policy-add idempotently, mirroring how applyPreset treats a
+        // call `policy add` idempotently, mirroring how applyPreset treats a
         // byte-identical re-application as a successful no-op.
         console.log(
           `  Preset '${preset.name}' is already applied and matches the live policy; nothing to do.`,
@@ -217,12 +272,11 @@ async function addSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectFromList(allPresets, { applied });
+    answer = await pickPresetOrExit(() => policies.selectFromList(allPresets, { applied }), usage);
   }
   if (!answer) return;
 
@@ -355,6 +409,48 @@ export function listSandboxPolicies(sandboxName: string) {
     );
   });
 
+  const exclusions = registry.getBaselineExclusions(sandboxName);
+  const exclusionTransition = registry.getBaselineExclusionTransition(sandboxName);
+  if (exclusions.length > 0 || exclusionTransition) {
+    console.log("");
+    console.log("  Baseline exclusions (unsupported egress removed):");
+    const listed = new Map(exclusions.map((exclusion) => [exclusion.key, exclusion]));
+    if (exclusionTransition) {
+      listed.set(exclusionTransition.exclusion.key, exclusionTransition.exclusion);
+    }
+    for (const exclusion of listed.values()) {
+      const isPending = exclusionTransition?.exclusion.key === exclusion.key;
+      // A repair command must remain visible even if the current agent
+      // baseline cannot be loaded. Resolving that baseline is part of the
+      // explicit retry, not a prerequisite for displaying the journal.
+      let currentDigest: string | null | undefined;
+      if (isPending) {
+        currentDigest = null;
+      } else {
+        try {
+          currentDigest = policies.getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
+        } catch {
+          currentDigest = undefined;
+        }
+      }
+      const status = isPending
+        ? `${YW}repair required — interrupted ${exclusionTransition.operation}; rebuild blocked${R}`
+        : currentDigest === undefined
+          ? `${YW}release baseline unreadable — inspection required${R}`
+          : currentDigest === null
+            ? `${YW}baseline entry removed — restore to clear${R}`
+            : currentDigest === exclusion.digest
+              ? "active"
+              : `${YW}baseline changed — re-review required${R}`;
+      console.log(`    - ${exclusion.key} (${status})`);
+      if (isPending) {
+        console.log(
+          `      Re-run: ${CLI_NAME} ${sandboxName} policy ${exclusionTransition.operation} ${exclusion.key}`,
+        );
+      }
+    }
+  }
+
   if (gatewayPresets === null) {
     console.log("");
     // A null gateway result can be a transient Docker daemon outage rather
@@ -477,18 +573,10 @@ async function checkChannelAddConflict(
       console.log("  --force: proceeding without a completed messaging channel conflict check.");
       return true;
     }
-    if (isNonInteractive()) {
-      console.error(
-        `  Aborting: rerun with --force to skip the messaging channel conflict check for ${channelName}.`,
-      );
-      process.exit(1);
-    }
-    const answer = (await askPrompt("  Continue without a completed conflict check? [y/N]: "))
-      .trim()
-      .toLowerCase();
-    if (answer === "y" || answer === "yes") return true;
-    console.log("  Aborting channel add.");
-    return false;
+    console.error(
+      `  Aborting: resolve the messaging channel conflict check for ${channelName} or re-run with --force.`,
+    );
+    process.exit(1);
   }
   if (conflicts.length === 0) return true;
 
@@ -497,30 +585,29 @@ async function checkChannelAddConflict(
       reason === "matching-token"
         ? `uses the same ${channel} credential`
         : `already has ${channel} enabled, but its credential hash is unavailable`;
-    console.log(
-      `  ${YW}⚠${R} Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges (e.g. Telegram getUpdates 409).`,
-    );
+    const message = `Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect.`;
+    if (!force) {
+      console.error(`  Conflict: ${message}`);
+    } else {
+      console.log(
+        `  ${YW}⚠${R} ${message} Continuing may break both bridges (e.g. Telegram getUpdates 409).`,
+      );
+    }
   }
 
   if (force) {
     console.log(`  --force: proceeding despite the messaging channel conflict above.`);
     return true;
   }
-  if (isNonInteractive()) {
-    console.error(
-      `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
-    );
-    process.exit(1);
-  }
-  const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
-  if (answer === "y" || answer === "yes") return true;
-  console.log("  Aborting channel add.");
-  return false;
+  console.error(
+    `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+  );
+  process.exit(1);
 }
 
 // Channel-owned pre-enable checks run after `checkChannelAddConflict` so the
-// shared credential axis is reported first. Registry read failures stay
-// fail-soft: they warn and proceed instead of crashing the add path.
+// shared credential axis is reported first. Hook failure policy controls
+// whether registry read failures or detected conflicts require --force.
 async function checkMessagingPreEnableHooks(
   sandboxName: string,
   channelName: string,
@@ -529,12 +616,20 @@ async function checkMessagingPreEnableHooks(
 ): Promise<boolean> {
   const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
+  const abortOnFailure = requests.some((request) => (request.onFailure ?? "abort") === "abort");
 
   let registryEntries: ReturnType<typeof registry.listSandboxes>["sandboxes"];
   try {
     registryEntries = registry.listSandboxes().sandboxes;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (abortOnFailure && !force) {
+      console.error(`  Could not verify messaging pre-enable checks: ${message}`);
+      console.error(
+        `  Aborting: resolve the messaging pre-enable check for ${channelName} or re-run with --force.`,
+      );
+      process.exit(1);
+    }
     console.log(`  ${YW}⚠${R} Could not verify messaging pre-enable checks: ${message}`);
     return true;
   }
@@ -571,8 +666,19 @@ async function checkMessagingPreEnableHooks(
   } catch (err) {
     if (!isMessagingHookConflictError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
+    const failedHookAborts = err.onFailure === "abort";
     for (const line of message.split("\n").filter((line) => line.trim().length > 0)) {
-      console.log(`  ${YW}⚠${R} ${line}`);
+      if (failedHookAborts && !force) {
+        console.error(`  Conflict: ${line}`);
+      } else {
+        console.log(`  ${YW}⚠${R} ${line}`);
+      }
+    }
+    if (failedHookAborts && !force) {
+      console.error(
+        `  Aborting: resolve the messaging pre-enable conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+      );
+      process.exit(1);
     }
     if (force) {
       console.log("  --force: proceeding despite the messaging pre-enable conflict above.");
@@ -1375,7 +1481,7 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
         `  ${YW}⚠${R} Channel '${channelName}' bridge removed but its policy preset failed to un-apply.`,
       );
       console.error(
-        `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-remove ${channelName}`,
+        `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
       );
     } else {
       syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
@@ -1385,7 +1491,7 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-remove ${channelName}`,
+      `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
     );
   }
 }
@@ -1632,12 +1738,14 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectForRemoval(allPresets, { applied });
+    answer = await pickPresetOrExit(
+      () => policies.selectForRemoval(allPresets, { applied }),
+      usage,
+    );
   }
   if (!answer) return;
 
@@ -1675,5 +1783,159 @@ async function removeSandboxPolicyUnlocked(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "remove");
+  refreshSandboxPolicyContextFile(sandboxName);
+}
+
+function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObject): void {
+  console.log(prefix);
+  for (const line of renderBaselineEntryScope(key, entry)) {
+    console.log(line);
+  }
+}
+
+export async function excludeSandboxBaseline(
+  sandboxName: string,
+  options: PolicyBaselineOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    excludeSandboxBaselineUnlocked(sandboxName, options),
+  );
+}
+
+async function excludeSandboxBaselineUnlocked(
+  sandboxName: string,
+  options: PolicyBaselineOptions,
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const explicitAck = Boolean(options.yes || options.force);
+  const key = options.key?.trim();
+  if (!key) {
+    console.error("  A baseline key is required.");
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--dry-run]`);
+    process.exit(1);
+  }
+
+  const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
+  if (!baseline) {
+    console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
+    process.exit(1);
+  }
+
+  const entry = policies.getSandboxBaselineEntry(sandboxName, key);
+  if (!entry) {
+    console.error(`  Unknown baseline entry '${key}'.`);
+    console.error(
+      `  Valid baseline keys: ${listBaselineEntryKeys(baseline.content).join(", ") || "(none)"}`,
+    );
+    process.exit(1);
+  }
+
+  if (isProtectedBaselineExclusionKey(key)) {
+    console.error(
+      `  Baseline entry '${key}' is required for managed inference and cannot be excluded.`,
+    );
+    process.exit(1);
+  }
+
+  const featureImpact = getBaselineExclusionFeatureImpact(baseline.agent, key);
+  if (!featureImpact) {
+    console.error(
+      `  Baseline entry '${key}' has no supported-feature impact disclosure and cannot be excluded safely.`,
+    );
+    process.exit(1);
+  }
+
+  printBaselineEntryScope(
+    `  Excluding baseline entry '${key}' from '${sandboxName}' removes:`,
+    key,
+    entry,
+  );
+  console.log(`  ${YW}Support impact: ${featureImpact}${R}`);
+
+  const digest = digestBaselineEntry(entry);
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
+
+  if (isNonInteractive() && !explicitAck) {
+    console.error(
+      "  Non-interactive exclusion requires explicit acknowledgement: pass --force (or --yes).",
+    );
+    process.exit(1);
+  }
+  if (!explicitAck) {
+    const confirm = await askPrompt(`  Exclude '${key}' from sandbox '${sandboxName}'? [y/N]: `);
+    if (!confirm.trim().toLowerCase().startsWith("y")) return;
+  }
+
+  if (!policies.excludeBaselineEntry(sandboxName, key, digest)) {
+    // A failed cross-system mutation can leave a durable repair journal. Keep
+    // the in-sandbox context aligned before returning the nonzero result.
+    refreshSandboxPolicyContextFile(sandboxName);
+    process.exit(1);
+  }
+  console.log(`  ${G}✓${R} Excluded baseline entry '${key}' for '${sandboxName}'.`);
+  refreshSandboxPolicyContextFile(sandboxName);
+}
+
+export async function restoreSandboxBaseline(
+  sandboxName: string,
+  options: PolicyBaselineOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    restoreSandboxBaselineUnlocked(sandboxName, options),
+  );
+}
+
+async function restoreSandboxBaselineUnlocked(
+  sandboxName: string,
+  options: PolicyBaselineOptions,
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const key = options.key?.trim();
+  if (!key) {
+    console.error("  A baseline key is required.");
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--dry-run]`);
+    process.exit(1);
+  }
+
+  const isExcluded = registry.getBaselineExclusions(sandboxName).some((entry) => entry.key === key);
+  const pendingTransition = registry.getBaselineExclusionTransition(sandboxName);
+  const isPendingForKey = pendingTransition?.exclusion.key === key;
+  if (!isExcluded && !isPendingForKey) {
+    console.error(`  Baseline entry '${key}' is not excluded for '${sandboxName}'.`);
+    process.exit(1);
+  }
+
+  const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
+  if (!baseline) {
+    console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
+    process.exit(1);
+  }
+
+  const entry = policies.getSandboxBaselineEntry(sandboxName, key);
+  if (entry) {
+    printBaselineEntryScope(
+      `  Restoring baseline entry '${key}' for '${sandboxName}' re-allows:`,
+      key,
+      entry,
+    );
+  } else {
+    console.log(
+      `  ${YW}⚠${R} The current baseline no longer defines '${key}'; clearing the exclusion record only.`,
+    );
+  }
+
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
+
+  if (!policies.restoreBaselineEntry(sandboxName, key)) {
+    refreshSandboxPolicyContextFile(sandboxName);
+    process.exit(1);
+  }
+  console.log(`  ${G}✓${R} Restored baseline entry '${key}' for '${sandboxName}'.`);
   refreshSandboxPolicyContextFile(sandboxName);
 }

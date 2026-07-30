@@ -9,6 +9,21 @@ import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import {
+  applyBaselineExclusions,
+  type BaselineExclusionRequest,
+} from "../policy/baseline-exclusion";
+import {
+  collectPlatformIdentity,
+  type PlatformIdentity,
+} from "../readiness/platform-qualification";
+import {
+  isQualifiedStationProfile,
+  isQualifiedStationRuntime,
+  isStationGb300PciDevice,
+  isStationGb300ProductName,
+  type StationProfile,
+} from "../readiness/station-qualification";
+import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -33,10 +48,7 @@ const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "h
 const PROC_PATH = "/proc";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
 const SYSFS_PATH = "/sys";
-const DMI_PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name";
 const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
-const NVIDIA_PCI_VENDOR = "0x10de";
-const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
 const STATION_GB300_SHARED_SYSFS_RELATIVE_PATHS = [
   "devices/system/cpu",
   "devices/system/memory",
@@ -67,9 +79,7 @@ type DirectGpuPolicyOptions = {
   sysfsReadOnlyPaths?: readonly string[];
 };
 
-export function isStationGb300ProductName(productName: string): boolean {
-  return /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu.test(productName.trim());
-}
+export { isStationGb300ProductName };
 
 function readTrimmedFile(filePath: string): string | null {
   try {
@@ -82,8 +92,14 @@ function readTrimmedFile(filePath: string): string | null {
 export function discoverStationGb300SysfsReadOnlyPaths(
   productName: string,
   sysfsRoot = SYSFS_PATH,
+  stationProfile?: StationProfile | null,
 ): string[] {
   if (!isStationGb300ProductName(productName)) return [];
+  if (stationProfile !== undefined && !isQualifiedStationProfile(stationProfile)) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
+    );
+  }
 
   const readOnlyPaths: string[] = [];
   const pciDevicesRoot = path.join(sysfsRoot, "bus", "pci", "devices");
@@ -97,14 +113,15 @@ export function discoverStationGb300SysfsReadOnlyPaths(
     if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
     const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
     const vendor = readTrimmedFile(path.join(pciDeviceRoot, "vendor"))?.toLowerCase();
+    const device = readTrimmedFile(path.join(pciDeviceRoot, "device"))?.toLowerCase();
     const pciClass = readTrimmedFile(path.join(pciDeviceRoot, "class"));
-    if (vendor === NVIDIA_PCI_VENDOR && pciClass && DISPLAY_PCI_CLASS_PATTERN.test(pciClass)) {
+    if (isStationGb300PciDevice(vendor, device, pciClass)) {
       readOnlyPaths.push(`${SYSFS_PATH}/bus/pci/devices/${pciDeviceName}`);
     }
   }
   if (readOnlyPaths.length === 0) {
     throw new Error(
-      `Cannot prepare Station GB300 direct GPU sandbox policy; no NVIDIA display-class PCI device was found under ${pciDevicesRoot}.`,
+      `Cannot prepare Station GB300 direct GPU sandbox policy; no exact NVIDIA GB300 PCI device was found under ${pciDevicesRoot}.`,
     );
   }
 
@@ -116,10 +133,47 @@ export function discoverStationGb300SysfsReadOnlyPaths(
   return readOnlyPaths;
 }
 
-function discoverHostStationGb300SysfsReadOnlyPaths(): string[] {
-  if (process.platform !== "linux") return [];
-  const productName = readTrimmedFile(DMI_PRODUCT_NAME_PATH);
-  return productName ? discoverStationGb300SysfsReadOnlyPaths(productName) : [];
+export function discoverHostStationGb300SysfsReadOnlyPaths(
+  options: {
+    platform?: string;
+    architecture?: string;
+    hasNvidiaGpu?: boolean;
+    identity?: PlatformIdentity;
+    sysfsRoot?: string;
+  } = {},
+): string[] {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "linux") return [];
+  const identity = options.identity ?? collectPlatformIdentity();
+  if (identity.nvidiaPlatform !== "station") return [];
+  if (!identity.productName || !isStationGb300ProductName(identity.productName)) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; the detected Station product is not a qualified GB300 system.",
+    );
+  }
+  if (!isQualifiedStationProfile(identity.stationProfile)) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
+    );
+  }
+  if (
+    !isQualifiedStationRuntime({
+      platform,
+      architecture: options.architecture ?? process.arch,
+      osId: identity.osId,
+      osVersionId: identity.osVersionId,
+      hasNvidiaGpu: options.hasNvidiaGpu ?? identity.stationGb300PciGpu === true,
+    })
+  ) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; Linux ARM64, Ubuntu 24.04, and an available GB300 GPU are required.",
+    );
+  }
+  return discoverStationGb300SysfsReadOnlyPaths(
+    identity.productName,
+    options.sysfsRoot ?? SYSFS_PATH,
+    identity.stationProfile,
+  );
 }
 
 export function buildDirectGpuPolicyYaml(
@@ -327,17 +381,22 @@ export function prepareInitialSandboxCreatePolicy(
   options: {
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
+    hostGpuAvailable?: boolean;
     stationGb300SysfsReadOnlyPaths?: readonly string[];
     additionalPresets?: string[];
     agentName?: string | null;
     policyTier?: string | null;
+    baselineExclusions?: readonly BaselineExclusionRequest[];
   } = {},
 ): InitialSandboxPolicy {
   const directGpuPolicy = options.directGpu
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
         procReadWrite: options.dockerGpuPatch === true,
         sysfsReadOnlyPaths:
-          options.stationGb300SysfsReadOnlyPaths ?? discoverHostStationGb300SysfsReadOnlyPaths(),
+          options.stationGb300SysfsReadOnlyPaths ??
+          discoverHostStationGb300SysfsReadOnlyPaths({
+            hasNvidiaGpu: options.hostGpuAvailable,
+          }),
       })
     : null;
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
@@ -397,6 +456,25 @@ export function prepareInitialSandboxCreatePolicy(
       }
     }
 
+    // Replay operator baseline exclusions before presets merge on top. Fails
+    // closed via applyBaselineExclusions when a recorded approval no longer
+    // matches the current baseline, so a changed release forces re-review.
+    const baselineExclusions = options.baselineExclusions ?? [];
+    if (baselineExclusions.length > 0) {
+      const excluded = applyBaselineExclusions(
+        basePolicy,
+        baselineExclusions,
+        policyAgent ?? "openclaw",
+      );
+      if (excluded.excludedKeys.length > 0) {
+        const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
+        cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-agent-policy"));
+        fs.writeFileSync(policyPath, excluded.content, { encoding: "utf-8", mode: 0o600 });
+        effectiveBasePolicyPath = policyPath;
+        basePolicy = excluded.content;
+      }
+    }
+
     const basePolicyNames = getNetworkPolicyNames(basePolicy);
     if (basePolicyNames === null) {
       return {
@@ -433,6 +511,7 @@ export function prepareInitialSandboxCreatePolicy(
 
     const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
       agent: policyAgent,
+      excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

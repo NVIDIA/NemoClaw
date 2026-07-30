@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
+  openBackupShieldsWindow: vi.fn(),
+  relockBackupShieldsWindow: vi.fn(),
 }));
 
 vi.mock("../state/registry", () => ({
@@ -58,6 +60,10 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
 }));
+vi.mock("./sandbox/backup-shields-window", () => ({
+  openBackupShieldsWindow: mocks.openBackupShieldsWindow,
+  relockBackupShieldsWindow: mocks.relockBackupShieldsWindow,
+}));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
@@ -89,6 +95,11 @@ describe("backupAll", () => {
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
+    mocks.openBackupShieldsWindow.mockImplementation(() => ({
+      relocked: false,
+      wasLocked: false,
+    }));
+    mocks.relockBackupShieldsWindow.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -264,6 +275,211 @@ describe("backupAll", () => {
     logSpy.mockRestore();
   });
 
+  it("closes each shields window before backing up the next sandbox (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    const events: string[] = [];
+    mocks.openBackupShieldsWindow.mockImplementation(
+      (
+        name: string,
+        options: {
+          allowLegacyHermesProtocol?: boolean;
+          deferAutoRestoreWhileOwnerAlive?: boolean;
+          shieldsUpCommand: string;
+        },
+      ) => {
+        events.push(`open:${name}`);
+        expect(options.allowLegacyHermesProtocol).toBeUndefined();
+        expect(options.deferAutoRestoreWhileOwnerAlive).toBeUndefined();
+        expect(options.shieldsUpCommand).toBe(`nemoclaw ${name} shields up`);
+        return { relocked: false, wasLocked: true };
+      },
+    );
+    mocks.backupSandboxState.mockImplementation((name: string) => {
+      events.push(`backup:${name}`);
+      return {
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest: { backupPath: `/backups/${name}/timestamp` },
+      };
+    });
+    mocks.relockBackupShieldsWindow.mockImplementation(
+      (name: string, window: { relocked: boolean }) => {
+        events.push(`relock:${name}`);
+        window.relocked = true;
+        return true;
+      },
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(events).toEqual([
+      "open:alpha",
+      "backup:alpha",
+      "relock:alpha",
+      "open:beta",
+      "backup:beta",
+      "relock:beta",
+    ]);
+  });
+
+  it("relocks shields after a credential permission failure and keeps the failure hard (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: ["workspace"],
+      failedDirs: ["credentials"],
+      failedDirReasons: { credentials: "permission denied" },
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "backup failed (credentials (permission denied))",
+    );
+  });
+
+  it("counts an unlock failure and continues with later sandboxes (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    mocks.openBackupShieldsWindow.mockImplementation((name: string) =>
+      name === "alpha" ? null : { relocked: false, wasLocked: false },
+    );
+    mocks.backupSandboxState.mockImplementation((name: string) => ({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: `/backups/${name}/timestamp` },
+    }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.backupSandboxState).toHaveBeenCalledTimes(1);
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("beta");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "alpha: backup failed (could not safely unlock shields)",
+    );
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("1 backed up, 1 failed, 0 skipped");
+  });
+
+  it("aborts remaining backups when shields cannot be restored (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(backupAll()).rejects.toThrow(
+      "Shields lockdown could not be restored for 'alpha' after backup-all",
+    );
+
+    expect(mocks.backupSandboxState).toHaveBeenCalledTimes(1);
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("alpha");
+    expect(mocks.openBackupShieldsWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a backup error when shields restoration also fails (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    const backupError = new Error("EACCES: permission denied, open '/var/backups/state'");
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw backupError;
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const failure = await backupAll().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "Backup for 'alpha' failed and Shields lockdown could not be restored",
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      backupError,
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Shields lockdown could not be restored for 'alpha' after backup-all",
+        ),
+      }),
+    ]);
+  });
+
+  it("preserves an orphan-manifest error when shields restoration also fails (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    const orphanMessage = "Agent 'alpha' not found: /agents/alpha/manifest.yaml";
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw new Error(orphanMessage);
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const failure = await backupAll().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "encountered an orphan manifest and Shields lockdown could not be restored",
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: orphanMessage }),
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Shields lockdown could not be restored for 'alpha' after backup-all",
+        ),
+      }),
+    ]);
+  });
+
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
@@ -334,6 +550,9 @@ describe("backupAll", () => {
     expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped");
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.relockBackupShieldsWindow.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      mocks.returnSandboxContainerToStopped.mock.invocationCallOrder.at(-1)!,
+    );
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain("Starting stopped sandbox 'sb-stopped' to back it up");
     expect(logOutput).toContain("Returned 'sb-stopped' to its stopped state");
@@ -548,6 +767,8 @@ describe("backupAll", () => {
     });
 
     await expect(backupAll()).rejects.toThrow(/EACCES/);
+
+    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
   });
 
   it("re-throws an Agent-not-found message without the `: manifest.yaml` suffix (loadAgent contract)", async () => {

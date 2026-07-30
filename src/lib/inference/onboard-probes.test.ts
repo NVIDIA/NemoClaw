@@ -332,21 +332,19 @@ describe("OpenAI-compatible inference probes", () => {
     }
   });
 
-  it("uses an extended validation budget for slow NVIDIA Build models", () => {
-    for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
-      const args = getChatCompletionsProbeCurlArgs({
-        credentialArgs: FAKE_CREDENTIAL_ARGS,
-        model,
-        url: "https://integrate.api.nvidia.com/v1/chat/completions",
-        isWsl: false,
-      });
-      expect(args[args.indexOf("--connect-timeout") + 1]).toBe("10");
-      expect(args[args.indexOf("--max-time") + 1]).toBe("300");
-    }
+  it("uses an extended validation budget for DeepSeek V4 Flash", () => {
+    const args = getChatCompletionsProbeCurlArgs({
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
+      model: "deepseek-ai/deepseek-v4-flash",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+    expect(args[args.indexOf("--connect-timeout") + 1]).toBe("10");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("300");
 
     const wslArgs = getChatCompletionsProbeCurlArgs({
       credentialArgs: FAKE_CREDENTIAL_ARGS,
-      model: "qwen/qwen3.5-397b-a17b",
+      model: "deepseek-ai/deepseek-v4-flash",
       url: "https://integrate.api.nvidia.com/v1/chat/completions",
       isWsl: true,
     });

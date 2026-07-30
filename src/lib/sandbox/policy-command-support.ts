@@ -4,6 +4,7 @@
 import { Args } from "@oclif/core";
 
 import { dryRunFlag, forceFlag, yesFlag } from "../cli/common-flags";
+
 const sandboxNameArg = Args.string({
   name: "sandbox",
   description: "Sandbox name",
@@ -15,6 +16,12 @@ const presetArg = Args.string({
   description: "Policy preset name",
   ignoreStdin: true,
   required: false,
+});
+const baselineKeyArg = Args.string({
+  name: "key",
+  description: "Exact baseline network policy key",
+  ignoreStdin: true,
+  required: true,
 });
 
 export function commonPolicyOptions(flags: {
@@ -31,8 +38,12 @@ export function commonPolicyOptions(flags: {
 
 export const policyMutationArgs = { sandboxName: sandboxNameArg, preset: presetArg };
 
+export const policyBaselineArgs = { sandboxName: sandboxNameArg, key: baselineKeyArg };
+
 export const policyMutationFlags = {
   yes: yesFlag(),
   force: forceFlag(),
   "dry-run": dryRunFlag(),
 };
+
+export const policyBaselineRestoreFlags = { "dry-run": dryRunFlag() };

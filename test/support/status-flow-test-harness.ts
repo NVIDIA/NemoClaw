@@ -12,6 +12,8 @@ import type {
   ServingProcessHealth,
 } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
+import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
+import type { BaselineExclusionTransition } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
 
@@ -60,13 +62,19 @@ export type StatusFlowHarnessOptions = {
   routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
+  baselineExclusionStatus?: BaselineExclusionRuntimeStatus;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   preflight?: SandboxStatusPreflightResult;
+  postRecoveryPreflight?: SandboxStatusPreflightResult;
   sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
     agent?: string | null;
     agentVersion?: string | null;
     dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
+    baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
+    baselineExclusionTransition?: BaselineExclusionTransition;
+    preferredInferenceApi?: string | null;
+    compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";
@@ -95,10 +103,13 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const statusPreflight = requireDist("../../src/lib/actions/sandbox/status-preflight.js");
   const statusSnapshot = requireDist("../../src/lib/actions/sandbox/status-snapshot.js");
   const dockerHealth = requireDist("../../src/lib/actions/sandbox/docker-health.js");
-  const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+  const statusProcessRecovery = requireDist(
+    "../../src/lib/actions/sandbox/status/process-recovery.js",
+  );
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const nim = requireDist("../../src/lib/inference/nim.js");
+  const policy = requireDist("../../src/lib/policy/index.js");
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const shields = requireDist("../../src/lib/shields/index.js");
   const registry = requireDist("../../src/lib/state/registry.js");
@@ -179,6 +190,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
             ? null
             : { checked: false }
           : options.servingProcessHealth,
+      ...(options.postRecoveryPreflight
+        ? { postRecoveryPreflight: options.postRecoveryPreflight }
+        : {}),
     });
   const getSandboxDockerRuntimeSpy = vi
     .spyOn(dockerHealth, "getSandboxDockerRuntime")
@@ -187,7 +201,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       health: "unhealthy",
       paused: false,
     });
-  vi.spyOn(processRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(false);
+  vi.spyOn(statusProcessRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(false);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
@@ -203,6 +217,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
+  vi.spyOn(policy, "getBaselineExclusionRuntimeStatus").mockReturnValue(
+    options.baselineExclusionStatus ?? "excluded",
+  );
   const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
     options.versionCheck ?? {
       sandboxVersion: "0.1.0",

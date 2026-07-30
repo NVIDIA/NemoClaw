@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0.0",
+  "status": "incompatible",
+  "exitCode": 2,
+  "mutated": false,
+  "provenance": {
+    "nemoclawVersion": "0.1.0",
+    "observedAt": "2026-06-01T12:00:00Z"
+  },
+  "observations": [
+    { "id": "runtime.docker", "state": "absent", "evidenceIds": ["docker.not-found"] }
+  ],
+  "capabilities": [
+    { "id": "sandbox.container-runtime", "state": "absent", "evidenceIds": ["docker.not-found"] }
+  ],
+  "qualifications": [
+    { "id": "platform.generic-linux", "status": "unqualified", "capabilityIds": ["sandbox.container-runtime"] }
+  ],
+  "findings": [
+    {
+      "id": "runtime.docker-required",
+      "severity": "blocking",
+      "summary": "A container runtime is required.",
+      "capabilityIds": ["sandbox.container-runtime"],
+      "evidenceIds": ["docker.not-found"]
+    }
+  ],
+  "evidence": [
+    { "id": "docker.not-found", "summary": "The Docker executable was not found." }
+  ]
+}

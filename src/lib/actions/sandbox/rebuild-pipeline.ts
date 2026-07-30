@@ -10,7 +10,7 @@ import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
-import * as registry from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
@@ -20,6 +20,10 @@ import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import {
+  blockRebuildOnPendingBaselineTransition,
+  revalidateRebuildRouteBeforeDelete,
+} from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
@@ -101,6 +105,7 @@ async function rebuildSandboxUnlocked(
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
     preparedImage,
+    routePreflightReceipt,
     releaseOnboardLock,
     log,
     bail,
@@ -123,8 +128,9 @@ async function rebuildSandboxUnlocked(
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
+    if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
     let recoveryRegistrySnapshot = preparedBackupRecovery
-      ? JSON.parse(JSON.stringify(registry.load()))
+      ? JSON.parse(JSON.stringify(loadRegistry()))
       : liveState.staleRegistrySnapshot;
     const registryRollback = createRebuildRegistryRollback({
       sandboxName,
@@ -146,6 +152,7 @@ async function rebuildSandboxUnlocked(
       relock: relockShieldsIfNeeded,
     } = shieldsPhase;
     let sandboxStillExists = true;
+    let sandboxExistenceAmbiguous = false;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -212,6 +219,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         staleRecovery,
         backupManifest: backup.backupManifest,
+        force: normalized.force,
         log,
         bail,
         relockShieldsIfNeeded,
@@ -247,8 +255,12 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
+        validateAtDeleteEdge: () => revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         onDeleted: () => {
           sandboxStillExists = false;
+        },
+        onDeleteStateAmbiguous: () => {
+          sandboxExistenceAmbiguous = true;
         },
       });
       if (!mcpPreparation) return;
@@ -341,7 +353,9 @@ async function rebuildSandboxUnlocked(
         bail,
       });
     } finally {
-      if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
+      if (!rebuildShieldsWindow.relocked && !sandboxExistenceAmbiguous) {
+        relockShieldsIfNeeded(sandboxStillExists);
+      }
     }
   } finally {
     runBestEffortRebuildCleanup(

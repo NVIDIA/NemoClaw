@@ -101,6 +101,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.openclaw.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.openclaw.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.openclaw.generated.mdx
                     slug: set-up-nvidia-nim
@@ -168,6 +171,9 @@ navigation:
               - page: "Configure Agent Heartbeats"
                 path: configure-agents/configure-agent-heartbeats.mdx
                 slug: configure-agent-heartbeats
+              - page: "Configure Memory Search"
+                path: configure-agents/configure-memory-search.mdx
+                slug: configure-memory-search
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
@@ -278,9 +284,33 @@ navigation:
               - page: "Customize the Network Policy"
                 path: _build/agent-variants/network-policy/customize-network-policy.openclaw.generated.mdx
                 slug: customize-network-policy
+              - section: "Configure Policies"
+                slug: configure-policies
+                contents:
+                  - page: "Change the Baseline Policy"
+                    path: _build/agent-variants/network-policy/change-baseline-network-policy.openclaw.generated.mdx
+                    slug: change-baseline-network-policy
+                  - page: "Apply Policy Presets"
+                    path: _build/agent-variants/network-policy/apply-policy-presets.openclaw.generated.mdx
+                    slug: apply-policy-presets
+                  - page: "Create Custom Presets"
+                    path: _build/agent-variants/network-policy/create-custom-policy-presets.openclaw.generated.mdx
+                    slug: create-custom-policy-presets
+                  - page: "Configure Raw TLS"
+                    path: _build/agent-variants/network-policy/configure-raw-tls-passthrough.openclaw.generated.mdx
+                    slug: configure-raw-tls-passthrough
+                  - page: "Replace the Live Policy"
+                    path: _build/agent-variants/network-policy/replace-live-network-policy.openclaw.generated.mdx
+                    slug: replace-live-network-policy
+              - page: "Explain Policy to Agents"
+                path: _build/agent-variants/network-policy/explain-network-policy-to-agents.openclaw.generated.mdx
+                slug: explain-network-policy-to-agents
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.openclaw.generated.mdx
                 slug: integration-policy-examples
+              - page: "Set Up Gmail With an App Password"
+                path: _build/agent-variants/network-policy/set-up-gmail-with-an-app-password.openclaw.generated.mdx
+                slug: set-up-gmail-with-an-app-password
           - section: "Deployment"
             slug: deployment
             collapsed: open-by-default
@@ -289,7 +319,7 @@ navigation:
                 path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
                 slug: deploy-to-headless-server
               - page: "Gateway Lifecycle Authority"
-                path: deployment/gateway-lifecycle-authority.mdx
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.openclaw.generated.mdx
                 slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
@@ -339,6 +369,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
+              - page: "Configure Runtime Identity"
+                path: reference/configure-runtime-identity.mdx
+                slug: configure-runtime-identity
               - page: "Extension Taxonomy and SDK Readiness"
                 path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.openclaw.generated.mdx
                 slug: extension-taxonomy-sdk-readiness
@@ -357,6 +390,9 @@ navigation:
               - page: "Troubleshoot MCP Servers"
                 path: _build/agent-variants/reference/troubleshoot-mcp-servers.openclaw.generated.mdx
                 slug: troubleshoot-mcp-servers
+              - page: "System Readiness"
+                path: _build/agent-variants/reference/system-readiness.openclaw.generated.mdx
+                slug: system-readiness
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.openclaw.generated.mdx
                 slug: troubleshooting
@@ -465,6 +501,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.deepagents.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.deepagents.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.deepagents.generated.mdx
                     slug: set-up-nvidia-nim
@@ -569,6 +608,31 @@ navigation:
                   - page: "Transfer State Manually"
                     path: _build/agent-variants/manage-sandboxes/transfer-state-manually.deepagents.generated.mdx
                     slug: transfer-state-manually
+          - section: "Network Policy"
+            slug: network-policy
+            collapsed: open-by-default
+            contents:
+              - page: "Approve or Deny Network Requests"
+                path: _build/agent-variants/network-policy/approve-network-requests.deepagents.generated.mdx
+                slug: approve-network-requests
+              - page: "Customize the Network Policy"
+                path: _build/agent-variants/network-policy/customize-network-policy.deepagents.generated.mdx
+                slug: customize-network-policy
+              - section: "Configure Policies"
+                slug: configure-policies
+                contents:
+                  - page: "Change the Baseline Policy"
+                    path: _build/agent-variants/network-policy/change-baseline-network-policy.deepagents.generated.mdx
+                    slug: change-baseline-network-policy
+                  - page: "Apply Policy Presets"
+                    path: _build/agent-variants/network-policy/apply-policy-presets.deepagents.generated.mdx
+                    slug: apply-policy-presets
+                  - page: "Create Custom Presets"
+                    path: _build/agent-variants/network-policy/create-custom-policy-presets.deepagents.generated.mdx
+                    slug: create-custom-policy-presets
+                  - page: "Replace the Live Policy"
+                    path: _build/agent-variants/network-policy/replace-live-network-policy.deepagents.generated.mdx
+                    slug: replace-live-network-policy
           - section: "Deployment"
             slug: deployment
             collapsed: open-by-default
@@ -576,6 +640,25 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.deepagents.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.deepagents.generated.mdx
+                slug: gateway-lifecycle-authority
+          - section: "Monitoring"
+            slug: monitoring
+            collapsed: open-by-default
+            contents:
+              - page: "Understand Trace Export"
+                path: monitoring/understand-deepagents-trace-export.mdx
+                slug: understand-deepagents-trace-export
+              - page: "Set Up Trace Export"
+                path: monitoring/set-up-deepagents-trace-export.mdx
+                slug: set-up-deepagents-trace-export
+              - page: "Verify Trace Export"
+                path: monitoring/verify-deepagents-trace-export.mdx
+                slug: verify-deepagents-trace-export
+              - page: "Manage Trace Export"
+                path: monitoring/manage-deepagents-trace-export.mdx
+                slug: manage-deepagents-trace-export
           - section: "Security"
             slug: security
             collapsed: open-by-default
@@ -596,6 +679,9 @@ navigation:
               - page: "Platform Support"
                 path: reference/platform-support.mdx
                 slug: platform-support
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.deepagents.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.deepagents.generated.mdx
                 slug: architecture
@@ -617,6 +703,9 @@ navigation:
               - page: "Troubleshoot MCP Servers"
                 path: _build/agent-variants/reference/troubleshoot-mcp-servers.deepagents.generated.mdx
                 slug: troubleshoot-mcp-servers
+              - page: "System Readiness"
+                path: _build/agent-variants/reference/system-readiness.deepagents.generated.mdx
+                slug: system-readiness
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.deepagents.generated.mdx
                 slug: troubleshooting
@@ -731,6 +820,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.hermes.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.hermes.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.hermes.generated.mdx
                     slug: set-up-nvidia-nim
@@ -890,9 +982,33 @@ navigation:
               - page: "Customize the Network Policy"
                 path: _build/agent-variants/network-policy/customize-network-policy.hermes.generated.mdx
                 slug: customize-network-policy
+              - section: "Configure Policies"
+                slug: configure-policies
+                contents:
+                  - page: "Change the Baseline Policy"
+                    path: _build/agent-variants/network-policy/change-baseline-network-policy.hermes.generated.mdx
+                    slug: change-baseline-network-policy
+                  - page: "Apply Policy Presets"
+                    path: _build/agent-variants/network-policy/apply-policy-presets.hermes.generated.mdx
+                    slug: apply-policy-presets
+                  - page: "Create Custom Presets"
+                    path: _build/agent-variants/network-policy/create-custom-policy-presets.hermes.generated.mdx
+                    slug: create-custom-policy-presets
+                  - page: "Configure Raw TLS"
+                    path: _build/agent-variants/network-policy/configure-raw-tls-passthrough.hermes.generated.mdx
+                    slug: configure-raw-tls-passthrough
+                  - page: "Replace the Live Policy"
+                    path: _build/agent-variants/network-policy/replace-live-network-policy.hermes.generated.mdx
+                    slug: replace-live-network-policy
+              - page: "Explain Policy to Agents"
+                path: _build/agent-variants/network-policy/explain-network-policy-to-agents.hermes.generated.mdx
+                slug: explain-network-policy-to-agents
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.hermes.generated.mdx
                 slug: integration-policy-examples
+              - page: "Set Up Gmail With an App Password"
+                path: _build/agent-variants/network-policy/set-up-gmail-with-an-app-password.hermes.generated.mdx
+                slug: set-up-gmail-with-an-app-password
           - section: "Deployment"
             slug: deployment
             collapsed: open-by-default
@@ -900,6 +1016,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.hermes.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.hermes.generated.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -963,6 +1082,9 @@ navigation:
               - page: "Troubleshoot MCP Servers"
                 path: _build/agent-variants/reference/troubleshoot-mcp-servers.hermes.generated.mdx
                 slug: troubleshoot-mcp-servers
+              - page: "System Readiness"
+                path: _build/agent-variants/reference/system-readiness.hermes.generated.mdx
+                slug: system-readiness
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.hermes.generated.mdx
                 slug: troubleshooting

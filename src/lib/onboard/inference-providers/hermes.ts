@@ -53,11 +53,14 @@ export async function setupHermesProviderInference(
     }
     // DNS-resolving + pinning validation closes the DNS-rebinding gap a
     // string-only hostname check leaves open. For HTTP this returns the
-    // pinned-IP URL. DNS-backed HTTPS fails closed until NemoClaw has a
-    // runtime-aware transport that can preserve TLS SNI/Host while pinning the
-    // resolved peer IP across the downstream OpenShell boundary.
+    // pinned-IP URL. DNS-backed HTTPS fails closed here: onboarding does not
+    // wire the HTTPS Pin Runtime adapter (see inference-set-route-containment.ts),
+    // so a DNS-backed HTTPS endpoint must be set after onboarding via
+    // `inference set --endpoint-url`.
     try {
-      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup);
+      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup, {
+        allowOpenShellBridge: true,
+      });
       resolvedEndpointUrl = typeof validated === "string" ? validated : endpointUrl;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -16,14 +16,17 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isGatewayHealthy } from "../state/gateway";
-import type { DockerDriverGatewayPortListenerScan } from "./docker-driver-gateway-port-listener";
+import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import {
   isDockerDriverGatewayHttpReady,
   isGatewayHttpReady,
   waitForGatewayHttpReady,
 } from "./gateway-http-readiness";
-import { loadGatewayManagementDeclaration } from "./gateway-management";
+import {
+  invalidGatewayManagementDeclarationError,
+  loadGatewayManagementDeclaration,
+} from "./gateway-management";
 import {
   assertGatewayEffectAllowed,
   cgroupBelongsToUnit,
@@ -59,7 +62,7 @@ export interface GatewayHostRuntimeDeps {
   getGatewayPortListenerRawScan(
     portCheck: PortProbeResult,
     opts?: { gatewayBin?: string | null },
-  ): DockerDriverGatewayPortListenerScan;
+  ): GatewayPortListenerRawScan;
   getInstalledOpenshellVersion(): string | null;
   isGatewayHealthy?: typeof isGatewayHealthy;
   runCaptureOpenshell(args: string[], opts?: { ignoreError?: boolean }): string;
@@ -113,7 +116,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   function resolveCurrentGatewayOwner(gatewayName: string, gatewayPort: number): GatewayOwner {
     const loaded = loadGatewayManagementDeclaration();
     if (!loaded.ok) {
-      throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
+      throw invalidGatewayManagementDeclarationError(loaded.reason);
     }
     return resolveGatewayOwner({
       gatewayName,

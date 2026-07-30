@@ -69,8 +69,8 @@ const trustedPrActionPaths = {
   installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
 } as const;
 
-const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
-const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
+const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
 const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
 const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
@@ -201,7 +201,12 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
-function runLoggedPackageScript(script: string): string[][] {
+type LoggedPackageScript = {
+  calls: string[][];
+  stderr: string;
+};
+
+function runLoggedPackageScriptWithOutput(script: string): LoggedPackageScript {
   const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
   const fakeBin = join(temp, "bin");
   const commandLog = join(temp, "commands.jsonl");
@@ -229,14 +234,21 @@ function runLoggedPackageScript(script: string): string[][] {
       },
     });
     expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
-    return readFileSync(commandLog, "utf8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as string[]);
+    return {
+      calls: readFileSync(commandLog, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as string[]),
+      stderr: result.stderr,
+    };
   } finally {
     rmSync(temp, { force: true, recursive: true });
   }
+}
+
+function runLoggedPackageScript(script: string): string[][] {
+  return runLoggedPackageScriptWithOutput(script).calls;
 }
 
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
@@ -619,8 +631,8 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
   });
 
-  // source-shape-contract: compatibility -- Repository checks must follow every authoritative dependency-pin input and consumer
-  it("runs repository checks for every operational dependency-pin authority and consumer", () => {
+  // source-shape-contract: compatibility -- Repository validation must preserve file routing, command scopes, and aliases
+  it("preserves repository validation file routing, command scopes, and compatibility aliases", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
     const repositoryChecks = hooks.find((candidate) => candidate.id === "repository-checks");
     const files = new RegExp(repositoryChecks?.files ?? "(?!)", "u");
@@ -636,6 +648,7 @@ describe("pull request and main workflow contracts", () => {
       "agents/hermes/mcp-config-transaction.py",
       "nemoclaw-blueprint/blueprint.yaml",
       "nemoclaw/package.json",
+      "package.json",
       "scripts/brev-launchable-ci-cpu.sh",
       "scripts/check-installer-hash.sh",
       "scripts/install-openshell.sh",
@@ -647,6 +660,61 @@ describe("pull request and main workflow contracts", () => {
     }
     expect(files.test("dependency-pins.yaml")).toBe(false);
     expect(files.test("docs/reference/commands.mdx")).toBe(false);
+
+    const scripts = packageJson.scripts;
+    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
+    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
+    const broadCheckCalls = runLoggedPackageScript(scripts.check);
+    const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
+    const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
+    const legacyRepositoryChecks = runLoggedPackageScriptWithOutput(scripts.checks);
+
+    expect(cliCoverageCalls.map(([command]) => command)).toEqual(
+      "npm npm tsx vitest tsx".split(" "),
+    );
+    expect(cliCoverageCalls[3]).toEqual(
+      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
+    );
+    expect(cliCoverageCalls[4]).toEqual(
+      "tsx|scripts/check-coverage-ratchet.mts|coverage/cli/coverage-summary.json|ci/coverage-threshold-cli.json|CLI coverage".split(
+        "|",
+      ),
+    );
+    expect(pluginCoverageCalls[0]).toEqual(
+      expect.arrayContaining([
+        "--project",
+        "plugin",
+        "--coverage.include=nemoclaw/src/**/*.ts",
+        "--coverage.include=nemoclaw/src/**/*.cts",
+      ]),
+    );
+    expect(pluginCoverageCalls[1]).toEqual(
+      "tsx|scripts/check-coverage-ratchet.mts|coverage/plugin/coverage-summary.json|ci/coverage-threshold-plugin.json|Plugin coverage".split(
+        "|",
+      ),
+    );
+    expect(broadCheckCalls.map((call) => call.join(" "))).toEqual([
+      "npx prek run --all-files --stage pre-commit",
+      "npx prek run --all-files --stage manual",
+    ]);
+    expect(routinePrCalls.map((call) => call.join(" "))).toEqual([
+      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-commit",
+      "npx commitlint --from origin/main --to HEAD",
+      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-push",
+    ]);
+    expect(repositoryCheckCalls.map((call) => call.join(" "))).toEqual([
+      "tsx scripts/checks/run.mts",
+    ]);
+    expect(scripts["check:diff"]).toBe("npm run validate:pr");
+    expect(legacyRepositoryChecks.calls.map((call) => call.join(" "))).toEqual([
+      "npm run checks:repository",
+    ]);
+    expect(legacyRepositoryChecks.stderr).toContain("npm run validate:pr");
+    expect(legacyRepositoryChecks.stderr).toContain("npm run checks:repository");
+    expect(legacyRepositoryChecks.stderr).toContain("runs only narrow repository checks");
+    expect(scripts.lint).toContain("npm run checks:repository");
+    expect(scripts["lint:fix"]).toContain("npm run checks:repository");
+    expect(repositoryChecks?.entry).toBe("npm run checks:repository");
   });
 
   // source-shape-contract: compatibility -- Pre-commit routing must apply the declarative guard to every supported test location
@@ -727,76 +795,6 @@ describe("pull request and main workflow contracts", () => {
       expect(jsFiles.test(path), path).toBe(true);
     }
     expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
-  });
-
-  it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
-    const scripts = packageJson.scripts;
-    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
-    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
-    const repoCheckCalls = runLoggedPackageScript(scripts.check);
-    const diffCheckCalls = runLoggedPackageScript(scripts["check:diff"]);
-
-    expect(cliCoverageCalls.map(([command]) => command)).toEqual([
-      "npm",
-      "npm",
-      "tsx",
-      "vitest",
-      "tsx",
-    ]);
-    expect(cliCoverageCalls[3]).toEqual(
-      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
-    );
-    expect(cliCoverageCalls[4]).toEqual([
-      "tsx",
-      "scripts/check-coverage-ratchet.mts",
-      "coverage/cli/coverage-summary.json",
-      "ci/coverage-threshold-cli.json",
-      "CLI coverage",
-    ]);
-    expect(pluginCoverageCalls[0]).toEqual(
-      expect.arrayContaining([
-        "--project",
-        "plugin",
-        "--coverage.include=nemoclaw/src/**/*.ts",
-        "--coverage.include=nemoclaw/src/**/*.cts",
-      ]),
-    );
-    expect(pluginCoverageCalls[1]).toEqual([
-      "tsx",
-      "scripts/check-coverage-ratchet.mts",
-      "coverage/plugin/coverage-summary.json",
-      "ci/coverage-threshold-plugin.json",
-      "Plugin coverage",
-    ]);
-    expect(repoCheckCalls).toEqual([
-      ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
-      ["npx", "prek", "run", "--all-files", "--stage", "manual"],
-    ]);
-    expect(diffCheckCalls).toEqual([
-      [
-        "npx",
-        "prek",
-        "run",
-        "--from-ref",
-        "origin/main",
-        "--to-ref",
-        "HEAD",
-        "--stage",
-        "pre-commit",
-      ],
-      ["npx", "commitlint", "--from", "origin/main", "--to", "HEAD"],
-      [
-        "npx",
-        "prek",
-        "run",
-        "--from-ref",
-        "origin/main",
-        "--to-ref",
-        "HEAD",
-        "--stage",
-        "pre-push",
-      ],
-    ]);
   });
 
   // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions
@@ -922,7 +920,7 @@ describe("pull request and main workflow contracts", () => {
     expect(bootstrapSetup.if).toBe(
       "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
     );
-    expect(bootstrapSetup.uses).toContain("actions/setup-node@");
+    expect(bootstrapSetup.uses).toBe(trustedSetupNodeAction);
     expect(bootstrapSetup.with?.["node-version"]).toBe("22");
     expect(bootstrapSetup.with?.cache).toBe("npm");
     const bootstrapInstall = requiredWorkflowStep(
@@ -985,6 +983,7 @@ describe("pull request and main workflow contracts", () => {
       ["pull_request", prWorkflow],
       ["main", mainWorkflow],
     ] as const) {
+      expect(workflow.jobs["cli-test-shards"]["timeout-minutes"], workflowName).toBe(15);
       const checkoutStep = requiredWorkflowStep(workflow.jobs["cli-test-shards"], "Checkout");
       const shardStep = requiredWorkflowStep(
         workflow.jobs["cli-test-shards"],
@@ -1020,6 +1019,8 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
+    expect(parityStep.run).toContain("npx tsx scripts/checks/e2e-mock-parity.mts");
+    expect(parityStep.run).not.toContain("scripts/checks/e2e-mock-parity.ts");
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
       "Detect trusted E2E support sharding",
@@ -1118,13 +1119,12 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata
   it("pins downloaded CI tooling to reviewed integrity", () => {
-    const staticRunsJoined = stepRuns(sharedActions.staticChecks).join("\n");
-
-    expect(staticRunsJoined).toContain(
-      'HADOLINT_SHA256="6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"',
-    );
-    expect(staticRunsJoined).not.toContain('"${HADOLINT_URL}.sha256"');
-    expect(staticRunsJoined).not.toContain("EXPECTED=$(curl");
+    const docsRuns = stepRuns(prWorkflow.jobs["docs-only-checks"]).join("\n");
+    for (const runs of [stepRuns(sharedActions.staticChecks).join("\n"), docsRuns]) {
+      expect(runs).toContain("6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47");
+      expect(runs).not.toMatch(/HADOLINT_URL.*sha256|EXPECTED=\$\(curl/);
+    }
+    expect(docsRuns.indexOf("HADOLINT_SHA256")).toBeLessThan(docsRuns.indexOf("prek run"));
   });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
@@ -1167,7 +1167,7 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  it("keeps trusted coverage actions compatible across the .ts to .mts migration (#6935)", () => {
+  it("requires migrated .mts coverage entrypoints (#6918)", () => {
     const cases = [
       {
         action: sharedActions.cliCoverageShard,
@@ -1197,13 +1197,8 @@ describe("pull request and main workflow contracts", () => {
         expectedStatus: 0,
       },
       {
-        fixtureExtension: "ts",
-        expectedEntrypointExtension: "ts",
-        expectedStatus: 0,
-      },
-      {
         fixtureExtension: "missing",
-        expectedEntrypointExtension: "ts",
+        expectedEntrypointExtension: "mts",
         expectedStatus: 1,
       },
     ] as const;
@@ -1375,6 +1370,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
+      SANDBOX_IMAGES_E2E_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
@@ -1409,9 +1405,9 @@ describe("pull request and main workflow contracts", () => {
       mainGate,
       {
         ...successfulMain,
-        REAL_OPENCLAW_DIST_HARNESS_RESULT: "failure",
+        SANDBOX_IMAGES_E2E_RESULT: "failure",
       },
-      workflowJobListing([workflowJob(301, "real-openclaw-dist-harness", "failure")]),
+      workflowJobListing([workflowJob(302, "sandbox-images-and-e2e", "failure")]),
     );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
@@ -1437,9 +1433,9 @@ describe("pull request and main workflow contracts", () => {
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
-    expect(mainFailure.stdout).toContain("real-openclaw-dist-harness failed");
+    expect(mainFailure.stdout).toContain("sandbox-images-and-e2e failed");
     expect(mainFailure.stdout).toContain(
-      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/301",
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
     );
     expect(malformedFailure.status).not.toBe(0);
     expect(malformedFailure.stdout).toContain(

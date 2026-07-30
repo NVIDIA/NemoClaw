@@ -63,9 +63,7 @@ describe("PR E2E controller commands", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish",
-    );
+    expect(result.stderr).toContain("--mode must be seed, start, approve-e2e, finish");
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
@@ -287,44 +285,12 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("parses a fork credentialed E2E skip resolution", () => {
-    expect(
-      parseControllerCommand([
-        "--mode",
-        "record-fork-e2e-skip",
-        "--pr",
-        "42",
-        "--head",
-        HEAD_SHA,
-        "--base",
-        BASE_SHA,
-        "--workflow-sha",
-        WORKFLOW_SHA,
-        "--maintainer",
-        "maintainer",
-        "--reason",
-        "Reviewed exact fork revision",
-        "--evidence-url",
-        "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
-      ]),
-    ).toEqual({
-      mode: "record-fork-e2e-skip",
-      prNumber: 42,
-      headSha: HEAD_SHA,
-      baseSha: BASE_SHA,
-      workflowSha: WORKFLOW_SHA,
-      maintainer: "maintainer",
-      reason: "Reviewed exact fork revision",
-      evidenceUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
-    });
-  });
-
-  it("parses an authorized control-plane run inside a private workspace", () => {
+  it("parses a maintainer-approved E2E run inside a private workspace", () => {
     withPrivateWorkDir((workDir) => {
       expect(
         parseControllerCommand([
           "--mode",
-          "start-control-plane",
+          "approve-e2e",
           "--pr",
           "42",
           "--head",
@@ -336,7 +302,7 @@ describe("PR E2E controller commands", () => {
           "--maintainer",
           "maintainer",
           "--reason",
-          "Reviewed exact credentialed control-plane execution",
+          "Reviewed credentialed fork execution",
           "--gate-run-id",
           "77",
           "--workflow-run-attempt",
@@ -345,13 +311,13 @@ describe("PR E2E controller commands", () => {
           workDir,
         ]),
       ).toMatchObject({
-        mode: "start-control-plane",
+        mode: "approve-e2e",
         prNumber: 42,
         headSha: HEAD_SHA,
         baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
-        reason: "Reviewed exact credentialed control-plane execution",
+        reason: "Reviewed credentialed fork execution",
         gateRunId: 77,
         workflowRunAttempt: 1,
         planPath: path.join(workDir, "risk-plan.json"),
@@ -359,50 +325,13 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("parses a protected-environment control-plane run inside a private workspace", () => {
-    withPrivateWorkDir((workDir) => {
-      expect(
-        parseControllerCommand([
-          "--mode",
-          "start-approved-control-plane",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--approval-run-id",
-          "77",
-          "--approval-run-attempt",
-          "1",
-          "--gate-run-id",
-          "77",
-          "--workflow-run-attempt",
-          "1",
-          "--work-dir",
-          workDir,
-        ]),
-      ).toMatchObject({
-        mode: "start-approved-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        approvalRunId: 77,
-        approvalRunAttempt: 1,
-        gateRunId: 77,
-        workflowRunAttempt: 1,
-        planPath: path.join(workDir, "risk-plan.json"),
-      });
-    });
-  });
-
-  it("rejects the removed control-plane bypass mode", () => {
-    expect(() => parseControllerCommand(["--mode", "resolve-control-plane"])).toThrow(
-      /--mode must be/u,
-    );
+  it.each([
+    "resolve-control-plane",
+    "start-control-plane",
+    "start-approved-control-plane",
+    "start-approved-fork",
+  ])("rejects removed approval mode %s", (mode) => {
+    expect(() => parseControllerCommand(["--mode", mode])).toThrow(/--mode must be/u);
   });
 
   it("parses an abandon command", () => {

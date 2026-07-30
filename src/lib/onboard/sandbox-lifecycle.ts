@@ -10,6 +10,11 @@ export function removeSandboxUnlessSessionReservation(
   entry: SandboxEntry | null,
   sandboxName: string,
 ): void {
+  const recreate = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+  if (recreate?.sandboxName === sandboxName && recreate.phase !== "completed") {
+    return;
+  }
+
   if (!registry.isPendingReservationForSession(entry, onboardSession.loadSession()?.sessionId)) {
     registry.removeSandbox(sandboxName);
   }

@@ -20,6 +20,7 @@ type RenderTarget = {
   sourcePath: string;
   variant: AgentVariant;
 };
+type NavigationVariantMembership = Map<string, Set<AgentVariant>>;
 type RenderAgentVariantOptions = {
   outputPath?: string;
   sourcePath?: string;
@@ -62,10 +63,13 @@ function main(): void {
   writeGeneratedFiles(generatedVariantPages);
 }
 
-function splitFrontmatter(source: string): { frontmatter: string; body: string } {
+function splitFrontmatter(
+  source: string,
+  sourceLabel = "source page",
+): { frontmatter: string; body: string } {
   const match = source.match(/^(\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n)([\s\S]*)$/);
   if (!match) {
-    throw new Error("commands.mdx must start with YAML frontmatter");
+    throw new Error(`${sourceLabel} must start with YAML frontmatter`);
   }
   return { frontmatter: match[1], body: match[2] };
 }
@@ -282,7 +286,13 @@ function renderGeneratedAgentVariantPages(): RenderedFile[] {
 }
 
 function findAgentVariantTargets(): RenderTarget[] {
-  const sharedSources = findSharedNavigationSourcePaths();
+  const variantMembership = findNavigationVariantMembership();
+  assertDeclaredAgentVariantScope(variantMembership);
+  const sharedSources = new Set(
+    [...variantMembership.entries()]
+      .filter(([, variants]) => variants.size > 1)
+      .map(([sourcePath]) => sourcePath),
+  );
   assertNoUnsharedPlaceholders(sharedSources);
   return findGeneratedNavigationTargets().sort((left, right) => {
     const sourceOrder = left.sourcePath.localeCompare(right.sourcePath);
@@ -316,18 +326,29 @@ function collectGeneratedTargets(nodes: NavigationNode[], variant: AgentVariant)
   });
 }
 
-function findSharedNavigationSourcePaths(): Set<string> {
+function findNavigationVariantMembership(): NavigationVariantMembership {
   const docsIndex = parse(readFileSync(path.join(docsRoot, "index.yml"), "utf8")) as DocsIndex;
   const userGuide = docsIndex.navigation?.find((item) => Array.isArray(item.variants));
-  const openclaw = userGuide?.variants?.find((variant) => variant.slug === "openclaw");
-  const hermes = userGuide?.variants?.find((variant) => variant.slug === "hermes");
-  if (!openclaw?.layout || !hermes?.layout) {
-    throw new Error("docs/index.yml must define openclaw and hermes navigation variants");
+  if (!userGuide?.variants) {
+    throw new Error("docs/index.yml must define navigation variants");
   }
 
-  const openclawPaths = collectSourcePaths(openclaw.layout);
-  const hermesPaths = collectSourcePaths(hermes.layout);
-  return new Set([...openclawPaths].filter((sourcePath) => hermesPaths.has(sourcePath)));
+  const membership: NavigationVariantMembership = new Map();
+  for (const variant of userGuide.variants) {
+    if (!isAgentVariant(variant.slug) || !variant.layout) continue;
+    for (const sourcePath of collectSourcePaths(variant.layout)) {
+      const variants = membership.get(sourcePath) ?? new Set<AgentVariant>();
+      variants.add(variant.slug);
+      membership.set(sourcePath, variants);
+    }
+  }
+
+  for (const variant of agentVariants) {
+    if (!userGuide.variants.some((entry) => entry.slug === variant && entry.layout)) {
+      throw new Error(`docs/index.yml must define the ${variant} navigation variant`);
+    }
+  }
+  return membership;
 }
 
 function collectSourcePaths(nodes: NavigationNode[]): Set<string> {
@@ -370,6 +391,81 @@ function normalizeLegacyVariantSource(navPath: string): string {
   return navPath;
 }
 
+function assertDeclaredAgentVariantScope(membership: NavigationVariantMembership): void {
+  const violations: string[] = [];
+
+  for (const [sourcePath, publishedVariants] of [...membership.entries()].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    const sourceFilePath = path.join(docsRoot, sourcePath);
+    const declaredVariants = readDeclaredAgentVariants(
+      readFileSync(sourceFilePath, "utf8"),
+      sourcePath,
+    );
+    const published = orderedAgentVariants(publishedVariants);
+
+    if (!declaredVariants) {
+      if (publishedVariants.size < agentVariants.length) {
+        violations.push(
+          `docs/${sourcePath} is published for [${published.join(", ")}] but does not declare agent-variants`,
+        );
+      }
+      continue;
+    }
+
+    const declared = orderedAgentVariants(declaredVariants);
+    if (
+      declared.length !== published.length ||
+      declared.some((variant, index) => variant !== published[index])
+    ) {
+      violations.push(
+        `docs/${sourcePath} declares agent-variants [${declared.join(", ")}] but navigation publishes [${published.join(", ")}]`,
+      );
+    }
+  }
+
+  if (violations.length > 0) {
+    throw new Error(
+      [
+        "Guide variant scope does not match docs/index.yml:",
+        ...violations.map((violation) => `  - ${violation}`),
+        "Publish each source page in every applicable guide variant, or declare the intentional subset in frontmatter.",
+      ].join("\n"),
+    );
+  }
+}
+
+function readDeclaredAgentVariants(source: string, sourcePath: string): Set<AgentVariant> | null {
+  const { frontmatter } = splitFrontmatter(source, `docs/${sourcePath}`);
+  const frontmatterSource = frontmatter
+    .replace(/^\uFEFF?---\r?\n/, "")
+    .replace(/\r?\n---\r?\n$/, "");
+  const parsed = parse(frontmatterSource) as { "agent-variants"?: unknown } | null;
+  const value = parsed?.["agent-variants"];
+  if (value === undefined) return null;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`docs/${sourcePath} agent-variants must be a non-empty list`);
+  }
+
+  const variants = new Set<AgentVariant>();
+  for (const entry of value) {
+    if (typeof entry !== "string" || !isAgentVariant(entry)) {
+      throw new Error(
+        `docs/${sourcePath} agent-variants contains unsupported value ${JSON.stringify(entry)}`,
+      );
+    }
+    if (variants.has(entry)) {
+      throw new Error(`docs/${sourcePath} agent-variants repeats ${entry}`);
+    }
+    variants.add(entry);
+  }
+  return variants;
+}
+
+function orderedAgentVariants(variants: ReadonlySet<AgentVariant>): AgentVariant[] {
+  return agentVariants.filter((variant) => variants.has(variant));
+}
+
 function assertNoUnsharedPlaceholders(sharedSources: Set<string>): void {
   const offenderPaths: string[] = [];
   for (const sourcePath of findPlaceholderSourcePaths()) {
@@ -380,7 +476,7 @@ function assertNoUnsharedPlaceholders(sharedSources: Set<string>): void {
       [
         "The following non-shared nav pages contain $$nemoclaw and would render it literally:",
         ...offenderPaths.map((offenderPath) => `  - docs/${offenderPath}`),
-        "Use a literal CLI name on single-variant pages, or add the page to both nav variants.",
+        "Use a literal CLI name on single-variant pages, or publish the page in every applicable variant.",
       ].join("\n"),
     );
   }

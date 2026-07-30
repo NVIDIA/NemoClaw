@@ -17,49 +17,14 @@
       "category": "security"
     },
     {
+      "file": "src/lib/readiness/host.test.ts",
+      "test": "bounds and redacts successful probe text before schema validation",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
       "test": "matches the bundled local-inference host-gateway ports (#5744)",
       "category": "compatibility"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "does not expose stale published-launchable controls",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "fails closed on unsupported reusable test-suite values before checkout",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "grants the reusable workflow permission ceiling so GitHub can start the run",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps instance deletion inside the workflow ownership boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps manual dispatch inputs out of the Brev credential boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps write permissions out of the secret-bearing target-branch job",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "passes only declared inputs and secrets to branch validation",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "verifies the pinned Brev CLI digest before extracting it",
-      "category": "security"
     },
     {
       "file": "test/candidate-compat.test.ts",
@@ -158,7 +123,7 @@
     },
     {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "compiles host-preservation probes for every post-reboot recovery target",
+      "test": "compiles gateway-health and host-preservation probes for every post-reboot recovery target",
       "category": "security"
     },
     {
@@ -227,6 +192,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/e2e-semantic-phase-check.test.ts",
+      "test": "builds the policy boundary before semantic collection and CLI compilation",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "derives test selectors from code and workflow jobs from workflow metadata",
       "category": "compatibility"
@@ -239,11 +209,6 @@
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects diagnostics workflow-boundary drift for secret and Docker auth handling",
       "category": "security"
     },
     {
@@ -283,7 +248,7 @@
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",
-      "test": "keeps repository payload layers at their cache boundaries (#7144)",
+      "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
     },
     {
@@ -292,8 +257,23 @@
       "category": "security"
     },
     {
+      "file": "test/openclaw-final-image-layout.test.ts",
+      "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
+      "category": "security"
+    },
+    {
+      "file": "test/hosted-runner-recovery-workflow.test.ts",
+      "test": "locks recovery identities to the source workflows' runtime names (#7140)",
       "category": "security"
     },
     {
@@ -343,7 +323,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps the authoritative local-build allowance tied to same-head PR evidence",
+      "test": "keeps the authoritative local-build allowance tied to exact PR evidence",
       "category": "compatibility"
     },
     {
@@ -387,6 +367,61 @@
       "category": "security"
     },
     {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "audits the same lock and rebuilds the base when its graph changes",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "fails closed on missing required packages and symlinked package roots",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "invokes the locked installer before exposing OpenClaw in %s",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects $name even with a test-only matching lock digest",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects a same-registry tarball with a substituted package manifest",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects any lock byte tamper before registry metadata is consulted",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects symlinked package manifests",
+      "category": "security"
+    },
+    {
+      "file": "test/reviewed-npm-audit-workflow.test.ts",
+      "test": "executes the trusted driver and helper against explicit target inputs",
+      "category": "security"
+    },
+    {
+      "file": "test/reviewed-npm-audit-workflow.test.ts",
+      "test": "runs PR audits from trusted code and keeps the main audit on the checked-in action",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "pins and verifies the Node.js archive in the trusted WSL helper",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "loads the WSL helper from trusted revisions before candidate execution (#6958)",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
       "category": "security"
@@ -427,6 +462,31 @@
       "category": "security"
     },
     {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "binds host-prepared GitHub context to the selected repository and pull request",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "fails closed around the credential-free OpenShell filesystem and network boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "keeps GitHub and upstream model credentials in separate host-only steps",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "pins trusted helper and bind sources to their checkout directories",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "preserves credential-free unavailable artifacts for manual dry runs",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "rejects deleting or weakening analysis-workspace symlink removal",
       "category": "security"
@@ -435,6 +495,11 @@
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "requires one advisor lane to publish the PR comment",
       "category": "security"
+    },
+    {
+      "file": "test/pr-limit-policy.test.ts",
+      "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
+      "category": "compatibility"
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
@@ -498,7 +563,7 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
-      "test": "runs repository checks for every operational dependency-pin authority and consumer",
+      "test": "preserves repository validation file routing, command scopes, and compatibility aliases",
       "category": "compatibility"
     },
     {
@@ -509,11 +574,6 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "scopes pre-push typechecks to project and transitive inputs",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
-      "test": "collects the gateway drift regression from its integration project (#6692)",
       "category": "compatibility"
     },
     {

@@ -31,19 +31,31 @@ const TEST_PROGRESS_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts
 const FAKE_OPENAI_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/fake-openai-compatible.ts");
 
 describe("semantic E2E phase checker", () => {
+  // source-shape-contract: compatibility -- Generated policy output must precede semantic collection and remain shared with the canonical CLI build
+  test("builds the policy boundary before semantic collection and CLI compilation", () => {
+    const scripts = (
+      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
+        scripts: Record<string, string>;
+      }
+    ).scripts;
+
+    expect(scripts["build:policy-boundary"]).toBe("tsc -p nemoclaw/tsconfig.shared.json");
+    expect(scripts["test:e2e-phases:check"]).toMatch(
+      /^npm run build:policy-boundary && node .*tools\/e2e\/check-semantic-phases\.mts$/u,
+    );
+    expect(scripts["build:cli"]).toMatch(
+      /^npm run build:policy-boundary && tsc -p tsconfig\.src\.json &&/u,
+    );
+  });
+
   test("derives coverage from registry, free-standing, shared, and forwarding workflow paths", () => {
     const modules = semanticPhaseCoverageModules(
       {
         matrix: [{}],
         testMatrix: [
           {
-            id: "docs-validation",
-            file: "test/e2e/live/docs-validation.test.ts",
-            project: "e2e-live",
-          },
-          {
-            id: "gateway-drift-preflight",
-            file: "test/gateway-drift-preflight.test.ts",
+            id: "vllm-docker-storage",
+            file: "test/vllm-docker-storage.test.ts",
             project: "integration",
           },
         ],
@@ -51,13 +63,11 @@ describe("semantic E2E phase checker", () => {
       {
         liveTestToJobs: new Map([
           ["test/e2e/live/bootstrap-install-smoke.test.ts", ["bootstrap-install-smoke"]],
-          ["test/e2e/live/docs-validation.test.ts", ["docs-validation"]],
-          ["test/gateway-drift-preflight.test.ts", ["gateway-drift-preflight"]],
+          ["test/vllm-docker-storage.test.ts", ["vllm-docker-storage"]],
         ]),
       },
       [
         "test/e2e/live/bootstrap-install-smoke.test.ts",
-        "test/e2e/live/docs-validation.test.ts",
         "test/e2e/live/unselected-regression.test.ts",
       ],
     );
@@ -67,11 +77,10 @@ describe("semantic E2E phase checker", () => {
         file: "test/e2e/live/bootstrap-install-smoke.test.ts",
         project: "e2e-live",
       },
-      { file: "test/e2e/live/docs-validation.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/launchable-smoke.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/registry-targets.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/unselected-regression.test.ts", project: "e2e-live" },
-      { file: "test/gateway-drift-preflight.test.ts", project: "integration" },
+      { file: "test/vllm-docker-storage.test.ts", project: "integration" },
     ]);
   });
 

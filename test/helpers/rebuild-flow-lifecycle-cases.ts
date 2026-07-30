@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -26,11 +27,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-      expect(
-        harness.runOpenshellSpy.mock.calls.some(
-          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
-        ),
-      ).toBe(false);
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("backs up once, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async ({
@@ -73,7 +70,7 @@ export function registerRebuildFlowLifecycleTests(): void {
         harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
       );
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.onboardSpy).toHaveBeenCalledWith(
@@ -98,7 +95,8 @@ export function registerRebuildFlowLifecycleTests(): void {
         }),
       );
       const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
-        (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+        (call) =>
+          Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
       );
       expect(harness.registryUpdateSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
@@ -135,6 +133,169 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
         "rebuilt successfully",
       );
+    });
+
+    it("keeps the original sandbox when the shared route drifts at the delete edge (#7798)", async () => {
+      const harness = createRebuildFlowHarness({
+        revalidateRebuildRouteBeforeDelete: () => ({
+          ok: false,
+          message: "Shared inference route changed before sandbox deletion.",
+        }),
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Shared inference route changed before sandbox deletion.");
+
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+      expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    });
+
+    it("keeps baseline exclusions durable through successful replacement onboarding (#7194)", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "openclaw",
+              key: "openclaw_docs",
+              digest: "baseline-digest",
+              acknowledgedAt: "2026-07-19T00:00:00.000Z",
+              appliedAgentVersion: "2026.6.10",
+            },
+          ],
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "Preserving baseline-exclusion registry entry across sandbox recreation",
+      );
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects a schema-invalid recorded-agent baseline before registry or live sandbox mutation (#7194)", async () => {
+      const harness = createRebuildFlowHarness({
+        agentPolicyAdditionsContent: `
+version: 1
+network_policies:
+  unsafe_entry:
+    name: unsafe_entry
+    endpoints:
+      - host: api.example.test
+        port: 443
+        access: full
+`,
+        preflightWithProductionBaselineResolver: true,
+        sandboxEntry: {
+          agent: "hermes",
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "hermes",
+              key: "nous_research",
+              digest: "baseline-digest",
+              acknowledgedAt: "2026-07-19T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).rejects.toThrow("Replacement onboarding preflight failed");
+
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+        "does not satisfy the shipped sandbox policy schema",
+      );
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
+        ),
+      ).toBe(false);
+    });
+
+    it("keeps baseline-exclusion retry metadata when inner replacement creation fails (#7194)", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "openclaw",
+              key: "openclaw_docs",
+              digest: "baseline-digest",
+              acknowledgedAt: "2026-07-19T00:00:00.000Z",
+              appliedAgentVersion: "2026.6.10",
+            },
+          ],
+        },
+        onboard: () => {
+          throw new Error("injected replacement create failure");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "Preserving baseline-exclusion registry entry across sandbox recreation",
+      );
+    });
+
+    it("waits for post-delete sandbox absence before inner onboarding (#7194)", async () => {
+      const events: string[] = [];
+      let sandboxGetAttempts = 0;
+      const probeSequence = [
+        {
+          event: "stale-live",
+          result: { status: 0, output: "Sandbox: alpha\nPhase: Ready" },
+        },
+        {
+          event: "absent",
+          result: { status: 1, output: "", stderr: "Error: sandbox alpha not found" },
+        },
+      ];
+      const harness = createRebuildFlowHarness({
+        captureOpenshell: () => {
+          const probe = probeSequence[Math.min(sandboxGetAttempts, probeSequence.length - 1)];
+          sandboxGetAttempts += 1;
+          events.push(probe.event);
+          return probe.result;
+        },
+        onboard: () => {
+          events.push("onboard");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(events).toEqual(["stale-live", "absent", "onboard"]);
+      expect(
+        harness.captureOpenshellSpy.mock.calls.filter(
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get -g nemoclaw alpha",
+        ),
+      ).toHaveLength(2);
     });
 
     it("accepts the agent version cached by the confirmation probe before lock acquisition", async () => {

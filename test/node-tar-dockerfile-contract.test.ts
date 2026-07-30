@@ -75,15 +75,18 @@ describe("node-tar image remediation contract", () => {
     const { file, installsPatchDownloader, installsWithNpm } = entry;
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const source = completedStage(dockerfile);
-    const patchPayloadLayer = source.indexOf("RUN --mount=type=bind,from=hermes-npm-patch-payload");
-    const scanPayloadLayer = source.indexOf("RUN --mount=type=bind,from=hermes-scan-payload");
+    const patchPayloadStage = ["hermes-npm-patch-payload", "openclaw-dependency-payload"].find(
+      (stage) => source.includes(`COPY --from=${stage} / /`),
+    );
+    const patchPayloadLayer =
+      patchPayloadStage === undefined ? -1 : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
+    const scanPayloadLayer = source.indexOf("COPY --from=hermes-scan-payload / /");
     const patchInputStage =
-      patchPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-npm-patch-payload") : source;
+      patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
     const scanInputStage =
       scanPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-scan-payload") : source;
-    const reviewedCopy = patchInputStage.indexOf(
-      "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
-    );
+    const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
@@ -100,6 +103,15 @@ describe("node-tar image remediation contract", () => {
     const scanInputReady = scanPayloadLayer >= 0 ? scanPayloadLayer : scanCopy;
 
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
+    expect(
+      flattenedPatchInputStage.includes(
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+      ) ||
+        patchInputStage.includes(
+          "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
+        ),
+      file,
+    ).toBe(true);
     expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
     expect(patchRun, file).toBeGreaterThan(patchInputReady);
     const aptInstall = source.indexOf(
@@ -127,6 +139,39 @@ describe("node-tar image remediation contract", () => {
     expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
     expect(
       npmConsumers.every((index) => index > patchRun),
+      file,
+    ).toBe(true);
+  });
+});
+
+describe("reviewed npm image remediation contract", () => {
+  it.each([
+    { file: "Dockerfile.base", installsWithNpm: true },
+    { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },
+    { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
+  ])("upgrades npm before use in $file", ({ file, installsWithNpm }) => {
+    const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
+    const patchRun = source.indexOf(
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+    );
+    const upgradeCopy = source.indexOf(
+      "COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts",
+    );
+    const upgradeRun = source.indexOf(
+      "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+    );
+
+    expect(upgradeCopy, file).toBeGreaterThanOrEqual(0);
+    expect(patchRun, file).toBeGreaterThan(upgradeCopy);
+    expect(upgradeRun, file).toBeGreaterThan(patchRun);
+
+    const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
+    const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
+      (match) => match.index,
+    );
+    expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
+    expect(
+      npmConsumers.every((index) => index > upgradeRun),
       file,
     ).toBe(true);
   });

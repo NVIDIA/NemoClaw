@@ -6,6 +6,7 @@ import {
   configureDcodeSession,
   makeDcodeSandboxEntry,
 } from "../../../../test/helpers/rebuild-dcode-flow-support";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   resetRebuildFlowTestEnvironment,
@@ -32,10 +33,7 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
 
     expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
@@ -58,10 +56,7 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
 
     expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
@@ -95,10 +90,7 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
       expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
       expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
         harness.preparedDcodeBuildContext,

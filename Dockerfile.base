@@ -19,6 +19,7 @@
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to exact Debian trixie versions
 #   gosu 1.19           — pinned release + per-arch sha256 checksum
+#   npm 11.18.0         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
 #   .openclaw dirs      — directory structure is dictated by the OpenClaw
@@ -41,8 +42,9 @@
 #   3. gosu upgrade                 — update URL, checksum, and version
 #   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
-#   5. New .openclaw subdirectory   — add mkdir below
-#   6. PyYAML or other pip dep bump — change the version below
+#   5. npm upgrade                  — update upgrade-bundled-npm.mts
+#   6. New .openclaw subdirectory   — add mkdir below
+#   7. PyYAML or other pip dep bump — change the version below
 # For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
 # the base-image workflow.
 #
@@ -50,7 +52,53 @@
 # by OpenClaw CLI version bumps or the weekly docker-pin-check.
 # ────────────────────────────────────────────────────────────────────────
 
+ARG PERL_VERSION=5.44.0
+ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
+ARG PERL_PACKAGE_REVISION=1nemoclaw1
+
+# Debian trixie has not published libssh2 or Python packages containing the
+# reviewed upstream fixes. Build native packages once and install the same
+# artifacts into the managed OpenClaw image.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS native-security-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential=12.12 \
+        ca-certificates=20250419 \
+        curl=8.14.1-2+deb13u4 \
+        git=1:2.47.3-0+deb13u1 \
+        libssl-dev=3.5.6-1~deb13u2 \
+        openssh-server=1:10.0p1-7+deb13u4 \
+        xz-utils=5.8.1-1+deb13u1 \
+        zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh
+COPY scripts/security/patches/libssh2-1.11.1-cve-2026.patch /scripts/security/patches/libssh2-1.11.1-cve-2026.patch
+COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch
+
+RUN bash /scripts/security/build-native-security-packages.sh /out
+
+# Debian trixie has not published a Perl package containing the reviewed
+# upstream fixes. Build the fixed release as native Debian packages so dpkg
+# dependencies and vulnerability inventory describe the executed runtime.
+FROM native-security-builder AS perl-builder
+
+ARG PERL_VERSION
+ARG PERL_SHA256
+ARG PERL_PACKAGE_REVISION
+
+COPY scripts/security/build-perl-security-packages.sh /scripts/security/build-perl-security-packages.sh
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        netbase=6.5 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN bash /scripts/security/build-perl-security-packages.sh \
+    /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
+
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+
+COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
 # credential chains from attempting an impossible metadata discovery path.
@@ -58,6 +106,12 @@ ENV AWS_EC2_METADATA_DISABLED=true
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Trixie has not published fixes for the reviewed libexpat, jq, or Vim
+# advisories. Install fixed Debian packages from an immutable snapshot, with
+# architecture-specific hashes, until Trixie carries them.
+# The checksum and runtime probes put the validating command last in each pipe.
+# The runtime Vim probe verifies the package that this layer installs.
+# hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
@@ -73,12 +127,137 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
         "dos2unix=7.5.2-1*" \
-        jq=1.7.1-6+deb13u2 \
-        vim-tiny=2:9.1.1230-2 \
+        libonig5=6.9.9-1+b1 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         tmux=3.5a-3 \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) \
+            libexpat_sha256="37d24b40a745107941f823d1f22c38f197f01981f7f0783777fe0026af016463"; \
+            libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
+            libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
+            jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
+            vim_tiny_sha256="0e6e231d6d2430a92cf76f8a78506090418fa37758c33b31ed50dfbfc76e22ed" \
+            ;; \
+        arm64) \
+            libexpat_sha256="df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397"; \
+            libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
+            libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
+            jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
+            vim_tiny_sha256="be30f7e9de0b872bec0128ccd890452c0e0e29d99017d16c0f3aa74164f6700d" \
+            ;; \
+        *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
+    esac \
+    && perl_version_before="$(dpkg-query -W -f='${Version}' perl)" \
+    && security_deb_dir="/tmp/nemoclaw-debian-security" \
+    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
+    && vim_common_sha256="6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39" \
+    && mkdir -p "$security_deb_dir" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libexpat1.deb" \
+        "$snapshot_url/e/expat/libexpat1_2.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libonig5.deb" \
+        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libjq1.deb" \
+        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/jq.deb" \
+        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/vim-common.deb" \
+        "$snapshot_url/v/vim/vim-common_9.2.0782-1_all.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/vim-tiny.deb" \
+        "$snapshot_url/v/vim/vim-tiny_9.2.0782-1_${arch}.deb" \
+    && printf '%s  %s\n' \
+        "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
+        "$libonig_sha256" "$security_deb_dir/libonig5.deb" \
+        "$libjq_sha256" "$security_deb_dir/libjq1.deb" \
+        "$jq_sha256" "$security_deb_dir/jq.deb" \
+        "$vim_common_sha256" "$security_deb_dir/vim-common.deb" \
+        "$vim_tiny_sha256" "$security_deb_dir/vim-tiny.deb" \
+        | sha256sum -c - \
+    && dpkg -i \
+        "$security_deb_dir/libexpat1.deb" \
+        "$security_deb_dir/libonig5.deb" \
+        "$security_deb_dir/libjq1.deb" \
+        "$security_deb_dir/jq.deb" \
+        "$security_deb_dir/vim-common.deb" \
+        "$security_deb_dir/vim-tiny.deb" \
+        /tmp/nemoclaw-native-security/libssh2-1t64.deb \
+        /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
+    && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1" \
+    && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
+    && test "$(jq --version)" = "jq-1.8.2" \
+    && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
+    && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
+    && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
+    && printf '%s  %s\n' \
+        "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
+        /usr/lib/python3.13/html/parser.py \
+        | sha256sum -c - \
+    && python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')" \
+    && python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')" \
+    && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
+    && printf '%s\n' \
+        "architecture=$arch" \
+        "libexpat1=2.8.2-1" \
+        "libonig5=6.9.9-1+b1" \
+        "libjq1=1.8.2-1" \
+        "jq=1.8.2-1" \
+        "vim-common=2:9.2.0782-1" \
+        "vim-tiny=2:9.2.0782-1" \
+        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        > /usr/local/share/nemoclaw/security-packages.txt \
+    && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0644 /usr/local/share/nemoclaw/security-packages.txt \
+    && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        /tmp/nemoclaw-native-security/perl-base.deb \
+        /tmp/nemoclaw-native-security/perl.deb \
+    && rm -rf /tmp/nemoclaw-native-security \
+    && rm -rf /var/lib/apt/lists/* \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
+    && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
+    && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
+    && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \
+    && test "$(perl -MIO::Compress::Base -e 'print IO::Compress::Base->VERSION')" = "2.223" \
+    && test "$(perl -MIO::Uncompress::Unzip -e 'print IO::Uncompress::Unzip->VERSION')" = "2.223" \
+    && test "$(perl -MFile::GlobMapper -e 'print File::GlobMapper->VERSION')" = "1.001" \
+    && perl -MSocket=pack_ip_mreq_source -e \
+        'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && printf '%s\n' \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
+        >> /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && git --version \
+    && test -z "$(dpkg --audit)"
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
@@ -225,18 +404,39 @@ ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-20
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
-COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
-COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
+# Keep paired runtime manifests and remediation helpers in grouped layers so
+# the published base retains its established image layout.
+COPY agents/openclaw/openclaw-runtime/package.json \
+    agents/openclaw/openclaw-runtime/package-lock.json \
+    /usr/local/lib/nemoclaw/openclaw-runtime/
+COPY agents/openclaw/mcporter-runtime/package.json \
+    agents/openclaw/mcporter-runtime/package-lock.json \
+    /usr/local/lib/nemoclaw/mcporter-runtime/
 COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
-COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
-COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
-COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/lib/reviewed-npm-archive.mts \
+    scripts/lib/reviewed-npm-audit.mts \
+    scripts/lib/openclaw-npm-remediation.mts \
+    /scripts/lib/
+COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
 # npm 10.9.8 in the pinned Node 22 image bundles an affected node-tar copy.
 # Replace only that private package from a registry- and SRI-verified archive
-# before npm processes any OpenClaw or mcporter installation input.
+# before npm processes the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Upgrade the complete private npm tree so its sigstore, brace-expansion, and
+# picomatch packages meet the reviewed security floors.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# npm 11.18.0 contains brace-expansion 5.0.7. Replace only that private
+# package from the reviewed 5.0.8 archive after the complete npm upgrade.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
@@ -278,30 +478,58 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "Error: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin"; exit 1; \
     fi; \
-    OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
-        --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
-        --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
-    if [ -z "$OPENCLAW_SOURCE_PACK_PATH" ] || [ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ] || [ -L "$OPENCLAW_SOURCE_PACK_PATH" ]; then \
-        echo "Error: reviewed OpenClaw archive path is empty or invalid"; exit 1; \
-    fi; \
-    OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
-    OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
+    OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
-    if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
-        OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
-            --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
-            --working-directory "$OPENCLAW_PACK_DIR")"; \
-        OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
-        OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
+    if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+        OPENCLAW_LOCK_SHA256=82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88; \
+        ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
+        [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
+            || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+            --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
+            --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
+            --registry-origin https://registry.npmjs.org/ \
+            --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
+            --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}"; \
+        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+        npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
+            --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
+            --userconfig /dev/null --registry https://registry.npmjs.org/; \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+            --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
+            --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
+            --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
+            --label "OpenClaw ${OPENCLAW_VERSION}"; \
+        node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs; \
+        mkdir -p /usr/local/lib/node_modules; \
+        ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \
+        ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw /usr/local/bin/openclaw; \
+        OPENCLAW_RECIPE='locked-ci+reviewed-lifecycle-v2'; \
+    else \
+        OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+            --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
+            --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
+        if [ -z "$OPENCLAW_SOURCE_PACK_PATH" ] || [ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ] || [ -L "$OPENCLAW_SOURCE_PACK_PATH" ]; then \
+            echo "Error: reviewed OpenClaw archive path is empty or invalid"; exit 1; \
+        fi; \
+        OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
+        OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
+        if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
+            OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
+                --working-directory "$OPENCLAW_PACK_DIR")"; \
+            OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
+            OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
+        fi; \
+        npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH"; \
+        case "$OPENCLAW_VERSION" in \
+            2026.4.24) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+            2026.3.11) ;; \
+            *) echo "Error: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy"; exit 1 ;; \
+        esac; \
+        rm -rf "$OPENCLAW_PACK_DIR"; \
     fi; \
-    npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH" \
-    && case "$OPENCLAW_VERSION" in \
-        2026.4.24|2026.7.1) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
-        2026.3.11) ;; \
-        *) echo "Error: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy"; exit 1 ;; \
-    esac \
-    && rm -rf "$OPENCLAW_PACK_DIR" \
-    && OPENCLAW_INSTALLED_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}')" \
+    OPENCLAW_INSTALLED_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}')" \
     && if [ "$OPENCLAW_INSTALLED_VERSION" != "$OPENCLAW_VERSION" ]; then \
         echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
     fi \
@@ -346,6 +574,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
+        "lock-sha256=${OPENCLAW_LOCK_SHA256}" \
         "recipe=${OPENCLAW_RECIPE}" \
         "mcporter-package=mcporter@${MCPORTER_VERSION}" \
         "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \

@@ -3,13 +3,18 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 4 as const;
+export const RISK_PLAN_VERSION = 8 as const;
 
-export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+export const PR_E2E_TYPED_TARGET_IDS = [
+  "ubuntu-repo-cloud-langchain-deepagents-code",
+  "ubuntu-repo-docker-post-reboot-recovery",
+] as const;
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
+const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
+const POST_REBOOT_STATUS_RUNTIME = "src/lib/actions/sandbox/status-snapshot.ts";
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -19,6 +24,7 @@ export type RiskFamilyId =
   | "inference-policy"
   | "messaging-lifecycle"
   | "platform-install"
+  | "openclaw-image"
   | "credentials-security"
   | "e2e-control-plane"
   | "sandbox-boundary"
@@ -87,11 +93,6 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
-  ".github/workflows/pr-e2e-gate.yaml",
-  "tools/e2e/pr-e2e-gate.mts",
-  "tools/e2e/pr-e2e-required.mts",
-]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
@@ -107,10 +108,10 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/risk-signal-reporter.ts",
 ]);
 const FOCUSED_E2E_SUMMARY =
-  "Changed workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
+  "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
 const FOCUSED_E2E_INVARIANTS = [
-  "the changed test remains wired to a job or typed-target selector declared by the trusted workflow",
-  "the canonical execution path runs the changed test rather than treating it as advisory coverage",
+  "the selected job or typed target exercises the changed runtime surface or test",
+  "the canonical execution path runs the required coverage rather than treating it as advisory",
 ] as const;
 
 export function isPrE2eTypedTargetId(value: string): boolean {
@@ -120,14 +121,34 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 export function focusedPrE2eTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eTarget[] {
-  return changedFiles.includes(DEEPAGENTS_HEADLESS_INFERENCE_CHECK)
-    ? [
-        {
-          id: PR_E2E_TYPED_TARGET_IDS[0],
-          matchedFiles: [DEEPAGENTS_HEADLESS_INFERENCE_CHECK],
-        },
-      ]
+  const deepAgentsMatchedFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
+        (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
+    ),
+  );
+  const postRebootMatchedFiles = changedFiles.includes(POST_REBOOT_STATUS_RUNTIME)
+    ? [POST_REBOOT_STATUS_RUNTIME]
     : [];
+  return [
+    ...(deepAgentsMatchedFiles.length > 0
+      ? [
+          {
+            id: PR_E2E_TYPED_TARGET_IDS[0],
+            matchedFiles: deepAgentsMatchedFiles,
+          },
+        ]
+      : []),
+    ...(postRebootMatchedFiles.length > 0
+      ? [
+          {
+            id: PR_E2E_TYPED_TARGET_IDS[1],
+            matchedFiles: postRebootMatchedFiles,
+          },
+        ]
+      : []),
+  ];
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
@@ -243,11 +264,22 @@ export const RISK_RULES: readonly RiskRule[] = [
       RISK_RELEVANT_TEST_FILES.has(file),
   },
   {
+    id: "openclaw-image",
+    summary: "OpenClaw final-image changes must preserve cold onboarding and a usable first turn.",
+    tier: 3,
+    requiredJobs: ["full-e2e"],
+    invariants: [
+      "the repository-root image builds through the same cold path exercised by supported hosts",
+      "the resulting OpenClaw sandbox becomes ready and completes a real first turn",
+    ],
+    matches: (file) => file === "Dockerfile",
+  },
+  {
     id: "credentials-security",
     summary:
       "Credential and security-boundary changes must preserve secrecy, sanitization, and fail-closed policy behavior.",
     tier: 3,
-    requiredJobs: ["credential-sanitization", "security-posture"],
+    requiredJobs: ["cloud-inference", "security-posture"],
     invariants: [
       "plaintext credentials do not cross logs, snapshots, artifacts, or sandbox boundaries",
       "invalid or missing security state fails closed",
@@ -265,7 +297,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "E2E selection, execution, and evidence changes must preserve trusted dispatch and fail-closed result classification.",
     tier: 3,
-    requiredJobs: ["cloud-onboard", "credential-sanitization", "security-posture"],
+    requiredJobs: ["cloud-onboard", "cloud-inference", "security-posture"],
     invariants: [
       "the controller selects only trusted jobs and binds results to the intended PR commit",
       "single-shard and matrix jobs both emit complete evidence through the canonical reporter",
@@ -466,11 +498,4 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
 
 export function riskPlanRequiredTargetIds(plan: RiskPlan): string[] {
   return plan.requiredTargets.map((target) => target.id);
-}
-
-export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
-  const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return (
-    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
-  );
 }

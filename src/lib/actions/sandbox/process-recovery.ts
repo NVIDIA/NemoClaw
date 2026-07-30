@@ -39,6 +39,8 @@ import {
   type GatewayRestartDeps,
   type GatewayRestartFailureLayer,
   type GatewayRestartResult,
+  gatewayIntegrityRepairLines,
+  isGatewayIntegrityRepairLayer,
   printGatewayRestartFailure,
   type RestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
@@ -587,9 +589,11 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
 const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
+const OPENSHELL_STATUS_UNAVAILABLE = "status: Unavailable";
 const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
 const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
+const OPENSHELL_RELAY_CHANNEL_DROPPED = 'message: "relay channel dropped"';
 const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (os error 2)"';
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
@@ -597,20 +601,29 @@ function normalizeOpenshellStructuredError(value: string): string {
   return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-function hasRetryableOpenshellResultShape(result: ReturnType<typeof captureOpenshell>): boolean {
-  return (
-    result.status === 1 &&
-    !result.error &&
-    String(result.stdout ?? "").trim() === "" &&
-    String(result.stderr ?? "").trim() !== ""
-  );
+function hasRetryableOpenshellFailureShape(result: ReturnType<typeof captureOpenshell>): boolean {
+  return result.status === 1 && !result.error && String(result.stderr ?? "").trim() !== "";
 }
 
 function isRetryableOpenshellReRegistrationState(
   result: ReturnType<typeof captureOpenshell>,
+  sandboxName: string,
 ): boolean {
-  if (!hasRetryableOpenshellResultShape(result)) return false;
+  if (!hasRetryableOpenshellFailureShape(result)) return false;
   const error = normalizeOpenshellStructuredError(String(result.stderr));
+  // OpenShell can publish Ready before replacement registration settles.
+  // Retry only if the readiness probe reports phase Error for this sandbox.
+  // The CLI can emit informational stdout before this exact stderr refusal;
+  // stdout does not change the result of the read-only `true` probe.
+  if (
+    error ===
+    `Error: sandbox '${sandboxName}' is not ready (phase: Error); wait for it to reach Ready state.`
+  ) {
+    return true;
+  }
+  // All less-specific transient signatures remain constrained to an otherwise
+  // empty stdout stream so unrelated command output cannot be reclassified.
+  if (String(result.stdout ?? "").trim() !== "") return false;
   if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
 
   // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
@@ -633,6 +646,10 @@ function isRetryableOpenshellReRegistrationState(
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     error.includes(OPENSHELL_SUPERVISOR_RELAY_DEADLINE) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_TIMED_OUT);
+  const relayChannelDropped =
+    (error.includes(OPENSHELL_SERVICE_UNAVAILABLE) ||
+      error.includes(OPENSHELL_STATUS_UNAVAILABLE)) &&
+    error.includes(OPENSHELL_RELAY_CHANNEL_DROPPED);
   const relayTargetUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     (error.includes(OPENSHELL_RELAY_TARGET_NOT_FOUND) ||
@@ -640,6 +657,7 @@ function isRetryableOpenshellReRegistrationState(
   return (
     sessionUnavailable ||
     relayChannelTimedOut ||
+    relayChannelDropped ||
     relayTargetUnavailable ||
     error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
   );
@@ -652,7 +670,11 @@ type RecreatedSandboxOpenShellReadinessFailure =
 
 type RecreatedSandboxOpenShellReadinessResult =
   | { ready: true }
-  | { failure: RecreatedSandboxOpenShellReadinessFailure; ready: false };
+  | {
+      failure: RecreatedSandboxOpenShellReadinessFailure;
+      openshellError?: string;
+      ready: false;
+    };
 
 type RecreatedSandboxOpenShellReadyOptions = {
   captureOpenshellImpl?: typeof captureOpenshell;
@@ -665,16 +687,30 @@ type RecreatedSandboxOpenShellReadyOptions = {
 
 function recreatedSandboxOpenShellReadinessFailureDetail(
   failure: RecreatedSandboxOpenShellReadinessFailure,
+  openshellError?: string,
 ): string {
-  switch (failure) {
-    case "managed-health-definitive-failure":
-      return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
-    case "managed-health-inconclusive-timeout":
-      return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
-    case "openshell-readiness-failure":
-      return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
-  }
+  const detail = (() => {
+    switch (failure) {
+      case "managed-health-definitive-failure":
+        return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
+      case "managed-health-inconclusive-timeout":
+        return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
+      case "openshell-readiness-failure":
+        return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
+    }
+  })();
+  return openshellError ? `${detail} Last OpenShell readiness error: ${openshellError}` : detail;
 }
+
+// Default seconds to wait for OpenShell to re-register a recreated sandbox as
+// Ready before giving up and surfacing the manual-recover hint. Aligned with
+// `connect`'s readiness budget (`waitForSandboxReadyOrExit` defaults to 120s):
+// both prove the same post-recreate sandbox readiness, but this path used to
+// give up 4x sooner (30s), so a cold-start `phase: Error` settling window that
+// exceeded 30s but was within `connect`'s 120s left the primary dashboard/API
+// forward unstarted — exactly why `connect --probe-only` recovers what `start`
+// abandons (#7227). Env-tunable via NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS.
+const GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS = 120;
 
 /**
  * Wait until OpenShell has re-registered a directly recreated sandbox as
@@ -694,7 +730,10 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     Number.isFinite(options.timeoutSeconds) &&
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
-      : readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", 30);
+      : readNonNegativeNumberEnv(
+          "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+          GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS,
+        );
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     options.intervalSeconds ?? 3,
@@ -704,6 +743,7 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     intervalSeconds > 0
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
+  let lastOpenshellError: string | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const preGuardRemainingMs = deadlineMs - now();
@@ -728,7 +768,11 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     }
     const remainingMs = deadlineMs - now();
     if (attempt > 1 && remainingMs <= 0) {
-      return { failure: "openshell-readiness-failure", ready: false };
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     const result = capture(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
       ignoreError: true,
@@ -737,23 +781,44 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
     if (result.status === 0 && !result.error) return { ready: true };
+    const openshellError = normalizeOpenshellStructuredError(String(result.stderr ?? ""));
+    if (openshellError) lastOpenshellError = openshellError;
     // This probe executes only `true`, so an OpenShell process timeout has no
     // mutation outcome to reconcile. Treat that exact timeout as inconclusive
     // and retry behind the pinned managed-health guard on the next iteration.
     // All other unexpected OpenShell failures remain definitive.
-    if (!isRetryableOpenshellReRegistrationState(result) && !isCommandTimeout(result)) {
-      return { failure: "openshell-readiness-failure", ready: false };
+    if (
+      !isRetryableOpenshellReRegistrationState(result, sandboxName) &&
+      !isCommandTimeout(result)
+    ) {
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     if (attempt === maxAttempts) {
-      return { failure: "openshell-readiness-failure", ready: false };
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     const postProbeRemainingMs = deadlineMs - now();
     if (postProbeRemainingMs <= 0) {
-      return { failure: "openshell-readiness-failure", ready: false };
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     sleep(Math.min(intervalSeconds * 1000, postProbeRemainingMs) / 1000);
   }
-  return { failure: "openshell-readiness-failure", ready: false };
+  return {
+    failure: "openshell-readiness-failure",
+    openshellError: lastOpenshellError,
+    ready: false,
+  };
 }
 
 export function waitForRecreatedSandboxOpenShellReady(
@@ -786,6 +851,15 @@ function printHostManagedGatewayRecoveryHints(
     console.error("  Recreate the sandbox runtime to restore it:");
     console.error(`    nemoclaw ${quotedSandboxName} rebuild --yes`);
     console.error("  If rebuild is blocked, destroy and re-onboard the sandbox to restore it.");
+    return;
+  }
+  // A drifted protected config and a quarantined supervisor both refuse every
+  // relaunch deterministically, so the generic "retry the managed restart" hint
+  // below would send the operator into a loop that cannot succeed (#7801).
+  if (isGatewayIntegrityRepairLayer(failureLayer)) {
+    for (const line of gatewayIntegrityRepairLines(quotedSandboxName, failureLayer)) {
+      console.error(`  ${line}`);
+    }
     return;
   }
   let agentName = agent?.name ?? null;
@@ -864,7 +938,7 @@ export function waitForRecoveredSandboxGateway(
     Number.isFinite(options.timeoutSeconds) &&
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
-      : 30;
+      : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
   const timeoutSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
     requestedTimeoutSeconds,
@@ -961,6 +1035,10 @@ function isHermesAgent(
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
  * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, secretBoundaryRefused?, secretBoundaryReason? }`.
+ * `onRecoveryFailureLayer` reports the classified managed-restart failure so a
+ * quiet caller (`recover`, `connect --probe-only`) can still explain why
+ * recovery is not retryable instead of printing a generic "check the gateway
+ * log". The result shape is unchanged so existing callers keep their contract.
  */
 function checkAndRecoverSandboxProcessesWithoutHostLock(
   sandboxName: string,
@@ -972,6 +1050,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     isWsl: isWslOverride,
+    onRecoveryFailureLayer,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
@@ -980,6 +1059,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -1100,6 +1180,17 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
           "the primary dashboard/API host forward is owned by another sandbox",
+      };
+    }
+    if (forwardHealthy === null) {
+      return {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail:
+          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
       };
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
@@ -1223,14 +1314,45 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           managedRecoveryFailureLayer,
         );
       }
+      onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
     if (relaunch) {
       try {
         const completion = relaunch.finalize(true);
+        if (completion.stateRestored === false || completion.rolledBack) {
+          if (!quiet) {
+            console.error(
+              completion.rolledBack
+                ? "  Sandbox recovery did not complete; the previous container was restored."
+                : "  Sandbox recovery failed and the previous container could not be restored automatically.",
+            );
+            if (completion.rolledBack && completion.stateBackupRemoved === false) {
+              console.error("  Warning: the temporary sandbox state backup could not be removed.");
+            }
+            if (!completion.rolledBack) {
+              printHostManagedGatewayRecoveryHints(
+                sandboxName,
+                recoveryAgent,
+                managedRecoveryFailureLayer,
+              );
+            }
+          }
+          return {
+            checked: true,
+            wasRunning: false,
+            recovered: false,
+            forwardRecovered: false,
+          };
+        }
         if (!completion.backupRemoved && !quiet) {
           console.error(
             "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
+          );
+        }
+        if (completion.stateBackupRemoved === false && !quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but its temporary state backup could not be removed.",
           );
         }
       } catch {
@@ -1255,7 +1377,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
                 : ({ failure: "openshell-readiness-failure", ready: false } as const);
           return readiness.ready
             ? null
-            : recreatedSandboxOpenShellReadinessFailureDetail(readiness.failure);
+            : recreatedSandboxOpenShellReadinessFailureDetail(
+                readiness.failure,
+                "openshellError" in readiness ? readiness.openshellError : undefined,
+              );
         })()
       : null;
     if (readinessFailureDetail) {
@@ -1342,6 +1467,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent, managedRecoveryFailureLayer);
   }
 
+  onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
   return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
 }
 
@@ -1355,6 +1481,7 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>

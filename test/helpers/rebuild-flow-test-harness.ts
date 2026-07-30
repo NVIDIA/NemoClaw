@@ -40,6 +40,7 @@ const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 const onboardSession = requireDist("../../state/onboard-session.js");
 const registry = requireDist("../../state/registry.js");
+const registryPersistence = requireDist("../../state/registry/persistence.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
@@ -48,6 +49,7 @@ const gatewayState = requireDist("./gateway-state.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
+const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 const buildContextFingerprint = requireDist("../../adapters/fs/build-context-fingerprint.js");
 const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 const rebuildShields = requireDist("./rebuild-shields.js");
@@ -68,10 +70,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
+  let policyAdditionsPath: string | null = null;
+  if (typeof overrides.agentPolicyAdditionsContent === "string") {
+    const policyDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-agent-policy-"));
+    harnessTempDirs.push(policyDir);
+    policyAdditionsPath = path.join(policyDir, "policy-additions.yaml");
+    fs.writeFileSync(policyAdditionsPath, overrides.agentPolicyAdditionsContent);
+  }
   const agentDef = {
     name:
       typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : "openclaw",
     expectedVersion: "0.2.0",
+    policyAdditionsPath,
   };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -235,7 +245,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return true;
     });
   let registryLoadCount = 0;
-  vi.spyOn(registry, "load").mockImplementation(() => {
+  vi.spyOn(registryPersistence, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
     const defaultSandbox = isPreDeleteRead ? preDeleteDefaultSandbox : initialDefaultSandbox;
@@ -261,6 +271,42 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       Object.assign(currentSandboxEntry, updates);
       return true;
     });
+  vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockImplementation(
+    (...args: unknown[]) => {
+      const input = args[0] as {
+        sandboxName: string;
+        gatewayName: string;
+        targetUpdate: Record<string, unknown>;
+      };
+      if (!registry.updateSandbox(input.sandboxName, input.targetUpdate)) {
+        return {
+          ok: false,
+          message: "Sandbox registry entry disappeared during rebuild route preflight.",
+        };
+      }
+      return {
+        ok: true,
+        receipt: {
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          route: {
+            provider: input.targetUpdate.provider ?? null,
+            model: input.targetUpdate.model ?? null,
+            endpointUrl: input.targetUpdate.endpointUrl ?? null,
+            preferredInferenceApi: input.targetUpdate.preferredInferenceApi ?? null,
+            credentialEnv: input.targetUpdate.credentialEnv ?? null,
+          },
+          migratedSandboxNames: [],
+        },
+      };
+    },
+  );
+  vi.spyOn(rebuildRoutePreflight, "revalidateRebuildRouteBeforeDelete").mockImplementation(
+    (...args: unknown[]) => {
+      const receipt = args[0] as Record<string, unknown>;
+      return overrides.revalidateRebuildRouteBeforeDelete?.(receipt) ?? { ok: true, receipt };
+    },
+  );
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation((...args: unknown[]) => {
@@ -382,7 +428,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      if (argv.join(" ") === "sandbox get alpha") {
+      const overrideResult = overrides.runOpenshell?.(argv);
+      if (overrideResult) return overrideResult;
+      if (
+        argv.join(" ") === "sandbox get alpha" ||
+        argv.join(" ") === "sandbox get -g nemoclaw alpha"
+      ) {
         return {
           status: 1,
           output: "sandbox alpha not found",
@@ -390,7 +441,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stderr: "sandbox alpha not found",
         };
       }
-      return overrides.runOpenshell ? overrides.runOpenshell(argv) : { status: 0, output: "" };
+      return { status: 0, output: "" };
+    });
+  const captureOpenshellSpy = vi
+    .spyOn(openshellRuntime, "captureOpenshell")
+    .mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      return overrides.captureOpenshell
+        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+        : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
   const defaultRemovalReceipt = {
     entry: preDeleteSandboxEntry,
@@ -430,8 +489,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const options = args[0] as RebuildRecreateOnboardOpts;
       await overrides.onboard?.(session, options);
     });
-  vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockResolvedValue(
-    undefined,
+  vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockImplementation(
+    async (options: unknown) => {
+      const preflightOptions = (options ?? {}) as Record<string, unknown>;
+      if (overrides.preflightWithProductionBaselineResolver) {
+        policies.resolveSandboxBaselinePolicy(String(preflightOptions.sandboxName ?? ""));
+      }
+      await overrides.preflightAuthoritativeRebuildTarget?.(preflightOptions);
+    },
   );
   const ensureValidatedBraveSearchCredentialSpy = vi
     .spyOn(rebuildOnboardDependencies, "ensureValidatedWebSearchCredential")
@@ -549,6 +614,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     releaseOnboardLockSpy,
     relockSpy,
     restoreSandboxStateSpy,
+    captureOpenshellSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
     prepareMcpBridgesForAbsentSandboxRebuildSpy,

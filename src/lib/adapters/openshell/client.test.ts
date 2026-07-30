@@ -291,6 +291,31 @@ describe("openshell helpers", () => {
     ]);
   });
 
+  it("scopes both sandbox lookups to the requested gateway (#7429)", () => {
+    const calls: string[][] = [];
+    const spawnSyncImpl: OpenshellSpawnSync = (_command, args) => {
+      calls.push([...args]);
+      return makeSpawnResult({
+        status: 0,
+        stdout: args.includes("get") ? "alpha Ready\n" : "Host openshell-alpha\n",
+        stderr: "",
+      });
+    };
+
+    captureSandboxSshConfigCommand("openshell", "alpha", {
+      spawnSyncImpl,
+      gatewayName: "nemoclaw-18080",
+    });
+
+    // Both hops must carry the gateway: `get` succeeding on one gateway while
+    // `ssh-config` resolves against another would emit a config for the wrong
+    // sandbox.
+    expect(calls).toEqual([
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      ["sandbox", "ssh-config", "-g", "nemoclaw-18080", "alpha"],
+    ]);
+  });
+
   it("does not request SSH config when the sandbox is missing", () => {
     const calls: string[][] = [];
     const spawnSyncImpl: OpenshellSpawnSync = (_command, args) => {

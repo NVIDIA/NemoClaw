@@ -24,6 +24,8 @@ import {
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { getBaselineExclusionRuntimeStatus } from "../../policy";
+import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclusion";
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
@@ -39,6 +41,7 @@ import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
 import {
   getSandboxStatusPreflight,
   type SandboxStatusFailureLayer,
+  type SandboxStatusPreflightResult,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
 import {
@@ -165,6 +168,15 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
+  baselineExclusions: string[];
+  /** Observed enforcement state for each recorded baseline exclusion. */
+  baselineExclusionStates: Array<{ key: string; status: BaselineExclusionRuntimeStatus }>;
+  /** Interrupted cross-system policy mutation that must be reconciled before rebuild. */
+  baselineExclusionTransition: {
+    operation: registry.BaselineExclusionTransitionOperation;
+    key: string;
+  } | null;
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
@@ -200,6 +212,8 @@ export interface SandboxStatusSnapshot {
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   servingProcessHealth: ServingProcessHealth | null;
+  /** Refreshed after Docker recovery so callers do not render stale stopped-container state. */
+  postRecoveryPreflight?: SandboxStatusPreflightResult;
 }
 
 export interface SandboxStatusAgentInfo {
@@ -244,6 +258,28 @@ export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatus
 
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
+type RecoverSandboxProcesses =
+  typeof import("./status/process-recovery")["checkAndRecoverSandboxProcesses"];
+type SandboxProcessRecoveryResult = ReturnType<RecoverSandboxProcesses>;
+
+type SandboxProcessRecoveryFailure = {
+  layer:
+    | "inspection"
+    | "secret-boundary"
+    | "mcp-reconciliation"
+    | "gateway-recovery"
+    | "forward-recovery"
+    | "recovery-error";
+  detail: string;
+};
+
+function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
+  return (
+    require("./status/process-recovery") as {
+      checkAndRecoverSandboxProcesses: RecoverSandboxProcesses;
+    }
+  ).checkAndRecoverSandboxProcesses;
+}
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
@@ -253,17 +289,101 @@ interface CollectSandboxStatusSnapshotDeps {
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
   reportInferenceProbeError?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
+  recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
+  getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
+  getBaselineExclusionRuntimeStatus?: typeof getBaselineExclusionRuntimeStatus;
+}
+
+function sanitizedStatusDetail(error: unknown): string {
+  const raw = error instanceof Error && error.message ? error.message : String(error);
+  return redact(raw)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
+function processRecoveryFailure(
+  result: SandboxProcessRecoveryResult,
+): SandboxProcessRecoveryFailure | null {
+  if (!result.checked) {
+    return {
+      layer: "inspection",
+      detail: "the managed agent gateway could not be inspected",
+    };
+  }
+  if ("secretBoundaryRefused" in result && result.secretBoundaryRefused) {
+    return {
+      layer: "secret-boundary",
+      detail: sanitizedStatusDetail(
+        "secretBoundaryReason" in result
+          ? result.secretBoundaryReason
+          : "the agent secret boundary refused recovery",
+      ),
+    };
+  }
+  if ("mcpReconciliationRefused" in result && result.mcpReconciliationRefused) {
+    return {
+      layer: "mcp-reconciliation",
+      detail: sanitizedStatusDetail(
+        "mcpReconciliationReason" in result
+          ? result.mcpReconciliationReason
+          : "MCP reconciliation refused recovery",
+      ),
+    };
+  }
+  if ("forwardRecoveryFailed" in result && result.forwardRecoveryFailed) {
+    return {
+      layer: "forward-recovery",
+      detail: sanitizedStatusDetail(
+        "forwardRecoveryFailureDetail" in result
+          ? result.forwardRecoveryFailureDetail
+          : "the host forward could not be restored",
+      ),
+    };
+  }
+  if (result.wasRunning === false && result.recovered && !result.forwardRecovered) {
+    return {
+      layer: "forward-recovery",
+      detail: "the primary dashboard/API host forward was not proven after gateway recovery",
+    };
+  }
+  if (result.wasRunning === false && !result.recovered) {
+    return {
+      layer: "gateway-recovery",
+      detail: "the managed agent gateway could not be restarted",
+    };
+  }
+  if (result.wasRunning === null && (!("runtime" in result) || result.runtime !== "terminal")) {
+    return {
+      layer: "inspection",
+      detail: "the managed agent gateway recovery result was inconclusive",
+    };
+  }
+  return null;
+}
+
+async function refreshPreflightAfterDockerRecovery(
+  sandbox: registry.SandboxEntry | null,
+  initial: SandboxStatusPreflightResult,
+  getPreflight: typeof getSandboxStatusPreflight,
+): Promise<SandboxStatusPreflightResult> {
+  // A listener observed while the sandbox was stopped may belong to another
+  // process. Starting the container makes the ordinary preflight stop checking
+  // that port, so keep this ownership conflict authoritative.
+  if (initial.failureLayer === "sandbox_dashboard_port_conflict") return initial;
+  try {
+    return await getPreflight(sandbox);
+  } catch {
+    return initial;
+  }
 }
 
 function reportInferenceProbeError(error: unknown, writer: (message: string) => void): void {
-  const raw = error instanceof Error && error.message ? error.message : String(error);
-  const detail = redact(raw)
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const detail = sanitizedStatusDetail(error);
   writer(
-    `  Warning: the authoritative inference.local probe could not run: ${detail.slice(0, 240) || "unknown error"}`,
+    `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
   );
 }
 
@@ -271,6 +391,7 @@ export async function collectSandboxStatusSnapshot(
   sandboxName: string,
   opts: {
     suppressInferenceProbe?: boolean;
+    preflight?: SandboxStatusPreflightResult;
     deps?: CollectSandboxStatusSnapshotDeps;
   } = {},
 ): Promise<SandboxStatusSnapshot> {
@@ -292,6 +413,56 @@ export async function collectSandboxStatusSnapshot(
       output: `  Could not probe live gateway state: ${message}`,
     };
   }
+  const dockerRecovered = lookup.recoveredSandbox === true;
+  const managedOpenClawDeliveryMustBeProven =
+    lookup.state === "present" &&
+    sb?.openshellDriver === "docker" &&
+    (sb.agent ?? "openclaw") === "openclaw" &&
+    parseSandboxPhase(lookup.output || "") === "Ready" &&
+    !opts.preflight?.failure;
+  if (
+    lookup.state === "present" &&
+    (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
+  ) {
+    let failure: SandboxProcessRecoveryFailure | null;
+    try {
+      // The managed gateway service can restart a Docker sandbox before status
+      // runs. OpenShell then reports Ready without a recoveredSandbox marker,
+      // while the OpenClaw gateway and host forward can still be absent.
+      const recovery = (opts.deps?.recoverSandboxProcesses ?? loadRecoverSandboxProcesses())(
+        sandboxName,
+        {
+          quiet: true,
+        },
+      );
+      failure = processRecoveryFailure(recovery);
+    } catch (error) {
+      failure = {
+        layer: "recovery-error",
+        detail: sanitizedStatusDetail(error) || "agent and host-forward recovery failed",
+      };
+    }
+    if (failure) {
+      lookup = {
+        ...lookup,
+        state: "sandbox_recovery_failed",
+        output:
+          `  Sandbox '${sandboxName}' is present, but its agent delivery chain could not be proven ` +
+          `(${failure.layer}: ${failure.detail}).`,
+      };
+    }
+  }
+  const postRecoveryPreflight =
+    dockerRecovered && opts.preflight
+      ? await refreshPreflightAfterDockerRecovery(
+          sb,
+          opts.preflight,
+          opts.deps?.getSandboxStatusPreflightImpl ?? getSandboxStatusPreflight,
+        )
+      : undefined;
+  const suppressInferenceProbe =
+    (postRecoveryPreflight ?? opts.preflight)?.suppressInferenceProbe ??
+    opts.suppressInferenceProbe === true;
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
@@ -320,6 +491,7 @@ export async function collectSandboxStatusSnapshot(
       inferenceHealth: null,
       terminalRuntimeHealth: null,
       servingProcessHealth: null,
+      ...(postRecoveryPreflight ? { postRecoveryPreflight } : {}),
     };
   }
   const live =
@@ -362,7 +534,7 @@ export async function collectSandboxStatusSnapshot(
   let providerHealth: ProviderHealthStatus | null = null;
   try {
     providerHealth = maybeGetSandboxStatusInferenceHealth(
-      opts.suppressInferenceProbe === true,
+      suppressInferenceProbe,
       lookup.state === "present",
       (live && live.provider) || currentProvider,
       (live && live.model) || currentModel,
@@ -382,7 +554,7 @@ export async function collectSandboxStatusSnapshot(
   // `inference.local` is authoritative because it is the route the agent uses.
   // Probe it independently of direct/upstream provider diagnostics, including
   // providers without a registered host-side health probe (#6192).
-  if (opts.suppressInferenceProbe !== true && lookup.state === "present") {
+  if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
     try {
       gatewayChain = await (
@@ -420,6 +592,7 @@ export async function collectSandboxStatusSnapshot(
     inferenceHealth,
     terminalRuntimeHealth,
     servingProcessHealth,
+    ...(postRecoveryPreflight ? { postRecoveryPreflight } : {}),
   };
 }
 
@@ -440,9 +613,11 @@ async function buildSandboxStatusReport(
   deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const preflight = await getSandboxStatusPreflight(getSandbox(sandboxName));
+  const preflight = await (deps.getSandboxStatusPreflightImpl ?? getSandboxStatusPreflight)(
+    getSandbox(sandboxName),
+  );
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
-    suppressInferenceProbe: preflight.suppressInferenceProbe,
+    preflight,
     deps,
   });
   const {
@@ -459,12 +634,30 @@ async function buildSandboxStatusReport(
   } = snapshot;
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
-  const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
+  const effectivePreflight = withoutTerminalPhasePreflight(
+    snapshot.postRecoveryPreflight ?? preflight,
+    phase,
+  );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
       : [];
+  const baselineExclusions = sb?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [];
+  const baselineExclusionStates =
+    sb?.baselineExclusions?.map((exclusion) => ({
+      key: exclusion.key,
+      status: (deps.getBaselineExclusionRuntimeStatus ?? getBaselineExclusionRuntimeStatus)(
+        sandboxName,
+        exclusion,
+      ),
+    })) ?? [];
+  const baselineExclusionTransition = sb?.baselineExclusionTransition
+    ? {
+        operation: sb.baselineExclusionTransition.operation,
+        key: sb.baselineExclusionTransition.exclusion.key,
+      }
+    : null;
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
@@ -496,6 +689,9 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    baselineExclusions,
+    baselineExclusionStates,
+    baselineExclusionTransition,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,

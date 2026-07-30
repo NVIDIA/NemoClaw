@@ -275,6 +275,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain(
       "The mcporter locked graph reported no findings across `138` dependencies",
     );
+    expect(review).toContain("`@hono/node-server` to patched release `2.0.11`");
     expect(review).toContain("GHSA-frvp-7c67-39w9");
     expect(review).toContain("Hono finding remains in the reviewed OpenClaw graph");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
@@ -433,10 +434,15 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
   // source-shape-contract: security -- The legacy archive remediation helper must be present in the base image before the fail-closed Docker build invokes it
   it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
     const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
-    const helperCopy = dockerfile.indexOf(
+    const flattenedDockerfile = dockerfile.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const groupedHelperCopy = flattenedDockerfile.indexOf(
+      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+    );
+    const legacyHelperCopy = flattenedDockerfile.indexOf(
       "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
     );
-    const helperInvocation = dockerfile.indexOf(
+    const helperCopy = groupedHelperCopy >= 0 ? groupedHelperCopy : legacyHelperCopy;
+    const helperInvocation = flattenedDockerfile.indexOf(
       "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
     );
 
@@ -668,8 +674,8 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
     const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-    const buildAndPush = baseImages.jobs["build-and-push"] as WorkflowJob;
-    const guard = requiredStep(buildAndPush, "Validate production Docker build args");
+    const buildOpenClawPlatforms = baseImages.jobs["build-openclaw-platforms"] as WorkflowJob;
+    const guard = requiredStep(buildOpenClawPlatforms, "Validate production Docker build args");
 
     for (const [input, expectedOutput] of [
       ["", "openclaw_build_arg=\n"],

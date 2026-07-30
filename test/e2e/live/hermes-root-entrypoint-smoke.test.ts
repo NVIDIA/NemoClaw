@@ -221,8 +221,8 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "gateway.pid is not a regular top-level file",
-    "test -f /sandbox/.hermes/gateway.pid && test ! -L /sandbox/.hermes/gateway.pid",
+    "gateway.pid is not a regular runtime file",
+    "test -f /sandbox/.hermes/runtime/gateway.pid && test ! -L /sandbox/.hermes/runtime/gateway.pid && test ! -e /sandbox/.hermes/gateway.pid && test ! -L /sandbox/.hermes/gateway.pid",
   );
   await expectContainerShFails(
     probe,
@@ -235,6 +235,15 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
     container,
     "config.yaml disappeared after gateway remove attempt",
     "test -f /sandbox/.hermes/config.yaml",
+  );
+}
+
+async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string): Promise<void> {
+  await expectContainerSh(
+    probe,
+    container,
+    "build-only Hermes paths are present in the runtime image",
+    'for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp; do test ! -e "$path" && test ! -L "$path"; done',
   );
 }
 
@@ -366,6 +375,7 @@ async function runCleanVariant(
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
+  await assertBuildOnlyPathsAbsent(probe, container);
   await assertBearerAuth(probe, container);
   await assertDashboardHome(probe, container);
 }
@@ -437,7 +447,8 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       "gateway process runs as gateway user",
       "gateway log has no PID race or config load failure",
       "Hermes v0.14 writable runtime directories are present",
-      "gateway.pid is migrated to a regular top-level file",
+      "build-only upstream tests and root caches are absent from the runtime image",
+      "gateway.pid is stored as a regular file below the writable runtime directory",
       "gateway user cannot remove config.yaml from sticky config root",
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
       "dashboard-home is sandbox-owned 0700 with 0600 allowlisted config/env",
@@ -479,6 +490,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       cleanStartupHealthy: true,
       legacyStartupHealthy: true,
       runtimeLayoutVerified: true,
+      buildOnlyPathsAbsent: true,
       gatewayPrivilegeSeparationVerified: true,
       bearerAuthVerified: true,
       dashboardHomeVerified: true,

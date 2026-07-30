@@ -30,6 +30,7 @@ import {
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
 import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
+import { normalizeReasoningEffort, REASONING_EFFORT_ENV } from "./reasoning-mode";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -328,6 +329,13 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_REASONING=${sanitizeDockerArg(reasoning)}`,
     );
   }
+  const reasoningEffort = normalizeReasoningEffort(process.env[REASONING_EFFORT_ENV]);
+  if (reasoningEffort) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_REASONING_EFFORT=.*$/m,
+      `ARG NEMOCLAW_REASONING_EFFORT=${sanitizeDockerArg(reasoningEffort)}`,
+    );
+  }
   // Honor NEMOCLAW_INFERENCE_INPUTS for vision-capable models. OpenClaw's
   // model schema currently accepts "text" and "image" only, so validate
   // strictly against that vocabulary. Adding modalities to OpenClaw later
@@ -415,7 +423,7 @@ export function patchStagedDockerfile(
     }
     dockerfile = dockerfile.replace(
       messagingPlanArgPattern,
-      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlan(hydratedMessagingPlan))}`,
+      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(hydratedMessagingPlan))}`,
     );
   }
   if (hermesToolGateways.length > 0) {

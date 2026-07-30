@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PrepareTargetPrError,
   prepareTargetPr,
+  validatePrepareTargetDirectory,
   validatePrepareTargetPrInput,
 } from "../tools/pr-review-advisor/prepare-target-pr.mts";
 
@@ -44,7 +45,11 @@ function harness(shas: { base?: string; head?: string } = {}) {
   const appendEnv = (key: string, value: string): void => {
     env.push([key, value]);
   };
-  return { gitCalls, env, options: { targetDir: tempDir(), runGit, appendEnv } };
+  return {
+    gitCalls,
+    env,
+    options: { targetDir: path.join(tempDir(), "pr-workdir"), runGit, appendEnv },
+  };
 }
 
 describe("validatePrepareTargetPrInput", () => {
@@ -72,6 +77,22 @@ describe("validatePrepareTargetPrInput", () => {
 });
 
 describe("prepareTargetPr", () => {
+  it("accepts only a dedicated pr-workdir cleanup target", () => {
+    const parent = tempDir();
+    const dedicated = path.join(parent, "pr-workdir");
+
+    expect(validatePrepareTargetDirectory(dedicated)).toBe(path.resolve(dedicated));
+    for (const unsafe of ["", path.parse(dedicated).root, parent, path.join(parent, "repo")]) {
+      expect(() => validatePrepareTargetDirectory(unsafe)).toThrow(PrepareTargetPrError);
+      expect(() => validatePrepareTargetDirectory(unsafe)).toThrow(/target directory|pr-workdir/u);
+    }
+    for (const currentDirectory of [dedicated, path.join(dedicated, "checkout")]) {
+      expect(() => validatePrepareTargetDirectory(dedicated, currentDirectory)).toThrow(
+        /pr-workdir/u,
+      );
+    }
+  });
+
   it("fetches, verifies SHAs, and exports env on the pull_request_target path", () => {
     const { gitCalls, env, options } = harness({ base: BASE_SHA, head: HEAD_SHA });
 

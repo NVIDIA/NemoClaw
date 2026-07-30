@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import os
 import sys
+import asyncio
 from types import SimpleNamespace
 
 
@@ -62,6 +63,12 @@ class Parser:
     def parse_args(self):
         argv = sys.argv[1:]
         command = next((arg for arg in argv if not arg.startswith("-") and arg != "none"), None)
+        non_interactive_message = None
+        for index, arg in enumerate(argv):
+            if arg in {"-n", "--non-interactive"} and index + 1 < len(argv):
+                non_interactive_message = argv[index + 1]
+            elif arg.startswith("--non-interactive="):
+                non_interactive_message = arg.split("=", 1)[1]
         tools_command = None
         if command == "tools":
             index = argv.index("tools")
@@ -89,6 +96,11 @@ class Parser:
             no_mcp=False,
             trust_project_mcp=True,
             shell_allow_list=["bash"],
+            non_interactive_message=non_interactive_message,
+            output_format=("json" if "--json" in argv else "text"),
+            quiet=("-q" in argv or "--quiet" in argv),
+            no_stream=("--no-stream" in argv),
+            timeout=None,
         )
 
     def error(self, message):
@@ -119,6 +131,22 @@ def cli_main():
     assert all(os.environ.get(name) == "false" for name in tracing_flags)
     assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["HOME"] == "/sandbox"
+    output_format = getattr(args, "output_format", "text")
+    if args.non_interactive_message:
+        from deepagents_code.client.non_interactive import run_non_interactive
+
+        timeout = getattr(args, "timeout", None)
+        exit_code = asyncio.run(
+            asyncio.wait_for(
+                run_non_interactive(
+                            message=args.non_interactive_message,
+                            quiet=args.quiet,
+                            stream=not args.no_stream,
+                ),
+                        timeout=timeout,
+            )
+        )
+        raise SystemExit(exit_code)
     print(f"managed-posture-ok auto_approve={args.auto_approve}")
 `,
   );
@@ -254,6 +282,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 _dotenv_loaded_values = {}
+CLI_MAX_RETRIES_KEY = "__deepagents_cli_max_retries__"
 
 
 def _preview_dotenv_environ(*, start_path=None):
@@ -429,14 +458,58 @@ def _run_single_hook(command, event, payload_bytes):
     `
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 settings = SimpleNamespace(shell_allow_list=["bash"])
+logger = logging.getLogger(__name__)
+
+
+class _Console:
+    def print(self, message):
+        print(message)
+
+
+def escape_markup(value):
+    return value
+
+
+def generate_thread_id():
+    return "thread-1"
+
+
+def _write_text(text):
+    print(text, end="", flush=True)
+
+
+def _write_newline():
+    print()
+
+
+async def _run_non_interactive_impl(*args, **kwargs):
+    del args
+    if kwargs.get("message") == "fixture-json-task":
+        return 0
+    return kwargs
+
+
+async def _run_agent_loop(*args, **kwargs):
+    return await _run_non_interactive_impl(*args, **kwargs)
 
 
 async def run_non_interactive(*args, **kwargs):
-    del args
-    return kwargs
+    console = _Console()
+    thread_id = generate_thread_id()
+    try:
+        result = await _run_agent_loop(*args, **kwargs)
+        return result
+    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        console.print(
+            f"\\n[red]Unexpected error ({type(e).__name__}): "
+            f"{escape_markup(str(e))}[/red]"
+        )
+        return 1
 
 
 async def _run_startup_command(command, console, *, quiet):

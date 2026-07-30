@@ -44,7 +44,9 @@ describe("ollama-auth-proxy request handler", () => {
   beforeEach(async () => {
     backend = await startBackend();
     proxyPort = await freePort();
-    proxy = await startProxy(proxyPort, backend.port, TOKEN);
+    proxy = await startProxy(proxyPort, backend.port, TOKEN, {
+      backendUrl: `http://localhost:${backend.port}`,
+    });
   });
 
   afterEach(async () => {

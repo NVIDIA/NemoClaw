@@ -18,6 +18,10 @@ import { createLocalInferenceRouteApplier } from "../../onboard/local-inference-
 
 const requireDist = createRequire(import.meta.url);
 const openshellRuntime = requireDist("../../adapters/openshell/runtime.js") as {
+  captureOpenshell(
+    args: string[],
+    options?: Record<string, unknown>,
+  ): { status: number | null; output?: string; stdout?: string; stderr?: string };
   runOpenshell(
     args: string[],
     options?: Record<string, unknown>,
@@ -111,6 +115,7 @@ const localProviderScenarios = [
           applyLocalInferenceRoute,
           run: () => ({ status: 0 }),
           VLLM_LOCAL_CREDENTIAL_ENV: "NEMOCLAW_VLLM_LOCAL_TOKEN",
+          getManagedVllmProviderBinding: () => null,
           ...unusedCommonInferenceDeps,
         },
       ),
@@ -144,6 +149,12 @@ describe("rebuild local-provider recreation", () => {
     credentialEnv,
     setup,
   }) => {
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: sandbox alpha not found",
+    });
     let harness!: RebuildFlowHarness;
     let setupResult: SetupResult | undefined;
     harness = createRebuildFlowHarness({
@@ -183,7 +194,7 @@ describe("rebuild local-provider recreation", () => {
 
     const calls = harness.runOpenshellSpy.mock.calls.map((call) => call[0] as string[]);
     const deleteCall = calls.findIndex(
-      (args) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
+      (args) => args.join(" ") === "sandbox delete -g nemoclaw alpha",
     );
     const providerLookup = calls.findIndex(
       (args) => args[0] === "provider" && args[1] === "get" && args[2] === provider,

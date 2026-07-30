@@ -60,8 +60,8 @@ const BROAD_FILES = [
   "src/lib/credentials/provider-list.ts",
 ] as const;
 const BROAD_JOBS = [
+  "cloud-inference",
   "cloud-onboard",
-  "credential-sanitization",
   "security-posture",
   "channels-add-remove",
   "channels-stop-start",
@@ -121,6 +121,14 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
   );
 }
 
+function directPrGateCheckRoute(overrides: Record<string, unknown> = {}) {
+  const check = exactPrGateCheck(overrides);
+  return githubFetchRoute(
+    ({ url, method }) => url.endsWith(`/check-runs/${String(check.id)}`) && method === "GET",
+    () => githubResponse(check),
+  );
+}
+
 function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
   const body = (request.body ?? {}) as Record<string, unknown>;
   return githubResponse(exactPrGateCheck({ id, ...body }));
@@ -161,9 +169,10 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 3,
+    version: 4,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
+    checkoutRepository: "NVIDIA/NemoClaw",
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,
@@ -250,28 +259,9 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
 }
 
 describe("PR E2E controller", () => {
-  it("explains the accepted evidence URL when a manual fork skip uses another GitHub URL", () => {
-    expect(() =>
-      parseControllerCommand([
-        "--mode",
-        "record-fork-e2e-skip",
-        "--pr",
-        "42",
-        "--head",
-        HEAD_SHA,
-        "--base",
-        BASE_SHA,
-        "--workflow-sha",
-        WORKFLOW_SHA,
-        "--maintainer",
-        "maintainer",
-        "--reason",
-        "Reviewed exact fork revision",
-        "--evidence-url",
-        "https://github.com/NVIDIA/NemoClaw/pull/42#issuecomment-1",
-      ]),
-    ).toThrow(
-      "Evidence URL must be an Actions run URL such as https://github.com/NVIDIA/NemoClaw/actions/runs/123. PR, issue, comment, job, and external URLs are not accepted. Leave the field blank if no run exists.",
+  it("rejects the removed manual fork skip mode", () => {
+    expect(() => parseControllerCommand(["--mode", "record-fork-e2e-skip"])).toThrow(
+      "--mode must be",
     );
   });
 
@@ -298,8 +288,8 @@ describe("PR E2E controller", () => {
       focusedPlan,
     );
     expect(riskPlanRequiredJobIds(focusedPlan)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
       "token-rotation",
     ]);
@@ -310,6 +300,9 @@ describe("PR E2E controller", () => {
     expect(riskPlanRequiredTargetIds(targetPlan)).toEqual([DCODE_TARGET]);
     expect(validatePrGateState(gate)).toEqual(gate);
     expect(() => validatePrGateState({ ...gate, prNumber: 0 })).toThrow(/PR number/u);
+    expect(() => validatePrGateState({ ...gate, checkoutRepository: "invalid" })).toThrow(
+      /checkout repository/u,
+    );
     expect(() => validatePrGateState({ ...gate, expectedShards: {} })).toThrow(/shard selections/u);
     expect(() => validatePrGateState({ ...gate, expectedTargets: ["unknown-target"] })).toThrow(
       /State targets/u,
@@ -405,6 +398,22 @@ describe("PR E2E controller", () => {
               object: { type: "commit", sha: WORKFLOW_SHA },
             }),
         ),
+        existingPrGateCheckRunsRoute({
+          id: 101,
+          output: {
+            title: "Evaluating PR commit",
+            summary:
+              "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+          },
+        }),
+        directPrGateCheckRoute({
+          id: 101,
+          output: {
+            title: "Evaluating PR commit",
+            summary:
+              "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+          },
+        }),
         githubFetchRoute(
           ({ url }) => url.endsWith("/actions/workflows/e2e.yaml/dispatches"),
           () =>
@@ -416,11 +425,12 @@ describe("PR E2E controller", () => {
         ),
       ]),
     );
-
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs,
         targets: [DCODE_TARGET],
         prNumber: 42,
@@ -429,18 +439,23 @@ describe("PR E2E controller", () => {
         workflowSha: WORKFLOW_SHA,
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
       }),
     ).resolves.toEqual({ runId: 23, workflowSha: WORKFLOW_SHA });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("git/ref/heads/main");
-    const request = fetchMock.mock.calls[1]!;
+    const request = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/actions/workflows/e2e.yaml/dispatches"),
+    )!;
     expect(String(request[0])).toContain("actions/workflows/e2e.yaml/dispatches");
     expect(JSON.parse(String(request[1]?.body))).toEqual({
       ref: "main",
       inputs: {
         jobs: jobs.join(","),
         targets: DCODE_TARGET,
+        controller_check_id: "101",
         pr_number: "42",
         checkout_sha: HEAD_SHA,
+        checkout_repository: "NVIDIA/NemoClaw",
         base_sha: BASE_SHA,
         workflow_sha: WORKFLOW_SHA,
         plan_hash: "c".repeat(64),
@@ -486,6 +501,22 @@ describe("PR E2E controller", () => {
                 files: [{ filename: "docs/quickstart.mdx" }],
               }),
           ),
+          existingPrGateCheckRunsRoute({
+            id: 101,
+            output: {
+              title: "Evaluating PR commit",
+              summary:
+                "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+            },
+          }),
+          directPrGateCheckRoute({
+            id: 101,
+            output: {
+              title: "Evaluating PR commit",
+              summary:
+                "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+            },
+          }),
           githubFetchRoute(
             ({ url }) => url.endsWith("/actions/workflows/e2e.yaml/dispatches"),
             () =>
@@ -499,11 +530,12 @@ describe("PR E2E controller", () => {
         requests,
       ),
     );
-
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -511,6 +543,7 @@ describe("PR E2E controller", () => {
         workflowSha: WORKFLOW_SHA,
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
       }),
     ).resolves.toEqual({ runId: 23, workflowSha: ADVANCED_WORKFLOW_SHA });
     const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
@@ -570,7 +603,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -578,6 +613,7 @@ describe("PR E2E controller", () => {
         workflowSha: WORKFLOW_SHA,
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
       }),
     ).rejects.toThrow(/trusted E2E control-plane changes/u);
     expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
@@ -637,7 +673,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -645,6 +683,7 @@ describe("PR E2E controller", () => {
         workflowSha: WORKFLOW_SHA,
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
       }),
     ).rejects.toThrow(error);
     expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
@@ -691,7 +730,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -699,6 +740,7 @@ describe("PR E2E controller", () => {
         workflowSha: WORKFLOW_SHA,
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
       }),
     ).rejects.toThrow(/main changed again/u);
     expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
@@ -1189,75 +1231,6 @@ describe("PR E2E controller", () => {
     }
   });
 
-  it("automatically dispatches controller-only changes through the normal evidence path", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-controller-"));
-    const outputPath = path.join(workDir, "github-output");
-    fs.writeFileSync(outputPath, "", { mode: 0o600 });
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const controllerFiles = [".github/workflows/pr-e2e-gate.yaml", "tools/e2e/pr-e2e-gate.mts"];
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          existingPrGateCheckRunsRoute(),
-          githubFetchRoute(
-            ({ url }) => url.includes("/pulls?state=open&head="),
-            () => githubResponse([pullRequestListItem(pullRequest(controllerFiles.length))]),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse(controllerFiles.map((filename) => ({ filename }))),
-          ),
-          pullRequestDetailRoute(pullRequest(controllerFiles.length)),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/git/ref/heads/main"),
-            () =>
-              githubResponse({
-                ref: "refs/heads/main",
-                object: { type: "commit", sha: WORKFLOW_SHA },
-              }),
-          ),
-          githubFetchRoute(
-            ({ url, method }) =>
-              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
-            () =>
-              githubResponse({
-                workflow_run_id: 23,
-                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
-                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
-              }),
-          ),
-          githubFetchRoute(
-            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            (request) => prGateMutationResponse(request),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    try {
-      await startPrGate(startCommand(workDir));
-
-      const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
-      expect(dispatch?.body).toMatchObject({
-        inputs: {
-          jobs: "cloud-onboard,credential-sanitization,security-posture",
-          checkout_sha: HEAD_SHA,
-          base_sha: BASE_SHA,
-        },
-      });
-      const outputs = fs.readFileSync(outputPath, "utf8");
-      expect(outputs).toContain("dispatched=true");
-      expect(outputs).not.toContain("fork_skip_mode=");
-      expect(outputs).not.toContain("finalized=true");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
   it("completes the check when all evidence passes", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-lifecycle-"));
     const outputPath = path.join(workDir, "github-output");
@@ -1278,7 +1251,18 @@ describe("PR E2E controller", () => {
               checkListCalls += 1;
               return checkListCalls <= 2
                 ? githubResponse({ total_count: 0, check_runs: [] })
-                : githubResponse({ total_count: 1, check_runs: [exactPrGateCheck()] });
+                : githubResponse({
+                    total_count: 1,
+                    check_runs: [
+                      exactPrGateCheck({
+                        output: {
+                          title: "Evaluating PR commit",
+                          summary:
+                            "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+                        },
+                      }),
+                    ],
+                  });
             },
           ),
           githubFetchRoute(
@@ -1321,6 +1305,13 @@ describe("PR E2E controller", () => {
               return githubResponse(workflowRun(gate!));
             },
           ),
+          directPrGateCheckRoute({
+            output: {
+              title: "Evaluating PR commit",
+              summary:
+                "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+            },
+          }),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),

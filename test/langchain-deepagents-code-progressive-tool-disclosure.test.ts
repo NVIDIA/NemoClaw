@@ -35,6 +35,7 @@ if __name__ == "__main__":
   "main.py": `from __future__ import annotations
 
 import os
+import asyncio
 from types import SimpleNamespace
 
 class Parser:
@@ -51,7 +52,22 @@ def parse_args():
     return args
 
 def cli_main():
-    return parse_args()
+    args = parse_args()
+    output_format = getattr(args, "output_format", "text")
+    if getattr(args, "non_interactive_message", None):
+        from deepagents_code.client.non_interactive import run_non_interactive
+
+        timeout = getattr(args, "timeout", None)
+        exit_code = asyncio.run(
+            asyncio.wait_for(
+                run_non_interactive(
+                            message=args.non_interactive_message,
+                ),
+                        timeout=timeout,
+            )
+        )
+        raise SystemExit(exit_code)
+    return args
 `,
   "app.py": fs
     .readFileSync(
@@ -283,7 +299,17 @@ def _run_single_hook(command, event, payload_bytes): return None
 `,
   "client/non_interactive.py": `from __future__ import annotations
 
-async def run_non_interactive(*args, **kwargs): return kwargs
+async def run_non_interactive(*args, **kwargs):
+    try:
+        return kwargs
+    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        console.print(
+            f"\\n[red]Unexpected error ({type(e).__name__}): "
+            f"{escape_markup(str(e))}[/red]"
+        )
+        return 1
+
 async def _run_startup_command(command, console, *, quiet): return command
 `,
 };

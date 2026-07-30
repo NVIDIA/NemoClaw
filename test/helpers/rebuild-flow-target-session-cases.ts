@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -186,10 +187,7 @@ export function registerRebuildFlowTargetSessionTests(): void {
         expect(errors).toContain("cannot determine the inference endpoint");
         expect(errors).toContain("Sandbox is untouched");
         expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-        expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-          ["sandbox", "delete", "alpha"],
-          expect.anything(),
-        );
+        expectNoSandboxDelete(harness.runOpenshellSpy);
         expect(harness.onboardSpy).not.toHaveBeenCalled();
       } finally {
         restoreEnv();
