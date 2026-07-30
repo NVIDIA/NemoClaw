@@ -100,6 +100,40 @@ interface OpenShellGatewayUserServiceTarget {
   trustedUnitPaths: string[];
 }
 
+const TRUSTED_GATEWAY_SERVICE_IDENTITY = Symbol("trusted-openshell-gateway-service-identity");
+
+interface TrustedOpenShellGatewayUserServiceIdentityBase {
+  readonly [TRUSTED_GATEWAY_SERVICE_IDENTITY]: true;
+  readonly pid: number;
+  readonly serviceName: string;
+}
+
+export interface TrustedHomebrewOpenShellGatewayUserServiceIdentity
+  extends TrustedOpenShellGatewayUserServiceIdentityBase {
+  readonly formulaName: typeof OPENSHELL_GATEWAY_HOMEBREW_SERVICE;
+  readonly formulaTap: typeof OPENSHELL_GATEWAY_HOMEBREW_TAP;
+  readonly manager: "homebrew";
+  readonly serviceIdentity: string;
+}
+
+export interface TrustedSystemdOpenShellGatewayUserServiceIdentity
+  extends TrustedOpenShellGatewayUserServiceIdentityBase {
+  readonly execStartPath: string;
+  readonly manager: "systemd";
+  readonly unitPath: string;
+}
+
+/**
+ * Opaque, immutable evidence for one active trusted package-managed gateway.
+ *
+ * Callers may retain and inspect this receipt, but only this module can mint
+ * one. Every lifecycle mutation re-resolves the package-managed authority and
+ * proves that its exact unit/formula identity still matches this receipt.
+ */
+export type TrustedActiveOpenShellGatewayUserServiceIdentity =
+  | TrustedHomebrewOpenShellGatewayUserServiceIdentity
+  | TrustedSystemdOpenShellGatewayUserServiceIdentity;
+
 export function getOpenShellGatewayUserServicePaths(): string[] {
   return [
     "/usr/local/lib/systemd/user/openshell-gateway.service",
@@ -389,6 +423,352 @@ function validateSystemdServiceIdentityFromProperties(
         ok: false,
         reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
       };
+}
+
+interface TrustedServiceContext {
+  commandExists: (command: string) => boolean;
+  env: NodeJS.ProcessEnv;
+  service: OpenShellGatewayUserServiceTarget;
+  spawnSyncImpl: SpawnSyncLike;
+}
+
+interface SystemdServiceState {
+  activeState: string;
+  execStartPath: string;
+  mainPid: number;
+  unitPath: string;
+}
+
+interface HomebrewServiceState {
+  loaded: boolean;
+  pid: number | null;
+  running: boolean;
+  serviceIdentity: string;
+}
+
+function trustedServiceContext(opts: OpenShellGatewayUserServiceOptions): TrustedServiceContext {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux" && platform !== "darwin") {
+    throw new Error(`OpenShell gateway service lifecycle is unsupported on ${platform}`);
+  }
+  const env = opts.env ?? process.env;
+  const home = effectiveHome(opts.home, opts.env);
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  const service = resolveOpenShellGatewayUserService({ ...opts, env, home });
+  if (!service) {
+    throw new Error("No trusted package-managed OpenShell gateway service is installed");
+  }
+  const command = service.manager === "homebrew" ? "brew" : "systemctl";
+  if (!commandExists(command)) {
+    throw new Error(`${command} is unavailable for the trusted OpenShell gateway service`);
+  }
+  return { commandExists, env, service, spawnSyncImpl };
+}
+
+function queryTrustedSystemdServiceState(context: TrustedServiceContext): SystemdServiceState {
+  const result = runSystemctlUser(
+    [
+      "show",
+      context.service.serviceName,
+      "--property=FragmentPath",
+      "--property=ExecStart",
+      "--property=ActiveState",
+      "--property=MainPID",
+    ],
+    context,
+  );
+  if (!result.ok) {
+    throw new Error(
+      `Failed to query trusted OpenShell gateway systemd service: ${result.reason ?? "unknown error"}`,
+    );
+  }
+  const properties = parseSystemctlShow(result.stdout ?? "");
+  const identity = validateSystemdServiceIdentityFromProperties(context.service, properties);
+  if (!identity.ok) {
+    throw new Error(identity.reason ?? "OpenShell gateway systemd service identity is invalid");
+  }
+  const unitPath = path.normalize(properties.FragmentPath ?? "");
+  const execStartPath = extractSystemdExecStartPath(properties.ExecStart ?? "");
+  const mainPid = Number(properties.MainPID);
+  if (
+    execStartPath === null ||
+    !Number.isSafeInteger(mainPid) ||
+    mainPid < 0 ||
+    !(properties.ActiveState ?? "").trim()
+  ) {
+    throw new Error("OpenShell gateway systemd service returned incomplete lifecycle state");
+  }
+  return {
+    activeState: properties.ActiveState,
+    execStartPath,
+    mainPid,
+    unitPath,
+  };
+}
+
+function queryTrustedHomebrewServiceState(context: TrustedServiceContext): HomebrewServiceState {
+  const result = runBrew(["services", "info", context.service.serviceName, "--json"], context);
+  if (!result.ok) {
+    throw new Error(
+      `Failed to query trusted OpenShell gateway Homebrew service: ${result.reason ?? "unknown error"}`,
+    );
+  }
+  let records: unknown;
+  try {
+    records = JSON.parse(result.stdout ?? "");
+  } catch {
+    throw new Error("OpenShell gateway Homebrew service state returned invalid JSON");
+  }
+  if (!Array.isArray(records)) {
+    throw new Error("OpenShell gateway Homebrew service state did not return an array");
+  }
+  const namedRecords = records.filter(
+    (candidate): candidate is Record<string, unknown> =>
+      candidate !== null &&
+      typeof candidate === "object" &&
+      (candidate as Record<string, unknown>).name === context.service.serviceName,
+  );
+  if (namedRecords.length !== 1) {
+    throw new Error("OpenShell gateway Homebrew service identity is missing or ambiguous");
+  }
+  const record = namedRecords[0];
+  const expectedServiceIdentity = `homebrew.mxcl.${context.service.serviceName}`;
+  if (
+    record.service_name !== expectedServiceIdentity ||
+    typeof record.loaded !== "boolean" ||
+    typeof record.running !== "boolean"
+  ) {
+    throw new Error("OpenShell gateway Homebrew service identity is foreign or incomplete");
+  }
+  const rawPid = record.pid;
+  const pid =
+    rawPid === null || rawPid === undefined
+      ? null
+      : typeof rawPid === "number" && Number.isSafeInteger(rawPid) && rawPid >= 0
+        ? rawPid
+        : Number.NaN;
+  if (Number.isNaN(pid)) {
+    throw new Error("OpenShell gateway Homebrew service returned an invalid process ID");
+  }
+  return {
+    loaded: record.loaded,
+    pid,
+    running: record.running,
+    serviceIdentity: expectedServiceIdentity,
+  };
+}
+
+function requireTrustedIdentityReceipt(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+): void {
+  if (
+    identity === null ||
+    typeof identity !== "object" ||
+    identity[TRUSTED_GATEWAY_SERVICE_IDENTITY] !== true ||
+    !Object.isFrozen(identity)
+  ) {
+    throw new Error("OpenShell gateway service lifecycle requires a captured trusted identity");
+  }
+}
+
+function assertMatchingServiceTarget(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  context: TrustedServiceContext,
+): void {
+  if (
+    context.service.manager !== identity.manager ||
+    context.service.serviceName !== identity.serviceName
+  ) {
+    throw new Error("Trusted OpenShell gateway service authority drifted");
+  }
+}
+
+function requireMatchingSystemdState(
+  identity: TrustedSystemdOpenShellGatewayUserServiceIdentity,
+  context: TrustedServiceContext,
+): SystemdServiceState {
+  const state = queryTrustedSystemdServiceState(context);
+  if (state.unitPath !== identity.unitPath || state.execStartPath !== identity.execStartPath) {
+    throw new Error("Trusted OpenShell gateway systemd unit identity drifted");
+  }
+  return state;
+}
+
+function requireMatchingHomebrewState(
+  identity: TrustedHomebrewOpenShellGatewayUserServiceIdentity,
+  context: TrustedServiceContext,
+): HomebrewServiceState {
+  if (
+    identity.formulaName !== OPENSHELL_GATEWAY_HOMEBREW_SERVICE ||
+    identity.formulaTap !== OPENSHELL_GATEWAY_HOMEBREW_TAP
+  ) {
+    throw new Error("Trusted OpenShell gateway Homebrew formula identity drifted");
+  }
+  const state = queryTrustedHomebrewServiceState(context);
+  if (state.serviceIdentity !== identity.serviceIdentity) {
+    throw new Error("Trusted OpenShell gateway Homebrew service identity drifted");
+  }
+  return state;
+}
+
+function trustedActiveIdentity(
+  context: TrustedServiceContext,
+): TrustedActiveOpenShellGatewayUserServiceIdentity {
+  if (context.service.manager === "systemd") {
+    const state = queryTrustedSystemdServiceState(context);
+    if (state.activeState !== "active" || state.mainPid <= 0) {
+      throw new Error("Trusted OpenShell gateway systemd service is not active");
+    }
+    return Object.freeze({
+      [TRUSTED_GATEWAY_SERVICE_IDENTITY]: true as const,
+      execStartPath: state.execStartPath,
+      manager: "systemd",
+      pid: state.mainPid,
+      serviceName: context.service.serviceName,
+      unitPath: state.unitPath,
+    });
+  }
+  const state = queryTrustedHomebrewServiceState(context);
+  if (state.loaded !== true || state.running !== true || state.pid === null || state.pid <= 0) {
+    throw new Error("Trusted OpenShell gateway Homebrew service is not active");
+  }
+  return Object.freeze({
+    [TRUSTED_GATEWAY_SERVICE_IDENTITY]: true as const,
+    formulaName: OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
+    formulaTap: OPENSHELL_GATEWAY_HOMEBREW_TAP,
+    manager: "homebrew",
+    pid: state.pid,
+    serviceIdentity: state.serviceIdentity,
+    serviceName: context.service.serviceName,
+  });
+}
+
+/**
+ * Capture the exact active package-managed gateway authority and process.
+ *
+ * This is intentionally strict: unavailable managers, inactive services,
+ * foreign units/formulae, malformed state, and ambiguous identities all throw.
+ */
+export function captureTrustedActiveOpenShellGatewayUserService(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): TrustedActiveOpenShellGatewayUserServiceIdentity {
+  return trustedActiveIdentity(trustedServiceContext(opts));
+}
+
+function requireInactiveServiceContext(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  opts: OpenShellGatewayUserServiceOptions,
+): TrustedServiceContext {
+  requireTrustedIdentityReceipt(identity);
+  const context = trustedServiceContext(opts);
+  assertMatchingServiceTarget(identity, context);
+  if (identity.manager === "systemd") {
+    const state = requireMatchingSystemdState(identity, context);
+    if (state.activeState !== "inactive" || state.mainPid !== 0) {
+      throw new Error("Trusted OpenShell gateway systemd service is not proven inactive");
+    }
+  } else {
+    const state = requireMatchingHomebrewState(identity, context);
+    if (state.loaded || state.running || (state.pid !== null && state.pid !== 0)) {
+      throw new Error("Trusted OpenShell gateway Homebrew service is not proven inactive");
+    }
+  }
+  return context;
+}
+
+/**
+ * Revalidate that the exact captured service authority remains inactive.
+ */
+export function assertTrustedOpenShellGatewayUserServiceInactive(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  opts: OpenShellGatewayUserServiceOptions = {},
+): void {
+  requireInactiveServiceContext(identity, opts);
+}
+
+function requireExactActiveServiceContext(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  opts: OpenShellGatewayUserServiceOptions,
+): TrustedServiceContext {
+  requireTrustedIdentityReceipt(identity);
+  const context = trustedServiceContext(opts);
+  assertMatchingServiceTarget(identity, context);
+  if (identity.manager === "systemd") {
+    const state = requireMatchingSystemdState(identity, context);
+    if (state.activeState !== "active" || state.mainPid !== identity.pid) {
+      throw new Error("Trusted OpenShell gateway systemd process identity drifted");
+    }
+  } else {
+    const state = requireMatchingHomebrewState(identity, context);
+    if (!state.loaded || !state.running || state.pid === null || state.pid !== identity.pid) {
+      throw new Error("Trusted OpenShell gateway Homebrew process identity drifted");
+    }
+  }
+  return context;
+}
+
+/**
+ * Stop only the exact captured manager/service identity, then independently
+ * prove that the same trusted authority is inactive and did not respawn.
+ */
+export function stopTrustedOpenShellGatewayUserServiceAndProveInactive(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  opts: OpenShellGatewayUserServiceOptions = {},
+): void {
+  const context = requireExactActiveServiceContext(identity, opts);
+  const result =
+    identity.manager === "homebrew"
+      ? runBrew(["services", "stop", identity.serviceName], context)
+      : runSystemctlUser(["stop", identity.serviceName], context);
+  if (!result.ok) {
+    throw new Error(
+      `Failed to stop trusted OpenShell gateway ${identity.manager} service: ${
+        result.reason ?? "unknown error"
+      }`,
+    );
+  }
+  requireInactiveServiceContext(identity, opts);
+}
+
+/**
+ * Start the same captured manager/service identity from a proven stopped state,
+ * then independently prove the exact unit/formula identity and a new PID.
+ */
+export function resumeTrustedOpenShellGatewayUserServiceAndProveActive(
+  identity: TrustedActiveOpenShellGatewayUserServiceIdentity,
+  opts: OpenShellGatewayUserServiceOptions = {},
+): TrustedActiveOpenShellGatewayUserServiceIdentity {
+  const context = requireInactiveServiceContext(identity, opts);
+  const result =
+    identity.manager === "homebrew"
+      ? runBrew(["services", "start", identity.serviceName], context)
+      : runSystemctlUser(["start", identity.serviceName], context);
+  if (!result.ok) {
+    throw new Error(
+      `Failed to resume trusted OpenShell gateway ${identity.manager} service: ${
+        result.reason ?? "unknown error"
+      }`,
+    );
+  }
+  const resumed = trustedActiveIdentity(trustedServiceContext(opts));
+  if (
+    resumed.manager !== identity.manager ||
+    resumed.serviceName !== identity.serviceName ||
+    resumed.pid === identity.pid ||
+    (identity.manager === "systemd" &&
+      (resumed.manager !== "systemd" ||
+        resumed.unitPath !== identity.unitPath ||
+        resumed.execStartPath !== identity.execStartPath)) ||
+    (identity.manager === "homebrew" &&
+      (resumed.manager !== "homebrew" ||
+        resumed.formulaName !== identity.formulaName ||
+        resumed.formulaTap !== identity.formulaTap ||
+        resumed.serviceIdentity !== identity.serviceIdentity))
+  ) {
+    throw new Error("Resumed OpenShell gateway service identity drifted or reused its prior PID");
+  }
+  return resumed;
 }
 
 export function getTrustedActiveOpenShellGatewayUserServicePid(

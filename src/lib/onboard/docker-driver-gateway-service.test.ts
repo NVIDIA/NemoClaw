@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
 import {
+  assertTrustedOpenShellGatewayUserServiceInactive,
+  captureTrustedActiveOpenShellGatewayUserService,
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
@@ -12,9 +14,11 @@ import {
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+  resumeTrustedOpenShellGatewayUserServiceAndProveActive,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
+  stopTrustedOpenShellGatewayUserServiceAndProveInactive,
 } from "./docker-driver-gateway-service";
 
 const STATUS_CONNECTED = `
@@ -357,6 +361,311 @@ describe("docker-driver-gateway-service", () => {
         ),
       }),
     ).toBeNull();
+  });
+
+  it("leases the exact trusted systemd service identity across stop and resume", () => {
+    const events: string[] = [];
+    let active = true;
+    let pid = 4242;
+    const opts = {
+      commandExists: (command: string) => command === "systemctl",
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        const operation = args.slice(1).join(" ");
+        events.push(operation);
+        if (args.includes("show")) {
+          return spawnResult(
+            0,
+            "",
+            [
+              trustedShowOutput(),
+              `ActiveState=${active ? "active" : "inactive"}`,
+              `MainPID=${active ? String(pid) : "0"}`,
+            ].join("\n"),
+          );
+        }
+        if (args.includes("stop")) {
+          active = false;
+          return spawnResult();
+        }
+        if (args.includes("start")) {
+          active = true;
+          pid = 5252;
+          return spawnResult();
+        }
+        return spawnResult(1, "unexpected command");
+      }),
+    };
+
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+    expect(captured).toMatchObject({
+      execStartPath: "/usr/bin/openshell-gateway",
+      manager: "systemd",
+      pid: 4242,
+      serviceName: "openshell-gateway",
+      unitPath: "/lib/systemd/user/openshell-gateway.service",
+    });
+    expect(Object.isFrozen(captured)).toBe(true);
+
+    stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts);
+    assertTrustedOpenShellGatewayUserServiceInactive(captured, opts);
+    const resumed = resumeTrustedOpenShellGatewayUserServiceAndProveActive(captured, opts);
+
+    expect(resumed).toMatchObject({
+      execStartPath: "/usr/bin/openshell-gateway",
+      manager: "systemd",
+      pid: 5252,
+      serviceName: "openshell-gateway",
+      unitPath: "/lib/systemd/user/openshell-gateway.service",
+    });
+    expect(events).toEqual([
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "stop openshell-gateway",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+      "start openshell-gateway",
+      "show openshell-gateway --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID",
+    ]);
+  });
+
+  it("refuses systemd unit drift before stopping the captured service", () => {
+    let execPath = "/usr/bin/openshell-gateway";
+    const stop = vi.fn();
+    const opts = {
+      commandExists: () => true,
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args.includes("show")) {
+          return spawnResult(
+            0,
+            "",
+            [
+              trustedShowOutput("/lib/systemd/user/openshell-gateway.service", execPath),
+              "ActiveState=active",
+              "MainPID=4242",
+            ].join("\n"),
+          );
+        }
+        stop();
+        return spawnResult();
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+    execPath = "/usr/local/bin/openshell-gateway";
+
+    expect(() => stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts)).toThrow(
+      "unit identity drifted",
+    );
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when systemd respawns the service during stop proof", () => {
+    let pid = 4242;
+    const opts = {
+      commandExists: () => true,
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args.includes("show")) {
+          return spawnResult(
+            0,
+            "",
+            [trustedShowOutput(), "ActiveState=active", `MainPID=${String(pid)}`].join("\n"),
+          );
+        }
+        if (args.includes("stop")) {
+          pid = 5252;
+          return spawnResult();
+        }
+        return spawnResult(1, "unexpected command");
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+
+    expect(() => stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts)).toThrow(
+      "not proven inactive",
+    );
+  });
+
+  it("does not mutate when the captured systemd manager becomes unavailable", () => {
+    const captureOpts = {
+      commandExists: () => true,
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+      spawnSyncImpl: () =>
+        spawnResult(0, "", [trustedShowOutput(), "ActiveState=active", "MainPID=4242"].join("\n")),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(captureOpts);
+    const mutation = vi.fn();
+
+    expect(() =>
+      stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, {
+        ...captureOpts,
+        commandExists: () => false,
+        spawnSyncImpl: mutation,
+      }),
+    ).toThrow("systemctl is unavailable");
+    expect(mutation).not.toHaveBeenCalled();
+  });
+
+  it("rejects a resumed systemd service that reuses the captured PID", () => {
+    let active = true;
+    const opts = {
+      commandExists: () => true,
+      existsSync: (candidate: string) =>
+        candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args.includes("show")) {
+          return spawnResult(
+            0,
+            "",
+            [
+              trustedShowOutput(),
+              `ActiveState=${active ? "active" : "inactive"}`,
+              `MainPID=${active ? "4242" : "0"}`,
+            ].join("\n"),
+          );
+        }
+        if (args.includes("stop")) active = false;
+        if (args.includes("start")) active = true;
+        return spawnResult();
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+    stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts);
+
+    expect(() => resumeTrustedOpenShellGatewayUserServiceAndProveActive(captured, opts)).toThrow(
+      "reused its prior PID",
+    );
+  });
+
+  it("leases the exact official Homebrew formula identity across stop and resume", () => {
+    const events: string[] = [];
+    let active = true;
+    let pid = 4242;
+    const opts = {
+      commandExists: (command: string) => command === "brew",
+      platform: "darwin" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        events.push(args.join(" "));
+        if (args[0] === "list") return spawnResult();
+        if (args[0] === "info") return officialFormulaInfo();
+        if (args[0] === "services" && args[1] === "info") {
+          return officialRunningServiceInfo({
+            loaded: active,
+            pid: active ? pid : 0,
+            running: active,
+          });
+        }
+        if (args[0] === "services" && args[1] === "stop") {
+          active = false;
+          return spawnResult();
+        }
+        if (args[0] === "services" && args[1] === "start") {
+          active = true;
+          pid = 5252;
+          return spawnResult();
+        }
+        return spawnResult(1, "unexpected command");
+      }),
+    };
+
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+    expect(captured).toMatchObject({
+      formulaName: "openshell",
+      formulaTap: "nvidia/openshell",
+      manager: "homebrew",
+      pid: 4242,
+      serviceIdentity: "homebrew.mxcl.openshell",
+      serviceName: "openshell",
+    });
+
+    stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts);
+    assertTrustedOpenShellGatewayUserServiceInactive(captured, opts);
+    const resumed = resumeTrustedOpenShellGatewayUserServiceAndProveActive(captured, opts);
+
+    expect(resumed).toMatchObject({
+      formulaName: "openshell",
+      formulaTap: "nvidia/openshell",
+      manager: "homebrew",
+      pid: 5252,
+      serviceIdentity: "homebrew.mxcl.openshell",
+    });
+    expect(events.filter((event) => event === "info --json=v2 openshell")).toHaveLength(6);
+    expect(events).toContain("services stop openshell");
+    expect(events).toContain("services start openshell");
+  });
+
+  it("refuses Homebrew tap drift before stopping the captured service", () => {
+    const captureOpts = {
+      commandExists: () => true,
+      platform: "darwin" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args[0] === "info") return officialFormulaInfo();
+        if (args[0] === "services") return officialRunningServiceInfo();
+        return spawnResult();
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(captureOpts);
+    const stop = vi.fn();
+
+    expect(() =>
+      stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, {
+        ...captureOpts,
+        spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+          if (args[0] === "info") {
+            return spawnResult(
+              0,
+              "",
+              JSON.stringify({ formulae: [{ name: "openshell", tap: "other/tap" }] }),
+            );
+          }
+          if (args[0] === "services" && args[1] === "stop") stop();
+          return spawnResult();
+        }),
+      }),
+    ).toThrow("must come from nvidia/openshell");
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Homebrew reports a foreign service after stopping", () => {
+    let stopped = false;
+    const opts = {
+      commandExists: () => true,
+      platform: "darwin" as const,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        if (args[0] === "info") return officialFormulaInfo();
+        if (args[0] === "services" && args[1] === "info") {
+          return stopped
+            ? officialRunningServiceInfo({
+                loaded: false,
+                pid: 0,
+                running: false,
+                service_name: "foreign.openshell",
+              })
+            : officialRunningServiceInfo();
+        }
+        if (args[0] === "services" && args[1] === "stop") {
+          stopped = true;
+          return spawnResult();
+        }
+        return spawnResult();
+      }),
+    };
+    const captured = captureTrustedActiveOpenShellGatewayUserService(opts);
+
+    expect(() => stopTrustedOpenShellGatewayUserServiceAndProveInactive(captured, opts)).toThrow(
+      "foreign or incomplete",
+    );
   });
 
   it("removes a marked NemoClaw unit before activating an upstream systemd unit (#6903)", () => {
