@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
   resolveManagedImageCatalogFromGhcr,
 } from "../managed-image/catalog";
@@ -161,9 +162,9 @@ export async function prepareSandboxWorkloadSource(
   try {
     release = normalizeManagedImageRelease(input.version);
   } catch (error) {
-    return unavailableResult(
-      input,
-      `managed image release for CLI version '${input.version}' is unavailable: ${diagnostic(error)}`,
+    throw new SandboxWorkloadPreparationError(
+      `managed image release for CLI version '${input.version}' failed validation`,
+      { cause: error },
     );
   }
 
@@ -179,6 +180,12 @@ export async function prepareSandboxWorkloadSource(
       dependencies.resolveCatalog ?? ((options) => resolveManagedImageCatalogFromGhcr(options))
     )({ release, platform });
   } catch (error) {
+    if (!(error instanceof ManagedImageCatalogUnavailableError)) {
+      throw new SandboxWorkloadPreparationError(
+        `managed image catalog '${release}' failed validation`,
+        { cause: error },
+      );
+    }
     return unavailableResult(
       input,
       `managed image catalog '${release}' is unavailable: ${diagnostic(error)}`,
