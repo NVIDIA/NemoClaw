@@ -3,7 +3,7 @@
 
 # Hermes 0.19.0 dependency and compatibility review
 
-Review date: 2026-07-29
+Review date: 2026-07-30
 
 ## Decision
 
@@ -16,8 +16,9 @@ Named-profile copies remain inside the raw `profiles` directory capture under th
 The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
 The selected Python graph is hardened before installation with a reviewed, exact-source patch that updates the published dependency metadata and frozen lock together.
-It selects `cryptography==48.0.1`, `Pillow==12.3.0`, and `starlette==1.3.1`, then verifies those installed versions and the complete environment with `uv pip check`.
+It selects `cryptography==48.0.1`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, then verifies those installed versions and the complete environment with `uv pip check`.
 The final image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
+The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
 
 The source-pin commit must publish a fresh multi-platform Hermes base image before the final Dockerfile can name its immutable digest.
 The PR is not approval-ready until the pinned final image and required live E2E gates pass on the exact PR head.
@@ -33,6 +34,8 @@ The PR is not approval-ready until the pinned final image and required live E2E 
 | Target source commit | `3ef6bbd201263d354fd83ec55b3c306ded2eb72a` |
 | Target source archive SHA-256 | `285f3fc134ff466a90065e1517801a68993733b807158ee8f32aa01613786990` |
 | Target npm cross-check integrity | `sha512-+oVKG3lXbk2kEP+J6BXZjtmSBSaFfczIdOWQ9CUSTdTqq2uyHbk4p+kPyZ6MeGs56JU5qXzMNbqGKRVOQRGC1A==` |
+| Target Node.js release | `24.18.1` |
+| Target uv release | `0.11.33` |
 | Target PyPI wheel SHA-256 | `bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f` |
 | Target PyPI source distribution SHA-256 | `ac986bede64a2785436676c0ea084ec586574f8cb00a9d047e095b435d3e21c0` |
 | Target publish date | `2026-07-20` |
@@ -56,7 +59,7 @@ The `hermes-agent` npm package is published from a different bridge repository a
 
 The complete adjacent range contains 2,399 source commits.
 The upstream release-note estimate is not used as the audit boundary.
-Python remains `>=3.11,<3.14`, and the JavaScript runtime remains Node `>=20`, so NemoClaw's Python 3.13 and Node 22 image floors remain compatible.
+Python remains `>=3.11,<3.14`, and the JavaScript runtime remains Node.js `>=20`, so NemoClaw's Python 3.13 and checksum-pinned Node.js 24.18.1 runtime remain compatible.
 
 ## Semantic migration and retained workarounds
 
@@ -152,21 +155,18 @@ The override clears `GHSA-5rvq-cxj2-64vf`, `GHSA-6jv3-5f52-599m`, and `GHSA-v9pg
 A Python 3.13 FastAPI `TestClient` probe covered ordinary forms, file upload, and dense CRLF input with the replacement parser.
 
 The source patch changes the published constraints and `uv.lock` as one transaction rather than overlaying packages after `uv sync`.
-In addition to the three direct selections, the resolver necessarily moves `alibabacloud-tea-openapi` from `0.4.4` to `0.4.5`, `darabonba-core` from `1.0.5` to `1.0.8`, and adds `websocket-client==1.9.0`.
+In addition to the five direct selections, the resolver necessarily moves `alibabacloud-tea-openapi` from `0.4.4` to `0.4.5`, `darabonba-core` from `1.0.5` to `1.0.8`, and adds `websocket-client==1.9.0`.
 The changed packages remain under Apache-2.0, BSD-3-Clause, MIT-CMU, or compatible dual-license terms; no restrictive license enters the selected graph.
 
-The 2026-07-29 point-in-time audit reports no advisory for `cryptography==48.0.1`, `Pillow==12.3.0`, or `starlette==1.3.1`.
-The exported patched lock still reports 14 records in seven other packages, but three records are for the published `python-multipart==0.0.27` resolution that the final image already replaces with `0.0.32`, for which the same point-in-time audit reports no advisories.
-The effective image therefore retains 11 newly published records in six unrelated packages: `click==8.3.1`, `mcp==1.26.0`, `pydantic-settings==2.13.1`, `Pygments==2.19.2`, `PyNaCl==1.5.0`, and `tornado==6.5.5`.
-Those records are not introduced by this targeted remediation and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
+The 2026-07-30 point-in-time audit reports no advisory for `cryptography==48.0.1`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, or `tornado==6.5.7`.
+The exported patched lock still contains lower-severity records in unrelated packages and records for the published `python-multipart==0.0.27` resolution that the final image replaces with `0.0.32`.
+Those records are not introduced by this targeted Critical and High remediation and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
 
 Compatibility evidence covers all 97 upstream image-routing tests with Pillow `12.3.0`, plus a real FastAPI `0.133.1`, Starlette `1.3.1`, and multipart `0.0.32` form and upload `TestClient` smoke.
 The image build additionally requires the frozen environment to remain consistent and asserts the exact installed versions before continuing.
 
-The remaining high records have evidence-backed exclusions from currently enabled Hermes paths.
-Hermes-owned MCP servers use stdio and do not enable authenticated stateful HTTP, custom WebSocket servers, or MCP tasks.
-Telegram uses HTTPX outbound requests and polling by default rather than Tornado's affected HTTP client and decompression paths.
-No Hermes call to `click.edit()` or PKCS#7 and S/MIME verification was found.
+The remaining audit records do not meet the Critical or High remediation threshold.
+They stay recorded rather than being described as fixed or excluded.
 
 The final root JavaScript runtime graph remains `agent-browser@0.26.0` plus the existing Streamdown tree and reports zero production audit findings.
 The TUI and web workspaces retain unchanged high package-level findings in build-only dependencies whose `node_modules` directories are deleted after compilation.
@@ -196,7 +196,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
 | `HERMES-8` | High | Guard and runtime-proof | Optional upstream secret sources stay disabled, `--safe-mode` does not broaden the generated environment allowlist, and the live environment boundary must reject raw credentials. |
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
-| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `cryptography==48.0.1`, `Pillow==12.3.0`, and `starlette==1.3.1`, and fails the image build on dependency inconsistency or installed-version drift. |
+| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `cryptography==48.0.1`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the image build on dependency inconsistency or installed-version drift. The base image separately checksum-pins Node.js `24.18.1` and asserts uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
 | `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30411365314` published the exact source commit as amd64 and arm64 manifests under OCI index `sha256:c4aee5c9b087840da6e1eb2127fef9f4a2eab0862992008d1741dc09f632422e`. The final Dockerfile pins that digest. Before the cron ledger relocation, the pinned arm64 final image passed all 62 BuildKit steps, including installed-version, patch, config, and cross-identity SQLite probes. The exact PR head must build the three added relocation layers and changed cron probe before protected runtime E2E. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |

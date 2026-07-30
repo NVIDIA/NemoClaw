@@ -931,7 +931,7 @@ jobs:
           if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be schedule or workflow_dispatch"
           fi
-          # Exact-head mode: controller-dispatched PR revision.
+          # PR E2E mode: controller-dispatched PR commit.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
             if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
               fail "checkout SHA must be lowercase 40-hex"
@@ -1474,9 +1474,10 @@ jobs:
         # localhost-compatible routing, namespace-aware HTTPS pinning, DNS
         # rebinding resistance, private-target redirect rejection, and
         # credential-bearing URL state rejection without live provider quota.
-        # It also proves runtime identity through a deterministic public OAuth
-        # refresh, real OpenShell provider attachment/injection, rotation, and
-        # rollback without using a third-party tenant.
+        # It also proves generic and Entra-shaped runtime identity through a
+        # deterministic public OAuth refresh, real OpenShell provider
+        # attachment/injection, Graph /v1.0/me policy, rotation, and rollback
+        # without storing a third-party tenant credential in PR CI.
         # Provider smokes live in inference-routing-provider-smoke.test.ts; any
         # future secret-bearing lane must run that file from trusted main.
         run: |
@@ -3492,7 +3493,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "upgrade-stale-sandbox"
