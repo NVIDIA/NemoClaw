@@ -43,8 +43,7 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("Docker startup-command patch", () => {
-  it("preserves the registered supervisor and writable layer until recovery finalizes", () => {
-    const snapshotImageId = `sha256:${"d".repeat(64)}`;
+  it("preserves the registered supervisor until recovery finalizes", () => {
     const dockerCapture = vi.fn((args: readonly string[]) =>
       args[0] === "ps"
         ? "old-container-id\n"
@@ -53,10 +52,6 @@ describe("Docker startup-command patch", () => {
           : "",
     );
     const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRun = vi.fn(() => ({
-      status: 0,
-      stdout: `Docker informational output\n${snapshotImageId}\n`,
-    }));
     const dockerRename = vi.fn(() => ({ status: 0 }));
     const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
       status: 0,
@@ -72,7 +67,6 @@ describe("Docker startup-command patch", () => {
       },
       {
         dockerCapture,
-        dockerRun,
         dockerRunDetached,
         dockerRename,
         dockerStop,
@@ -83,53 +77,14 @@ describe("Docker startup-command patch", () => {
     expect(result).toMatchObject({
       newContainerId: "new-container-id",
       backupWasRunning: true,
-      snapshotImageId,
       backupRemoved: false,
     });
     expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRun).toHaveBeenCalledWith(
-      ["commit", "old-container-id"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerRun.mock.invocationCallOrder[0]).toBeLessThan(
-      dockerRename.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
     expect(dockerRename.mock.invocationCallOrder[0]).toBeLessThan(
       dockerRunDetached.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
-    expect(cloneArgs).toContain(snapshotImageId);
-    expect(cloneArgs).not.toContain(`sha256:${"c".repeat(64)}`);
-  });
-
-  it("does not mutate the container when its writable-layer snapshot fails", () => {
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
-
-    expect(() =>
-      recreateStartupCommandForTest(
-        {
-          sandboxName: "alpha",
-          keepOriginalRunningUntilFinalize: true,
-          waitForSupervisor: false,
-          openshellSandboxCommand: ["env", "nemoclaw-start"],
-        },
-        {
-          dockerCapture: vi.fn((args: readonly string[]) =>
-            args[0] === "ps"
-              ? "old-container-id\n"
-              : args[0] === "inspect"
-                ? JSON.stringify([inspectFixture()])
-                : "",
-          ),
-          dockerRun: vi.fn(() => ({ status: 1, stderr: "commit failed" })),
-          dockerRunDetached,
-          dockerRename,
-        },
-      ),
-    ).toThrow(/Could not snapshot the sandbox writable layer.*commit failed/);
-    expect(dockerRename).not.toHaveBeenCalled();
-    expect(dockerRunDetached).not.toHaveBeenCalled();
+    expect(cloneArgs).toContain(`sha256:${"c".repeat(64)}`);
   });
 
   it("requires deferred finalization when preserving the registered supervisor", () => {

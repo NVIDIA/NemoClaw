@@ -6,7 +6,6 @@ import {
   dockerForceRm,
   dockerRename,
   dockerRm,
-  dockerRun,
   dockerRunDetached,
   dockerStart,
   dockerStop,
@@ -50,7 +49,6 @@ type RecreateDeps = Required<
     DockerGpuPatchDeps,
     | "dockerCapture"
     | "dockerForceRm"
-    | "dockerRun"
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
@@ -69,7 +67,6 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
   return {
     dockerCapture,
     dockerForceRm,
-    dockerRun,
     dockerRunDetached,
     dockerRename,
     dockerRm,
@@ -173,7 +170,6 @@ export function recreateOpenShellDockerSandboxContainer(
     sandboxName: options.sandboxName,
     modeAttempts: [],
   };
-  let snapshotImageId: string | null = null;
   try {
     validateRequiredDockerUlimits(options.requiredUlimits);
     if (options.keepOriginalRunningUntilFinalize && options.waitForSupervisor !== false) {
@@ -292,37 +288,6 @@ export function recreateOpenShellDockerSandboxContainer(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     };
-    if (options.keepOriginalRunningUntilFinalize) {
-      // Docker commit pauses the source container by default. Do not pass the
-      // deprecated --pause flag: newer Docker clients print its warning into
-      // the captured output alongside the committed image ID.
-      const commitResult = d.dockerRun(["commit", oldContainerId], {
-        ...containerMutationOptions,
-        timeout: Math.max(
-          DOCKER_GPU_PATCH_TIMEOUT_MS,
-          (options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS) * 1000,
-        ),
-      });
-      if (!hasZeroDockerExitStatus(commitResult)) {
-        throw new Error(
-          `Could not snapshot the sandbox writable layer before recovery: ${resultText(
-            commitResult,
-          )}`,
-        );
-      }
-      const committedImages = String(commitResult.stdout || "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => /^sha256:[0-9a-f]{64}$/i.test(line));
-      if (committedImages.length !== 1) {
-        throw new Error(
-          "Docker committed the sandbox writable layer but did not return a valid immutable image ID.",
-        );
-      }
-      const [committedImage] = committedImages;
-      snapshotImageId = committedImage;
-      cloneOptions.image = committedImage;
-    }
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
 
     const backupWasRunning = options.keepOriginalRunningUntilFinalize === true;
@@ -429,7 +394,6 @@ export function recreateOpenShellDockerSandboxContainer(
       backupContainerName,
       mode: selectedMode,
       backupWasRunning,
-      ...(snapshotImageId ? { snapshotImageId } : {}),
       backupRemoved,
     });
     if (options.waitForSupervisor === false) return result(false);
@@ -450,13 +414,6 @@ export function recreateOpenShellDockerSandboxContainer(
     }
     return result(reconcile.backupRemoved);
   } catch (error) {
-    if (snapshotImageId) {
-      d.dockerRun(["rmi", snapshotImageId], {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-      });
-    }
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);
   }
 }

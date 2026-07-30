@@ -95,10 +95,6 @@ export type DockerGpuPatchResult = {
   // True when recovery did not stop the original OpenShell supervisor before
   // creating the replacement. The caller passes replacement health separately.
   backupWasRunning?: boolean;
-  // Immutable image created from the original container's writable layer.
-  // The active replacement references it after a successful handoff; a
-  // rollback removes it after restoring the original container.
-  snapshotImageId?: string;
   // True when the patch path also confirmed supervisor reconnect AND removed
   // the backup container. False when the caller deferred the reconnect wait
   // (via `waitForSupervisor: false`); the backup is still in place and the

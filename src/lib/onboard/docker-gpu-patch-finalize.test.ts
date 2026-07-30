@@ -85,22 +85,19 @@ describe("finalizeDockerGpuPatchBackup", () => {
   });
 
   it("rolls back to the still-running original container without restarting it", () => {
-    const snapshotImageId = `sha256:${"d".repeat(64)}`;
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const dockerRun = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
       {
         result: {
           ...deferredCreateResult(),
           backupWasRunning: true,
-          snapshotImageId,
         },
         supervisorReady: false,
       },
-      { dockerStop, dockerRm, dockerRename, dockerStart, dockerRun },
+      { dockerStop, dockerRm, dockerRename, dockerStart },
     );
 
     expect(outcome).toEqual({ backupRemoved: false, rolledBack: true });
@@ -114,10 +111,6 @@ describe("finalizeDockerGpuPatchBackup", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(dockerStart).not.toHaveBeenCalled();
-    expect(dockerRun).toHaveBeenCalledWith(
-      ["rmi", snapshotImageId],
-      expect.objectContaining({ ignoreError: true }),
-    );
   });
 
   it("reports rolledBack=false when restoring the backup fails", () => {
