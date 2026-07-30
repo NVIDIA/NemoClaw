@@ -78,6 +78,7 @@ import {
   type ManagedStartupProfile,
   type ManagedStartupRootApplyRequest,
   type PreparedManagedCloneProvider,
+  persistedHostContainerRuntimeActivation,
   printHermesGatewayRestoreHint,
   renderManagedBootstrapHeldCommand,
   resolveHermesDashboardOnboardState,
@@ -829,6 +830,18 @@ async function autoCreateSandboxFromSource(
 // we are about to clone from.
 function deleteSandboxForRestore(name: string): void {
   const sbMeta = registry.getSandbox(name);
+  const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateSandbox(sbMeta);
+  try {
+    deleteSandboxForRestoreWithPersistedRuntime(name, sbMeta);
+  } finally {
+    restoreHostRuntime();
+  }
+}
+
+function deleteSandboxForRestoreWithPersistedRuntime(
+  name: string,
+  sbMeta: SandboxEntry | null,
+): void {
   if (sbMeta?.nimContainer) {
     nim.stopNimContainerByName(sbMeta.nimContainer);
   } else {
@@ -1746,7 +1759,14 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
-      runSnapshotCreate(sandboxName, request);
+      const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateSandbox(
+        registry.getSandbox(sandboxName),
+      );
+      try {
+        runSnapshotCreate(sandboxName, request);
+      } finally {
+        restoreHostRuntime();
+      }
       break;
     }
     case "list": {
@@ -1764,7 +1784,14 @@ export async function runSandboxSnapshot(
       break;
     }
     case "restore": {
-      await runSnapshotRestore(sandboxName, request);
+      const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateSandbox(
+        registry.getSandbox(sandboxName),
+      );
+      try {
+        await runSnapshotRestore(sandboxName, request);
+      } finally {
+        restoreHostRuntime();
+      }
       break;
     }
     default:

@@ -99,6 +99,26 @@ describe("showSandboxStatus flow", () => {
   });
 
   it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ])("activates the persisted runtime for the %s agent before status probes", async (agent) => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: { agent, openshellDriver: "podman" },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    expect(harness.activateHostRuntimeSpy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        agent,
+        name: "alpha",
+        openshellDriver: "podman",
+      }),
+    );
+  });
+
+  it.each([
     ["high", "high"],
     [null, "endpoint-default"],
   ] as const)("reports the effective compatible-endpoint reasoning effort (%s) (#7659)", async (stored, expected) => {

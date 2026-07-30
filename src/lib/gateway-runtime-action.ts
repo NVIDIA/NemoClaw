@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listSandboxGatewayComputeBindings } from "./actions/sandbox/gateway-target";
+import {
+  listSandboxGatewayComputeBindings,
+  persistedHostContainerRuntimeActivation,
+} from "./actions/sandbox/gateway-target";
 import { stripAnsi } from "./adapters/openshell/client";
 import * as openshellRuntime from "./adapters/openshell/runtime";
 import {
@@ -238,11 +241,19 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
         computeDriver: options.computeDriver,
         gatewayName,
       });
-      await gatewayRuntimeDependencies.startGatewayForRecovery({
-        computeDriver,
+      const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateGateway({
+        driverName: computeDriver,
         gatewayName,
-        gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
       });
+      try {
+        await gatewayRuntimeDependencies.startGatewayForRecovery({
+          computeDriver,
+          gatewayName,
+          gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
+        });
+      } finally {
+        restoreHostRuntime();
+      }
     } catch {
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.

@@ -59,6 +59,7 @@ const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-life
 const mcpBridge = requireDist("./mcp-bridge.js");
 const messaging = requireDist("../../messaging/index.js");
 const shields = requireDist("../../shields/index.js");
+const persistedHostContainerRuntime = requireDist("./gateway-target.js");
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
@@ -66,6 +67,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const activateHostRuntimeSpy = vi
+    .spyOn(persistedHostContainerRuntime.persistedHostContainerRuntimeActivation, "activateSandbox")
+    .mockReturnValue(() => undefined);
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -546,6 +550,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   warnSpy.mockClear();
 
   return {
+    activateHostRuntimeSpy,
     rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
     applyPresetSpy,
     backupSandboxStateSpy,

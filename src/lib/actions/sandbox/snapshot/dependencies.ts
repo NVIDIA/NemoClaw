@@ -70,6 +70,7 @@ export {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../../onboard/sandbox-provider-cleanup";
 export { streamSandboxCreate } from "../../../sandbox/create-stream";
+export { persistedHostContainerRuntimeActivation } from "../gateway-target";
 export { formatSnapshotBaselineExclusionSummary } from "../snapshot-baseline-exclusion-summary";
 export { printHermesGatewayRestoreHint } from "../snapshot-hermes-gateway-hint";
 export type { PreparedManagedCloneProvider } from "./managed-clone-providers";

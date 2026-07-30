@@ -34,6 +34,12 @@ export interface HostLocalInferenceRuntimeActivationInput {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativePodmanDeps?: NativePodmanPreflightDeps;
   readonly podmanBin?: string;
+  /**
+   * Qualification receipt produced by the selected driver's persisted-runtime
+   * adapter. Each host-local adapter owns validation of its receipt shape.
+   */
+  readonly qualifiedRuntime?: unknown;
+  /** @deprecated Use qualifiedRuntime for driver-neutral activation. */
   readonly qualifiedPodmanRuntime?: NativePodmanPreflightReceipt;
   readonly socketAuthorityDeps?: PodmanSocketAuthorityDeps;
   readonly configureContainerEngine?: typeof configureHostContainerEngine;
@@ -197,12 +203,25 @@ const podmanRuntimeAdapter: HostLocalInferenceRuntimeAdapter = {
         "Native Podman host-local inference requires the qualified OPENSHELL_PODMAN_SOCKET.",
       );
     }
-    const qualified =
+    const qualifiedCandidate =
+      input.qualifiedRuntime ??
       input.qualifiedPodmanRuntime ??
       assessNativePodman({
         ...input.nativePodmanDeps,
         env: environment,
       });
+    if (
+      typeof qualifiedCandidate !== "object" ||
+      qualifiedCandidate === null ||
+      !("driverName" in qualifiedCandidate) ||
+      !("socketPath" in qualifiedCandidate) ||
+      !("socketAuthority" in qualifiedCandidate) ||
+      !("architecture" in qualifiedCandidate) ||
+      !("cdiDevices" in qualifiedCandidate)
+    ) {
+      throw new Error("Native Podman host-local inference received an invalid qualification.");
+    }
+    const qualified = qualifiedCandidate as NativePodmanPreflightReceipt;
     if (qualified.driverName !== "podman" || qualified.socketPath !== socketPath) {
       throw new Error(
         "Native Podman host-local inference runtime does not match the qualified Podman socket.",

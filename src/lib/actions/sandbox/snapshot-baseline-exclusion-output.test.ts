@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   backupSandboxState: vi.fn(),
+  activateSandboxHostRuntime: vi.fn(() => () => undefined),
   captureOpenshell: vi.fn(() => ({ status: 0, output: "alpha Ready\n" })),
   findBackup: vi.fn(),
   getBaselineExclusions: vi.fn(),
@@ -18,6 +19,12 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
+}));
+
+vi.mock("./gateway-target", () => ({
+  persistedHostContainerRuntimeActivation: {
+    activateSandbox: mocks.activateSandboxHostRuntime,
+  },
 }));
 
 vi.mock("../../shields", () => ({
@@ -75,6 +82,9 @@ describe("snapshot baseline exclusion output", () => {
 
     await runSandboxSnapshot("alpha", { kind: "create" });
 
+    expect(mocks.activateSandboxHostRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "hermes", name: "alpha" }),
+    );
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Active baseline exclusions: nous_research");
     expect(output).toContain(

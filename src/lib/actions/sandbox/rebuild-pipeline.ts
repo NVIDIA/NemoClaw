@@ -24,7 +24,11 @@ import {
   blockRebuildOnPendingBaselineTransition,
   managedWorkloadRebuildHandoffMatchesRegisteredEntry,
 } from "./rebuild-preflight-guards";
-import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
+import {
+  getSandboxGatewayComputeBinding,
+  persistedHostContainerRuntimeActivation,
+  runRebuildPreflightPhase,
+} from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
   verifyPreparedBuildContext,
@@ -61,28 +65,43 @@ export async function rebuildSandbox(
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
   return withMcpLifecycleLock(sandboxName, async () => {
-    const scopedEnvKeys = [
-      BRAVE_API_KEY_ENV,
-      TAVILY_API_KEY_ENV,
-      MESSAGING_SETUP_APPLIER_ENV_KEY,
-      "OPENSHELL_GATEWAY",
-      DOCKER_GPU_PATCH_NETWORK_ENV,
-      ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
-      ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
-    ];
-    const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
+    const restoreHostRuntime = persistedHostContainerRuntimeActivation.activateSandbox(
+      getSandboxGatewayComputeBinding(sandboxName),
+    );
     try {
-      await rebuildSandboxUnlocked(sandboxName, options, opts);
+      await rebuildSandboxWithPersistedRuntime(sandboxName, options, opts);
     } finally {
-      for (const key of scopedEnvKeys) delete process.env[key];
-      Object.assign(
-        process.env,
-        Object.fromEntries(
-          savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
-        ),
-      );
+      restoreHostRuntime();
     }
   });
+}
+
+async function rebuildSandboxWithPersistedRuntime(
+  sandboxName: string,
+  options: string[] | RebuildSandboxOptions,
+  opts: RebuildSandboxExecutionOptions,
+): Promise<void> {
+  const scopedEnvKeys = [
+    BRAVE_API_KEY_ENV,
+    TAVILY_API_KEY_ENV,
+    MESSAGING_SETUP_APPLIER_ENV_KEY,
+    "OPENSHELL_GATEWAY",
+    DOCKER_GPU_PATCH_NETWORK_ENV,
+    ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
+    ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
+  ];
+  const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
+  try {
+    await rebuildSandboxUnlocked(sandboxName, options, opts);
+  } finally {
+    for (const key of scopedEnvKeys) delete process.env[key];
+    Object.assign(
+      process.env,
+      Object.fromEntries(
+        savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
+    );
+  }
 }
 
 async function rebuildSandboxUnlocked(

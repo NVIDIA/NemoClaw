@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-
+import { persistedHostContainerRuntimeActivation } from "./actions/sandbox/gateway-target";
 import * as gatewayRuntime from "./gateway-runtime-action";
 
 describe("gateway-runtime-action per-sandbox gateway routing", () => {
   let captureSpy: MockInstance;
   let runSpy: MockInstance;
   let startGatewaySpy: MockInstance;
+  let activateHostRuntimeSpy: MockInstance;
 
   beforeEach(() => {
     captureSpy = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "captureOpenshell");
@@ -29,6 +30,9 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
     startGatewaySpy = vi
       .spyOn(gatewayRuntime.gatewayRuntimeDependencies, "startGatewayForRecovery")
       .mockResolvedValue(undefined as never);
+    activateHostRuntimeSpy = vi
+      .spyOn(persistedHostContainerRuntimeActivation, "activateGateway")
+      .mockReturnValue(() => undefined);
   });
 
   afterEach(() => {
@@ -270,6 +274,10 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
         computeDriver: "podman",
         gatewayName: "nemoclaw-8090",
         gatewayPort: 8090,
+      });
+      expect(activateHostRuntimeSpy).toHaveBeenCalledExactlyOnceWith({
+        driverName: "podman",
+        gatewayName: "nemoclaw-8090",
       });
       expect(result.recovered).toBe(true);
     });

@@ -7,6 +7,10 @@ import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import type { RebuildManifest } from "../../state/sandbox";
+import {
+  getSandboxGatewayComputeBinding,
+  persistedHostContainerRuntimeActivation,
+} from "./gateway-target";
 import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
   preflightRebuildCredentials,
@@ -70,6 +74,8 @@ export interface RebuildPreflightPhaseResult {
   log: RebuildLog;
   bail: RebuildBail;
 }
+
+export { getSandboxGatewayComputeBinding, persistedHostContainerRuntimeActivation };
 
 /**
  * Validate and pin the complete recreate contract while the old sandbox remains
