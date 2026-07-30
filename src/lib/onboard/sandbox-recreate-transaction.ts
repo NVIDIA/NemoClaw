@@ -40,8 +40,23 @@ export function fingerprintSandboxRecreateValue(value: unknown): string {
   return createHash("sha256").update(serialized).digest("hex");
 }
 
+const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
+  "pendingRouteReservation",
+  "reservationSessionId",
+  "provider",
+  "model",
+  "endpointUrl",
+  "endpointSource",
+  "credentialEnv",
+  "preferredInferenceApi",
+  "gatewayName",
+  "gatewayPort",
+];
+
 export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
-  return fingerprintSandboxRecreateValue(entry);
+  const durable: Record<string, unknown> = { ...entry };
+  for (const field of ROUTE_RESERVATION_FIELDS) delete durable[field];
+  return fingerprintSandboxRecreateValue(durable);
 }
 
 export function fingerprintSandboxLiveIdentity(getOutput: string): string | null {
