@@ -609,8 +609,8 @@ describe("complete managed-image publication workflow", () => {
 
     expect(accepted.status, accepted.stderr).toBe(0);
     expect(pullCleanupCalls).toHaveLength(expectedPullCalls.length * 2);
-    expect(pullCleanupCalls.filter((call) => call.startsWith("pull ")).toSorted()).toEqual(
-      expectedPullCalls.toSorted(),
+    expect(pullCleanupCalls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
+      expectedPullCalls.sort(),
     );
     for (let index = 0; index < pullCleanupCalls.length; index += 2) {
       const pull = pullCleanupCalls[index];
