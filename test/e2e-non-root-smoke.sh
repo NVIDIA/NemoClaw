@@ -58,6 +58,16 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
+# ── Test 0: Published OCI metadata defaults to non-root (#7882) ──
+
+info "0. Image defaults to the sandbox user"
+IMAGE_USER="$(docker image inspect --format '{{.Config.User}}' "$IMAGE" 2>/dev/null || true)"
+if [ "$IMAGE_USER" = "sandbox" ]; then
+  pass "image Config.User is sandbox"
+else
+  fail "expected image Config.User=sandbox, got '${IMAGE_USER:-<empty>}'"
+fi
+
 # Helper: run the entrypoint under --security-opt no-new-privileges with
 # a final command of the caller's choice. The command is captured by
 # nemoclaw-start as NEMOCLAW_CMD and exec'd after entrypoint setup.
