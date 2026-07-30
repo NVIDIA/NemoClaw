@@ -29,7 +29,9 @@ It also repairs post-reboot delivery recovery, OpenShell-preserving uninstall, m
 - Messaging credential and shared-resource conflicts now stop onboarding, rebuild, and `channels add` for every channel.
   The explicit `channels add <channel> --force` flag remains the only conflict bypass and accepts the duplicate-consumer or shared-resource risk.
   For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
-- Hermes sandbox images now pin reviewed versions of `cryptography`, `Pillow`, and `starlette`.
+- OpenClaw, Hermes, and Deep Agents Code sandbox images now use reviewed, checksum-pinned Perl 5.44.0 packages.
+  Their base-image publisher creates multi-platform tags only after the native `linux/amd64` and `linux/arm64` digests pass.
+  Hermes sandbox images now pin reviewed versions of `cryptography`, `Pillow`, and `starlette`.
   Deep Agents Code sandbox images now pin a reviewed `Pillow` version.
   Hermes images also exclude upstream test sources from the published runtime filesystem, and image builds fail when dependency or filesystem identity drifts.
 - Gateway startup and Docker pulls now limit retained subprocess diagnostics.
