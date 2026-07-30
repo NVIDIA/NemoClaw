@@ -8,7 +8,7 @@ import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 export interface SandboxRegistryMetadataDeps {
-  isLinuxDockerDriverGatewayEnabled(): boolean;
+  getOpenShellComputeDriverName(): string;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
 }
@@ -55,10 +55,6 @@ export function createSandboxRegistryMetadataHelpers(
     | "openshellDriver"
     | "openshellVersion"
   > {
-    // OpenShell's Docker-driver gateway always starts with OPENSHELL_DRIVERS=docker,
-    // including on macOS arm64 (#3454). Recording "vm" for darwin here makes later
-    // setup misclassify the sandbox and run VM-only DNS monkeypatch / warning paths
-    // (#3728).
     return {
       gpuEnabled: config.sandboxGpuEnabled,
       hostGpuDetected: config.hostGpuDetected,
@@ -68,7 +64,9 @@ export function createSandboxRegistryMetadataHelpers(
       // Only persist a proof when this run produced one; omit on reuse/update
       // paths so a prior proof result is preserved rather than nulled out.
       ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
-      openshellDriver: deps.isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
+      // Driver identity comes from the resolved compute plan, not the host
+      // gateway launcher; those layers may differ (#7744).
+      openshellDriver: deps.getOpenShellComputeDriverName(),
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),

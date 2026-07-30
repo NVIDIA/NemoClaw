@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  buildPolicyContext,
   type BuildPolicyContextOptions,
+  buildPolicyContext,
   type PolicyContext,
   type PolicyContextPreset,
-} from "./context";
+} from "./context-builder";
 import { canonicaliseHost } from "./host-redaction";
 
 export type AccessFailureKind =

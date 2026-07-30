@@ -161,6 +161,7 @@ describe("handleSandboxState", () => {
           { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
         ],
       },
+      sandboxRecreate: null,
     };
     const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
       mutator(session);
@@ -608,6 +609,7 @@ describe("handleSandboxState", () => {
       gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
+      sandboxRecreate: null,
     };
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
@@ -649,6 +651,7 @@ describe("handleSandboxState", () => {
       gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
+      sandboxRecreate: null,
     };
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
 
@@ -683,6 +686,7 @@ describe("handleSandboxState", () => {
       gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
+      sandboxRecreate: null,
     };
     const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
       mutator(session);
@@ -725,6 +729,7 @@ describe("handleSandboxState", () => {
       gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
+      sandboxRecreate: null,
     };
     const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
       mutator(session);

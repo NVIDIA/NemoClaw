@@ -30,9 +30,8 @@ export {
 // probe.
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const DOCKER_PROBE_TIMEOUT_MS = 15_000;
-// Status invocation can take several minutes on unfixed code while
-// the gateway recovery path retries. Keep the budget generous; the
-// bug is independent of latency.
+// Recovery can take several minutes while gateway and host-forward
+// readiness converge, so keep the status budget generous.
 const STATUS_TIMEOUT_MS = 5 * 60_000;
 const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
@@ -42,6 +41,9 @@ const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
   "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 const NEMOCLAW_INSTALLER = fileURLToPath(
   new URL("../../../../scripts/install.sh", import.meta.url),
+);
+const NEMOCLAW_OPENSHELL_INSTALLER = fileURLToPath(
+  new URL("../../../../scripts/install-openshell.sh", import.meta.url),
 );
 const USER_SERVICE_STAGE_RESULT_PREFIX = "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=";
 
@@ -143,6 +145,23 @@ export function buildOpenShellGatewayUserServiceRestartScript(): string {
   ].join("\n");
 }
 
+export function buildOpenShellGatewayUserServiceDiagnosticsScript(): string {
+  return [
+    "set +e",
+    "service=openshell-gateway",
+    'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
+    "  service=nemoclaw-openshell-gateway",
+    "fi",
+    'printf "OpenShell gateway user service: %s\\n" "$service"',
+    'systemctl --user show "$service" --no-pager --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus',
+    'systemctl --user status "$service" --no-pager --full',
+    "if command -v journalctl >/dev/null 2>&1; then",
+    '  journalctl --user --unit "$service" --no-pager --lines=200',
+    "fi",
+    "exit 0",
+  ].join("\n");
+}
+
 export type LifecycleProfile = "post-reboot-recovery" | "dcode-rebuild-invalid-credential";
 
 export interface LifecycleCleanup {
@@ -205,12 +224,41 @@ function instanceName(instance: NemoClawInstance | string): string {
 }
 
 export class LifecyclePhaseFixture {
+  private postRebootUserServiceStage: UserServiceStageResult | undefined;
+
   constructor(
     private readonly host: HostCliClient,
     private readonly sandbox: SandboxClient,
     private readonly cleanup: LifecycleCleanup,
     private readonly gateway?: GatewayClient,
   ) {}
+
+  /**
+   * Ensure OpenShell is installed and stage the OpenShell gateway user service
+   * before onboarding. Onboarding must see the service so it writes the
+   * Docker-driver environment that the unit needs after a user-manager restart.
+   */
+  async preparePostReboot(): Promise<UserServiceStageResult> {
+    if (this.postRebootUserServiceStage) return this.postRebootUserServiceStage;
+
+    if (!(await this.host.isCommandAvailable("openshell-gateway"))) {
+      const install = await this.host.command("bash", [NEMOCLAW_OPENSHELL_INSTALLER], {
+        artifactName: "lifecycle-prereq-install-openshell",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 10 * 60_000,
+      });
+      assertExitZero(install, "install OpenShell before reboot lifecycle onboarding");
+    }
+
+    const stage = await this.ensureOpenShellGatewayUserService();
+    this.postRebootUserServiceStage = stage;
+    if (stage === "staged") {
+      this.cleanup.add("lifecycle.remove-staged-gateway-user-service", async () => {
+        await this.removeStagedOpenShellGatewayUserService();
+      });
+    }
+    return stage;
+  }
 
   async rebuildSandbox(
     instance: NemoClawInstance | string,
@@ -306,10 +354,9 @@ export class LifecyclePhaseFixture {
    *      make `openshell status` report the named gateway connected
    *      without running `nemoclaw onboard --resume`.
    *
-   *   We deliberately do NOT assert on the status exit code here
-   *   because the bug is precisely that status "succeeds" at
-   *   destroying state. The state-validation phase that follows is
-   *   what catches the regression via the
+   *   Status must exit zero to prove that the restored sandbox delivery
+   *   path is ready. The state-validation phase that follows additionally
+   *   verifies preservation via the
    *   `local-registry-entry-present` and `docker-sandbox-container-present`
    *   probes.
    *
@@ -319,12 +366,17 @@ export class LifecyclePhaseFixture {
    *   - `docker start` the labeled container so the sandbox returns
    *     to a usable state for any teardown that expects it live;
    *   - remove a user service staged only for this source-checkout
-   *     fixture, then restore the original gateway runtime shape.
+   *     fixture after the sandbox cleanup has used it.
    */
   async simulatePostReboot(
     instance: NemoClawInstance,
     options: PostRebootOptions = {},
   ): Promise<LifecycleResult> {
+    if (!this.postRebootUserServiceStage) {
+      throw new Error(
+        "OpenShell gateway user service must be prepared before post-reboot onboarding.",
+      );
+    }
     const mode: PostRebootMode = options.mode ?? "stop-original";
     const steps: LifecycleResult["steps"] = [];
 
@@ -337,17 +389,6 @@ export class LifecyclePhaseFixture {
       );
     }
     const originalName = containerNames[0];
-    const userServiceStage = await this.ensureOpenShellGatewayUserService();
-    let previousRuntime: HostGatewayRuntime | null = null;
-    if (userServiceStage === "staged") {
-      this.cleanup.add("lifecycle.remove-staged-gateway-user-service", async () => {
-        await this.removeStagedOpenShellGatewayUserService();
-        await this.startGatewayRuntime(previousRuntime, {
-          sandboxName: instance.sandboxName,
-        });
-        await this.waitForGatewayConnected();
-      });
-    }
 
     const stop = await this.host.command("docker", ["stop", originalName], {
       artifactName: `lifecycle-post-reboot-docker-stop-${originalName}`,
@@ -385,7 +426,7 @@ export class LifecyclePhaseFixture {
       });
     }
 
-    previousRuntime = await this.restartGatewayRuntime({
+    const previousRuntime = await this.restartGatewayRuntime({
       delayMs: 0,
       requireUserService: true,
       sandboxName: instance.sandboxName,
@@ -401,10 +442,9 @@ export class LifecyclePhaseFixture {
     // We invoke status through the host CLI client so artifacts are
     // captured and the command goes through the same
     // shellProbe/redaction layer the rest of the fixture code uses.
-    // Status is allowed to fail (exit non-zero) because on unfixed
-    // code it intentionally fails after destroying state — the
-    // post-action invariants are checked by state-validation.
-    const statusResult = await this.host.nemoclaw([instance.sandboxName, "status"], {
+    // Status must exit zero to prove the restored delivery path is ready;
+    // state-validation still verifies registry and container preservation.
+    const statusResult = await this.host.expectStatus(instance.sandboxName, {
       artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: STATUS_TIMEOUT_MS,
@@ -623,8 +663,19 @@ export class LifecyclePhaseFixture {
       }
       if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
+    const diagnostics = await this.host.command(
+      "sh",
+      ["-lc", buildOpenShellGatewayUserServiceDiagnosticsScript()],
+      {
+        artifactName: "lifecycle-gateway-user-service-diagnostics",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
     throw new Error(
-      `gateway did not become healthy after restart: ${lastError instanceof Error ? lastError.message : String(lastError ?? "unknown")}`,
+      `gateway did not become healthy after restart: ${
+        lastError instanceof Error ? lastError.message : String(lastError ?? "unknown")
+      }; service diagnostics: ${diagnostics.artifacts.result}`,
     );
   }
 

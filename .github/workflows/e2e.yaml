@@ -20,7 +20,7 @@ on:
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include Exact staging Brev Launchable qualification when jobs and targets are empty. Requires the persistent repository readiness gate."
+        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -178,6 +178,12 @@ jobs:
             ubuntu-repo-cloud-langchain-deepagents-code)
               matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
               ;;
+            ubuntu-repo-docker-post-reboot-recovery)
+              matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
+              ;;
+            ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
+              ;;
             *)
               echo "::error::PR E2E target is not approved by the trusted controller" >&2
               exit 1
@@ -270,6 +276,47 @@ jobs:
             ' <<< "$check_json" >/dev/null ||
             { echo "::error::controller check does not authorize this exact E2E run"; exit 1; }
 
+      - name: Authorize Launchable E2E maintainer dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
+        env:
+          ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_maintainer() {
+            local maintainer="$1"
+            if [[ ! "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ || "$maintainer" == -* || "$maintainer" == *- ]]; then
+              echo "::error::Launchable E2E actor is invalid" >&2
+              exit 1
+            fi
+
+            local permission_json
+            permission_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
+              echo "::error::Launchable E2E permission response did not match the actor" >&2
+              exit 1
+            fi
+            case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
+              maintain | admin) ;;
+              *)
+                echo "::error::Launchable E2E requires a repository maintainer or administrator" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          require_maintainer "$ACTOR"
+          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+            require_maintainer "$TRIGGERING_ACTOR"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -305,7 +352,10 @@ jobs:
           [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
           [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::PR E2E runs require controller-selected jobs or targets"; exit 1; }
-          [[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]] || { echo "::error::PR E2E target is not approved by the trusted controller"; exit 1; }
+          case "$TARGETS" in
+            ""|ubuntu-repo-cloud-langchain-deepagents-code|ubuntu-repo-docker-post-reboot-recovery|ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery) ;;
+            *) echo "::error::PR E2E target is not approved by the trusted controller"; exit 1 ;;
+          esac
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -421,12 +471,9 @@ jobs:
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    environment:
-      name: approve-brev-launchable-e2e
-      deployment: false
     permissions:
       contents: read
     concurrency:
@@ -451,10 +498,10 @@ jobs:
       - id: workspace
         name: Prepare the trusted lane
         env:
-          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
+          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_API_KEY || '' }}
           BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
           BREV_CLI_VERSION: 0.6.330
-          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
+          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
@@ -500,8 +547,8 @@ jobs:
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
-          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 
@@ -513,22 +560,9 @@ jobs:
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
             ${{ steps.workspace.outputs.work_dir }}/dispatch.json
-            ${{ steps.workspace.outputs.work_dir }}/qualification.json
+            ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
             ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
-
-  staging-brev-launchable-readiness:
-    name: Require staging Brev Launchable readiness
-    needs: generate-matrix
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Fail when staging Brev Launchable is not ready
-        run: |
-          echo "::error::Full E2E must run from NVIDIA/NemoClaw main and requires NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true. A release administrator must enable it after the protected environment, secrets, staging Launchable ID, and ownership are configured."
-          exit 1
 
   live:
     needs: generate-matrix
@@ -898,7 +932,7 @@ jobs:
           if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be schedule or workflow_dispatch"
           fi
-          # Exact-head mode: controller-dispatched PR revision.
+          # PR E2E mode: controller-dispatched PR commit.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
             if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
               fail "checkout SHA must be lowercase 40-hex"
@@ -1441,6 +1475,10 @@ jobs:
         # localhost-compatible routing, namespace-aware HTTPS pinning, DNS
         # rebinding resistance, private-target redirect rejection, and
         # credential-bearing URL state rejection without live provider quota.
+        # It also proves generic and Entra-shaped runtime identity through a
+        # deterministic public OAuth refresh, real OpenShell provider
+        # attachment/injection, Graph /v1.0/me policy, rotation, and rollback
+        # without storing a third-party tenant credential in PR CI.
         # Provider smokes live in inference-routing-provider-smoke.test.ts; any
         # future secret-bearing lane must run that file from trusted main.
         run: |
@@ -2009,6 +2047,49 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-4434-tui-unreachable-inference.test.ts
 
       - name: "Upload issue #4434 TUI unreachable inference artifacts"
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  dashboard-remote-bind:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',dashboard-remote-bind,') || contains(format(',{0},', inputs.targets), ',dashboard-remote-bind,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "dashboard-remote-bind"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/dashboard-remote-bind
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Run dashboard remote-bind live test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dashboard-remote-bind.test.ts
+
+      - name: Upload dashboard remote-bind artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -5587,7 +5668,6 @@ jobs:
         generate-matrix,
         retired-selector-compatibility,
         staging-brev-launchable,
-        staging-brev-launchable-readiness,
         live,
         shared-e2e,
         openshell-gateway-auth-contract,
@@ -5604,6 +5684,7 @@ jobs:
         brave-search,
         ollama-auth-proxy,
         cron-preflight-inference-local,
+        dashboard-remote-bind,
         sessions-agents-cli,
         hermes-e2e,
         hermes-gpu-startup,
@@ -5680,6 +5761,7 @@ jobs:
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
         with:
           script: |
             const path = require('node:path');
@@ -5687,7 +5769,7 @@ jobs:
             const { resolveReportPr, loadReportJobs, renderE2eReport } = await import(
               pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'tools/e2e/report-e2e-results.mts')).href
             );
-            const needs = ${{ toJSON(needs) }};
+            const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
             const prNumber = await resolveReportPr({ github, context, core, env: process.env });
             if (prNumber === undefined) return;
             const { apiJobs, loaded } = await loadReportJobs({ github, context, core });
@@ -5748,6 +5830,7 @@ jobs:
           RUNTIME_ARTIFACTS: ${{ runner.temp }}/e2e-runtime-audit
           RUNTIME_SUMMARY_FILE: ${{ runner.temp }}/e2e-runtime-summary.json
           TARGETS: ${{ inputs.targets }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
         with:
           script: |
             const path = require('path');
@@ -5766,7 +5849,7 @@ jobs:
             const runtimeHistory = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-runtime-history.mts'),
             );
-            const needs = ${{ toJSON(needs) }};
+            const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.

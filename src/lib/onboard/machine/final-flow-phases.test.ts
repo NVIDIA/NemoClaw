@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { context, createPhases } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
-import { pushIfTransition } from "../__test-helpers__/machine-recorders";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+import { advanceTo } from "./result";
 
 describe("final onboard flow phases", () => {
   it("selects the requested branch setup state", () => {
@@ -15,11 +15,15 @@ describe("final onboard flow phases", () => {
 
   it("runs policies before final verification", async () => {
     const order: string[] = [];
-    const [branchPhase, policiesPhase, finalizationPhase] = createPhases("openclaw", order);
+    const [branchPhase, policiesPhase, finalizationPhase, postVerifyPhase] = createPhases(
+      "openclaw",
+      order,
+    );
 
     const branchResult = await branchPhase.run(context());
     const policiesResult = await policiesPhase.run(branchResult.context);
-    await finalizationPhase.run(policiesResult.context);
+    const finalizationResult = await finalizationPhase.run(policiesResult.context);
+    await postVerifyPhase.run(finalizationResult.context);
 
     expect(order).toEqual(["openclaw", "policies", "set-default", "agent-forward", "verify"]);
   });
@@ -35,7 +39,8 @@ describe("final onboard flow phases", () => {
   });
 
   it("rejects final phases when required context is missing", async () => {
-    const [branchPhase, policiesPhase, finalizationPhase] = createPhases("openclaw");
+    const [branchPhase, policiesPhase, finalizationPhase, postVerifyPhase] =
+      createPhases("openclaw");
     const incomplete = context({ sandboxName: null });
 
     await expect(branchPhase.run(incomplete)).rejects.toThrow(
@@ -47,52 +52,88 @@ describe("final onboard flow phases", () => {
     await expect(finalizationPhase.run(incomplete)).rejects.toThrow(
       "Onboarding state is incomplete before finalization.",
     );
+    await expect(postVerifyPhase.run(incomplete)).rejects.toThrow(
+      "Onboarding state is incomplete before post verification.",
+    );
   });
 
-  it("records each phase result on the resume compatibility path", async () => {
-    const order: string[] = [];
-    const recorded: string[] = [];
-    const phases = createPhases("openclaw", order);
-
-    await runFinalOnboardFlowSlice({
-      context: context({ resume: true }),
-      runtime: {
-        session: async () =>
-          createSession({
-            machine: {
-              version: 1,
-              state: "openclaw",
-              stateEnteredAt: "2026-06-09T00:00:00.000Z",
-              revision: 1,
-            },
+  it("rejects a prerequisite repair result with session updates without applying it", async () => {
+    const phases = createPhases("openclaw");
+    const applyResult = vi.fn(async () => createSession());
+    const recordRepairEvent = vi.fn(async () => createSession());
+    const invalidPhases = [
+      {
+        state: "openclaw" as const,
+        run: async (flowContext: ReturnType<typeof context>) => ({
+          context: flowContext,
+          result: advanceTo("policies", {
+            updates: { model: "unexpected/model" },
+            metadata: { state: "openclaw" },
           }),
-        applyResult: async () => createSession(),
+        }),
       },
-      phases,
-      resume: true,
-      recordStateResult: async (result) => {
-        if (result.type === "transition") {
-          recorded.push(result.next);
-        } else {
-          recorded.push(result.type);
-        }
-      },
-      recordInvalidatedStateResult: async (result) => {
-        pushIfTransition(recorded, result);
-      },
-      afterPoliciesResultApplied: () => {
-        order.push("disarm");
-      },
-    });
+      ...phases.slice(1),
+    ];
 
-    expect(order).toEqual([
-      "openclaw",
-      "policies",
-      "disarm",
-      "set-default",
-      "agent-forward",
-      "verify",
-    ]);
-    expect(recorded).toEqual(["policies", "finalizing", "complete"]);
+    await expect(
+      runFinalOnboardFlowSlice({
+        context: context({ resume: true }),
+        runtime: {
+          session: async () =>
+            createSession({
+              machine: {
+                version: 1,
+                state: "policies",
+                stateEnteredAt: "2026-06-09T00:00:00.000Z",
+                revision: 1,
+              },
+            }),
+          applyResult,
+        },
+        phases: invalidPhases,
+        recordRepairEvent,
+      }),
+    ).rejects.toThrow("expected an update-free advance");
+
+    expect(applyResult).not.toHaveBeenCalled();
+    expect(recordRepairEvent).toHaveBeenCalledTimes(2);
+    expect(recordRepairEvent).toHaveBeenNthCalledWith(1, "state.repair.started", expect.anything());
+    expect(recordRepairEvent).toHaveBeenNthCalledWith(2, "state.repair.failed", expect.anything());
+  });
+
+  it("rejects an extra opposite branch phase before reading or running the flow", async () => {
+    const order: string[] = [];
+    const phases = createPhases("openclaw", order);
+    const session = vi.fn(async () => createSession());
+
+    await expect(
+      runFinalOnboardFlowSlice({
+        context: context(),
+        runtime: { session, applyResult: vi.fn(async () => createSession()) },
+        phases: [phases[0], { ...phases[0], state: "agent_setup" }, phases[1], phases[2]],
+        recordRepairEvent: vi.fn(async () => createSession()),
+      }),
+    ).rejects.toThrow("Expected exactly one final onboarding branch phase");
+
+    expect(session).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+  });
+
+  it("rejects a missing downstream phase before reading or running the flow", async () => {
+    const order: string[] = [];
+    const phases = createPhases("openclaw", order);
+    const session = vi.fn(async () => createSession());
+
+    await expect(
+      runFinalOnboardFlowSlice({
+        context: context(),
+        runtime: { session, applyResult: vi.fn(async () => createSession()) },
+        phases: phases.slice(0, 3),
+        recordRepairEvent: vi.fn(async () => createSession()),
+      }),
+    ).rejects.toThrow("Expected exactly four final onboarding phases");
+
+    expect(session).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
   });
 });

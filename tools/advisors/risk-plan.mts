@@ -5,12 +5,16 @@ import { createHash } from "node:crypto";
 
 export const RISK_PLAN_VERSION = 8 as const;
 
-export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+export const PR_E2E_TYPED_TARGET_IDS = [
+  "ubuntu-repo-cloud-langchain-deepagents-code",
+  "ubuntu-repo-docker-post-reboot-recovery",
+] as const;
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
+const POST_REBOOT_STATUS_RUNTIME = "src/lib/actions/sandbox/status-snapshot.ts";
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -89,11 +93,6 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
-  ".github/workflows/pr-e2e-gate.yaml",
-  "tools/e2e/pr-e2e-gate.mts",
-  "tools/e2e/pr-e2e-required.mts",
-]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
@@ -122,21 +121,34 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 export function focusedPrE2eTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eTarget[] {
-  const matchedFiles = stableUnique(
+  const deepAgentsMatchedFiles = stableUnique(
     changedFiles.filter(
       (file) =>
         file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
-  return matchedFiles.length > 0
-    ? [
-        {
-          id: PR_E2E_TYPED_TARGET_IDS[0],
-          matchedFiles,
-        },
-      ]
+  const postRebootMatchedFiles = changedFiles.includes(POST_REBOOT_STATUS_RUNTIME)
+    ? [POST_REBOOT_STATUS_RUNTIME]
     : [];
+  return [
+    ...(deepAgentsMatchedFiles.length > 0
+      ? [
+          {
+            id: PR_E2E_TYPED_TARGET_IDS[0],
+            matchedFiles: deepAgentsMatchedFiles,
+          },
+        ]
+      : []),
+    ...(postRebootMatchedFiles.length > 0
+      ? [
+          {
+            id: PR_E2E_TYPED_TARGET_IDS[1],
+            matchedFiles: postRebootMatchedFiles,
+          },
+        ]
+      : []),
+  ];
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
@@ -486,11 +498,4 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
 
 export function riskPlanRequiredTargetIds(plan: RiskPlan): string[] {
   return plan.requiredTargets.map((target) => target.id);
-}
-
-export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
-  const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return (
-    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
-  );
 }

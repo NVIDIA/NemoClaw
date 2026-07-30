@@ -6,7 +6,6 @@ import {
   buildRiskPlan,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
-  requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../tools/advisors/risk-plan.mts";
@@ -150,8 +149,11 @@ describe("deterministic PR risk plan", () => {
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
     );
 
-    expect(PR_E2E_TYPED_TARGET_IDS).toEqual(["ubuntu-repo-cloud-langchain-deepagents-code"]);
-    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(PR_E2E_TYPED_TARGET_IDS).toEqual([
+      "ubuntu-repo-cloud-langchain-deepagents-code",
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
         id: PR_E2E_TYPED_TARGET_IDS[0],
@@ -162,12 +164,11 @@ describe("deterministic PR risk plan", () => {
     expect(result.families).toContainEqual(
       expect.objectContaining({
         id: "focused-e2e",
-        requiredTargets: [...PR_E2E_TYPED_TARGET_IDS],
+        requiredTargets: [PR_E2E_TYPED_TARGET_IDS[0]],
       }),
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
@@ -185,7 +186,7 @@ describe("deterministic PR risk plan", () => {
       "test/langchain-deepagents-code-managed-model-params.test.ts",
     );
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
         id: PR_E2E_TYPED_TARGET_IDS[0],
@@ -195,6 +196,23 @@ describe("deterministic PR risk plan", () => {
     ]);
     expect(result.tier).toBe(2);
     expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
+  });
+
+  it("selects post-reboot recovery for status delivery recovery changes (#7824)", () => {
+    const changedFile = "src/lib/actions/sandbox/status-snapshot.ts";
+    const result = plan(changedFile);
+    const adjacentStatusFile = plan("src/lib/actions/sandbox/status-text.ts");
+
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[1]]);
+    expect(result.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[1],
+        families: ["focused-e2e"],
+        matchedFiles: [changedFile],
+      }),
+    ]);
+    expect(riskPlanRequiredTargetIds(adjacentStatusFile)).toEqual([]);
+    expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -358,31 +376,6 @@ describe("deterministic PR risk plan", () => {
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
     expect(result.requiredTargets).toEqual([]);
-  });
-
-  it("runs controller-only changes without credentialed E2E authorization", () => {
-    const result = plan(
-      ".github/workflows/pr-e2e-gate.yaml",
-      "tools/e2e/pr-e2e-gate.mts",
-      "tools/e2e/pr-e2e-required.mts",
-    );
-
-    expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
-  });
-
-  it.each([
-    ".github/workflows/e2e.yaml",
-    "test/e2e/risk-signal-reporter.ts",
-    "tools/e2e/workflow-plan.mts",
-  ])("requires authorization before credentialed E2E can execute %s", (file) => {
-    expect(requiresCredentialedE2eAuthorization(plan(file))).toBe(true);
-  });
-
-  it("keeps mixed controller and credentialed execution changes behind authorization", () => {
-    const result = plan(".github/workflows/pr-e2e-gate.yaml", "test/e2e/risk-signal-reporter.ts");
-
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it.each([
