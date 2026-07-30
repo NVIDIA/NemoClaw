@@ -78,61 +78,57 @@ describe("Hermes 0.19 durable state ledgers", () => {
     expect(hermes.stateDirs).toContain("cron");
     expect(hermes.stateFiles).toEqual(
       expect.arrayContaining([
-        { path: "cron/executions.db", strategy: "sqlite_backup" },
+        { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },
         { path: "gateway/discord_message_recovery.db", strategy: "sqlite_backup" },
       ]),
     );
   });
 
-  it.skipIf(!canRunSqlite)(
-    "lets the online cron database copy replace the earlier directory capture",
-    () => {
-      const fixture = tempFixture();
-      const hermesHome = path.join(fixture, ".hermes");
-      const liveDb = path.join(hermesHome, "cron", "executions.db");
-      const backupDb = path.join(fixture, "backup", "cron", "executions.db");
-      createLedger(liveDb, "online-copy");
+  it.skipIf(!canRunSqlite)("backs up and restores the nested cron execution ledger online", () => {
+    const fixture = tempFixture();
+    const hermesHome = path.join(fixture, ".hermes");
+    const liveDb = path.join(hermesHome, "runtime", "cron-executions.db");
+    const backupDb = path.join(fixture, "backup", "runtime", "cron-executions.db");
+    createLedger(liveDb, "online-copy");
 
-      fs.mkdirSync(path.dirname(backupDb), { recursive: true });
-      fs.writeFileSync(backupDb, "raw directory capture\n");
-      const backup = spawnSync(
-        "sh",
-        [
-          "-c",
-          buildStateFileBackupCommand(hermesHome, {
-            path: "cron/executions.db",
-            strategy: "sqlite_backup",
-          }),
-        ],
-        { encoding: null },
-      );
-      expect(backup.status, backup.stderr.toString()).toBe(0);
-      fs.writeFileSync(backupDb, backup.stdout);
-      expect(readLedger(backupDb)).toBe("online-copy");
+    fs.mkdirSync(path.dirname(backupDb), { recursive: true });
+    const backup = spawnSync(
+      "sh",
+      [
+        "-c",
+        buildStateFileBackupCommand(hermesHome, {
+          path: "runtime/cron-executions.db",
+          strategy: "sqlite_backup",
+        }),
+      ],
+      { encoding: null },
+    );
+    expect(backup.status, backup.stderr.toString()).toBe(0);
+    fs.writeFileSync(backupDb, backup.stdout);
+    expect(readLedger(backupDb)).toBe("online-copy");
 
-      fs.rmSync(liveDb);
-      createLedger(liveDb, "stale-directory-copy");
-      fs.writeFileSync(`${liveDb}-wal`, "stale wal\n");
-      fs.writeFileSync(`${liveDb}-shm`, "stale shm\n");
-      const restore = spawnSync(
-        "sh",
-        [
-          "-c",
-          buildStateFileRestoreCommand(
-            hermesHome,
-            { path: "cron/executions.db", strategy: "sqlite_backup" },
-            false,
-          ),
-        ],
-        { input: fs.readFileSync(backupDb) },
-      );
+    fs.rmSync(liveDb);
+    createLedger(liveDb, "stale-directory-copy");
+    fs.writeFileSync(`${liveDb}-wal`, "stale wal\n");
+    fs.writeFileSync(`${liveDb}-shm`, "stale shm\n");
+    const restore = spawnSync(
+      "sh",
+      [
+        "-c",
+        buildStateFileRestoreCommand(
+          hermesHome,
+          { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },
+          false,
+        ),
+      ],
+      { input: fs.readFileSync(backupDb) },
+    );
 
-      expect(restore.status, restore.stderr.toString()).toBe(0);
-      expect(readLedger(liveDb)).toBe("online-copy");
-      expect(fs.existsSync(`${liveDb}-wal`)).toBe(false);
-      expect(fs.existsSync(`${liveDb}-shm`)).toBe(false);
-    },
-  );
+    expect(restore.status, restore.stderr.toString()).toBe(0);
+    expect(readLedger(liveDb)).toBe("online-copy");
+    expect(fs.existsSync(`${liveDb}-wal`)).toBe(false);
+    expect(fs.existsSync(`${liveDb}-shm`)).toBe(false);
+  });
 
   it.skipIf(!canRunSqlite)(
     "recreates the nested Discord recovery parent before restoring its database",
@@ -172,7 +168,7 @@ describe("Hermes 0.19 durable state ledgers", () => {
     const sshLog = path.join(fixture, "ssh-log.jsonl");
     const ledgers = [
       ["runtime/state.db", "original sqlite backup\n"],
-      ["cron/executions.db", "original cron backup\n"],
+      ["runtime/cron-executions.db", "original cron backup\n"],
       ["gateway/discord_message_recovery.db", "original Discord backup\n"],
     ] as const;
     const readText = (filePath: string) => fs.readFileSync(filePath, "utf8");
@@ -220,7 +216,7 @@ function readStdin() {
 }
 const ledger = [
   "runtime/state.db",
-  "cron/executions.db",
+  "runtime/cron-executions.db",
   "gateway/discord_message_recovery.db",
 ].find((candidate) => cmd.includes(candidate));
 if (cmd.includes("[ -d ")) process.exit(0);
