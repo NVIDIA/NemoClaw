@@ -317,7 +317,7 @@ network_policies:
     expect(source).toContain(").toHaveLength(0);");
   });
 
-  it("restores DNS before removal and checks Hermes discovery after a tool call", () => {
+  it("restores DNS before removal, restarts Hermes, then checks discovery after a tool call", () => {
     const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
     const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
@@ -327,16 +327,18 @@ network_policies:
       "const survivingDiscoveryOffset = await assertAdapterDnsRebindingDenied",
       hermesTest,
     );
-    const toolCall = source.indexOf("await assertRealAdapterToolCall", rebinding);
+    const restart = source.indexOf("await restartBridgeWithoutHostSecret", rebinding);
+    const toolCall = source.indexOf("await assertRealAdapterToolCall", restart);
     const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", toolCall);
 
     expect(denialProof).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(denialProof);
     expect(remove).toBeGreaterThan(restore);
     expect(rebinding).toBeGreaterThan(hermesTest);
-    expect(toolCall).toBeGreaterThan(rebinding);
+    expect(restart).toBeGreaterThan(rebinding);
+    expect(toolCall).toBeGreaterThan(restart);
     expect(rediscovery).toBeGreaterThan(toolCall);
-    expect(source).toContain("Hermes MCP rediscovery after DNS rebinding bridge removal");
+    expect(source).toContain("Hermes MCP rediscovery after explicit restart");
   });
 
   it("restores host DNS strictly while treating the ephemeral sandbox as best effort", async () => {

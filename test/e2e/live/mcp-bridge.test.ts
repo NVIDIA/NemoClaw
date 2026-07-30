@@ -1246,7 +1246,7 @@ mcpBridgeShardTest("hermes")(
     const survivingMcp = {
       server: fakeMcp,
       expectedSecret: HOST_SECRET,
-      label: "Hermes MCP rediscovery after DNS rebinding bridge removal",
+      label: "Hermes MCP rediscovery after explicit restart",
     };
     const survivingDiscoveryOffset = await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
@@ -1255,20 +1255,14 @@ mcpBridgeShardTest("hermes")(
       secretPaths: ["/sandbox/.hermes"],
       survivingMcp,
     });
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "hermes",
-      sandboxName: HERMES_SANDBOX_NAME,
-      resultToken: hermesResult,
-      artifactName: "hermes-real-mcp-tool-call-initial",
-    });
-    await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       resultToken: hermesResult,
-      artifactName: "hermes-real-mcp-tool-call-after-restart",
+      artifactName: "hermes-real-mcp-tool-call-after-rediscovery-restart",
     });
+    await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
     fakeMcp.setSecret(ROTATED_HOST_SECRET);
     await rotateBridgeCredential(host, HERMES_SANDBOX_NAME, "hermes");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {

@@ -68,15 +68,13 @@ afterEach(async () => {
   compatibleMock = undefined;
 });
 
-async function startDeferredCompatibleMock(attempts: number): Promise<StartedHttpServer> {
+async function startDeferredCompatibleMock(): Promise<StartedHttpServer> {
   return startCompatibleMock({
     apiKey: COMPATIBLE_API_KEY,
     model: COMPATIBLE_MODEL,
     toolChallenge: TOOL_CHALLENGE,
     toolResultToken: EXPECTED_RESULT_TOKEN,
     deferredToolName: DEFERRED_TOOL_NAME,
-    deferredToolSearchAttempts: attempts,
-    deferredToolSearchRetryDelayMs: 0,
   });
 }
 
@@ -159,10 +157,16 @@ describe("authenticated MCP rediscovery evidence", () => {
   });
 
   it.each([
-    ["initialize HTTP response", 0, { responseStatus: 401 }],
-    ["initialized notification response with HTTP 200", 1, { responseStatus: 200 }],
-    ["tools/list JSON-RPC response", 2, { responseHasResult: false }],
-  ])("rejects a failed %s", (_failure, failedRequestIndex, response) => {
+    ["an unsuccessful initialize HTTP response", 0, { responseStatus: 401 }],
+    ["an initialize response without a negotiated session ID", 0, { negotiatedSessionId: "" }],
+    [
+      "an initialize response without a negotiated protocol version",
+      0,
+      { negotiatedProtocolVersion: "" },
+    ],
+    ["an initialized notification response with HTTP 200", 1, { responseStatus: 200 }],
+    ["a tools/list response without a JSON-RPC result", 2, { responseHasResult: false }],
+  ])("rejects %s", (_failure, failedRequestIndex, response) => {
     const requests = [
       successfulInitialize(),
       request("notifications/initialized"),
@@ -175,8 +179,8 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("Hermes deferred MCP tool discovery", () => {
-  it("retries tool_search within one Hermes message history until the target appears", async () => {
-    compatibleMock = await startDeferredCompatibleMock(3);
+  it("uses one tool_search, tool_describe, and tool_call when the deferred target is present", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
     const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
 
     const firstSearch = expectToolCall(
@@ -184,16 +188,8 @@ describe("Hermes deferred MCP tool discovery", () => {
       "tool_search",
       { query: DEFERRED_TOOL_NAME },
     );
-    expect(firstSearch.id).toBe("call_hermes_tool_search_1");
-    recordToolResult(messages, firstSearch, { matches: [] });
-
-    const secondSearch = expectToolCall(
-      await requestCompatibleMessage(compatibleMock, messages),
-      "tool_search",
-      { query: DEFERRED_TOOL_NAME },
-    );
-    expect(secondSearch.id).toBe("call_hermes_tool_search_2");
-    recordToolResult(messages, secondSearch, { matches: [{ name: DEFERRED_TOOL_NAME }] });
+    expect(firstSearch.id).toBe("call_hermes_tool_search");
+    recordToolResult(messages, firstSearch, { matches: [{ name: DEFERRED_TOOL_NAME }] });
 
     const description = expectToolCall(
       await requestCompatibleMessage(compatibleMock, messages),
@@ -220,8 +216,8 @@ describe("Hermes deferred MCP tool discovery", () => {
     expect(finalMessage.tool_calls).toBeUndefined();
   });
 
-  it("stops same-turn tool_search retries after the configured attempt count", async () => {
-    compatibleMock = await startDeferredCompatibleMock(2);
+  it("stops after one well-formed tool_search miss", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
     const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
 
     const firstSearch = expectToolCall(
@@ -229,16 +225,8 @@ describe("Hermes deferred MCP tool discovery", () => {
       "tool_search",
       { query: DEFERRED_TOOL_NAME },
     );
-    expect(firstSearch.id).toBe("call_hermes_tool_search_1");
+    expect(firstSearch.id).toBe("call_hermes_tool_search");
     recordToolResult(messages, firstSearch, { matches: [] });
-
-    const secondSearch = expectToolCall(
-      await requestCompatibleMessage(compatibleMock, messages),
-      "tool_search",
-      { query: DEFERRED_TOOL_NAME },
-    );
-    expect(secondSearch.id).toBe("call_hermes_tool_search_2");
-    recordToolResult(messages, secondSearch, { matches: [] });
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
     expect(terminalMessage).toMatchObject({
@@ -249,7 +237,7 @@ describe("Hermes deferred MCP tool discovery", () => {
   });
 
   it("rejects a malformed tool_search result without retrying", async () => {
-    compatibleMock = await startDeferredCompatibleMock(3);
+    compatibleMock = await startDeferredCompatibleMock();
     const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
 
     const firstSearch = expectToolCall(
@@ -257,7 +245,7 @@ describe("Hermes deferred MCP tool discovery", () => {
       "tool_search",
       { query: DEFERRED_TOOL_NAME },
     );
-    expect(firstSearch.id).toBe("call_hermes_tool_search_1");
+    expect(firstSearch.id).toBe("call_hermes_tool_search");
     recordToolResult(messages, firstSearch, { matches: [{ unexpected: true }] });
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);

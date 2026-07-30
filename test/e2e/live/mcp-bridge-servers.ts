@@ -22,8 +22,6 @@ type TestServer = http.Server | https.Server;
 
 export const HERMES_DEFERRED_TOOL_SEARCH_MISS =
   "Hermes tool_search did not return the deferred target";
-const HERMES_DEFERRED_TOOL_SEARCH_ATTEMPTS = 15;
-const HERMES_DEFERRED_TOOL_SEARCH_RETRY_DELAY_MS = 2_000;
 
 export interface StartedHttpServer {
   port: number;
@@ -365,8 +363,6 @@ export async function startCompatibleMock(options: {
   toolResultToken?: string;
   toolNames?: string[];
   deferredToolName?: string;
-  deferredToolSearchAttempts?: number;
-  deferredToolSearchRetryDelayMs?: number;
   progressiveToolSearch?: { toolName: string; query: string };
 }): Promise<StartedHttpServer> {
   const server = http.createServer(async (req, res) => {
@@ -430,12 +426,11 @@ export async function startCompatibleMock(options: {
           return undefined;
         }
       };
-      const hermesSearchToolCallId = (attempt: number) => `call_hermes_tool_search_${attempt}`;
       const classifyHermesSearchResult = (
         index: number,
         toolName: string,
       ): "target" | "miss" | "invalid" => {
-        const parsed = parsedToolResult(index, hermesSearchToolCallId(index + 1));
+        const parsed = parsedToolResult(index, "call_hermes_tool_search");
         if (!Array.isArray(parsed?.matches)) return "invalid";
         const matches = parsed.matches;
         const hasValidEntries = matches.every(
@@ -499,42 +494,23 @@ export async function startCompatibleMock(options: {
       } else if (!sawAuthenticatedToolResult && options.deferredToolName) {
         const bridgeNames = ["tool_search", "tool_describe", "tool_call"];
         const missingBridges = bridgeNames.filter((name) => !visibleToolNames.has(name));
-        const deferredToolSearchAttempts =
-          options.deferredToolSearchAttempts ?? HERMES_DEFERRED_TOOL_SEARCH_ATTEMPTS;
-        const deferredToolSearchRetryDelayMs =
-          options.deferredToolSearchRetryDelayMs ?? HERMES_DEFERRED_TOOL_SEARCH_RETRY_DELAY_MS;
-        const firstNonSearchResult = toolResults.findIndex(
-          (message, index) => message.tool_call_id !== hermesSearchToolCallId(index + 1),
-        );
-        const completedSearches =
-          firstNonSearchResult === -1 ? toolResultCount : firstNonSearchResult;
         if (visibleToolNames.has(options.deferredToolName)) {
           protocolError = `deferred target ${options.deferredToolName} leaked into model tools`;
         } else if (missingBridges.length > 0) {
           protocolError = `Hermes tool search bridges missing: ${missingBridges.join(", ")}`;
         } else if (toolResultCount === 0) {
           plannedToolCall = {
-            id: hermesSearchToolCallId(1),
+            id: "call_hermes_tool_search",
             name: "tool_search",
             arguments: { query: options.deferredToolName },
           };
-        } else if (firstNonSearchResult === -1) {
-          const searchResult = classifyHermesSearchResult(
-            toolResultCount - 1,
-            options.deferredToolName,
-          );
+        } else if (toolResultCount === 1) {
+          const searchResult = classifyHermesSearchResult(0, options.deferredToolName);
           if (searchResult === "target") {
             plannedToolCall = {
               id: "call_hermes_tool_describe",
               name: "tool_describe",
               arguments: { name: options.deferredToolName },
-            };
-          } else if (searchResult === "miss" && toolResultCount < deferredToolSearchAttempts) {
-            await delay(deferredToolSearchRetryDelayMs);
-            plannedToolCall = {
-              id: hermesSearchToolCallId(toolResultCount + 1),
-              name: "tool_search",
-              arguments: { query: options.deferredToolName },
             };
           } else if (searchResult === "miss") {
             protocolError = HERMES_DEFERRED_TOOL_SEARCH_MISS;
@@ -542,10 +518,10 @@ export async function startCompatibleMock(options: {
             protocolError = "Hermes returned an unexpected deferred tool result sequence";
           }
         } else if (
-          toolResultCount === completedSearches + 1 &&
+          toolResultCount === 2 &&
           toolResults.at(-1)?.tool_call_id === "call_hermes_tool_describe"
         ) {
-          if (hasExpectedHermesDescription(completedSearches, options.deferredToolName)) {
+          if (hasExpectedHermesDescription(1, options.deferredToolName)) {
             plannedToolCall = {
               id: "call_hermes_tool_call",
               name: "tool_call",
