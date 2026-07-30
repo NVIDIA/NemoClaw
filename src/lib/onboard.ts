@@ -2591,6 +2591,9 @@ async function createSandboxWithBaseImageResolution(
     // untouched.
     const replacementWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
     managedWorkloadRuntime.ensurePreparedProfile(replacementWorkload);
+    if (replacementWorkload.source.kind === "managed-image") {
+      sandboxGpuCreateFlow.resolveCurrentManagedBootstrapRuntimeProvider(computePlan.driverName);
+    }
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2631,6 +2634,10 @@ async function createSandboxWithBaseImageResolution(
 
   const preparedSandboxWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
   managedWorkloadRuntime.ensurePreparedProfile(preparedSandboxWorkload);
+  const managedBootstrapRuntimeProvider =
+    preparedSandboxWorkload.source.kind === "managed-image"
+      ? sandboxGpuCreateFlow.resolveCurrentManagedBootstrapRuntimeProvider(computePlan.driverName)
+      : null;
 
   applyExtraProviderReconciliation({
     extraProviders: resolvedCreateIntent.extraProviders,
@@ -2678,9 +2685,11 @@ async function createSandboxWithBaseImageResolution(
     preparedSandboxWorkload.source.kind === "managed-image" &&
     managedStartupRootApplyRequest &&
     managedBootstrapIdentity &&
-    intendedSandboxStartupCommand
+    intendedSandboxStartupCommand &&
+    managedBootstrapRuntimeProvider
       ? {
           bootstrapIdentity: managedBootstrapIdentity,
+          runtimeProvider: managedBootstrapRuntimeProvider,
           request: managedStartupRootApplyRequest,
           image: {
             repository: preparedSandboxWorkload.source.contract.image,

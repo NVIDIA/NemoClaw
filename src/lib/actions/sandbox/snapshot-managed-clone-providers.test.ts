@@ -447,7 +447,7 @@ describe("managed snapshot clone provider credentials", () => {
     ],
   ])("fails closed on %s before provider mutation", (_scenario, inspection) => {
     const broker = fakeBroker();
-    const runner = vi.fn(() => inspection);
+    const runner = vi.fn((_args: string[]) => inspection);
 
     expect(() =>
       prepareManagedCloneProviders({

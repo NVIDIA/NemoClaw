@@ -10,6 +10,7 @@ import {
   type InitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
 } from "../../src/lib/onboard/initial-policy.ts";
+import { resolveCurrentManagedBootstrapRuntimeProvider } from "../../src/lib/onboard/managed-bootstrap/runtime-providers.ts";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupAgent,
@@ -482,6 +483,7 @@ async function run(input: Inputs): Promise<void> {
         terminalAgent: input.agent === "langchain-deepagents-code",
         managedBootstrap: {
           bootstrapIdentity: launch.managedBootstrapIdentity,
+          runtimeProvider: resolveCurrentManagedBootstrapRuntimeProvider("docker"),
           request: launch.managedStartupRootApplyRequest,
           image,
           agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },

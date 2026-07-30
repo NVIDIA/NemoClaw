@@ -44,7 +44,8 @@ export {
   renderManagedBootstrapHeldCommand,
   runManagedBootstrapSequence,
 } from "../../../onboard/managed-bootstrap/adapter";
-export { createDockerManagedBootstrapAdapter } from "../../../onboard/managed-bootstrap/docker";
+export type { ManagedBootstrapRuntimeProvider } from "../../../onboard/managed-bootstrap/runtime-provider";
+export { resolvePersistedManagedBootstrapRuntimeProvider } from "../../../onboard/managed-bootstrap/runtime-providers";
 export type {
   ManagedStartupAgent,
   ManagedStartupProfile,
