@@ -18,7 +18,6 @@ import {
   isPrE2eTypedTargetId,
   RISK_PLAN_VERSION,
   type RiskPlan,
-  requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
@@ -70,7 +69,6 @@ const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
-const CONTROL_PLANE_AUTHORIZATION_TITLE = "Maintainer approval required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "Maintainer approval required to run fork E2E";
 const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
 const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
@@ -3189,7 +3187,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
   }
   const reason = normalizedWaiverReason(command.reason);
   const executionTitle = authorizedExecutionTitle(command.maintainer);
-  let pendingTitle = CONTROL_PLANE_AUTHORIZATION_TITLE;
+  const pendingTitle = FORK_E2E_AUTHORIZATION_TITLE;
 
   let checkRunId: number | undefined;
   try {
@@ -3200,8 +3198,9 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       headSha: command.headSha,
       baseSha: command.baseSha,
     });
-    const isFork = pull.head.repo?.full_name !== repository;
-    pendingTitle = isFork ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
+    if (pull.head.repo?.full_name === repository) {
+      throw new Error("approve-e2e is only supported for fork pull requests");
+    }
     const changedFiles = await pullChangedFiles(repository, pull, token);
     const inventory = readFreeStandingJobsInventory();
     const plan = validateRiskPlan(
@@ -3212,9 +3211,6 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       }),
       new Set(inventory.allowedJobs),
     );
-    if (!isFork && !requiresCredentialedE2eAuthorization(plan)) {
-      throw new Error("pull request does not require credentialed E2E authorization");
-    }
     const jobs = riskPlanRequiredJobIds(plan);
     const targets = riskPlanRequiredTargetIds(plan);
     if (jobs.length + targets.length === 0) {
