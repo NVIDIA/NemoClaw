@@ -8,6 +8,24 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { FakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
+export interface AuthenticatedMcpDiscoveryTarget {
+  server: FakeMcpHttpsServer;
+  expectedSecret: string;
+  label: string;
+}
+
+export async function assertAuthenticatedMcpRediscovery(
+  target: AuthenticatedMcpDiscoveryTarget | undefined,
+  requestOffset: number | undefined,
+): Promise<void> {
+  if (!target || requestOffset === undefined) return;
+  await assertAuthenticatedMcpDiscovery(target.server, {
+    requestOffset,
+    expectedSecret: target.expectedSecret,
+    label: target.label,
+  });
+}
+
 export async function assertAuthenticatedMcpDiscovery(
   fakeMcp: FakeMcpHttpsServer,
   options: {

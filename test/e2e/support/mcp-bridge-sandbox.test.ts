@@ -322,10 +322,13 @@ network_policies:
     const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
     const remove = source.indexOf("const remove = await host.nemoclaw", denialProof);
+    const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", remove);
 
     expect(denialProof).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(denialProof);
     expect(remove).toBeGreaterThan(restore);
+    expect(rediscovery).toBeGreaterThan(remove);
+    expect(source).toContain("Hermes MCP rediscovery after DNS rebinding bridge removal");
   });
 
   it("restores host DNS strictly while treating the ephemeral sandbox as best effort", async () => {
