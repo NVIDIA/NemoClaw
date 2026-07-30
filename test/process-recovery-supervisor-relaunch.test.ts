@@ -44,6 +44,70 @@ function setImmediateRecoveryPolling() {
   vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
 }
 
+function composedRelaunchTransaction(order: string[]) {
+  const finalizeTransaction = vi.fn(({ supervisorReady }: { supervisorReady: boolean }) => {
+    order.push(supervisorReady ? "commit-container" : "rollback-container");
+    return supervisorReady
+      ? { backupRemoved: true, rolledBack: false }
+      : { backupRemoved: false, rolledBack: true };
+  });
+  const resolveContainer = vi
+    .fn()
+    .mockReturnValueOnce("old-container-id")
+    .mockReturnValue("replacement-container-id");
+  const relaunchManagedSupervisorSessionImpl = vi.fn(
+    (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
+      relaunchManagedSupervisorSession(sandboxName, {
+        quiet: options.quiet,
+        deps: {
+          ...options.deps,
+          resolveContainer,
+          inspectContainer: vi.fn(() => ({
+            Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
+          })),
+          backupState: vi.fn(
+            () =>
+              ({
+                success: true,
+                manifest: { backupPath: "/tmp/rebuild-backups/recovery-box/recovery" },
+                backedUpDirs: ["workspace"],
+                failedDirs: [],
+                backedUpFiles: [],
+                failedFiles: [],
+              }) as never,
+          ),
+          restoreState: vi.fn(() => {
+            order.push("restore-state");
+            return {
+              success: true,
+              restoredDirs: ["workspace"],
+              failedDirs: [],
+              restoredFiles: [],
+              failedFiles: [],
+            };
+          }),
+          removeBackup: vi.fn(() => true),
+          recreate: vi.fn(() => ({
+            applied: true as const,
+            oldContainerId: "old-container-id",
+            newContainerId: "replacement-container-id",
+            originalName: "openshell-recovery-box",
+            backupContainerName: "openshell-recovery-box-nemoclaw-backup",
+            mode: {
+              kind: "startup-command" as const,
+              label: "persistent sandbox startup command",
+              device: "",
+              args: [],
+            },
+            backupRemoved: false,
+          })),
+          finalize: finalizeTransaction,
+        },
+      }),
+  );
+  return { finalizeTransaction, relaunchManagedSupervisorSessionImpl };
+}
+
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   it("does not turn ambiguous supervisor unavailability into a container mutation", () => {
     mockOpenClawSandbox("ambiguous-box");
@@ -176,23 +240,26 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   it("commits only after managed health accepts the recreated supervisor", () => {
     mockOpenClawSandbox("recovered-box");
     setImmediateRecoveryPolling();
-    const finalize = vi.fn((supervisorReady: boolean) =>
-      supervisorReady
-        ? { backupRemoved: true, rolledBack: false }
-        : { backupRemoved: false, rolledBack: true },
-    );
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
-      containerId: "replacement-container-id",
-      finalize,
-    }));
+    const order: string[] = [];
+    const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
+      composedRelaunchTransaction(order);
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
     );
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
+    const acceptedProbe = {
       status: 0,
       stdout: "GATEWAY_PID=4242\n",
       stderr: "",
-    }));
+    };
+    let pinnedProbeCount = 0;
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => {
+      pinnedProbeCount += 1;
+      if (pinnedProbeCount === 1) {
+        return { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" };
+      }
+      if (pinnedProbeCount === 3) order.push("post-restore-health");
+      return acceptedProbe;
+    });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -210,14 +277,73 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
 
     expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: true });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("recovered-box", "recover");
+    expect(relaunchManagedSupervisorSessionImpl).toHaveBeenCalledWith(
+      "recovered-box",
+      expect.objectContaining({
+        deps: expect.objectContaining({
+          confirmRestoredManagedHealth: expect.any(Function),
+        }),
+      }),
+    );
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledWith(
       "recovered-box",
       "probe",
       210000,
       "replacement-container-id",
     );
-    expect(finalize).toHaveBeenCalledOnce();
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(order).toEqual(["restore-state", "post-restore-health", "commit-container"]);
+    expect(finalizeTransaction).toHaveBeenCalledOnce();
+    expect(finalizeTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ supervisorReady: true }),
+    );
+  });
+
+  it("rolls back the composed transaction when post-restore managed health fails", () => {
+    mockOpenClawSandbox("post-restore-failed-box");
+    setImmediateRecoveryPolling();
+    const order: string[] = [];
+    const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
+      composedRelaunchTransaction(order);
+    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
+      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
+    );
+    const acceptedProbe = {
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    };
+    let pinnedProbeCount = 0;
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => {
+      pinnedProbeCount += 1;
+      if (pinnedProbeCount === 1) {
+        return { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" };
+      }
+      if (pinnedProbeCount === 3) {
+        order.push("post-restore-health");
+        return { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" };
+      }
+      return acceptedProbe;
+    });
+
+    const result = checkAndRecoverSandboxProcesses("post-restore-failed-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+    });
+    expect(order).toEqual(["restore-state", "post-restore-health", "rollback-container"]);
+    expect(finalizeTransaction).toHaveBeenCalledOnce();
+    expect(finalizeTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ supervisorReady: false }),
+    );
   });
 
   it("reports recovery failure when state restore rolls the replacement back", () => {

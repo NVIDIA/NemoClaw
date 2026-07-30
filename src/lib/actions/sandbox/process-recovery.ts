@@ -509,6 +509,17 @@ function recoverSandboxProcesses(
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
             ),
+          confirmRestoredManagedHealth: (containerId) =>
+            waitForRecoveredSandboxGateway(sandboxName, {
+              quiet,
+              requireManagedProbe: true,
+              timeoutSeconds: gatewayRecoveryTimeoutSeconds(agent),
+              managedProbeImpl: (name) =>
+                confirmRecoveredSandboxGatewayManaged(name, {
+                  requestGatewaySupervisorActionImpl: (name, action) =>
+                    requestPinnedGatewaySupervisorAction(name, action, 210000, containerId),
+                }),
+            }),
         },
       });
       if (relaunch) return { kind: "relaunched", relaunch };

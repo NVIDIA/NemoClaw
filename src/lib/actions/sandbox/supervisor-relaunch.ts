@@ -48,6 +48,7 @@ export type ManagedSupervisorRelaunchDeps = {
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
+  confirmRestoredManagedHealth?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
@@ -136,6 +137,7 @@ export function relaunchManagedSupervisorSession(
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
+  const confirmRestoredManagedHealth = deps.confirmRestoredManagedHealth;
   const backupState = deps.backupState ?? sandboxState.backupSandboxState;
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
@@ -241,6 +243,25 @@ export function relaunchManagedSupervisorSession(
           stateRestored = false;
         }
         if (!stateRestored) {
+          const finalized = finalize({ result, supervisorReady: false });
+          const outcome = {
+            ...finalized,
+            stateRestored: false,
+            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
+          };
+          completed = { supervisorReady, outcome };
+          return outcome;
+        }
+        let restoredManagedHealth = false;
+        try {
+          restoredManagedHealth = confirmRestoredManagedHealth?.(result.newContainerId) === true;
+        } catch {
+          restoredManagedHealth = false;
+        }
+        if (!restoredManagedHealth) {
+          // State restoration can trigger a gateway reload. Re-prove the
+          // pinned replacement after that mutation while the previous
+          // container is still available for rollback.
           const finalized = finalize({ result, supervisorReady: false });
           const outcome = {
             ...finalized,
