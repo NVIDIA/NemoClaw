@@ -15,6 +15,7 @@ import type {
   ManagedBootstrapAgentIdentity,
   ManagedBootstrapImageIdentity,
 } from "./managed-bootstrap/adapter";
+import type { ManagedBootstrapRuntimeProvider } from "./managed-bootstrap/runtime-provider";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
@@ -24,6 +25,7 @@ import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+export { resolveCurrentManagedBootstrapRuntimeProvider } from "./managed-bootstrap/runtime-providers";
 
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
@@ -48,6 +50,7 @@ export interface SandboxGpuCreateFlowInput {
   persistStartupCommand?: boolean;
   managedBootstrap?: {
     readonly bootstrapIdentity: string;
+    readonly runtimeProvider: ManagedBootstrapRuntimeProvider;
     readonly request: ManagedStartupRootApplyRequest;
     readonly image: ManagedBootstrapImageIdentity;
     readonly agentIdentity: ManagedBootstrapAgentIdentity;

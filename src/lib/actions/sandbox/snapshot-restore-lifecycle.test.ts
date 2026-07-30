@@ -351,6 +351,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       { toolDisclosure: "automatic" },
       "current source tool disclosure is invalid",
     ],
+    [
+      "unregistered Podman runtime provider",
+      { openshellDriver: "podman" },
+      "driver 'podman' is not registered",
+    ],
   ])("rejects %s before deleting a forced managed-clone destination", async (_label, currentOverride, expectedError) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const built = managedOpenClawProfile();

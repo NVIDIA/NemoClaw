@@ -19,7 +19,6 @@ import {
   isDockerDesktopWslRuntime,
 } from "./docker-gpu-sandbox-create";
 import {
-  createDockerManagedBootstrapAdapter,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapSequenceResult,
   resolveOpenShellSandboxId,
@@ -154,7 +153,8 @@ export function createSandboxGpuCreateAttemptRunner(
     let streamedManagedCreateResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let managedSequence: ManagedBootstrapSequenceResult | null = null;
     if (managedBootstrap && managedMode) {
-      const adapter = createDockerManagedBootstrapAdapter({
+      const runtimeProvider = managedBootstrap.runtimeProvider;
+      const adapter = runtimeProvider.createAdapter({
         runCaptureOpenshell: deps.runCaptureOpenshell,
         runOpenshell: deps.runOpenshell,
         sleep: deps.sleep,
@@ -166,7 +166,7 @@ export function createSandboxGpuCreateAttemptRunner(
             plan: {
               schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
               sandboxName: input.sandboxName,
-              driverId: "docker",
+              driverId: runtimeProvider.driverId,
               image: managedBootstrap.image,
               profile: {
                 agent: managedBootstrap.request.agent,
@@ -207,7 +207,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 sandbox: {
                   sandboxName: input.sandboxName,
                   sandboxId: resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell),
-                  driverId: "docker",
+                  driverId: runtimeProvider.driverId,
                 },
                 ready: true,
                 readyAt: new Date().toISOString(),
@@ -215,19 +215,17 @@ export function createSandboxGpuCreateAttemptRunner(
             },
           },
           request: managedBootstrap.request,
-          replacementOptions: {
-            values: {
-              gpuModeArgs: managedMode.args,
-              gpuModeDevice: managedMode.device,
-              gpuModeKind: managedMode.kind,
-              gpuModeLabel: managedMode.label,
-              requiredUlimits: (input.requiredUlimits ?? []).map(
-                (value) => `${value.name}=${value.soft}:${value.hard}`,
-              ),
-              extraGroupGids:
-                backend === "jetson" && compatibility ? detectTegraDeviceGroupGids() : [],
+          replacementOptions: runtimeProvider.createReplacementOptions({
+            acceleration: {
+              strategy: managedMode.kind,
+              label: managedMode.label,
+              device: managedMode.device,
+              arguments: managedMode.args,
             },
-          },
+            limits: input.requiredUlimits ?? [],
+            supplementaryGroupIds:
+              backend === "jetson" && compatibility ? detectTegraDeviceGroupGids() : [],
+          }),
           timeoutSecs: input.sandboxReadyTimeoutSecs,
         });
         if (!streamedManagedCreateResult) {

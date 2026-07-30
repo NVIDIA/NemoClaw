@@ -56,7 +56,6 @@ import {
   captureOpenshell,
   cleanupHermesSandboxProviders,
   createDockerGpuSandboxCreatePatch,
-  createDockerManagedBootstrapAdapter,
   createManagedBootstrapIdentity,
   createManagedStartupRootApplyRequest,
   type DockerGpuSandboxCreatePatch,
@@ -76,6 +75,7 @@ import {
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   MANAGED_STARTUP_CA_ENV,
   MANAGED_STARTUP_PROFILE_ENV,
+  type ManagedBootstrapRuntimeProvider,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
   type ManagedStartupRootApplyRequest,
@@ -84,6 +84,7 @@ import {
   renderManagedBootstrapHeldCommand,
   resolveHermesDashboardOnboardState,
   resolveOpenShellSandboxId,
+  resolvePersistedManagedBootstrapRuntimeProvider,
   resolveSandboxGatewayName,
   runManagedBootstrapSequence,
   runOpenshell,
@@ -295,6 +296,7 @@ function resolveCloneDashboardEnvArgs(
 
 interface PreparedManagedSnapshotClone {
   readonly envArgs: readonly string[];
+  readonly runtimeProvider: ManagedBootstrapRuntimeProvider;
   readonly rootApplyRequest: ManagedStartupRootApplyRequest;
   readonly workload: Extract<NonNullable<SandboxEntry["workload"]>, { kind: "managed-image" }>;
   readonly messaging: SandboxEntry["messaging"];
@@ -378,6 +380,7 @@ async function prepareManagedSnapshotClone(
 ): Promise<PreparedManagedSnapshotClone | null> {
   const workload = source.workload;
   if (workload?.kind !== "managed-image") return null;
+  const runtimeProvider = resolvePersistedManagedBootstrapRuntimeProvider(source.openshellDriver);
   if (workload.reference !== fromImage || source.imageTag !== workload.reference) {
     throw new Error("managed workload receipt does not match the source sandbox image reference");
   }
@@ -452,6 +455,7 @@ async function prepareManagedSnapshotClone(
   const providerEnvironment = { ...process.env, ...credentialEnvironment };
   return {
     envArgs: credentialProxyEnvArgs,
+    runtimeProvider,
     rootApplyRequest: createManagedStartupRootApplyRequest({
       agent: rebound.profile.agent,
       encodedProfile: rebound.encodedProfile,
@@ -517,6 +521,7 @@ interface PreparedSnapshotCloneLaunch {
   readonly startupCommand: readonly string[];
   readonly intendedStartupCommand: readonly string[];
   readonly managedBootstrapIdentity: string | null;
+  readonly managedBootstrapRuntimeProvider: ManagedBootstrapRuntimeProvider | null;
 }
 
 function prepareSnapshotCloneLaunch(
@@ -539,6 +544,7 @@ function prepareSnapshotCloneLaunch(
     "nemoclaw-start",
   ];
   const managedBootstrapIdentity = managedClone ? createManagedBootstrapIdentity() : null;
+  const managedBootstrapRuntimeProvider = managedClone?.runtimeProvider ?? null;
   const startupCommand =
     managedClone && managedBootstrapIdentity
       ? renderManagedBootstrapHeldCommand(
@@ -587,6 +593,7 @@ function prepareSnapshotCloneLaunch(
     startupCommand,
     intendedStartupCommand,
     managedBootstrapIdentity,
+    managedBootstrapRuntimeProvider,
   };
 }
 
@@ -596,16 +603,8 @@ function createManagedSnapshotStartupPatch(
 ): DockerGpuSandboxCreatePatch | null {
   const managedClone = launch.managedClone;
   if (!managedClone) return null;
-  const sourceDriver = (launch.sourceEntry as SandboxEntry).openshellDriver;
-  if (
-    sourceDriver !== undefined &&
-    sourceDriver !== null &&
-    sourceDriver !== "docker" &&
-    sourceDriver !== "vm"
-  ) {
-    throw new Error(
-      `managed snapshot clone startup is unsupported for OpenShell driver '${sourceDriver}'`,
-    );
+  if (!launch.managedBootstrapRuntimeProvider) {
+    throw new Error("managed snapshot clone has no runtime provider");
   }
   return createDockerGpuSandboxCreatePatch({
     route: "native",
@@ -660,6 +659,10 @@ async function autoCreateSandboxFromSource(
     });
   let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
   if (managedClone && managedStartupPatch && launch.managedBootstrapIdentity) {
+    const runtimeProvider = launch.managedBootstrapRuntimeProvider;
+    if (!runtimeProvider) {
+      throw new Error("managed snapshot clone has no runtime provider");
+    }
     const separator = fromImage.lastIndexOf("@");
     const repository = separator > 0 ? fromImage.slice(0, separator) : "";
     const manifestDigest = separator > 0 ? fromImage.slice(separator + 1) : "";
@@ -668,7 +671,7 @@ async function autoCreateSandboxFromSource(
     }
     const captureText = (args: string[], options?: Record<string, unknown>) =>
       captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
-    const adapter = createDockerManagedBootstrapAdapter({
+    const adapter = runtimeProvider.createAdapter({
       runOpenshell,
       runCaptureOpenshell: captureText,
     });
@@ -679,7 +682,7 @@ async function autoCreateSandboxFromSource(
         plan: {
           schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
           sandboxName: dstName,
-          driverId: "docker",
+          driverId: runtimeProvider.driverId,
           image: {
             repository,
             manifestDigest: manifestDigest as `sha256:${string}`,
@@ -721,7 +724,7 @@ async function autoCreateSandboxFromSource(
             sandbox: {
               sandboxName: dstName,
               sandboxId: resolveOpenShellSandboxId(dstName, captureText),
-              driverId: "docker",
+              driverId: runtimeProvider.driverId,
             },
             ready: true,
             readyAt: new Date().toISOString(),
@@ -729,16 +732,16 @@ async function autoCreateSandboxFromSource(
         },
       },
       request: managedClone.rootApplyRequest,
-      replacementOptions: {
-        values: {
-          gpuModeArgs: [],
-          gpuModeDevice: "",
-          gpuModeKind: "startup-command",
-          gpuModeLabel: buildDockerGpuMode("startup-command").label,
-          requiredUlimits: [],
-          extraGroupGids: [],
+      replacementOptions: runtimeProvider.createReplacementOptions({
+        acceleration: {
+          strategy: "startup-command",
+          label: buildDockerGpuMode("startup-command").label,
+          device: "",
+          arguments: [],
         },
-      },
+        limits: [],
+        supplementaryGroupIds: [],
+      }),
       timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
     });
     if (!streamed) {
