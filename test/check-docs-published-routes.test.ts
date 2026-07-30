@@ -10,6 +10,7 @@ import { parse } from "yaml";
 
 import {
   buildPublishedRouteIndex,
+  extractMarkdownLinks,
   findBrokenChangelogRoutes,
   findBrokenPublishedInferenceRoutes,
   findBrokenPublishedManageSandboxRoutes,
@@ -464,16 +465,18 @@ describe("Manage Sandboxes extension routes", () => {
     const source = "manage-sandboxes/run-deep-agents-code.mdx";
     const quickstartSource = "get-started/quickstart-langchain-deepagents-code.mdx";
     const quickstart = readFileSync(path.join(repoRoot, "docs", quickstartSource), "utf8");
+    const quickstartRoute = "/user-guide/deepagents/get-started/quickstart";
+    const runtimeRoute =
+      "/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code";
 
-    expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([
-      "/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
-    ]);
+    expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([runtimeRoute]);
     expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
     expect(findBrokenPublishedRoutes(quickstartSource, index)).toEqual([]);
-    expect(quickstart.split('<a id="use-the-harness"></a>')).toHaveLength(2);
-    expect(quickstart).toContain(
-      "[Run Deep Agents Code](../manage-sandboxes/operate-sandboxes/run-deep-agents-code)",
-    );
+    expect(
+      extractMarkdownLinks(quickstart).map(({ target }) =>
+        resolvePublishedRoute(quickstartRoute, target),
+      ),
+    ).toContain(runtimeRoute);
     expect(
       index.routes.has(
         "/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
@@ -484,6 +487,15 @@ describe("Manage Sandboxes extension routes", () => {
         "/user-guide/hermes/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
       ),
     ).toBe(false);
+  });
+
+  it("preserves the legacy Deep Agents harness anchor", () => {
+    const quickstart = readFileSync(
+      path.join(repoRoot, "docs", "get-started/quickstart-langchain-deepagents-code.mdx"),
+      "utf8",
+    );
+
+    expect(quickstart.match(/<a\s+id=["']use-the-harness["']\s*><\/a>/g)).toHaveLength(1);
   });
 });
 
