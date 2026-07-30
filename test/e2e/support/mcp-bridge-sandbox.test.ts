@@ -317,17 +317,18 @@ network_policies:
     expect(source).toContain(").toHaveLength(0);");
   });
 
-  it("restores DNS before removal, restarts Hermes, then checks discovery after a tool call", () => {
+  it("captures the Hermes rediscovery offset after route removal and before restart", () => {
     const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
     const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
     const remove = source.indexOf("const remove = await host.nemoclaw", denialProof);
     const hermesTest = source.indexOf('mcpBridgeShardTest("hermes")');
-    const rebinding = source.indexOf(
-      "const survivingDiscoveryOffset = await assertAdapterDnsRebindingDenied",
-      hermesTest,
+    const rebinding = source.indexOf("await assertAdapterDnsRebindingDenied", hermesTest);
+    const offset = source.indexOf(
+      "const survivingDiscoveryOffset = fakeMcp.requests.length",
+      rebinding,
     );
-    const restart = source.indexOf("await restartBridgeWithoutHostSecret", rebinding);
+    const restart = source.indexOf("await restartBridgeWithoutHostSecret", offset);
     const toolCall = source.indexOf("await assertRealAdapterToolCall", restart);
     const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", toolCall);
 
@@ -335,7 +336,8 @@ network_policies:
     expect(restore).toBeGreaterThan(denialProof);
     expect(remove).toBeGreaterThan(restore);
     expect(rebinding).toBeGreaterThan(hermesTest);
-    expect(restart).toBeGreaterThan(rebinding);
+    expect(offset).toBeGreaterThan(rebinding);
+    expect(restart).toBeGreaterThan(offset);
     expect(toolCall).toBeGreaterThan(restart);
     expect(rediscovery).toBeGreaterThan(toolCall);
     expect(source).toContain("Hermes MCP rediscovery after explicit restart");

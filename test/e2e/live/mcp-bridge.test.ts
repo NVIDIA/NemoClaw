@@ -48,7 +48,6 @@ import {
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
 import {
-  type AuthenticatedMcpDiscoveryTarget,
   assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
@@ -190,9 +189,8 @@ async function assertAdapterDnsRebindingDenied(
     artifactPrefix: string;
     sandboxName: string;
     secretPaths: string[];
-    survivingMcp?: AuthenticatedMcpDiscoveryTarget;
   },
-): Promise<number | undefined> {
+): Promise<void> {
   const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
   cleanup.add(`stop ${options.artifactPrefix} DNS rebinding fake MCP HTTPS server`, () =>
     rebindMcp.close(),
@@ -318,14 +316,12 @@ async function assertAdapterDnsRebindingDenied(
   ).toHaveLength(0);
   // Restore before removal can reload policy and restart the sandbox.
   await restoreDnsRebindingHostsFixture(host, options.sandboxName, hostsFixture);
-  const survivingDiscoveryOffset = options.survivingMcp?.server.requests.length;
   const remove = await host.nemoclaw([options.sandboxName, "mcp", "remove", REBIND_SERVER_NAME], {
     artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-remove`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.adapter],
   });
   expectExitZero(remove, `${options.artifactPrefix} removes DNS rebinding route after proof`);
-  return survivingDiscoveryOffset;
 }
 async function addBridgeAndReadStatus(
   host: HostCliClient,
@@ -1248,13 +1244,13 @@ mcpBridgeShardTest("hermes")(
       expectedSecret: HOST_SECRET,
       label: "Hermes MCP rediscovery after explicit restart",
     };
-    const survivingDiscoveryOffset = await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
       artifactPrefix: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
-      survivingMcp,
     });
+    const survivingDiscoveryOffset = fakeMcp.requests.length;
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
