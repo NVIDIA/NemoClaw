@@ -6,7 +6,8 @@ run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.p
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * 1-6"
+    - cron: "0 0 * * 0"
   workflow_dispatch:
     inputs:
       targets:
@@ -15,7 +16,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, issue-2478-crash-loop-recovery-soak, and staging-brev-launchable are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -5581,7 +5582,7 @@ jobs:
 
   issue-2478-crash-loop-recovery:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery,') || contains(format(',{0},', inputs.targets), ',issue-2478-crash-loop-recovery,') }}
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 0 * * 1-6') || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery,') || contains(format(',{0},', inputs.targets), ',issue-2478-crash-loop-recovery,'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -5593,6 +5594,71 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-2478"
+      NEMOCLAW_E2E_RECOVERY_PROFILE: "functional"
+      NEMOCLAW_E2E_CRASH_CYCLES: "1"
+      NEMOCLAW_E2E_SOAK_SECONDS: "15"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: "Run issue #2478 crash-loop recovery live Vitest test"
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-2478-crash-loop-recovery.test.ts
+
+      - name: "Upload issue #2478 crash-loop recovery artifacts"
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  issue-2478-crash-loop-recovery-soak:
+    needs: generate-matrix
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 0 * * 0') || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery-soak,') || contains(format(',{0},', inputs.targets), ',issue-2478-crash-loop-recovery-soak,'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "issue-2478-crash-loop-recovery-soak"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_CHANGE_FOCUSED: "0"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/issue-2478-crash-loop-recovery-soak
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-2478-soak"
+      NEMOCLAW_E2E_RECOVERY_PROFILE: "soak"
+      NEMOCLAW_E2E_CRASH_CYCLES: "5"
+      NEMOCLAW_E2E_SOAK_SECONDS: "300"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5907,6 +5973,7 @@ jobs:
         openclaw-inference-switch,
         bedrock-runtime-compatible-anthropic,
         issue-2478-crash-loop-recovery,
+        issue-2478-crash-loop-recovery-soak,
         device-auth-health,
         channels-add-remove,
         tunnel-lifecycle,

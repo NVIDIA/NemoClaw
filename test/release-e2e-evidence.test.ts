@@ -94,12 +94,13 @@ describe("release E2E evidence", () => {
       targets: "",
     });
     const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
-    expect(parallelExplicitJobs).toHaveLength(4);
+    expect(parallelExplicitJobs).toHaveLength(5);
     expect(new Set(parallelExplicitJobs)).toEqual(
       new Set([
         "openshell-gateway-auth-contract",
         "mcp-bridge-dev",
         "hermes-gpu-startup",
+        "issue-2478-crash-loop-recovery-soak",
         "sandbox-rlimits-connect",
       ]),
     );

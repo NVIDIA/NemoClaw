@@ -135,6 +135,7 @@ const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
+const FREE_STANDING_CHANGE_FOCUSED_MARKER = "E2E_CHANGE_FOCUSED";
 const EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER = new Set(["hermes-gpu-startup"]);
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
@@ -146,6 +147,8 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "issue-2478-crash-loop-recovery",
+  "issue-2478-crash-loop-recovery-soak",
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
@@ -444,7 +447,13 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 
     allowedJobs.push(jobId);
     workflowJobs.push(jobId);
-    for (const file of collectLiveTestFiles(rawJob)) addMapValue(liveTestToJobs, file, jobId);
+    if (Object.hasOwn(env, FREE_STANDING_CHANGE_FOCUSED_MARKER)) {
+      if (env[FREE_STANDING_CHANGE_FOCUSED_MARKER] !== "0") {
+        errors.push(`${jobId} job ${FREE_STANDING_CHANGE_FOCUSED_MARKER} must be "0" when set`);
+      }
+    } else {
+      for (const file of collectLiveTestFiles(rawJob)) addMapValue(liveTestToJobs, file, jobId);
+    }
     if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
       if (env[FREE_STANDING_DEFAULT_ENABLED_MARKER] !== "0") {
         errors.push(`${jobId} job ${FREE_STANDING_DEFAULT_ENABLED_MARKER} must be "0" when set`);
@@ -981,8 +990,13 @@ function requireScheduledRun(errors: string[], triggers: WorkflowRecord): void {
   const cronEntries = schedule
     .map((entry) => asRecord(entry).cron)
     .filter((cron): cron is string => typeof cron === "string");
-  if (!cronEntries.includes("0 0 * * *")) {
-    errors.push("workflow schedule must run daily at 00:00 UTC");
+  for (const cron of ["0 0 * * 1-6", "0 0 * * 0"]) {
+    if (!cronEntries.includes(cron)) {
+      errors.push(`workflow schedule must include ${cron}`);
+    }
+  }
+  if (cronEntries.includes("0 0 * * *")) {
+    errors.push("workflow schedule must split nightly and weekly recovery runs");
   }
 }
 
@@ -3272,88 +3286,132 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
 }
 
 function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "issue-2478-crash-loop-recovery";
-  const targetName = "issue-2478-crash-loop-recovery";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing issue-2478-crash-loop-recovery job");
-    return;
-  }
+  const functionalSelector =
+    "${{ (github.event_name == 'schedule' && github.event.schedule == '0 0 * * 1-6') || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery,') || contains(format(',{0},', inputs.targets), ',issue-2478-crash-loop-recovery,'))) }}";
+  const soakSelector =
+    "${{ (github.event_name == 'schedule' && github.event.schedule == '0 0 * * 0') || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery-soak,') || contains(format(',{0},', inputs.targets), ',issue-2478-crash-loop-recovery-soak,'))) }}";
+  const variants = [
+    {
+      jobName: "issue-2478-crash-loop-recovery",
+      targetName: "issue-2478-crash-loop-recovery",
+      selector: functionalSelector,
+      timeoutMinutes: 30,
+      artifactName: "issue-2478-crash-loop-recovery",
+      sandboxName: "e2e-2478",
+      profile: "functional",
+      crashCycles: "1",
+      soakSeconds: "15",
+      explicitOnly: false,
+    },
+    {
+      jobName: "issue-2478-crash-loop-recovery-soak",
+      targetName: "issue-2478-crash-loop-recovery-soak",
+      selector: soakSelector,
+      timeoutMinutes: 35,
+      artifactName: "issue-2478-crash-loop-recovery-soak",
+      sandboxName: "e2e-2478-soak",
+      profile: "soak",
+      crashCycles: "5",
+      soakSeconds: "300",
+      explicitOnly: true,
+    },
+  ] as const;
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("issue-2478-crash-loop-recovery job must run on ubuntu-latest");
-  }
-  if (job["timeout-minutes"] !== 30) {
-    errors.push("issue-2478-crash-loop-recovery job must keep the 30 minute timeout");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-
-  const jobEnv = asRecord(job.env);
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("issue-2478-crash-loop-recovery job must not set DOCKER_CONFIG at job level");
-  }
-  const expectedEnv: Record<string, string> = {
-    E2E_JOB: "1",
-    E2E_TARGET_ID: targetName,
-    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/issue-2478-crash-loop-recovery",
-    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
-    NEMOCLAW_RUN_LIVE_E2E: "1",
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-2478",
-    OPENSHELL_GATEWAY: "nemoclaw",
-  };
-  for (const [key, value] of Object.entries(expectedEnv)) {
-    if (jobEnv[key] !== value) {
-      errors.push(`issue-2478-crash-loop-recovery job env ${key} must be ${value}`);
+  for (const variant of variants) {
+    const job = asRecord(jobs[variant.jobName]);
+    if (Object.keys(job).length === 0) {
+      errors.push(`workflow missing ${variant.jobName} job`);
+      continue;
     }
-  }
-  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
-    requireEnvDoesNotExposeSecret(errors, "issue-2478-crash-loop-recovery job", jobEnv, secret);
-  }
 
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `issue-2478-crash-loop-recovery step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    if (job["runs-on"] !== "ubuntu-latest") {
+      errors.push(`${variant.jobName} job must run on ubuntu-latest`);
     }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
+    if (job["timeout-minutes"] !== variant.timeoutMinutes) {
+      errors.push(`${variant.jobName} job must keep the ${variant.timeoutMinutes} minute timeout`);
+    }
+    if (job.if !== variant.selector) {
+      errors.push(`${variant.jobName} job must keep its ${variant.profile} schedule and selector`);
+    }
 
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) {
-    errors.push("issue-2478-crash-loop-recovery job missing checkout step");
-  }
-  requireFullShaAction(errors, checkout, "issue-2478-crash-loop-recovery checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("issue-2478-crash-loop-recovery checkout step must set persist-credentials=false");
-  }
+    const jobEnv = asRecord(job.env);
+    if ("DOCKER_CONFIG" in jobEnv) {
+      errors.push(`${variant.jobName} job must not set DOCKER_CONFIG at job level`);
+    }
+    const expectedEnv: Record<string, string> = {
+      E2E_JOB: "1",
+      E2E_TARGET_ID: variant.targetName,
+      E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${variant.artifactName}`,
+      NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_SANDBOX_NAME: variant.sandboxName,
+      NEMOCLAW_E2E_RECOVERY_PROFILE: variant.profile,
+      NEMOCLAW_E2E_CRASH_CYCLES: variant.crashCycles,
+      NEMOCLAW_E2E_SOAK_SECONDS: variant.soakSeconds,
+      OPENSHELL_GATEWAY: "nemoclaw",
+    };
+    if (variant.explicitOnly) {
+      expectedEnv.E2E_DEFAULT_ENABLED = "0";
+      expectedEnv.E2E_CHANGE_FOCUSED = "0";
+    }
+    for (const [key, value] of Object.entries(expectedEnv)) {
+      if (jobEnv[key] !== value) {
+        errors.push(`${variant.jobName} job env ${key} must be ${value}`);
+      }
+    }
+    for (const secret of COMMON_SECRET_ENV_NAMES) {
+      requireEnvDoesNotExposeSecret(errors, `${variant.jobName} job`, jobEnv, secret);
+    }
 
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+    const steps = asSteps(job.steps);
+    requireNoDispatchInputInterpolation(errors, steps);
+    for (const step of steps) {
+      const stepName = `${variant.jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+      const stepEnv = asRecord(step.env);
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+      if (step.name !== "Authenticate to Docker Hub") {
+        requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+        requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+        requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+      }
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+    }
 
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run issue #2478 crash-loop recovery live Vitest test",
-  );
-  const runVitestEnv = asRecord(runVitest?.env);
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "issue-2478-crash-loop-recovery live E2E step",
-    runVitestEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/issue-2478-crash-loop-recovery.test.ts");
+    const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+    if (!checkout) {
+      errors.push(`${variant.jobName} job missing checkout step`);
+    }
+    requireFullShaAction(errors, checkout, `${variant.jobName} checkout`);
+    if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+      errors.push(`${variant.jobName} checkout step must set persist-credentials=false`);
+    }
+
+    const installOpenShell = requireJobStep(
+      errors,
+      variant.jobName,
+      steps,
+      "Install OpenShell CLI",
+    );
+    requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
+    const runVitest = requireJobStep(
+      errors,
+      variant.jobName,
+      steps,
+      "Run issue #2478 crash-loop recovery live Vitest test",
+    );
+    const runVitestEnv = asRecord(runVitest?.env);
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `${variant.jobName} live E2E step`,
+      runVitestEnv,
+      "NVIDIA_INFERENCE_API_KEY",
+    );
+    requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+    requireRunContains(errors, runVitest, "test/e2e/live/issue-2478-crash-loop-recovery.test.ts");
+  }
 }
 
 function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): void {
