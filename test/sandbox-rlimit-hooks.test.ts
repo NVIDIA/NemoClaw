@@ -578,6 +578,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
     const managedStartupHold = path.join(tmp, "nemoclaw-managed-startup-hold");
+    const managedBootstrap = path.join(tmp, "nemoclaw-managed-bootstrap");
     const gatewayControl = path.join(tmp, "nemoclaw-gateway-control");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
@@ -610,6 +611,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
       fs.writeFileSync(managedStartupHold, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedBootstrap, "#!/usr/bin/env bash\n");
       fs.writeFileSync(gatewayControl, "#!/usr/bin/env sh\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const fixtureOwner = fs.statSync(startBin);
@@ -620,6 +622,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       )
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)
         .replaceAll("/usr/local/bin/nemoclaw-managed-startup-hold", managedStartupHold)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-bootstrap", managedBootstrap)
         .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)

@@ -68,7 +68,12 @@ describe("Docker managed-startup root applicator", () => {
         { containerId: CONTAINER_ID, request },
         { dockerCapture, dockerSpawnSync },
       ),
-    ).toEqual({ agent, containerId: CONTAINER_ID, image: IMAGE_ID });
+    ).toEqual({
+      agent,
+      containerId: CONTAINER_ID,
+      image: IMAGE_ID,
+      profileFingerprint: request.profileFingerprint,
+    });
 
     expect(dockerCapture).toHaveBeenCalledWith(["inspect", "--type", "container", CONTAINER_ID], {
       ignoreError: false,
@@ -187,6 +192,7 @@ describe("Docker managed-startup root applicator", () => {
       agent: "hermes",
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
+      profileFingerprint: request.profileFingerprint,
     });
   });
 
@@ -215,6 +221,7 @@ describe("Docker managed-startup root applicator", () => {
       agent: "hermes",
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
+      profileFingerprint: request.profileFingerprint,
     });
     expect(dockerSpawnSync).toHaveBeenCalledTimes(2);
   });

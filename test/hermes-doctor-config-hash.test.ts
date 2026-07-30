@@ -94,6 +94,7 @@ describe("Hermes doctor and config hash boundary", () => {
       for (const relativePath of [
         path.join(binDir, "nemoclaw-start"),
         path.join(binDir, "nemoclaw-managed-startup-hold"),
+        path.join(binDir, "nemoclaw-managed-bootstrap"),
         path.join(binDir, "nemoclaw-gateway-control"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),

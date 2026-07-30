@@ -62,19 +62,19 @@ interface ChildPayload {
   agent: ShippedManagedImageAgent;
   catalogCalls: CatalogCall[];
   forbiddenCalls: string[];
-  managedStartupRootExecCalls: Array<{
-    args: string[];
-    input: string;
-  }>;
-  managedStartupPatchCalls: Array<{
+  managedBootstrapCalls: Array<{
+    operation: string;
     agent?: string;
     encodedProfile?: string;
+    manifestDigest?: string;
     profileFingerprint?: string;
+    repository?: string;
     schemaVersion?: number;
     sandboxName?: string;
   }>;
   registerCalls: Array<{
     agent?: string;
+    dashboardPort?: number | null;
     imageTag?: string | null;
     name?: string;
     workload?: {
@@ -139,11 +139,11 @@ const model = ${JSON.stringify(MODEL)};
 const provider = ${JSON.stringify(PROVIDER)};
 const catalogCalls = [];
 const forbiddenCalls = [];
-const managedStartupRootExecCalls = [];
-const managedStartupPatchCalls = [];
+const managedBootstrapCalls = [];
 const registerCalls = [];
 const runnerCommands = [];
 const spawnCalls = [];
+let sandboxCreated = false;
 
 // The protected live-E2E job intentionally runs source without build:cli.
 // Route the root CLI's generated shared-boundary import back to its canonical
@@ -174,20 +174,6 @@ const replace = (target, name, value) => {
   if (target[name] !== value) throw new Error("could not install test boundary for " + name);
 };
 const childProcess = require("node:child_process");
-const nativeSpawnSync = childProcess.spawnSync;
-childProcess.spawnSync = (command, args = [], options = {}) => {
-  const argv = Array.isArray(args) ? args.map(String) : [];
-  if (
-    path.basename(String(command)) === "docker" &&
-    argv.includes("--apply-root-stdin")
-  ) {
-    managedStartupRootExecCalls.push({
-      args: argv,
-      input: String(options.input ?? ""),
-    });
-  }
-  return nativeSpawnSync(command, args, options);
-};
 
 const catalogResolver = require(${source("src/lib/onboard/managed-image/catalog.ts")});
 replace(catalogResolver, "resolveManagedImageCatalogFromGhcr", async ({ release }) => {
@@ -246,52 +232,116 @@ replace(baseImage, "pullAndResolveBaseImageDigest", () =>
 // source selection or the sandbox-create transport asserted here.
 const dockerDriverPlatform = require(${source("src/lib/onboard/docker-driver-platform.ts")});
 replace(dockerDriverPlatform, "isLinuxDockerDriverGatewayEnabled", () => false);
-const dockerSandboxCreatePatch = require(
-  ${source("src/lib/onboard/docker-gpu-sandbox-create.ts")},
+const managedBootstrap = require(${source("src/lib/onboard/managed-bootstrap/docker.ts")});
+const managedBootstrapContract = require(
+  ${source("src/lib/onboard/managed-bootstrap/adapter.ts")},
 );
-const createDockerGpuSandboxCreatePatch =
-  dockerSandboxCreatePatch.createDockerGpuSandboxCreatePatch;
-replace(dockerSandboxCreatePatch, "createDockerGpuSandboxCreatePatch", (options) => {
-  const containerId = "a".repeat(64);
-  const imageId = "b".repeat(64);
-  managedStartupPatchCalls.push({
-    agent: options.managedStartupRootApplyRequest?.agent,
-    encodedProfile: options.managedStartupRootApplyRequest?.encodedProfile,
-    profileFingerprint: options.managedStartupRootApplyRequest?.profileFingerprint,
-    schemaVersion: options.managedStartupRootApplyRequest?.schemaVersion,
-    sandboxName: options.sandboxName,
-  });
-  return createDockerGpuSandboxCreatePatch({
-    ...options,
-    deps: {
-      ...options.deps,
-      dockerCapture(args, captureOptions) {
-        if (args[0] === "inspect") {
-          return JSON.stringify([
-            {
-              Id: containerId,
-              Image: "sha256:" + imageId,
-              State: {
-                Running: true,
-                Paused: false,
-                Restarting: false,
-                Dead: false,
-              },
-            },
-          ]);
-        }
-        return options.deps.dockerCapture?.(args, captureOptions) ?? "";
-      },
+replace(managedBootstrap, "createDockerManagedBootstrapAdapter", () => {
+  const runtimeId = "a".repeat(64);
+  const replacementRuntimeId = "c".repeat(64);
+  const runtimeImageContentId = "sha256:" + "b".repeat(64);
+  const originalSpecHash = "d".repeat(64);
+  const replacementSpecHash = "e".repeat(64);
+  return {
+    async createHeldWorkload(input) {
+      const bootstrapIdentity = input.bootstrapIdentity;
+      const heldWorkloadArgv = managedBootstrapContract.renderManagedBootstrapHeldCommand(
+        input.request,
+        bootstrapIdentity,
+        input.plan.intendedWorkloadArgv,
+      );
+      managedBootstrapCalls.push({
+        operation: "create",
+        agent: input.request.agent,
+        encodedProfile: input.request.encodedProfile,
+        manifestDigest: input.plan.image.manifestDigest,
+        profileFingerprint: input.request.profileFingerprint,
+        repository: input.plan.image.repository,
+        schemaVersion: input.request.schemaVersion,
+        sandboxName: input.plan.sandboxName,
+      });
+      const createReceipt = await input.launch({ heldWorkloadArgv, bootstrapIdentity });
+      return {
+        schemaVersion: 1,
+        sandbox: createReceipt.sandbox,
+        bootstrapIdentity,
+        heldWorkloadArgv,
+        intendedWorkloadArgv: input.plan.intendedWorkloadArgv,
+        plan: input.plan,
+        createReceipt,
+      };
     },
-    overrides: {
-      ...options.overrides,
-      findContainerIds: () => [containerId],
-      finalizeManagedStartupSharedState: ({ supervisorReady }) => ({
-        supervisorReady,
-        failure: null,
-      }),
+    async discoverHeldWorkload(input) {
+      managedBootstrapCalls.push({ operation: "discover" });
+      return {
+        sandbox: input.sandbox,
+        runtimeId,
+        bootstrapIdentity: input.bootstrapIdentity,
+      };
     },
-  });
+    async inspectHeldWorkload({ handle, discovered }) {
+      managedBootstrapCalls.push({ operation: "inspect" });
+      return {
+        schemaVersion: 1,
+        sandbox: handle.sandbox,
+        runtimeId: discovered.runtimeId,
+        bootstrapIdentity: handle.bootstrapIdentity,
+        image: handle.plan.image,
+        runtimeImageContentId,
+        specHash: originalSpecHash,
+        specCanonicalJson: "{}\n",
+        agentIdentity: handle.plan.agentIdentity,
+        supervisorArgv: handle.plan.expectedSupervisorArgv,
+        heldWorkloadArgv: handle.heldWorkloadArgv,
+        metadata: handle.plan.metadata,
+      };
+    },
+    async replaceForBootstrap({ handle, snapshot, request }) {
+      managedBootstrapCalls.push({ operation: "replace" });
+      return {
+        schemaVersion: 1,
+        sandbox: handle.sandbox,
+        bootstrapIdentity: handle.bootstrapIdentity,
+        originalRuntimeId: snapshot.runtimeId,
+        replacementRuntimeId,
+        image: handle.plan.image,
+        runtimeImageContentId,
+        originalSpecHash,
+        replacementSpecHash,
+        profileFingerprint: request.profileFingerprint,
+      };
+    },
+    async awaitBootstrap({ handle, replacement }) {
+      managedBootstrapCalls.push({ operation: "await" });
+      return {
+        schemaVersion: 1,
+        sandbox: handle.sandbox,
+        runtimeId: replacement.replacementRuntimeId,
+        image: handle.plan.image,
+        runtimeImageContentId,
+        originalSpecHash,
+        replacementSpecHash,
+        profileFingerprint: handle.plan.profile.fingerprint,
+        bootstrapIdentity: handle.bootstrapIdentity,
+        transactionPending: true,
+        completedAt: "2026-07-29T12:01:00.000Z",
+      };
+    },
+    async finalizeBootstrap({ outcome, handle, snapshot }) {
+      managedBootstrapCalls.push({ operation: outcome });
+      return {
+        schemaVersion: 1,
+        sandbox: handle.sandbox,
+        bootstrapIdentity: handle.bootstrapIdentity,
+        outcome: outcome === "commit" ? "committed" : "rolled-back",
+        restoredRuntimeId: outcome === "rollback" ? snapshot?.runtimeId ?? null : null,
+        restoredSpecHash: outcome === "rollback" ? snapshot?.specHash ?? null : null,
+        heldWorkloadRemoved: false,
+        alreadyRolledBack: false,
+        finalizedAt: "2026-07-29T12:02:00.000Z",
+      };
+    },
+  };
 });
 
 const runner = require(${source("src/lib/runner.ts")});
@@ -307,7 +357,9 @@ runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
   runnerCommands.push(normalized);
-  if (normalized.includes("sandbox get " + sandboxName)) return "";
+  if (normalized.includes("sandbox get " + sandboxName)) {
+    return sandboxCreated ? "ID: " + sandboxName + "-id" : "";
+  }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   if (normalized.includes("forward list")) {
     return sandboxName + " 127.0.0.1 18789 23189 running";
@@ -356,6 +408,7 @@ childProcess.spawn = (command, args = [], options = {}) => {
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
   }
+  if (normalized.includes("sandbox create")) sandboxCreated = true;
   spawnCalls.push({ command: String(command), args: argv });
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -390,8 +443,7 @@ const { createSandbox } = require(${source("src/lib/onboard.ts")});
     agent: agentName,
     catalogCalls,
     forbiddenCalls,
-    managedStartupRootExecCalls,
-    managedStartupPatchCalls,
+    managedBootstrapCalls,
     registerCalls,
     runnerCommands,
     spawnCalls,
@@ -502,42 +554,22 @@ function assertManagedLaunch(
   const expectedContract = contractFor(agent);
   expect(result.payload.agent).toBe(agent);
   expect(result.payload.forbiddenCalls).toEqual([]);
-  expect(result.payload.managedStartupPatchCalls).toHaveLength(1);
-  expect(result.payload.managedStartupRootExecCalls).toHaveLength(1);
-  expect(result.payload.managedStartupPatchCalls[0]).toMatchObject({
+  expect(result.payload.managedBootstrapCalls.map(({ operation }) => operation)).toEqual([
+    "create",
+    "discover",
+    "inspect",
+    "replace",
+    "await",
+    "commit",
+  ]);
+  const bootstrapRequest = result.payload.managedBootstrapCalls[0];
+  expect(bootstrapRequest).toMatchObject({
     agent,
+    manifestDigest: expectedContract.digest,
+    repository: expectedContract.image,
     schemaVersion: 1,
     sandboxName: expect.stringMatching(/^managed-/u),
     profileFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
-  });
-  const rootExec = result.payload.managedStartupRootExecCalls[0];
-  expect(rootExec?.args).toEqual([
-    "exec",
-    "--interactive",
-    "--user",
-    "0:0",
-    "--workdir",
-    "/",
-    "a".repeat(64),
-    "/usr/bin/env",
-    "-i",
-    "HOME=/root",
-    "LANG=C.UTF-8",
-    "LC_ALL=C.UTF-8",
-    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
-    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    "/usr/local/bin/node",
-    "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
-    "--apply-root-stdin",
-    "--agent",
-    agent,
-  ]);
-  expect(rootExec?.input.endsWith("\n")).toBe(true);
-  expect(JSON.parse(rootExec?.input ?? "{}")).toMatchObject({
-    agent,
-    encodedProfile: result.payload.managedStartupPatchCalls[0]?.encodedProfile,
-    profileFingerprint: result.payload.managedStartupPatchCalls[0]?.profileFingerprint,
-    schemaVersion: 1,
   });
   expect(result.payload.catalogCalls).toHaveLength(1);
   expect(result.payload.catalogCalls[0]?.release).toMatch(/^v[0-9]/u);
@@ -561,7 +593,7 @@ function assertManagedLaunch(
   expect(createArgs.join(" ")).not.toContain("Dockerfile");
 
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))).toEqual([]);
-  const encodedProfile = result.payload.managedStartupPatchCalls[0]?.encodedProfile ?? "";
+  const encodedProfile = bootstrapRequest?.encodedProfile ?? "";
   const profile = decodeManagedStartupProfile(encodedProfile);
   expect(encodeManagedStartupProfile(profile)).toBe(encodedProfile);
   expect(profile).toMatchObject({
@@ -574,6 +606,17 @@ function assertManagedLaunch(
     },
     dashboard: { agent },
   });
+  if (agent === "langchain-deepagents-code") {
+    expect(profile.dashboard).toEqual({ agent, mode: "disabled" });
+    expect(createArgs.join("\n")).not.toContain("CHAT_UI_URL=");
+    expect(createArgs.join("\n")).not.toContain("NEMOCLAW_DASHBOARD_PORT=");
+    expect(
+      result.payload.runnerCommands.every((command) => !command.includes("forward start")),
+    ).toBe(true);
+    expect(result.payload.runnerCommands.every((command) => !command.includes("/health"))).toBe(
+      true,
+    );
+  }
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_CORPORATE_CA_B64="))).toEqual([]);
   expect(JSON.stringify(profile)).not.toContain(SECRET_CANARY);
   expect(profile.proxy).toMatchObject({
@@ -607,10 +650,14 @@ function assertManagedLaunch(
     )}`,
   ).toBeDefined();
   expect(registration?.agent ?? "openclaw").toBe(agent);
+  if (agent === "langchain-deepagents-code") {
+    expect(registration?.dashboardPort).toBe(0);
+  }
   expect(registration?.workload).toEqual({
     schemaVersion: 1,
     kind: "managed-image",
     reference: expectedContract.reference,
+    platform: expectedContract.platform,
     release: result.payload.catalogCalls[0]?.release,
     sourceRevision: SOURCE_REVISION,
     sourceCohort: expectedContract.source.cohort,

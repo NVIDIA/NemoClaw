@@ -680,6 +680,7 @@ describe("managed workload rebuild handoff", () => {
       routeProvider: "inference",
       upstreamProvider: "alpha-hermes-inference",
     });
+    assert(oldEntry.model);
 
     const runtime = createManagedWorkloadOnboardRuntime(
       {

@@ -1119,6 +1119,7 @@ describe("Hermes sandbox provisioning", () => {
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
+      path.join(localBin, "nemoclaw-managed-bootstrap"),
       gatewayControlPath,
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),

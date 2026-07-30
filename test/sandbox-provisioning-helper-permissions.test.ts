@@ -136,6 +136,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
+      path.join(localBin, "nemoclaw-managed-bootstrap"),
       path.join(localBin, "nemoclaw-codex-acp"),
       gatewayControlPath,
       path.join(localLib, "sandbox-init.sh"),

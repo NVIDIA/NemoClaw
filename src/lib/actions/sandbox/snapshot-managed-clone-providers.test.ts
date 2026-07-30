@@ -330,7 +330,7 @@ describe("managed snapshot clone provider credentials", () => {
 
   it("fails closed when provider inspection cannot prove exact NotFound", () => {
     const broker = fakeBroker();
-    const runner = vi.fn(() => ({
+    const runner = vi.fn((_args: string[]) => ({
       status: 1,
       stdout: "",
       stderr: "transport unavailable",
