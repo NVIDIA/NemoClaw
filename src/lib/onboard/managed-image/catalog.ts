@@ -5,15 +5,17 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import {
+  isManagedImagePlatform,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  type ManagedImagePlatform,
   type ManagedImagePublicationCohort,
+  managedImagePlatformForNodeArchitecture,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./contract";
@@ -327,21 +329,47 @@ async function getManifest(
   };
 }
 
-function selectImageManifest(document: unknown): `sha256:${string}` | null {
+function platformArchitecture(platform: ManagedImagePlatform): string {
+  return platform.slice("linux/".length);
+}
+
+function resolveCatalogPlatform(options: {
+  readonly platform?: ManagedImagePlatform;
+  readonly nodeArchitecture?: string;
+}): ManagedImagePlatform {
+  if (options.platform !== undefined) {
+    if (!isManagedImagePlatform(options.platform)) {
+      return invalid(`'${String(options.platform)}' is not a supported managed-image platform`);
+    }
+    return options.platform;
+  }
+  const nodeArchitecture = options.nodeArchitecture ?? process.arch;
+  const platform = managedImagePlatformForNodeArchitecture(nodeArchitecture);
+  if (platform === null) {
+    return invalid(`host architecture '${nodeArchitecture}' has no managed-image platform`);
+  }
+  return platform;
+}
+
+function selectImageManifest(
+  document: unknown,
+  platform: ManagedImagePlatform,
+): `sha256:${string}` | null {
   const root = requireObject(document, "manifest") as OciIndex;
   if (typeof root.mediaType !== "string") return invalid("manifest mediaType is missing");
   if (MANIFEST_MEDIA_TYPES.has(root.mediaType)) return null;
   if (!INDEX_MEDIA_TYPES.has(root.mediaType) || !Array.isArray(root.manifests)) {
     return invalid(`unsupported manifest mediaType '${root.mediaType}'`);
   }
+  const architecture = platformArchitecture(platform);
   const candidates = (root.manifests as OciDescriptor[]).filter(
     (descriptor) =>
-      descriptor.platform?.os === "linux" && descriptor.platform.architecture === "amd64",
+      descriptor.platform?.os === "linux" && descriptor.platform.architecture === architecture,
   );
   if (candidates.length !== 1) {
-    return invalid(`manifest index contains ${candidates.length} linux/amd64 image manifests`);
+    return invalid(`manifest index contains ${candidates.length} ${platform} image manifests`);
   }
-  return requireDigest(candidates[0]?.digest, "linux/amd64 manifest digest");
+  return requireDigest(candidates[0]?.digest, `${platform} manifest digest`);
 }
 
 function configDigest(document: unknown): `sha256:${string}` {
@@ -387,18 +415,19 @@ async function getImageConfig(
 function validateImageLabels(
   agent: ShippedManagedImageAgent,
   imageConfig: OciImageConfig,
+  platform: ManagedImagePlatform,
 ): {
   readonly cohort: ManagedImagePublicationCohort;
   readonly revision: string;
 } {
-  if (imageConfig.os !== "linux" || imageConfig.architecture !== "amd64") {
-    return invalid(`'${agent}' image config is not linux/amd64`);
+  if (imageConfig.os !== "linux" || imageConfig.architecture !== platformArchitecture(platform)) {
+    return invalid(`'${agent}' image config is not ${platform}`);
   }
   const labels = requireObject(imageConfig.config?.Labels, "image labels");
   const expected: Readonly<Record<string, string>> = {
     "io.nvidia.nemoclaw.agent": agent,
     "io.nvidia.nemoclaw.managed-image.contract": String(MANAGED_IMAGE_CONTRACT_VERSION),
-    "io.nvidia.nemoclaw.managed-image.platform": MANAGED_IMAGE_PLATFORM,
+    "io.nvidia.nemoclaw.managed-image.platform": platform,
     "io.nvidia.nemoclaw.managed-image.startup-profile": String(
       MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
     ),
@@ -439,13 +468,14 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
   readonly fetchImpl: Fetch;
   readonly expectedCohort?: ManagedImagePublicationCohort;
   readonly expectedRevision?: string;
+  readonly platform: ManagedImagePlatform;
 }): Promise<ManagedImageContractV1> {
   const { agent, reference } = options;
   const release = normalizeManagedImageRelease(options.release);
   const fetchImpl = options.fetchImpl;
   const repository = registryRepository(agent);
   const root = await getManifest(fetchImpl, repository, reference);
-  const platformDigest = selectImageManifest(root.document);
+  const platformDigest = selectImageManifest(root.document, options.platform);
   const workloadDigest = platformDigest ?? root.digest;
   const imageManifest =
     platformDigest === null
@@ -457,7 +487,7 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
     configDigest(imageManifest),
     root.token,
   );
-  const identity = validateImageLabels(agent, imageConfig);
+  const identity = validateImageLabels(agent, imageConfig, options.platform);
   if (options.expectedCohort !== undefined && identity.cohort !== options.expectedCohort) {
     return invalid(`'${agent}' image publication cohort does not match the OpenClaw cohort`);
   }
@@ -468,7 +498,7 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
   return {
     contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
     agent,
-    platform: MANAGED_IMAGE_PLATFORM,
+    platform: options.platform,
     image,
     digest: workloadDigest,
     reference: `${image}@${workloadDigest}`,
@@ -493,6 +523,8 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
 export async function resolveManagedImageContractFromGhcr(options: {
   readonly agent: ShippedManagedImageAgent;
   readonly release: string;
+  readonly platform?: ManagedImagePlatform;
+  readonly nodeArchitecture?: string;
   readonly fetchImpl?: Fetch;
   readonly environment?: NodeJS.ProcessEnv;
 }): Promise<ManagedImageContractV1> {
@@ -500,11 +532,13 @@ export async function resolveManagedImageContractFromGhcr(options: {
     return invalid("release aliases may only be resolved from the OpenClaw cohort pointer");
   }
   const release = normalizeManagedImageRelease(options.release);
+  const platform = resolveCatalogPlatform(options);
   return withRegistryFetch(options.fetchImpl, options.environment, (fetchImpl) =>
     resolveManagedImageContractAtReferenceFromGhcr({
       agent: options.agent,
       reference: release,
       release,
+      platform,
       fetchImpl,
     }),
   );
@@ -512,14 +546,18 @@ export async function resolveManagedImageContractFromGhcr(options: {
 
 export async function resolveManagedImageCatalogFromGhcr(options: {
   readonly release: string;
+  readonly platform?: ManagedImagePlatform;
+  readonly nodeArchitecture?: string;
   readonly fetchImpl?: Fetch;
   readonly environment?: NodeJS.ProcessEnv;
 }): Promise<ManagedImageContractCatalog> {
   const release = normalizeManagedImageRelease(options.release);
+  const platform = resolveCatalogPlatform(options);
   return withRegistryFetch(options.fetchImpl, options.environment, async (fetchImpl) => {
     const openclaw = await resolveManagedImageContractFromGhcr({
       agent: "openclaw",
       release,
+      platform,
       fetchImpl,
     });
     const cohortReference = `cohort-${openclaw.source.cohort}`;
@@ -530,6 +568,7 @@ export async function resolveManagedImageCatalogFromGhcr(options: {
           agent,
           reference: cohortReference,
           release,
+          platform,
           fetchImpl,
           expectedCohort: openclaw.source.cohort,
           expectedRevision: openclaw.source.revision,

@@ -34,6 +34,21 @@ describe("sandbox workload receipt", () => {
     expect(cloned).not.toBe(MANAGED_RECEIPT);
   });
 
+  it("preserves a selected arm64 platform and rejects unsupported platform drift", () => {
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...MANAGED_RECEIPT,
+        platform: "linux/arm64",
+      }),
+    ).toMatchObject({ platform: "linux/arm64" });
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...MANAGED_RECEIPT,
+        platform: "linux/s390x",
+      } as unknown as SandboxWorkloadReceipt),
+    ).toBeUndefined();
+  });
+
   it("drops malformed ownership and profile identity instead of persisting it", () => {
     expect(
       cloneSandboxWorkloadReceipt({

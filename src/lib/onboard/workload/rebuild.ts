@@ -11,7 +11,7 @@ import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
@@ -103,7 +103,9 @@ function contractFromReceipt(
     {
       contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
       agent,
-      platform: MANAGED_IMAGE_PLATFORM,
+      // Managed-image receipts predating the multi-architecture contract were
+      // published only for linux/amd64. New receipts always persist platform.
+      platform: receipt.platform ?? MANAGED_IMAGE_PLATFORMS[0],
       image,
       digest,
       reference: receipt.reference,

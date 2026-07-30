@@ -4,8 +4,9 @@
 import type { OpenShellComputePlan } from "../compute/plan";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  managedImagePlatformForNodeArchitecture,
 } from "../managed-image/contract";
 import type { ManagedImageSelectionPolicy, SandboxWorkloadRuntimeCapabilities } from "./source";
 
@@ -32,7 +33,7 @@ export type ManagedImageRuntimeProfileRegistry = Readonly<
 
 const COMPLETE_MANAGED_IMAGE_V1_SUPPORT = {
   exactDigestReferences: true,
-  platforms: [MANAGED_IMAGE_PLATFORM],
+  platforms: MANAGED_IMAGE_PLATFORMS,
   startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
   capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
 } as const satisfies ManagedImageRuntimeSupport;
@@ -45,8 +46,8 @@ const COMPLETE_MANAGED_IMAGE_V1_SUPPORT = {
 export const CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES = {
   docker: {
     support: COMPLETE_MANAGED_IMAGE_V1_SUPPORT,
-    hostArchitectures: ["amd64"],
-    managedImageSelectionPolicy: "prefer-managed",
+    hostArchitectures: ["amd64", "arm64"],
+    managedImageSelectionPolicy: "require-managed",
     legacyDockerfileBuilds: true,
   },
   kubernetes: {
@@ -62,10 +63,13 @@ function hostOciArchitecture(nodeArchitecture: string): string {
   return nodeArchitecture;
 }
 
-function cloneRuntimeSupport(support: ManagedImageRuntimeSupport): ManagedImageRuntimeSupport {
+function cloneRuntimeSupport(
+  support: ManagedImageRuntimeSupport,
+  platform: NonNullable<ReturnType<typeof managedImagePlatformForNodeArchitecture>>,
+): ManagedImageRuntimeSupport {
   return {
     exactDigestReferences: support.exactDigestReferences,
-    platforms: [...support.platforms],
+    platforms: [platform],
     startupProfileContractVersions: [...support.startupProfileContractVersions],
     capabilityContractVersions: [...support.capabilityContractVersions],
   };
@@ -77,9 +81,12 @@ export function resolveSandboxWorkloadRuntimeCapabilities(
   nodeArchitecture: string = process.arch,
 ): SandboxWorkloadRuntimeCapabilities {
   const profile = Object.hasOwn(profiles, plan.driverName) ? profiles[plan.driverName] : undefined;
+  const hostPlatform = managedImagePlatformForNodeArchitecture(nodeArchitecture);
   const supportedHost =
+    hostPlatform !== null &&
     profile?.support !== null &&
-    profile?.hostArchitectures.includes(hostOciArchitecture(nodeArchitecture)) === true;
+    profile?.hostArchitectures.includes(hostOciArchitecture(nodeArchitecture)) === true &&
+    profile?.support.platforms.includes(hostPlatform) === true;
   return {
     driverName: plan.driverName,
     managedImageSelectionPolicy: profile?.managedImageSelectionPolicy ?? "require-managed",
@@ -87,6 +94,6 @@ export function resolveSandboxWorkloadRuntimeCapabilities(
     managedImages:
       profile === undefined || profile.support === null || !supportedHost
         ? null
-        : cloneRuntimeSupport(profile.support),
+        : cloneRuntimeSupport(profile.support, hostPlatform),
   };
 }

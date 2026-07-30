@@ -125,6 +125,23 @@ const lifecycleMock = vi.hoisted(() => {
   };
 });
 
+const managedCloneCredentialMock = vi.hoisted(() => ({
+  runDeviceCodeFlow: vi.fn(async (): Promise<never> => {
+    throw new Error("production device-code OAuth is disabled in snapshot lifecycle tests");
+  }),
+  bindBrokerState: vi.fn(() => ({
+    file: "/test-only/hermes-tool-gateway-state.json",
+    brokerToken: "test-only-broker-token",
+  })),
+  removeBrokerState: vi.fn(() => true),
+}));
+
+export const runDeviceCodeFlowMock = managedCloneCredentialMock.runDeviceCodeFlow;
+export const bindHermesToolGatewayCloneProviderStateMock =
+  managedCloneCredentialMock.bindBrokerState;
+export const removeHermesToolGatewayProviderStateMock =
+  managedCloneCredentialMock.removeBrokerState;
+
 export const backupSandboxStateMock = vi.fn();
 export const loadAgentMock = vi.fn((name: string) => ({
   name,
@@ -248,6 +265,17 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
 }));
+vi.mock("../../oauth-device-code", () => ({
+  runDeviceCodeFlow: managedCloneCredentialMock.runDeviceCodeFlow,
+}));
+vi.mock("../../hermes-tool-gateway-clone-broker", () => ({
+  getHermesToolGatewayCloneBroker: () => ({
+    HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+    getHermesToolGatewayProviderName: (sandboxName: string) => `${sandboxName}-hermes-tool-gateway`,
+    bindHermesToolGatewayCloneProviderState: managedCloneCredentialMock.bindBrokerState,
+    removeHermesToolGatewayProviderState: managedCloneCredentialMock.removeBrokerState,
+  }),
+}));
 
 vi.mock("../../policy", () => ({
   applyPreset: applyPresetMock,
@@ -360,6 +388,17 @@ export function resetSnapshotRestoreMocks(): void {
     name,
     policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
   }));
+  managedCloneCredentialMock.runDeviceCodeFlow.mockReset();
+  managedCloneCredentialMock.runDeviceCodeFlow.mockImplementation(async (): Promise<never> => {
+    throw new Error("production device-code OAuth is disabled in snapshot lifecycle tests");
+  });
+  managedCloneCredentialMock.bindBrokerState.mockReset();
+  managedCloneCredentialMock.bindBrokerState.mockReturnValue({
+    file: "/test-only/hermes-tool-gateway-state.json",
+    brokerToken: "test-only-broker-token",
+  });
+  managedCloneCredentialMock.removeBrokerState.mockReset();
+  managedCloneCredentialMock.removeBrokerState.mockReturnValue(true);
   resolveAgentBaselinePolicyMock.mockImplementation((agent: string) => ({
     agent,
     policyPath:

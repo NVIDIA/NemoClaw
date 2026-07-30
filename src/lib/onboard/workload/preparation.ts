@@ -8,11 +8,13 @@ import {
 import {
   isShippedManagedImageAgent,
   type ManagedImageContractCatalog,
+  type ManagedImagePlatform,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../managed-image/contract";
 import {
   type ManagedImageSelectionPolicy,
+  managedImageRuntimePlatform,
   managedImageRuntimeSupportError,
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
@@ -21,6 +23,7 @@ import {
 
 type ResolveManagedImageCatalog = (options: {
   readonly release: string;
+  readonly platform: ManagedImagePlatform;
 }) => Promise<ManagedImageContractCatalog>;
 
 export interface PrepareSandboxWorkloadSourceInput {
@@ -83,6 +86,7 @@ function unavailableResult(
 function requireCompleteManagedImageCatalog(
   catalog: ManagedImageContractCatalog,
   expectedRelease: string,
+  expectedPlatform: ManagedImagePlatform,
 ): void {
   let cohortRevision: string | null = null;
   let publicationCohort: string | null = null;
@@ -94,7 +98,7 @@ function requireCompleteManagedImageCatalog(
       );
     }
     try {
-      const contract = parseManagedImageContractV1(candidate, agent);
+      const contract = parseManagedImageContractV1(candidate, agent, expectedPlatform);
       if (contract.source.release !== expectedRelease) {
         throw new SandboxWorkloadPreparationError(
           `managed image catalog contract for '${agent}' belongs to '${contract.source.release}', not '${expectedRelease}'`,
@@ -165,17 +169,23 @@ export async function prepareSandboxWorkloadSource(
   }
 
   let catalog: ManagedImageContractCatalog;
+  const platform = managedImageRuntimePlatform(input.runtime);
+  if (platform === null) {
+    throw new SandboxWorkloadPreparationError(
+      `driver '${input.runtime.driverName}' has no unambiguous managed-image host platform`,
+    );
+  }
   try {
     catalog = await (
       dependencies.resolveCatalog ?? ((options) => resolveManagedImageCatalogFromGhcr(options))
-    )({ release });
+    )({ release, platform });
   } catch (error) {
     return unavailableResult(
       input,
       `managed image catalog '${release}' is unavailable: ${diagnostic(error)}`,
     );
   }
-  requireCompleteManagedImageCatalog(catalog, release);
+  requireCompleteManagedImageCatalog(catalog, release, platform);
 
   return {
     source: resolveSandboxWorkloadSource({

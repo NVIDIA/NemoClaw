@@ -144,10 +144,10 @@ Use these details when your first-run path needs more control.
     If it prints a `newgrp docker` command, run that command before you retry the installer.
     On macOS, start Docker Desktop or Colima first.
 
-    On supported `amd64` Docker hosts, stock onboarding prefers complete immutable release images for OpenClaw, Hermes, and Deep Agents.
+    On supported `amd64` and `arm64` Docker hosts, stock onboarding requires complete immutable release images for OpenClaw, Hermes, and Deep Agents.
     NemoClaw resolves the selected release image to an exact digest.
     It applies the current onboarding configuration through a secret-free startup profile when the sandbox starts.
-    If managed image resolution is unavailable, Docker uses the trusted canonical Dockerfile recipe as a fallback.
+    Stock onboarding requires the complete immutable managed-image cohort and stops before mutation if it cannot be resolved. An explicit user-supplied `--from <Dockerfile>` remains a separate opt-in path.
     Explicit custom Dockerfile and custom-image workflows continue to use their local-build behavior.
 
     When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.

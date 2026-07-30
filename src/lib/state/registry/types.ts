@@ -152,6 +152,12 @@ export type SandboxWorkloadReceipt =
       readonly schemaVersion: 1;
       readonly kind: "managed-image";
       readonly reference: string;
+      /**
+       * Exact OCI platform selected from the publication index. Receipts
+       * created before multi-architecture managed images omit this field and
+       * are interpreted as the original linux/amd64 contract.
+       */
+      readonly platform?: "linux/amd64" | "linux/arm64";
       readonly release: string;
       readonly sourceRevision: string;
       /** Exact all-agent publication cohort that produced the immutable image. */

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "./managed-image/contract";
 import {
@@ -13,11 +13,19 @@ import {
   resolveSandboxWorkloadRuntimeCapabilities,
 } from "./workload/runtime";
 
-const MANAGED_IMAGE_V1_SUPPORT = {
+const AMD64_MANAGED_IMAGE_V1_SUPPORT = {
   exactDigestReferences: true,
-  platforms: [MANAGED_IMAGE_PLATFORM],
+  platforms: [MANAGED_IMAGE_PLATFORMS[0]],
   startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
   capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
+} as const;
+const ARM64_MANAGED_IMAGE_V1_SUPPORT = {
+  ...AMD64_MANAGED_IMAGE_V1_SUPPORT,
+  platforms: [MANAGED_IMAGE_PLATFORMS[1]],
+} as const;
+const COMPLETE_MANAGED_IMAGE_V1_SUPPORT = {
+  ...AMD64_MANAGED_IMAGE_V1_SUPPORT,
+  platforms: MANAGED_IMAGE_PLATFORMS,
 } as const;
 
 describe("sandbox workload runtime capabilities", () => {
@@ -26,21 +34,29 @@ describe("sandbox workload runtime capabilities", () => {
       resolveSandboxWorkloadRuntimeCapabilities({ driverName: "docker" }, undefined, "x64"),
     ).toEqual({
       driverName: "docker",
-      managedImageSelectionPolicy: "prefer-managed",
+      managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: true,
-      managedImages: MANAGED_IMAGE_V1_SUPPORT,
+      managedImages: AMD64_MANAGED_IMAGE_V1_SUPPORT,
     });
   });
 
-  it.each([
-    "arm64",
-    "s390x",
-  ])("does not select an amd64-only managed cohort on a %s host (#7744)", (architecture) => {
+  it("selects the complete multi-architecture managed cohort on arm64 (#7744)", () => {
     expect(
-      resolveSandboxWorkloadRuntimeCapabilities({ driverName: "docker" }, undefined, architecture),
+      resolveSandboxWorkloadRuntimeCapabilities({ driverName: "docker" }, undefined, "arm64"),
     ).toEqual({
       driverName: "docker",
-      managedImageSelectionPolicy: "prefer-managed",
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: true,
+      managedImages: ARM64_MANAGED_IMAGE_V1_SUPPORT,
+    });
+  });
+
+  it("does not fall back to the canonical Dockerfile on an unsupported stock host (#7744)", () => {
+    expect(
+      resolveSandboxWorkloadRuntimeCapabilities({ driverName: "docker" }, undefined, "s390x"),
+    ).toEqual({
+      driverName: "docker",
+      managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: true,
       managedImages: null,
     });
@@ -84,7 +100,7 @@ describe("sandbox workload runtime capabilities", () => {
     const profiles: ManagedImageRuntimeProfileRegistry = {
       ...CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES,
       [driverName]: {
-        support: MANAGED_IMAGE_V1_SUPPORT,
+        support: COMPLETE_MANAGED_IMAGE_V1_SUPPORT,
         hostArchitectures: ["amd64"],
         managedImageSelectionPolicy: "require-managed",
         legacyDockerfileBuilds: false,
@@ -95,7 +111,7 @@ describe("sandbox workload runtime capabilities", () => {
       driverName,
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: false,
-      managedImages: MANAGED_IMAGE_V1_SUPPORT,
+      managedImages: AMD64_MANAGED_IMAGE_V1_SUPPORT,
     });
   });
 

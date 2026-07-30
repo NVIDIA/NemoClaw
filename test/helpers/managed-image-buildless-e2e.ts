@@ -12,7 +12,7 @@ import { expect } from "vitest";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
@@ -28,6 +28,7 @@ import {
 import { nodeOptionsWithoutSourceLoader, SOURCE_REQUIRE_HOOK } from "./source-loader-options";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const MODEL = "nvidia/test-managed-model";
 const PROVIDER = "nvidia-prod";
 const SOURCE_REVISION = "2f03907c3a7ec151d7f5d4bb2a73abafc2849f83";

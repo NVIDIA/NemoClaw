@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
@@ -19,6 +19,7 @@ import {
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
 } from "./managed-startup/profile";
 
+const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const SOURCE_REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
 const SOURCE_RELEASE = "v0.0.89";
 const SOURCE_COHORT = "ghrun-7744-2";
@@ -68,6 +69,11 @@ describe("managed image contract v1", () => {
     expect(parsed.reference).toMatch(
       /^ghcr\.io\/nvidia\/nemoclaw\/[a-z0-9-]+@sha256:[0-9a-f]{64}$/u,
     );
+  });
+
+  it.each(MANAGED_IMAGE_PLATFORMS)("accepts the complete contract on %s (#7744)", (platform) => {
+    const contract = { ...contractFor("openclaw"), platform };
+    expect(parseManagedImageContractV1(contract, "openclaw", platform)).toEqual(contract);
   });
 
   it("rejects a mutable tag in place of the exact digest reference (#7744)", () => {
@@ -163,7 +169,7 @@ describe("managed image contract v1", () => {
   });
 
   it.each([
-    ["platform", { platform: "linux/arm64" }, "contract.platform"],
+    ["platform", { platform: "linux/ppc64le" }, "contract.platform"],
     [
       "startup profile",
       { startupProfileContractVersion: 2 },

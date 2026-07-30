@@ -12,10 +12,12 @@ import {
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORM,
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImagePlatform,
+  managedImagePlatformForNodeArchitecture,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
@@ -23,6 +25,7 @@ import {
 const RELEASE = "v0.0.97";
 const REVISION = "2f03907c3a7ec151d7f5d4bb2a73abafc2849f83";
 const COHORT = "ghrun-12345-1";
+const TEST_PLATFORM = managedImagePlatformForNodeArchitecture(process.arch) ?? "linux/amd64";
 const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
 const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
@@ -38,6 +41,7 @@ type RegistryFixtureOptions = {
   readonly rootBodyMismatch?: boolean;
   readonly rootReference?: string;
   readonly secondBlobRedirect?: boolean;
+  readonly platform?: ManagedImagePlatform;
 };
 
 function digest(character: string): `sha256:${string}` {
@@ -62,11 +66,13 @@ function jsonResponse(body: Buffer, digestHeader?: `sha256:${string}`): Response
 }
 
 function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtureOptions = {}) {
+  const platform = options.platform ?? TEST_PLATFORM;
+  const architecture = platform.slice("linux/".length);
   const repository = MANAGED_IMAGE_REPOSITORIES[agent].replace(/^ghcr\.io\//u, "");
   const labels = {
     "io.nvidia.nemoclaw.agent": agent,
     "io.nvidia.nemoclaw.managed-image.contract": String(MANAGED_IMAGE_CONTRACT_VERSION),
-    "io.nvidia.nemoclaw.managed-image.platform": MANAGED_IMAGE_PLATFORM,
+    "io.nvidia.nemoclaw.managed-image.platform": platform,
     "io.nvidia.nemoclaw.managed-image.startup-profile": String(
       MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
     ),
@@ -79,7 +85,7 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
     ...options.labels,
   };
   const imageConfig = {
-    architecture: "amd64",
+    architecture,
     os: "linux",
     config: { Labels: labels },
   };
@@ -107,7 +113,7 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
             mediaType: OCI_MANIFEST,
             digest: platformDigest,
             size: imageManifestBody.length,
-            platform: { architecture: "amd64", os: "linux" },
+            platform: { architecture, os: "linux" },
           },
           ...(options.duplicatePlatform
             ? [
@@ -115,7 +121,7 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
                   mediaType: OCI_MANIFEST,
                   digest: digest("f"),
                   size: 1024,
-                  platform: { architecture: "amd64", os: "linux" },
+                  platform: { architecture, os: "linux" },
                 },
               ]
             : []),
@@ -197,7 +203,7 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
   });
   const fetchImpl = fetchMock as unknown as typeof fetch;
 
-  return { configDigest, fetchImpl, fetchMock, platformDigest, rootDigest };
+  return { configDigest, fetchImpl, fetchMock, platform, platformDigest, rootDigest };
 }
 
 function catalogFixture(
@@ -244,7 +250,7 @@ describe("managed image GHCR catalog", () => {
     ).resolves.toEqual({
       contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
       agent: "openclaw",
-      platform: MANAGED_IMAGE_PLATFORM,
+      platform: TEST_PLATFORM,
       image: MANAGED_IMAGE_REPOSITORIES.openclaw,
       digest: fixture.platformDigest,
       reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@${fixture.platformDigest}`,
@@ -256,6 +262,25 @@ describe("managed image GHCR catalog", () => {
       },
       startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
       capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+    });
+  });
+
+  it.each(
+    MANAGED_IMAGE_PLATFORMS,
+  )("selects and validates the exact %s child manifest", async (platform) => {
+    const fixture = registryFixture("openclaw", { platform });
+
+    await expect(
+      resolveManagedImageContractFromGhcr({
+        agent: "openclaw",
+        release: RELEASE,
+        platform,
+        fetchImpl: fixture.fetchImpl,
+      }),
+    ).resolves.toMatchObject({
+      platform,
+      digest: fixture.platformDigest,
+      reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@${fixture.platformDigest}`,
     });
   });
 
@@ -422,7 +447,7 @@ describe("managed image GHCR catalog", () => {
     ).resolves.toMatchObject({ digest: fixture.rootDigest });
   });
 
-  it("pins the validated linux/amd64 child manifest rather than its mutable platform index", async () => {
+  it("pins the validated host-platform child manifest rather than its mutable platform index", async () => {
     const fixture = registryFixture("openclaw");
 
     await expect(
@@ -513,7 +538,7 @@ describe("managed image GHCR catalog", () => {
     expect(normalizeManagedImageRelease("0.0.97")).toBe(RELEASE);
   });
 
-  it("fails closed when an index has multiple linux/amd64 workload manifests", async () => {
+  it("fails closed when an index has multiple host-platform workload manifests", async () => {
     const fixture = registryFixture("openclaw", { duplicatePlatform: true });
     await expect(
       resolveManagedImageContractFromGhcr({
@@ -521,7 +546,20 @@ describe("managed image GHCR catalog", () => {
         release: RELEASE,
         fetchImpl: fixture.fetchImpl,
       }),
-    ).rejects.toThrow(/contains 2 linux\/amd64/);
+    ).rejects.toThrow(new RegExp(`contains 2 ${TEST_PLATFORM.replace("/", "\\/")}`));
+  });
+
+  it("fails closed before network access on an unsupported host architecture", async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      resolveManagedImageContractFromGhcr({
+        agent: "openclaw",
+        release: RELEASE,
+        nodeArchitecture: "s390x",
+        fetchImpl: fetchImpl as typeof fetch,
+      }),
+    ).rejects.toThrow(/host architecture 's390x' has no managed-image platform/);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("fails closed when the image does not advertise startup-profile v1", async () => {

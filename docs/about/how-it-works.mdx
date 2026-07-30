@@ -150,11 +150,12 @@ NemoClaw separates host orchestration from sandbox image contents.
 - The _blueprint_ is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.
   The runner resolves and verifies the blueprint before applying it through OpenShell.
 
-On supported `amd64` Docker hosts, stock onboarding prefers a complete immutable release image for the selected shipped agent.
+On supported `amd64` and `arm64` Docker hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
 NemoClaw accepts the release catalog only when one publication cohort contains OpenClaw, Hermes, and Deep Agents images.
 It resolves the selected image to an exact digest and builds a secret-free startup profile for the current sandbox configuration.
 The image startup applicator materializes that configuration when the sandbox starts.
-If managed image resolution is unavailable, Docker uses the trusted canonical Dockerfile recipe as a fallback.
+Stock onboarding requires the complete immutable managed-image cohort and stops before mutation if it cannot be resolved.
+An explicit user-supplied `--from <Dockerfile>` remains a separate opt-in path.
 Explicit custom Dockerfile and custom-image workflows continue to build locally.
 
 This separation keeps agent-specific sandbox assets focused and lets host orchestration and blueprint contents evolve on separate release cadences.

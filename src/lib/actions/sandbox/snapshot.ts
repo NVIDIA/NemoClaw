@@ -290,6 +290,8 @@ interface PreparedManagedSnapshotClone {
   readonly messaging: SandboxEntry["messaging"];
   readonly registryFields: Partial<SandboxEntry>;
   readonly credentialProviders: readonly PreparedManagedCloneProvider[];
+  /** Ephemeral destination-only credentials; never forwarded to sandbox create. */
+  readonly credentialEnvironment: NodeJS.ProcessEnv;
 }
 
 type SnapshotMessagingPlan = NonNullable<SandboxEntry["messaging"]>["plan"];
@@ -408,7 +410,13 @@ async function prepareManagedSnapshotClone(
             SandboxEntry["messaging"]
           >["plan"],
         };
-  const { prepareManagedCloneProviders } = await import("./snapshot/managed-clone-providers");
+  const { prepareManagedCloneProviders, resolveManagedCloneCredentialEnvironment } = await import(
+    "./snapshot/managed-clone-providers"
+  );
+  const credentialEnvironment = await resolveManagedCloneCredentialEnvironment({
+    profile: rebound.profile,
+  });
+  const providerEnvironment = { ...process.env, ...credentialEnvironment };
   return {
     envArgs: credentialProxyEnvArgs,
     rootApplyRequest: createManagedStartupRootApplyRequest({
@@ -419,11 +427,13 @@ async function prepareManagedSnapshotClone(
     workload: targetWorkload,
     registryFields: managedCloneRegistryFields(rebound.profile, source),
     messaging,
+    credentialEnvironment,
     credentialProviders: prepareManagedCloneProviders({
       profile: rebound.profile,
       messagingPlan: (messaging?.plan ?? null) as SnapshotMessagingPlan | null,
       destinationSandboxName,
       destinationWillBeReplaced,
+      environment: providerEnvironment,
       root: ROOT,
       runOpenshell,
     }),
@@ -504,6 +514,9 @@ function prepareSnapshotCloneLaunch(
   delete createEnv.NEMOCLAW_OBSERVABILITY;
   delete createEnv[MANAGED_STARTUP_PROFILE_ENV];
   delete createEnv[MANAGED_STARTUP_CA_ENV];
+  for (const provider of managedClone?.credentialProviders ?? []) {
+    delete createEnv[provider.providerEnvKey];
+  }
 
   const command = openshellBin;
   const commandArgs = [
@@ -1439,6 +1452,14 @@ async function runSnapshotRestoreUnlocked(
             managedProviderLifecycle?.provisionManagedCloneProviders(
               managedClone?.credentialProviders ?? [],
               {
+                ...(managedClone
+                  ? {
+                      environment: {
+                        ...process.env,
+                        ...managedClone.credentialEnvironment,
+                      },
+                    }
+                  : {}),
                 runOpenshell,
                 ...(targetExists ? { rollbackSandboxName: targetSandbox } : {}),
               },

@@ -17,11 +17,12 @@ NemoClaw separates immutable image contents, startup configuration, hot-reloadab
 
 ## Managed Image and Startup Profile Changes
 
-On supported `amd64` Docker hosts, stock OpenClaw, Hermes, and Deep Agents onboarding prefers complete immutable release images.
+On supported `amd64` and `arm64` Docker hosts, stock OpenClaw, Hermes, and Deep Agents onboarding requires complete immutable release images.
 NemoClaw resolves each selected image to an exact digest and applies current configuration through a secret-free startup profile.
 Managed rebuilds resolve the current CLI release to an exact image digest and prepare a replacement startup profile.
 Managed clones retain the source image digest and rebind target-specific configuration through the same startup-profile contract.
-If managed image resolution is unavailable, Docker uses the trusted canonical Dockerfile recipe as a fallback.
+Stock onboarding requires the complete immutable managed-image cohort and stops before mutation if it cannot be resolved.
+An explicit user-supplied `--from <Dockerfile>` remains a separate opt-in path.
 Explicit custom Dockerfile and custom-image workflows continue to use their local-build behavior.
 
 <AgentOnly variant="openclaw">
