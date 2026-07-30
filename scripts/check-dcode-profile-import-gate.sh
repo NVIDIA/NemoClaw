@@ -30,15 +30,16 @@ cd "${repo_root}"
 # test/Dockerfile.dcode-profile-missing-dependencies, and
 # agents/langchain-deepagents-code/Dockerfile. Those three reviewed Dockerfiles
 # contain no secret-bearing ARGs. NEMOCLAW_CORPORATE_CA_B64 carries public trust
-# anchors and is not passed to this gate. Only BASE_IMAGE is passed via
-# --build-arg, always as a public, non-secret image reference.
+# anchors, and the PERL_* arguments pin public source and package identities.
+# None are passed to this gate. Only BASE_IMAGE is passed via --build-arg,
+# always as a public, non-secret image reference.
 for dockerfile in \
   agents/langchain-deepagents-code/Dockerfile.base \
   test/Dockerfile.dcode-profile-missing-dependencies \
   agents/langchain-deepagents-code/Dockerfile; do
   while IFS= read -r arg_name; do
     case "${arg_name}" in
-      BASE_IMAGE | NEMOCLAW_CORPORATE_CA_B64 | NEMOCLAW_MODEL | NEMOCLAW_INFERENCE_PROVIDER_ID | NEMOCLAW_PROVIDER_KEY | NEMOCLAW_UPSTREAM_PROVIDER | NEMOCLAW_UPSTREAM_ENDPOINT_URL | NEMOCLAW_INFERENCE_BASE_URL | NEMOCLAW_INFERENCE_API | NEMOCLAW_TOOL_DISCLOSURE | NEMOCLAW_DCODE_AUTO_APPROVAL | NEMOCLAW_BUILD_ID | NEMOCLAW_DARWIN_VM_COMPAT | NEMOCLAW_PROXY_HOST | NEMOCLAW_PROXY_PORT) ;;
+      BASE_IMAGE | NEMOCLAW_CORPORATE_CA_B64 | NEMOCLAW_MODEL | NEMOCLAW_INFERENCE_PROVIDER_ID | NEMOCLAW_PROVIDER_KEY | NEMOCLAW_UPSTREAM_PROVIDER | NEMOCLAW_UPSTREAM_ENDPOINT_URL | NEMOCLAW_INFERENCE_BASE_URL | NEMOCLAW_INFERENCE_API | NEMOCLAW_TOOL_DISCLOSURE | NEMOCLAW_DCODE_AUTO_APPROVAL | NEMOCLAW_BUILD_ID | NEMOCLAW_DARWIN_VM_COMPAT | NEMOCLAW_PROXY_HOST | NEMOCLAW_PROXY_PORT | PERL_VERSION | PERL_SHA256 | PERL_PACKAGE_REVISION) ;;
       *)
         echo "ERROR: plain-progress build refuses unreviewed ARG ${arg_name} in ${dockerfile}" >&2
         exit 1
