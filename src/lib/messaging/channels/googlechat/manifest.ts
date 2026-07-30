@@ -123,6 +123,11 @@ export const googlechatManifest = {
   // consumed only as gateway-side refresh material, never delivered into the sandbox.
   // (The `serviceAccountFile` in `render` below is a start-gate marker only, not a
   // delivered file — see the comment there.)
+  // On `channels remove` this gateway-side material is torn down by
+  // applyChannelRemoveToGatewayAndRegistry via bridgeProviderNamesForChannel (which
+  // deletes the bridge provider from the gateway), not by clearChannelTokens — that
+  // clears only per-channel sandbox tokens and is intentionally a no-op for a bridge
+  // channel, so an empty `credentials` does not leave the service account behind.
   credentials: [],
   policyPresets: [{ name: "googlechat", policyKeys: ["googlechat"] }],
   render: [
