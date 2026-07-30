@@ -169,6 +169,42 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3, 3]);
   });
 
+  it("retries opaque OpenShell follow-ups after an exact re-registration state", () => {
+    const bufferError = Object.assign(new Error("spawnSync openshell ENOBUFS"), {
+      code: "ENOBUFS",
+    });
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
+        stdout: "",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+      })
+      .mockReturnValueOnce({ status: 101, output: "", stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: null,
+        output: "",
+        stdout: "",
+        stderr: "",
+        error: bufferError,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(4);
+    expect(sleeps).toEqual([3, 3, 3]);
+  });
+
   it("keeps an isolated blank OpenShell failure terminal", () => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,

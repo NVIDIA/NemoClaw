@@ -794,15 +794,15 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       sawRetryableReRegistrationState = true;
     }
     // OpenShell 0.0.85 can follow its exact phase/session transition response
-    // with one or more blank exit-1 results while the replacement registration
-    // settles. A blank failure is inconclusive only after this loop observed a
-    // known retryable state and while the pinned managed-health guard continues
-    // to pass. Remove this follow-up when supported OpenShell versions keep
-    // returning a structured transition response until exec is available.
+    // with one or more output-free non-success results while the replacement
+    // registration settles. The process status and spawn error are not stable
+    // across those follow-ups. An opaque result is inconclusive only after this
+    // loop observed a known retryable state and while the pinned managed-health
+    // guard continues to pass. Remove this follow-up when supported OpenShell
+    // versions keep returning a structured transition response until exec is
+    // available.
     const retryableEmptyFollowUp =
       sawRetryableReRegistrationState &&
-      result.status === 1 &&
-      !result.error &&
       String(result.stdout ?? "").trim() === "" &&
       String(result.stderr ?? "").trim() === "";
     if (!retryableReRegistrationState && !retryableEmptyFollowUp && !isCommandTimeout(result)) {
