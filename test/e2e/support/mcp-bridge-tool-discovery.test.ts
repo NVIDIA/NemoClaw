@@ -67,17 +67,15 @@ describe("authenticated MCP rediscovery evidence", () => {
   });
 
   it.each([
-    ["initialize HTTP response", "initialize", { responseStatus: 401 }],
-    ["tools/list JSON-RPC response", "tools/list", { responseHasResult: false }],
-  ])("rejects a failed %s", (_failure, failedMethod, response) => {
+    ["initialize HTTP response", 0, { responseStatus: 401 }],
+    ["tools/list JSON-RPC response", 2, { responseHasResult: false }],
+  ])("rejects a failed %s", (_failure, failedRequestIndex, response) => {
     const requests = [
       successfulInitialize(),
       request("notifications/initialized"),
       request("tools/list"),
     ];
-    const failedRequest = requests.find((candidate) => candidate.rpcMethod === failedMethod);
-    if (!failedRequest) throw new Error(`missing ${failedMethod} fixture request`);
-    Object.assign(failedRequest, response);
+    Object.assign(requests[failedRequestIndex], response);
 
     expect(hasSuccessfulAuthenticatedMcpDiscovery(requests, EXPECTED_SECRET)).toBe(false);
   });
