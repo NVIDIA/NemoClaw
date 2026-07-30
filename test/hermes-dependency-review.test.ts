@@ -87,13 +87,23 @@ describe("Hermes 0.19.0 dependency review", () => {
       "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
     );
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
-    for (const selection of ['"cryptography==48.0.1"', '"Pillow==12.3.0"', '"starlette==1.3.1"']) {
+    expect(arg("NODE_VERSION")).toBe("24.18.1");
+    expect(arg("UV_VERSION")).toBe("0.11.33");
+    for (const selection of [
+      '"cryptography==48.0.1"',
+      '"mcp==1.28.1"',
+      '"Pillow==12.3.0"',
+      '"starlette==1.3.1"',
+      '"tornado==6.5.7"',
+    ]) {
       expect(securityDependenciesPatch).toContain(selection);
     }
     for (const installedVersion of [
       "'cryptography': '48.0.1'",
+      "'mcp': '1.28.1'",
       "'pillow': '12.3.0'",
       "'starlette': '1.3.1'",
+      "'tornado': '6.5.7'",
     ]) {
       expect(dockerfileBase).toContain(installedVersion);
     }
@@ -108,8 +118,11 @@ describe("Hermes 0.19.0 dependency review", () => {
       expect(review).toContain(advisory);
     }
     expect(review).toContain("`cryptography==48.0.1`");
+    expect(review).toContain("`mcp==1.28.1`");
     expect(review).toContain("`Pillow==12.3.0`");
     expect(review).toContain("`starlette==1.3.1`");
-    expect(review).toContain("11 newly published records in six unrelated packages");
+    expect(review).toContain("`tornado==6.5.7`");
+    expect(review).toContain("checksum-pinned Node.js `24.18.1`");
+    expect(review).toContain("exact uv `0.11.33`");
   });
 });
