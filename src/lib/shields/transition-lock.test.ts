@@ -315,7 +315,7 @@ describe("host shields transition lock", () => {
     const displacedPath = `${lockPath}.displaced`;
     const originalFstatSync = fs.fstatSync;
     let swapped = false;
-    vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+    const fstatSpy = vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
       const stat = originalFstatSync(fd, options as { bigint: true });
       runWhen(!swapped, () => {
         swapped = true;
@@ -325,9 +325,13 @@ describe("host shields transition lock", () => {
       return stat;
     }) as typeof fs.fstatSync);
 
-    expect(locker.inspectShieldsTransitionLockOwner("alpha", TAKEOVER_TOKEN)).toBeNull();
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
-    expect(JSON.parse(fs.readFileSync(displacedPath, "utf8"))).toEqual(original);
+    try {
+      expect(locker.inspectShieldsTransitionLockOwner("alpha", TAKEOVER_TOKEN)).toBeNull();
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
+      expect(JSON.parse(fs.readFileSync(displacedPath, "utf8"))).toEqual(original);
+    } finally {
+      fstatSpy.mockRestore();
+    }
   });
 
   it("rejects takeover with the wrong token without moving the owner", () => {
