@@ -109,7 +109,7 @@ describe("verifyShieldsLockState", () => {
     );
   });
 
-  it("reports the pre-#7865 root-owned Hermes config root as drift", async () => {
+  it("reports the previous root-owned Hermes config root as drift (#7865)", async () => {
     const { verifyShieldsLockState } = await loadVerifier();
     const hermesTarget = {
       agentName: "hermes",

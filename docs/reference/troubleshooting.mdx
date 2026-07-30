@@ -2692,11 +2692,11 @@ If the command succeeds because the dashboard profile is missing, the dashboard 
 ### The Hermes gateway will not restart after `shields up`
 
 The Hermes config root holds the agent's top-level runtime state, not only its configuration: `auth.json`, the drain request, and the temporary files that back every atomic `gateway_state.json` and `gateway.pid` replace are created directly in `/sandbox/.hermes`.
-Lockdown therefore keeps that directory group-writable with the set-id and sticky bits and only changes its owner, so the gateway can still manage its own runtime files while the sticky bit stops the sandbox identity from unlinking or renaming the sealed root-owned configuration.
+Lockdown therefore moves that directory to `root:sandbox` mode `3770`, keeping the set-id and sticky bits, so the gateway can still manage its own runtime files while the sticky bit stops the sandbox identity from unlinking or renaming the sealed root-owned configuration.
 Inspect a locked root with:
 
 ```bash
-nemohermes <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
 ```
 
 Expected output:
@@ -2707,7 +2707,7 @@ Expected output:
 
 A sandbox locked by an older release carries a `755 root:root` root instead.
 The gateway cannot write its runtime state there, so every restart fails its health check and the supervisor quarantines relaunch until the sandbox is recreated.
-`nemohermes <name> shields status` reports the stale posture as drift; re-run `nemohermes <name> shields up` to repair it, or rebuild the sandbox.
+`$$nemoclaw <name> shields status` reports the stale posture as drift; re-run `$$nemoclaw <name> shields up` to repair it, or rebuild the sandbox.
 The sealed files are unchanged by the repair and stay `444 root:root`.
 
 ### Hermes restart reports `config hash mismatch`
