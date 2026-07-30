@@ -36,12 +36,11 @@ fail() {
   exit 1
 }
 
-[ "$#" -ge 2 ] || fail "SUPERVISOR_INVALID_REQUEST"
+[ "$#" -eq 2 ] || fail "SUPERVISOR_INVALID_REQUEST"
 ACTION="$1"
 NONCE="$2"
 case "$ACTION" in
-  restart | recover | probe) [ "$#" -eq 2 ] || fail "SUPERVISOR_INVALID_REQUEST" ;;
-  launch-supervisor) [ "$#" -le 34 ] || fail "SUPERVISOR_INVALID_REQUEST" ;;
+  restart | recover | probe) ;;
   *) fail "SUPERVISOR_INVALID_ACTION" ;;
 esac
 case "$NONCE" in
@@ -56,9 +55,8 @@ if [ "$PID1_ARGV0" = "/opt/openshell/bin/openshell-sandbox" ]; then
   [ -x "$CONTROL_MANAGED_HELPER" ] || fail "SUPERVISOR_REBUILD_REQUIRED"
   # Isolated mode ignores Python startup hooks, user-site packages, and
   # PYTHON* environment variables before the root helper imports anything.
-  exec python3 -I "$CONTROL_MANAGED_HELPER" "$@"
+  exec python3 -I "$CONTROL_MANAGED_HELPER" "$ACTION" "$NONCE"
 fi
-[ "$ACTION" != "launch-supervisor" ] || fail "SUPERVISOR_INVALID_ACTION"
 case "$PID1_CMDLINE" in
   *nemoclaw-start*) ;;
   *) fail "SUPERVISOR_UNAVAILABLE" ;;

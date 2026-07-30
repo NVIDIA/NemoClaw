@@ -431,9 +431,8 @@ export async function isSandboxGatewayRunningForStatus(
 /**
  * Recover a gateway through the registered agent's managed control boundary.
  * Legacy custom agents retain their SSH-owned compatibility path. Built-in
- * agents may relaunch a missing supervisor in the registered container, but
- * the caller must still prove that exact container through the managed health
- * gate.
+ * agents may return a transactional supervisor relaunch that the caller must
+ * commit or roll back after the managed health gate.
  */
 type SandboxProcessRecovery =
   | { kind: "managed" | "custom" }
@@ -1253,21 +1252,45 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       : null;
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
-    const gatewayReady = waitForRecoveredSandboxGateway(sandboxName, {
-      quiet,
-      initialManagedHealthPassed: recovery.kind === "managed",
-      requireManagedProbe: recovery.kind === "relaunched",
-      timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
-      managedProbeImpl: (name) =>
-        confirmRecoveredSandboxGatewayManaged(name, {
-          requestGatewaySupervisorActionImpl: requestManagedProbe,
-        }),
-    });
+    let gatewayReady = false;
+    try {
+      gatewayReady = waitForRecoveredSandboxGateway(sandboxName, {
+        quiet,
+        initialManagedHealthPassed: recovery.kind === "managed",
+        requireManagedProbe: recovery.kind === "relaunched",
+        timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+        managedProbeImpl: (name) =>
+          confirmRecoveredSandboxGatewayManaged(name, {
+            requestGatewaySupervisorActionImpl: requestManagedProbe,
+          }),
+      });
+    } catch (error) {
+      try {
+        relaunch?.finalize(false);
+      } catch {
+        // Preserve the original recovery error; the failure path below will
+        // direct the operator to inspect/rebuild the sandbox.
+      }
+      throw error;
+    }
     if (!gatewayReady) {
+      let rolledBack = true;
+      if (relaunch) {
+        try {
+          rolledBack = relaunch.finalize(false).rolledBack;
+        } catch {
+          rolledBack = false;
+        }
+      }
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+        if (!rolledBack) {
+          console.error(
+            "  Automatic rollback of the previous sandbox container failed; inspect Docker state before retrying.",
+          );
+        }
         printHostManagedGatewayRecoveryHints(
           sandboxName,
           recoveryAgent,
@@ -1275,6 +1298,22 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         );
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+    }
+    if (relaunch) {
+      try {
+        const completion = relaunch.finalize(true);
+        if (!completion.backupRemoved && !quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
+          );
+        }
+      } catch {
+        if (!quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but container transaction cleanup could not be confirmed.",
+          );
+        }
+      }
     }
     const readinessFailureDetail = relaunch
       ? (() => {
