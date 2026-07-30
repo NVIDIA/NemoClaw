@@ -793,7 +793,7 @@ function seedHermesDashboardConfig(
     reportFailure("seed", seed);
     return "failed";
   }
-  const seededMarker = `[dashboard] seeded model routing into ${dashboardConfigPath}`;
+  const seededMarker = `[dashboard] seeded model routing and reviewed policy into ${dashboardConfigPath}`;
   if (
     !String(seed.stderr ?? "")
       .split(/\r?\n/u)

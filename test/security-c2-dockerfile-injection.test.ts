@@ -14,7 +14,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { dockerfileInstructions } from "../src/lib/onboard/dockerfile-tool-disclosure-contract";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 
@@ -123,20 +122,27 @@ describe("C-2 fix: env var pattern (process.env) is safe", () => {
 describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth defaults", () => {
   it("NEMOCLAW_DISABLE_DEVICE_AUTH is promoted to ENV before the config generator RUN layer", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    const lines = src.split("\n");
     let promoted = false;
-    for (const instruction of dockerfileInstructions(src)) {
-      if (/^FROM\b/.test(instruction.text)) {
+    let inEnvBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*FROM\b/.test(line)) {
         promoted = false;
+        inEnvBlock = false;
       }
-      if (
-        /^ENV\b/.test(instruction.text) &&
-        /NEMOCLAW_DISABLE_DEVICE_AUTH[=\s]/.test(instruction.text)
-      ) {
+      if (/^\s*ENV\b/.test(line)) {
+        inEnvBlock = true;
+      }
+      if (inEnvBlock && /NEMOCLAW_DISABLE_DEVICE_AUTH[=\s]/.test(line)) {
         promoted = true;
       }
+      if (inEnvBlock && !/\\\s*$/.test(line)) {
+        inEnvBlock = false;
+      }
       if (
-        /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/.test(
-          instruction.text,
+        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts\b/.test(
+          line,
         )
       ) {
         expect(promoted).toBeTruthy();

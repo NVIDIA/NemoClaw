@@ -11,7 +11,7 @@ content:
 agent-variants: ["openclaw"]
 ---
 
-Declare model capabilities before onboarding so NemoClaw can apply them to the OpenClaw configuration through the managed startup profile.
+Declare model capabilities before onboarding so NemoClaw can bake them into the OpenClaw configuration.
 Use these settings only when the selected model and provider support the capability you declare.
 
 ## Configure Reasoning Mode
@@ -45,7 +45,7 @@ After provider selection, NemoClaw also rejects every explicit value, including 
 
 `default` names the unset state, which is useful to clear an effort that a sandbox already records.
 
-NemoClaw writes `params.extra_body.reasoning_effort` on the model entry in the generated OpenClaw config.
+NemoClaw writes `params.extra_body.reasoning_effort` on the model entry in the built OpenClaw config.
 OpenClaw merges that field into the request body.
 NemoClaw does not add the field for another API family.
 Reasoning effort is independent of `NEMOCLAW_REASONING`.
@@ -75,8 +75,7 @@ Non-interactive onboarding uses the environment value or the default `text` sett
 
 ## Apply Capability Changes
 
-For stock onboarding, these settings are managed startup-profile inputs.
-An explicit custom Dockerfile applies them during its local build.
+These settings are build-time inputs.
 Recreate an existing sandbox after changing any of these values.
 
 ```bash
@@ -94,7 +93,7 @@ nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <mo
 ```
 
 Pass `--reasoning-effort default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort.
-An ordinary sandbox restart preserves this runtime value or endpoint-default state; startup does not reapply the original onboarding value over the recorded runtime update.
+An ordinary sandbox restart preserves this runtime value or endpoint-default state; startup does not reapply the image's original onboarding value.
 `--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
 When you omit the flag, `inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
 For either explicit input, `inference set` parses the value and resolves the provider and API before any mutation.

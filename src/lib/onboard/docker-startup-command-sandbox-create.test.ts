@@ -9,10 +9,6 @@ import type {
   DockerGpuPatchResult,
 } from "./docker-gpu-patch";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
-import {
-  ManagedBootstrapCommitStateIndeterminateError,
-  ManagedBootstrapDurableCommitCleanupPendingError,
-} from "./managed-bootstrap/adapter";
 
 function startupResult(): DockerGpuPatchResult {
   return {
@@ -72,7 +68,7 @@ describe("Docker startup-command sandbox creation", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the startup-command recreation path with DCode's exact resource limits", async () => {
+  it("uses the startup-command recreation path with DCode's exact resource limits", () => {
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
       inspect: JSON.stringify([inspectFixture()]),
@@ -106,7 +102,7 @@ describe("Docker startup-command sandbox creation", () => {
       },
     });
 
-    await patch.ensureApplied();
+    patch.ensureApplied();
 
     expect(recreatePatch).not.toHaveBeenCalled();
     expect(dockerRunDetached.mock.calls[0]?.[0]).toEqual(
@@ -160,174 +156,7 @@ describe("Docker startup-command sandbox creation", () => {
     expect(context.rolledBack).toBe(true);
   });
 
-  it("defers a driver-owned managed cutover until the authoritative caller commits", async () => {
-    const deps = makeDeps();
-    let releaseCommit = () => {};
-    const commit = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseCommit = resolve;
-        }),
-    );
-    const rollback = vi.fn(async () => {});
-    const patch = createDockerGpuSandboxCreatePatch({
-      route: "native",
-      externalRecreation: true,
-      sandboxName: "alpha",
-      timeoutSecs: 60,
-      deps,
-    });
-    patch.attachManagedBootstrapCutover({
-      selectedMode: {
-        kind: "startup-command",
-        label: "managed bootstrap",
-        device: "",
-        args: [],
-      },
-      failureContext: { sandboxName: "alpha" },
-      commit,
-      rollback,
-    });
-    patch.maybeApplyDuringCreate();
-    await patch.ensureApplied();
-    patch.waitForSupervisorReconnectIfNeeded();
-    expect(commit).not.toHaveBeenCalled();
-    const firstCommit = patch.commitAfterReady();
-    const duplicateCommit = patch.commitAfterReady();
-    expect(commit).toHaveBeenCalledOnce();
-    expect(rollback).not.toHaveBeenCalled();
-    releaseCommit();
-    await Promise.all([firstCommit, duplicateCommit]);
-  });
-
-  it("rolls back a driver-owned cutover before reporting commit failure", async () => {
-    const deps = makeDeps();
-    const events: string[] = [];
-    const commit = vi.fn(async () => {
-      events.push("commit");
-      throw new Error("receipt validation failed");
-    });
-    const rollback = vi.fn(async () => {
-      events.push("rollback");
-    });
-    const onPatchFailureExit = vi.fn(() => {
-      events.push("exit");
-    });
-    const patch = createDockerGpuSandboxCreatePatch({
-      route: "native",
-      externalRecreation: true,
-      sandboxName: "alpha",
-      timeoutSecs: 60,
-      deps,
-      overrides: { onPatchFailureExit },
-    });
-    patch.attachManagedBootstrapCutover({
-      selectedMode: {
-        kind: "startup-command",
-        label: "managed bootstrap",
-        device: "",
-        args: [],
-      },
-      failureContext: {
-        sandboxName: "alpha",
-        oldContainerId: "held-container",
-        newContainerId: "replacement-container",
-      },
-      commit,
-      rollback,
-    });
-
-    await patch.commitAfterReady();
-
-    expect(events).toEqual(["commit", "rollback", "exit"]);
-    expect(onPatchFailureExit).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ message: "receipt validation failed" }),
-      expect.objectContaining({
-        context: expect.objectContaining({
-          oldContainerId: "held-container",
-          newContainerId: "replacement-container",
-          rolledBack: true,
-        }),
-      }),
-    );
-    await patch.rollbackManagedStartupAfterCreateFailure();
-    expect(rollback).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    {
-      label: "durably committed cleanup-pending",
-      failure: new ManagedBootstrapDurableCommitCleanupPendingError({
-        bootstrapIdentity: "b".repeat(64),
-        cleanupRuntimeId: "old-container",
-        detail: "injected exact backup cleanup failure",
-      }),
-      stateLine: "managed_bootstrap_cutover=durably-committed",
-    },
-    {
-      label: "commit-state-indeterminate",
-      failure: new ManagedBootstrapCommitStateIndeterminateError({
-        bootstrapIdentity: "b".repeat(64),
-        runtimeId: "replacement-container",
-        detail: "injected immutable commit probe failure",
-      }),
-      stateLine: "managed_bootstrap_cutover=commit-state-indeterminate",
-    },
-  ])("never rolls back a $label cutover", async ({ failure, stateLine }) => {
-    const deps = makeDeps();
-    const commit = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined);
-    const rollback = vi.fn(async () => {});
-    const onPatchFailureExit = vi.fn();
-    const patch = createDockerGpuSandboxCreatePatch({
-      route: "native",
-      externalRecreation: true,
-      sandboxName: "alpha",
-      timeoutSecs: 60,
-      deps,
-      overrides: { onPatchFailureExit },
-    });
-    patch.attachManagedBootstrapCutover({
-      selectedMode: {
-        kind: "startup-command",
-        label: "managed bootstrap",
-        device: "",
-        args: [],
-      },
-      failureContext: {
-        sandboxName: "alpha",
-        oldContainerId: "old-container",
-        newContainerId: "replacement-container",
-      },
-      commit,
-      rollback,
-    });
-
-    await patch.commitAfterReady();
-    await patch.rollbackManagedStartupAfterCreateFailure();
-
-    expect(commit).toHaveBeenCalledOnce();
-    expect(rollback).not.toHaveBeenCalled();
-    expect(onPatchFailureExit).toHaveBeenCalledWith(
-      "alpha",
-      failure,
-      expect.objectContaining({
-        additionalSummaryLines: expect.arrayContaining([
-          stateLine,
-          "managed_bootstrap_finalization_cleanup=pending",
-        ]),
-        context: expect.objectContaining({ rolledBack: false }),
-      }),
-    );
-
-    // The live owner can retry cleanup; the terminal report did not convert
-    // the irreversible commit into rollback or poison the retry promise.
-    await patch.commitAfterReady();
-    expect(commit).toHaveBeenCalledTimes(2);
-    expect(rollback).not.toHaveBeenCalled();
-  });
-
-  it("reports startup-command creation failures through the composed patch boundary", async () => {
+  it("reports startup-command creation failures through the composed patch boundary", () => {
     const deps = makeDeps();
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
@@ -348,7 +177,7 @@ describe("Docker startup-command sandbox creation", () => {
 
     patch.maybeApplyDuringCreate();
     expect(patch.createFailureMessage()).toMatch(/startup-command patch failed/);
-    await patch.exitOnPatchError();
+    patch.exitOnPatchError();
     expect(onPatchFailureExit).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ message: "startup recreate failed" }),

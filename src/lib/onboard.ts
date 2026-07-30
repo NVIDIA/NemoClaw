@@ -49,8 +49,7 @@ const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-conf
 const baseImageResolutionFlow: typeof import("./onboard/base-image-resolution-flow") = require("./onboard/base-image-resolution-flow");
 const sandboxCreateIntentResolution: typeof import("./onboard/sandbox-create-intent-resolution") = require("./onboard/sandbox-create-intent-resolution");
 const sandboxCreatePlanMaterialization: typeof import("./onboard/sandbox-create-plan-materialization") = require("./onboard/sandbox-create-plan-materialization");
-const managedWorkloadOnboard: typeof import("./onboard/managed-workload/onboard-orchestration") =
-  require("./onboard/managed-workload/onboard-orchestration");
+const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
@@ -2217,8 +2216,6 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
 
 async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
-  computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
-  managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2242,10 +2239,6 @@ async function createSandboxWithBaseImageResolution(
     "sandbox name",
   );
   preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
-  const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
-  const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const legacyDockerfilePath = effectiveAgent.dockerfilePath ?? effectiveAgent.legacyPaths?.dockerfile ?? path.join(ROOT, "Dockerfile");
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
@@ -2321,20 +2314,6 @@ async function createSandboxWithBaseImageResolution(
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
-  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
-  const plannedMessagingState =
-    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({
-    computePlan, managedWorkloadRebuild, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null),
-    rootDir: ROOT, model, provider, preferredInferenceApi,
-    endpointUrl: createIntent?.endpointUrl ?? null,
-    startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env },
-    note,
-    fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost(), "trusted-dockerfile-fallback"),
-  }, {
-    resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig,
-  });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2352,6 +2331,7 @@ async function createSandboxWithBaseImageResolution(
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
+    const requestedAgentName = getRequestedSandboxAgentName(agent);
     const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
     let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 
@@ -2584,15 +2564,6 @@ async function createSandboxWithBaseImageResolution(
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
-    // Resolve and validate the immutable workload before deleting the live
-    // sandbox. Catalog or contract failures must leave the existing workload
-    // untouched.
-    const replacementWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
-    managedWorkloadRuntime.ensurePreparedProfile(replacementWorkload);
-    if (replacementWorkload.source.kind === "managed-image") {
-      sandboxGpuCreateFlow.resolveCurrentManagedBootstrapRuntimeProvider(computePlan.driverName);
-    }
-
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     if (noRestorePending && !notReadyRecreateInProgress && !shouldSkipPreRecreateBackup(process.env)) {
@@ -2613,14 +2584,7 @@ async function createSandboxWithBaseImageResolution(
     runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     recreateRuntime.confirmDeleted();
-    const replacementReusesPreviousImage =
-      replacementWorkload.source.kind === "managed-image" &&
-      previousEntry?.imageTag === replacementWorkload.source.reference;
-    if (
-      previousEntry?.imageTag &&
-      previousEntry.workload?.shared !== true &&
-      !replacementReusesPreviousImage
-    ) {
+    if (previousEntry?.imageTag) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       const rmiResult = dockerRmi(previousEntry.imageTag, { ignoreError: true, suppressOutput: true });
       if (rmiResult.status !== 0) {
@@ -2630,56 +2594,128 @@ async function createSandboxWithBaseImageResolution(
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
 
-  const preparedSandboxWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
-  managedWorkloadRuntime.ensurePreparedProfile(preparedSandboxWorkload);
-  const managedBootstrapRuntimeProvider =
-    preparedSandboxWorkload.source.kind === "managed-image"
-      ? sandboxGpuCreateFlow.resolveCurrentManagedBootstrapRuntimeProvider(computePlan.driverName)
-      : null;
-
   applyExtraProviderReconciliation({
     extraProviders: resolvedCreateIntent.extraProviders,
     staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
   });
 
+  // Stage build context — use the custom Dockerfile path when provided,
+  // otherwise use the optimised default that only sends what the build needs.
+  // The build context contains source code, scripts, and potentially API keys
+  // in env args, so it must not persist in /tmp after a failed sandbox create.
+  // run() calls process.exit() on failure (bypassing normal control flow), so
+  // we register a process 'exit' handler to guarantee cleanup in all cases.
+  const { buildCtx, stagedDockerfile, origin, cleanupBuildCtx } =
+    preparedDcodeRebuild.resolveSandboxBuildContext(
+      {
+        preparedBuildContext,
+        agent,
+        fromDockerfile,
+      },
+      {
+        createAgentSandbox: (selectedAgent) =>
+          baseImageResolutionFlow.createAgentSandboxWithResolution(
+            baseImageResolutionContext,
+            selectedAgent,
+            agentOnboard.createAgentSandbox,
+          ),
+      },
+    );
+  // Returns true if the build context was fully removed, false otherwise.
+  // The caller uses this to decide whether the process 'exit' safety net
+  // can be deregistered — if inline cleanup fails, we leave the handler
+  // armed so the temp dir is still removed on process exit.
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, intendedSandboxStartupCommand, managedBootstrapIdentity, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
-    runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
-    legacy: {
-      preparedBuildContext, agent, fromDockerfile,
-      createAgentSandbox: (selectedAgent) =>
-        baseImageResolutionFlow.createAgentSandboxWithResolution(baseImageResolutionContext, selectedAgent, agentOnboard.createAgentSandbox),
-      patchInput: { preparedBuildContext, agent, fromDockerfile, model, chatUiUrl, provider, endpointUrl: createIntent?.endpointUrl ?? null, preferredInferenceApi, webSearchConfig, toolDisclosure: effectiveToolDisclosure, ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}), hermesToolGateways, sandboxGpuConfig: effectiveSandboxGpuConfig, ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext), gatewayPort: GATEWAY_PORT },
+  const { gpuRoutePlan, sandboxGpuLogMessage } = resolvedCreateIntent;
+  const materializationCapabilities = await sandboxCreateIntentResolver.rebind(
+    {
+      sandboxName,
+      enabledChannels,
+      webSearchConfig,
+      agent,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     },
-    plan: {
-      intent: resolvedCreateIntent,
-      rebindMessagingTokenDefs: async () =>
-        (await sandboxCreateIntentResolver.rebind({ sandboxName, enabledChannels, webSearchConfig, agent, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}) }, resolvedCreateIntent)).messagingTokenDefs,
-      runProviderPreDeleteCleanup: () =>
-        runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact, tolerateMissingSandbox: true }),
-      upsertMessagingProviders,
-      getHermesToolGatewayProviderName: (targetSandbox) =>
-        getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
-      discloseInitialSandboxPolicy,
-    },
-    launchInput: { agent, observabilityEnabled: createIntent?.observabilityEnabled === true, chatUiUrl, sandboxName, env: process.env, extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys, getDashboardForwardPort, hermesDashboardState, manageDashboard, openshellShellCommand, openshellArgv },
-    plannedMessagingPlan: plannedMessagingState?.plan ?? null,
-    gpu: { provider, config: effectiveSandboxGpuConfig, dockerDriverGateway, gatewayPort: GATEWAY_PORT },
-    dependencies: { materializeSandboxCreatePlan: sandboxCreatePlanMaterialization.materializeSandboxCreatePlan, prepareSandboxBuildPatchConfig: sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig },
+    resolvedCreateIntent,
+  );
+  const {
+    activeMessagingChannels,
+    initialSandboxPolicy,
+    policyTier: resolvedCreatePolicyTier,
+    createArgs,
+    messagingProviders,
+    compatibilityPolicyPath,
+  } = sandboxCreatePlanMaterialization.materializeSandboxCreatePlan({
+    intent: resolvedCreateIntent,
+    buildCtx,
+    messagingTokenDefs: materializationCapabilities.messagingTokenDefs,
+    runProviderPreDeleteCleanup: () =>
+      runSandboxProviderPreDeleteCleanup(sandboxName, {
+        runOpenshell,
+        redact,
+        tolerateMissingSandbox: true,
+      }),
+    upsertMessagingProviders,
+    getHermesToolGatewayProviderName: (targetSandbox) =>
+      getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    discloseInitialSandboxPolicy,
   });
+  if (initialSandboxPolicy.cleanup) {
+    process.on("exit", initialSandboxPolicy.cleanup);
+  }
+  if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
+  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
+  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const plannedMessagingState =
+    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
+  const configuredMessagingChannels =
+    getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels;
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+  const initialGpuRoute = dockerGpuRoute.initialDockerGpuRoute(gpuRoutePlan);
+  const { buildId, dashboardRemoteBindPrepared } =
+    await preparedDcodeRebuild.resolveSandboxBuildPatch({
+      preparedBuildContext,
+      agent,
+      fromDockerfile,
+      stagedDockerfile,
+      model,
+      chatUiUrl,
+      provider,
+      endpointUrl: createIntent?.endpointUrl ?? null,
+      preferredInferenceApi,
+      webSearchConfig,
+      toolDisclosure: effectiveToolDisclosure,
+      ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
+      hermesToolGateways,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      selectedGpuRoute: initialGpuRoute,
+      ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
+      gatewayPort: GATEWAY_PORT,
+    });
+  const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
+  const { createArgv, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
+    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
+      agent,
+      observabilityEnabled: createIntent?.observabilityEnabled === true,
+      chatUiUrl,
+      createArgs: dockerGpuRoute.renderSandboxCreateArgsForGpuRoute(createArgs, initialGpuRoute, {
+        compatibilityPolicyPath,
+      }),
+      sandboxName,
+      env: process.env,
+      extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys,
+      getDashboardForwardPort,
+      hermesDashboardState,
+      manageDashboard,
+      openshellShellCommand,
+      openshellArgv,
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+    });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   recreateRuntime.advance("creating");
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
-    workload: preparedSandboxWorkload, runtimeProvider: managedBootstrapRuntimeProvider,
-    bootstrapIdentity: managedBootstrapIdentity, request: managedStartupRootApplyRequest,
-    intendedWorkloadArgv: intendedSandboxStartupCommand,
-  });
   const {
     createResult,
-    runtimePatch,
+    dockerGpuCreatePatch,
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
@@ -2700,7 +2736,6 @@ async function createSandboxWithBaseImageResolution(
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
-      managedBootstrap,
       ...sandboxGpuCreateFlow.resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     },
     {
@@ -2721,36 +2756,8 @@ async function createSandboxWithBaseImageResolution(
   // Only deregister the 'exit' safety net when inline cleanup succeeded;
   // otherwise leave it armed so a later process.exit() still removes the
   // temp dir (which may hold source and env-arg API keys).
-  if (legacyBuildContext?.cleanupBuildCtx()) {
-    process.removeListener("exit", legacyBuildContext.cleanupBuildCtx);
-  }
-
-  if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    try {
-      dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
-        effectiveSandboxGpuConfig,
-        provider,
-        {
-          sandboxName,
-          dockerDriverGateway,
-          selectedRoute: selectedGpuRoute,
-          verifyDirectSandboxGpu,
-          verifyGpuOrExit: runtimePatch.verifyGpuOrExit,
-          selectedMode: runtimePatch.selectedMode,
-          runCaptureOpenshell,
-          log: console.log,
-        },
-      );
-      await runtimePatch.commitAfterReady();
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      try {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-      } catch (rollbackError) {
-        dockerGpuSandboxCreate.attachManagedBootstrapRollbackError(failure, rollbackError);
-      }
-      throw failure;
-    }
+  if (cleanupBuildCtx()) {
+    process.removeListener("exit", cleanupBuildCtx);
   }
 
   if (manageDashboard) {
@@ -2761,6 +2768,23 @@ async function createSandboxWithBaseImageResolution(
       runCaptureOpenshell,
       sleep: sleepSeconds,
     });
+  }
+
+  if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
+    dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
+      effectiveSandboxGpuConfig,
+      provider,
+      {
+        sandboxName,
+        dockerDriverGateway,
+        selectedRoute: selectedGpuRoute,
+        verifyDirectSandboxGpu,
+        verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
+        selectedMode: dockerGpuCreatePatch.selectedMode,
+        runCaptureOpenshell,
+        log: console.log,
+      },
+    );
   }
 
   let actualDashboardPort = 0;
@@ -2777,18 +2801,12 @@ async function createSandboxWithBaseImageResolution(
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
 
-  const { resolvedImageTag, workloadReceipt } =
-    managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
-      runtime: managedWorkloadRuntime,
-      workload: preparedSandboxWorkload,
-      registryImageRef,
-      prebuildImageRef: prebuild.imageRef,
-      firstCreateOutput,
-      createOutput: createResult.output,
-      buildId,
-      extractBuiltImageRef: buildContext.extractBuiltImageRef,
-      resolveSandboxImageTagFromCreateOutput,
-    });
+  // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
+  const resolvedImageTag =
+    registryImageRef ??
+    prebuild.imageRef ??
+    buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
+    resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   recreateRuntime.recordCreated();
   finalizeCreatedSandbox(
@@ -2824,7 +2842,6 @@ async function createSandboxWithBaseImageResolution(
           agent,
           agentVersionKnown: !fromDockerfile,
           imageTag: resolvedImageTag,
-          workload: workloadReceipt,
           openclawImagePluginInstalls,
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
@@ -2836,7 +2853,6 @@ async function createSandboxWithBaseImageResolution(
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,
-          hermesInferenceProvider: managedWorkloadRebuild?.hermesInferenceProvider,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
           ...recreateRuntime.registrationFields,
@@ -2879,21 +2895,13 @@ async function createSandboxWithBaseImageResolution(
 }
 
 type CreateSandboxArgs =
-  Parameters<typeof createSandboxWithBaseImageResolution> extends [
-    unknown,
-    unknown,
-    unknown,
-    ...infer Args,
-  ]
+  Parameters<typeof createSandboxWithBaseImageResolution> extends [unknown, ...infer Args]
     ? Args
     : never;
 
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
-  const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   return createSandboxWithBaseImageResolution(
     baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    computePlan,
-    null,
     ...args,
   );
 }
@@ -3965,7 +3973,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     initialHint: opts.baseImageResolutionHint,
     initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
-  const onboardingComputePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
@@ -4428,12 +4435,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           planRegisteredExtraProviders(gatewayName, { runOpenshell }),
         resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
         createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-          createSandboxWithBaseImageResolution.bind(
-            null,
-            baseImageResolutionContext,
-            onboardingComputePlan,
-            opts.managedWorkloadRebuild ?? null,
-          ),
+          createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
         ),
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
         getSandboxAgentRegistryFields,
@@ -4717,9 +4719,7 @@ module.exports = {
   findAvailableDashboardPort,
   startGatewayForRecovery,
   openshellArgv,
-  runOpenshell,
   runCaptureOpenshell,
-  sleepSeconds,
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,

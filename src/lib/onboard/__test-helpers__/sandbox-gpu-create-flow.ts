@@ -59,31 +59,13 @@ export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
   };
 }
 
-export function createManagedSandboxIdentityCapture(options: {
-  readonly sandboxId: string;
-  readonly getOutput: string | undefined;
-  readonly listOutput: string | undefined;
-}): (args: string[]) => string {
-  return (args) => {
-    if (args[0] === "sandbox" && args[1] === "get") {
-      return options.getOutput ?? `Name: alpha\nID: ${options.sandboxId}\n`;
-    }
-    if (args[0] === "sandbox" && args[1] === "list") {
-      return options.listOutput ?? "alpha Ready\n";
-    }
-    return "";
-  };
-}
-
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
-    rollbackManagedStartupAfterCreateFailure: vi.fn(),
     ensureApplied: vi.fn(),
     waitForSupervisorReconnectIfNeeded: vi.fn(),
-    commitAfterReady: vi.fn(),
     selectedMode: vi.fn(() => null),
     printReadinessFailureIfEnabled: vi.fn(),
     verifyGpuOrExit: vi.fn(() => VERIFIED_GPU_PROOF),

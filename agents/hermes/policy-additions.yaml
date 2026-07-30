@@ -23,9 +23,6 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /run/nemoclaw                 # Root-owned managed-startup handoff. Landlock
-                                    # grants reads only; file DAC still protects
-                                    # private runtime material in this directory.
   read_write:
     - /sandbox
     - /tmp

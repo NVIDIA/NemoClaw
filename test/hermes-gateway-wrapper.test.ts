@@ -1056,7 +1056,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       contextWindow: null,
       toolDisclosure: "progressive" as const,
       webSearchProvider: null,
-      managedImageCapabilityUnion: false,
       messagingCredentialPlaceholders: [],
       managedToolGateways: { brokerEnabled: false, presets: [] },
     };
@@ -1105,7 +1104,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         contextWindow: null,
         toolDisclosure: "progressive" as const,
         webSearchProvider: null,
-        managedImageCapabilityUnion: false,
         messagingCredentialPlaceholders: [],
         managedToolGateways: { brokerEnabled: false, presets: [] },
       };

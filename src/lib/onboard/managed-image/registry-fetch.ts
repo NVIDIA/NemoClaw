@@ -5,12 +5,20 @@ import { rootCertificates } from "node:tls";
 
 import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 
+import { withLocalNoProxy } from "../../proxy/local-no-proxy";
 import { resolveCorporateCa } from "../corporate-ca";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
-import { resolveHostProxyEnvironment } from "../host-proxy-env";
 
 type RegistryFetch = typeof fetch;
 type RegistryDispatcherOptions = NonNullable<ConstructorParameters<typeof EnvHttpProxyAgent>[0]>;
+const REGISTRY_PROXY_ENV_NAMES = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+] as const;
 
 export interface ManagedImageRegistryFetchSession {
   readonly fetchImpl: RegistryFetch;
@@ -43,6 +51,18 @@ function proxyUrl(value: string | undefined, name: string): string {
   return parsed.href;
 }
 
+function normalizedRegistryProxyEnvironment(
+  environment: NodeJS.ProcessEnv,
+): Record<string, string> {
+  const proxyEnvironment: Record<string, string> = {};
+  for (const name of REGISTRY_PROXY_ENV_NAMES) {
+    const value = environment[name]?.trim();
+    if (value) proxyEnvironment[name] = value;
+  }
+  withLocalNoProxy(proxyEnvironment);
+  return proxyEnvironment;
+}
+
 /**
  * Build a scoped Undici transport. This never replaces Node's global
  * dispatcher and never persists or logs credential-bearing proxy URLs.
@@ -51,7 +71,7 @@ export function resolveManagedImageRegistryDispatcherOptions(
   options: ManagedImageRegistryTransportOptions = {},
 ): RegistryDispatcherOptions {
   const environment = options.environment ?? process.env;
-  const proxy = resolveHostProxyEnvironment(environment);
+  const proxy = normalizedRegistryProxyEnvironment(environment);
   const httpProxy = proxyUrl(proxy.http_proxy ?? proxy.HTTP_PROXY, "HTTP_PROXY");
   const httpsProxy = proxyUrl(
     proxy.https_proxy ?? proxy.HTTPS_PROXY ?? proxy.http_proxy ?? proxy.HTTP_PROXY,

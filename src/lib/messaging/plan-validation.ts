@@ -18,8 +18,6 @@ export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
   agent?: MessagingAgentId | string | null;
   supportedChannelIds?: readonly MessagingChannelId[] | readonly string[] | null;
-  /** Explicit environment seam for deterministic rehydration without ambient credentials. */
-  environment?: Readonly<Record<string, string | undefined>>;
 }
 
 export function parseSandboxMessagingPlan(
@@ -82,10 +80,7 @@ export function parseSandboxMessagingPlan(
   if (!value.disabledChannels.every((channelId) => typeof channelId === "string")) return null;
 
   return cloneSandboxMessagingPlan(
-    normalizePersistedSandboxMessagingPlanShape(
-      value as MaybeCompactMessagingPlan,
-      options.environment,
-    ),
+    normalizePersistedSandboxMessagingPlanShape(value as MaybeCompactMessagingPlan),
   );
 }
 

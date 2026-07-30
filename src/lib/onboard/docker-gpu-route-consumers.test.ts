@@ -162,11 +162,11 @@ describe("selected route consumers", () => {
     expect(execInSandbox).not.toHaveBeenCalled();
   });
 
-  it("defers native proof diagnostics while automatic fallback owns recovery", async () => {
+  it("defers native proof diagnostics while automatic fallback owns recovery", () => {
     const proofError = new Error("native CUDA proof failed");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      await expect(
+      expect(() =>
         verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {
           sandboxName: "alpha",
           dockerDriverGateway: true,
@@ -178,7 +178,7 @@ describe("selected route consumers", () => {
           selectedMode: () => null,
           runCaptureOpenshell: vi.fn(() => ""),
         }),
-      ).rejects.toThrow(proofError);
+      ).toThrow(proofError);
       expect(consoleError).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();

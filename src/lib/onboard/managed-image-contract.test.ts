@@ -14,10 +14,6 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
-import {
-  MANAGED_STARTUP_AGENTS,
-  MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
-} from "./managed-startup/profile";
 
 const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const SOURCE_REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
@@ -51,11 +47,13 @@ function contractFor(agent: ShippedManagedImageAgent): ManagedImageContractV1 {
 }
 
 describe("managed image contract v1", () => {
-  it("advertises the exact startup-profile schema and all shipped agent consumers (#7744)", () => {
-    expect(MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION).toBe(
-      MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
-    );
-    expect([...SHIPPED_MANAGED_IMAGE_AGENTS].sort()).toEqual([...MANAGED_STARTUP_AGENTS].sort());
+  it("advertises startup-profile contract v1 for every shipped agent (#7744)", () => {
+    expect(MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION).toBe(1);
+    expect(SHIPPED_MANAGED_IMAGE_AGENTS).toEqual([
+      "openclaw",
+      "hermes",
+      "langchain-deepagents-code",
+    ]);
   });
 
   it.each(

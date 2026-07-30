@@ -47,7 +47,7 @@ export function probeGatewayMetadataHealth(gatewayName: string): boolean {
 }
 
 export function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
-  return driver === "docker" || driver === "podman" || driver === "vm";
+  return driver === "docker" || driver === "vm";
 }
 
 /**

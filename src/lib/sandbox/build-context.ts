@@ -71,35 +71,6 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
   normalizeReadModesForDockerCopy(path.join(buildCtx, "tools"));
 }
 
-function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
-  const sourceLib = path.join(rootDir, "src", "lib");
-  const stagedLib = path.join(buildCtx, "src", "lib");
-  for (const directory of ["core", "security", "state"]) {
-    fs.mkdirSync(path.join(stagedLib, directory), { recursive: true });
-  }
-  for (const fileName of ["json-types.ts", "ports.ts"]) {
-    fs.copyFileSync(path.join(sourceLib, "core", fileName), path.join(stagedLib, "core", fileName));
-  }
-  fs.cpSync(path.join(sourceLib, "messaging"), path.join(stagedLib, "messaging"), {
-    recursive: true,
-  });
-  fs.cpSync(
-    path.join(sourceLib, "onboard", "managed-startup"),
-    path.join(stagedLib, "onboard", "managed-startup"),
-    { recursive: true },
-  );
-  fs.copyFileSync(
-    path.join(sourceLib, "security", "credential-hash.ts"),
-    path.join(stagedLib, "security", "credential-hash.ts"),
-  );
-  for (const fileName of ["paths.ts", "state-root.ts"]) {
-    fs.copyFileSync(
-      path.join(sourceLib, "state", fileName),
-      path.join(stagedLib, "state", fileName),
-    );
-  }
-}
-
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -123,7 +94,11 @@ function stageLegacySandboxBuildContext(
     recursive: true,
   });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "scripts"));
-  stageManagedStartupRuntimeSources(rootDir, buildCtx);
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "messaging"),
+    path.join(buildCtx, "src", "lib", "messaging"),
+    { recursive: true },
+  );
   fs.copyFileSync(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
@@ -225,14 +200,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-startup-hold.sh"),
-    path.join(stagedScriptsDir, "managed-startup-hold.sh"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
-    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "gateway-control.sh"),
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );
@@ -275,10 +242,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-rlimits.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "entrypoint-env-wrapper.sh"),
-    path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
   );
@@ -291,7 +254,11 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
   // Build-time messaging applier used by OpenClaw and Hermes Dockerfiles.
-  stageManagedStartupRuntimeSources(rootDir, buildCtx);
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "messaging"),
+    path.join(buildCtx, "src", "lib", "messaging"),
+    { recursive: true },
+  );
   fs.copyFileSync(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),

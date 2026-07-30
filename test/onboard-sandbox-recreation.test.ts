@@ -51,7 +51,7 @@ childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -130,7 +130,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = (entry) => { registeredSandbox = entry; return true; };
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -153,13 +153,13 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands, registeredSandbox }));
 })().catch((error) => {
   console.error(error);
@@ -242,7 +242,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -256,7 +256,7 @@ sandboxState.backupSandboxState = (name) => {
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { agentType: "openclaw", dir: "/sandbox/.openclaw", backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z", reconcileOpenClawImagePluginProvenance: true, openclawImagePluginInstalls: [] },
+    manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
@@ -287,12 +287,12 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
   console.error(error);
@@ -343,7 +343,7 @@ const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksP
     const restoreEvent = events[restoreIndex];
     assert.equal(restoreEvent?.backupPath, "/tmp/fake-backup-path", "restore must use backup path");
     assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
-    assert.deepEqual(restoreEvent?.options?.freshOpenClawImagePluginInstalls, []);
+    assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
   });
 
   it("recreate-sandbox with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 skips backup", {
@@ -389,7 +389,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -421,13 +421,13 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
   console.error(error);
@@ -515,7 +515,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -529,7 +529,7 @@ sandboxState.backupSandboxState = (name) => {
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { agentType: "openclaw", dir: "/sandbox/.openclaw", backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z", reconcileOpenClawImagePluginProvenance: true, openclawImagePluginInstalls: [] },
+    manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
@@ -560,12 +560,12 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
   console.error(error);
@@ -663,7 +663,6 @@ registry.getSandbox = () => ({
   gpuEnabled: false,
   policies: ["npm"],
   policyTier: "balanced",
-  openclawImagePluginInstalls: [],
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -687,13 +686,13 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   const session = onboardSession.loadSession();
   console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
 })().catch((error) => {
@@ -789,7 +788,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
@@ -808,7 +807,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -924,7 +923,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -950,11 +949,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1049,7 +1048,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", openclawImagePluginInstalls: [] });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1087,11 +1086,11 @@ sandboxCreateStreamMod.streamSandboxCreate = (command, env, options = {}) => {
   return _origStreamCreate(command, env, { ...options, spawnImpl: fakeSpawn });
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1224,11 +1223,11 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4");
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
     sandboxName,

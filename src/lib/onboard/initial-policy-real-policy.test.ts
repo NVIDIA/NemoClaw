@@ -30,7 +30,7 @@ type PolicyEntry = {
 };
 
 type PolicyDocument = {
-  filesystem_policy?: { read_only?: string[]; read_write?: string[] };
+  filesystem_policy?: { read_write?: string[] };
   network_policies?: Record<string, PolicyEntry>;
 };
 
@@ -137,37 +137,6 @@ describe("initial sandbox policy real preset merge", () => {
 
       expect(readWrite, policyCase.path.join("/")).toContain("/dev/pts");
       expect(readWrite, policyCase.path.join("/")).not.toContain("/dev/ptmx");
-    }
-  });
-
-  it("keeps the root-owned managed-startup handoff read-only in every shipping policy", () => {
-    const policyCases = [
-      { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
-      {
-        path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-        agent: "openclaw",
-      },
-      { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
-      { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
-      { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
-      {
-        path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-        agent: "langchain-deepagents-code",
-      },
-    ];
-
-    for (const policyCase of policyCases) {
-      const effective = readPreparedPolicy(
-        prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
-          agentName: policyCase.agent,
-        }),
-      );
-      expect(effective.filesystem_policy?.read_only, policyCase.path.join("/")).toContain(
-        "/run/nemoclaw",
-      );
-      expect(effective.filesystem_policy?.read_write, policyCase.path.join("/")).not.toContain(
-        "/run/nemoclaw",
-      );
     }
   });
 

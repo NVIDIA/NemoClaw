@@ -5,9 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { CaptureOpenshellResult } from "../../adapters/openshell/client";
+import { type CaptureOpenshellResult, stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
-import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import type { SandboxEntry } from "../../state/registry";
 
 const GVPROXY_DNS = "192.168.127.1";
@@ -53,7 +52,8 @@ function dockerDriverGatewayStateDir(env: NodeJS.ProcessEnv, homeDir: string): s
 }
 
 export function parseSandboxIdFromGetOutput(output: string): string | null {
-  return parseOpenShellSandboxId(output);
+  const match = stripAnsi(output).match(/^\s*(?:Id|ID):\s*([A-Za-z0-9._-]+)\s*$/m);
+  return match?.[1] ?? null;
 }
 
 function readTextFileIfPresent(filePath: string): string | null {

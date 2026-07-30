@@ -41,8 +41,6 @@ describe("SANDBOX_PROVIDER_SUFFIXES", () => {
         "teams-bridge",
         "brave-search",
         "tavily-search",
-        "hermes-inference",
-        "hermes-tool-gateway",
       ].sort(),
     );
   });

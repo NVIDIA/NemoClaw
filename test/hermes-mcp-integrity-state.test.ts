@@ -294,14 +294,12 @@ print(json.dumps({
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-parent-"));
     const helper = path.join(tempDir, "guard-helper.sh");
     const parentFile = path.join(tempDir, "guard-parent");
-    const stepDownFile = path.join(tempDir, "guard-step-down");
     fs.writeFileSync(
       helper,
       [
         "#!/bin/bash",
         "set -euo pipefail",
         'printf "%s\\n" "$PPID" >"$NEMOCLAW_TEST_GUARD_PARENT_FILE"',
-        'printf "%s\\n" "${NEMOCLAW_TEST_STEPPED_DOWN:-0}" >"$NEMOCLAW_TEST_GUARD_STEP_DOWN_FILE"',
         'printf "%s\\n" "mcp_state=current"',
       ].join("\n"),
       { mode: 0o700 },
@@ -320,25 +318,20 @@ print(json.dumps({
             "HERMES_DIR=/test/.hermes",
             "HERMES_HASH_FILE=/test/hermes.config-hash",
             `NEMOCLAW_TEST_GUARD_PARENT_FILE=${bashPrintfQ(parentFile)}`,
-            `NEMOCLAW_TEST_GUARD_STEP_DOWN_FILE=${bashPrintfQ(stepDownFile)}`,
-            "export NEMOCLAW_TEST_GUARD_PARENT_FILE NEMOCLAW_TEST_GUARD_STEP_DOWN_FILE",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
-            "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
+            "export NEMOCLAW_TEST_GUARD_PARENT_FILE",
             "HERMES_MCP_RECONCILE_PENDING=9",
             "caller_pid=$$",
             "inspect_hermes_mcp_integrity",
             'IFS= read -r guard_parent <"$NEMOCLAW_TEST_GUARD_PARENT_FILE"',
-            'IFS= read -r guard_step_down <"$NEMOCLAW_TEST_GUARD_STEP_DOWN_FILE"',
             '[ "$guard_parent" = "$caller_pid" ]',
-            '[ "$guard_step_down" = "1" ]',
-            'printf "pending=%s stepped-down=%s\\n" "$HERMES_MCP_RECONCILE_PENDING" "$guard_step_down"',
+            'printf "pending=%s\\n" "$HERMES_MCP_RECONCILE_PENDING"',
           ].join("\n"),
         ],
         { encoding: "utf-8", timeout: 5000 },
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("pending=0 stepped-down=1\n");
+      expect(result.stdout).toBe("pending=0\n");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

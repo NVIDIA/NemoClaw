@@ -62,13 +62,11 @@ nvm use 22
 
 Then re-run the installer.
 
-### Local Dockerfile image push fails with out-of-memory errors
+### Image push fails with out-of-memory errors
 
-This failure applies only to explicit custom Dockerfile workflows.
-Their locally built sandbox image can be approximately 2.4 GB compressed.
-During local image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory.
+The sandbox image is approximately 2.4 GB compressed.
+During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory.
 On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
-Stock managed-image onboarding pulls an exact immutable image and does not run this local export pipeline.
 
 If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
 
@@ -150,7 +148,7 @@ To avoid these issues, install the prerequisites in the following order before r
 Homebrew Colima does not install the Docker CLI binary.
 If you install only Colima, `colima start` can succeed while later `docker` commands fail with `command not found`.
 
-Install both packages, start Colima with enough resources for the sandbox and any explicit custom Dockerfile build, and verify Docker before onboarding:
+Install both packages, start Colima with enough resources for the sandbox image build, and verify Docker before onboarding:
 
 ```bash
 brew install colima docker
@@ -194,15 +192,11 @@ Without this fix, sandbox pods fail DNS resolution against the in-cluster servic
 
 If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
 
-### DNS resolution from inside Docker fails (corporate firewall)
+### DNS resolution from inside docker fails (corporate firewall)
 
-Some corporate networks block outbound UDP port 53 to public DNS servers and force all host name resolution through DNS over TLS on TCP port 853.
-Containers do not inherit the host's DNS-over-TLS configuration.
-This can block sandbox startup and, on an explicit custom Dockerfile path, make dependency installation time out while resolving `registry.npmjs.org`.
+Some corporate networks block outbound UDP port 53 to public DNS servers and force all host name resolution through DNS over TLS on TCP port 853. Containers do not inherit the host's DNS-over-TLS configuration, so the sandbox build's `npm ci` step times out trying to resolve `registry.npmjs.org` against `1.1.1.1` or `8.8.8.8`.
 
-NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before it prepares the sandbox.
-The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress.
-When the probe confirms a DNS failure, onboarding stops with platform-specific remediation before sandbox creation.
+NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before starting the sandbox build. The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
 
 Use the preflight headline to choose the recovery path:
 
@@ -271,7 +265,7 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
 
-On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before sandbox creation starts.
+On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts.
 If a port becomes occupied after preflight but before `openshell forward start` runs, onboarding deletes the just-created sandbox and exits with a retry message instead of leaving a sandbox with an unreachable dashboard URL.
 
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
@@ -410,8 +404,8 @@ If onboarding reports that Docker is missing or unreachable, fix Docker first an
 $$nemoclaw onboard
 ```
 
-Native Podman remains unsupported in this release; the native-runtime follow-up in issue #7744 owns that enablement.
-Use Docker Desktop, Colima, or Docker Engine and rerun onboarding.
+Podman is not a tested runtime.
+If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
 
 ### Cluster fails with `overlayfs snapshotter cannot be enabled` on Docker 26+
 
@@ -475,10 +469,9 @@ If GitHub release metadata is unavailable, the script uses its bundled fallback 
 
 <AgentOnly variant="openclaw">
 
-### Explicit custom Dockerfile build fails during OpenClaw plugin install
+### Sandbox build fails during OpenClaw plugin install
 
-Complete managed release images already contain the reviewed supported-plugin dependency union and do not install those packages during stock onboarding.
-An explicitly selected custom Dockerfile can install managed plugins for selected features such as web search or diagnostics.
+During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics.
 If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
 Brave Search uses an external OpenClaw plugin and can reach this install path.
 Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package.
@@ -543,8 +536,7 @@ If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and 
 
 <AgentOnly variant="openclaw,hermes">
 
-Rerunning onboarding with a different provider recreates the sandbox because provider configuration and credential attachment are sandbox-creation inputs.
-Managed images receive the provider configuration through a secret-free startup profile, while a local Dockerfile path applies the same configuration during its build.
+Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs.
 NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation.
 If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
 
@@ -686,18 +678,15 @@ If neither is found, verify that Colima is running:
 colima status
 ```
 
-### Sandbox startup or local Dockerfile build is slow (under-provisioned container runtime)
+### Sandbox build is slow or hangs (under-provisioned container runtime)
 
-Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for a NemoClaw sandbox.
-Stock onboarding on a supported `amd64` or `arm64` host requires an exact managed image and avoids a local Dockerfile build.
-An explicit custom Dockerfile can still stall part-way through a local BuildKit build on an under-provisioned runtime.
+Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for the BuildKit-driven sandbox image build.
+On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
-In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before sandbox preparation reaches the likely failure point.
+In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before the sandbox build reaches the likely stall point.
 Type `y` only when you intentionally want to continue on the smaller runtime.
 Non-interactive onboarding prints the warning and continues.
-The configuration review shows a local build-time estimate only for an explicit custom Dockerfile.
-Managed-image launch does not show a Dockerfile build estimate.
 On Colima, raise the resources before re-running onboard:
 
 ```bash
@@ -747,7 +736,7 @@ $$nemoclaw onboard --non-interactive
 
 ### Sandbox creation killed by OOM (exit 137)
 
-On systems with 8 GB RAM or less and no swap configured, managed-image pull and startup or an explicit custom Dockerfile build and upload can exhaust available memory and get killed by the Linux OOM killer (exit code 137).
+On systems with 8 GB RAM or less and no swap configured, the sandbox image push can exhaust available memory and get killed by the Linux OOM killer (exit code 137).
 
 NemoClaw automatically detects low memory during onboarding and prompts to create a 4 GB swap file.
 If this automatic step fails or you are using a custom setup flow, create swap manually before running `$$nemoclaw onboard`:
@@ -760,32 +749,6 @@ sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 $$nemoclaw onboard
 ```
-
-### Managed bootstrap quiesced and retained a sandbox
-
-For a managed release image on Docker, NemoClaw binds bootstrap cleanup to the exact OpenShell sandbox ID and full Docker runtime ID.
-OpenShell deletion currently accepts a mutable sandbox name rather than an immutable ID.
-If NemoClaw cannot prove that the name still identifies the same sandbox, it stops the exact Docker runtime and retains it instead of risking deletion of a concurrent same-name replacement.
-
-The error includes the sandbox name, immutable sandbox ID, and Docker runtime ID.
-Do not run the printed name-only delete until you confirm that no same-name recreation is in progress and `openshell sandbox get <name>` still reports the exact sandbox ID from the error.
-Inspect the exact Docker runtime ID from the error and confirm that it is stopped.
-
-```bash
-openshell sandbox get <name>
-docker inspect <runtime-id> --format '{{json .State}}'
-```
-
-If either identity differs or cannot be read, preserve the retained runtime and resolve the ownership conflict before continuing.
-After the identities match and no concurrent recreation is active, coordinate the name-only removal and then resume onboarding:
-
-```bash
-openshell sandbox delete <name>
-$$nemoclaw onboard --resume
-```
-
-The retained runtime protects rollback evidence and shared-state commit receipts.
-Do not remove its Docker container directly unless the OpenShell owner has already been reconciled and you have separately preserved any required recovery evidence.
 
 ### Previous onboarding session failed
 
@@ -1365,8 +1328,7 @@ $$nemoclaw onboard
 ```
 
 Refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) for source precedence, host anchor discovery, image and runtime trust, custom Dockerfile requirements, import validation, and `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
-If the import does not occur, check onboarding output for a warning that the selected source was skipped, then inspect sandbox startup logs for the managed runtime merge result.
-An explicit custom Dockerfile build can also log `baking corporate proxy CA from ...`.
+If the import does not occur, check onboarding output for `baking corporate proxy CA from ...` or a warning that the selected source was skipped.
 
 </AgentOnly>
 
@@ -1455,7 +1417,7 @@ $$nemoclaw onboard --resume
 ### `openclaw update` hangs or times out inside the sandbox
 
 This is expected for the current NemoClaw deployment model.
-NemoClaw ships `openclaw` in the immutable managed release image, so the CLI is image-pinned rather than updated in place inside a running sandbox.
+NemoClaw installs `openclaw` into the sandbox image at build time, so the CLI is image-pinned rather than updated in place inside a running sandbox.
 
 Do not run `openclaw update` inside the sandbox.
 Instead:
@@ -1550,18 +1512,17 @@ Onboarding ends with:
 
 ```text
   Sandbox 'my-assistant' was created but did not become ready within 180s.
+  The orphaned sandbox has been removed — you can safely retry.
 ```
-
-The following cleanup message reports either that exact-owner cleanup succeeded or that NemoClaw quiesced and retained the exact runtime because name-only deletion was unsafe.
 
 This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`.
 It covers the readiness wait that follows sandbox creation, including in-sandbox boot, OpenClaw start, and policy load.
 It does not cover the inference probe.
 The 180-second default fits typical workstations but can be exceeded when:
 
-- The host or gateway is pulling and starting the managed image for the first time, or building and uploading an explicitly selected custom Dockerfile (cold caches, slow link).
+- The host is building or uploading the sandbox image for the first time (cold caches, slow link).
 - The selected model is large (70B+ parameters or 4-bit/8-bit quantisations that take time to memory-map).
-- Onboarding runs on a remote VM where a managed image pull or explicit custom-image upload crosses a slow link (for example DGX Station first-run installer).
+- Onboarding runs on a remote VM where image upload to the gateway streams over the network (for example DGX Station first-run installer).
 
 Raise the budget before re-running onboard:
 
@@ -1627,7 +1588,8 @@ that these backends do not emit.
 For the compatible-endpoint provider, NemoClaw now defaults to
 `/v1/chat/completions` and skips the Responses API probe entirely unless you
 opt in.
-If you onboarded an older release that selected `/v1/responses`, rerun onboarding so the replacement sandbox starts with Chat Completions:
+If you onboarded an older release that selected `/v1/responses`, re-run
+onboarding so the wizard rebuilds the image with chat completions:
 
 ```bash
 $$nemoclaw onboard
@@ -1640,8 +1602,8 @@ When you enable Telegram messaging with an OpenAI-compatible endpoint, onboardin
 If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
 
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
-It patches the running config but does not update the recorded startup configuration.
-A fresh `$$nemoclaw onboard` regenerates that configuration for either the managed-image or local Dockerfile path.
+It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
+A fresh `$$nemoclaw onboard` is the reliable fix.
 
 </AgentOnly>
 
@@ -1676,7 +1638,7 @@ For a server detected on `localhost:8000`, select the **Local vLLM** entry marke
 On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not.
 
 Do not rely on direct edits to `openclaw.json` for a persistent provider change.
-NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the immutable image, managed startup configuration, OpenShell route, and host-managed credentials aligned.
+NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
 
 Ask the agent to perform an action that requires a tool, then confirm that the TUI does not show a JSON blob as assistant text, the gateway log shows tool dispatch followed by an answer, and `$$nemoclaw <name> status` reports the intended local vLLM or compatible provider.
 If JSON still appears as text, confirm that vLLM started with automatic tool choice and the parser required by the model family.
@@ -1712,11 +1674,10 @@ Streaming defects then surface at runtime instead of during onboarding.
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
-`NEMOCLAW_DISABLE_DEVICE_AUTH` is a sandbox-creation setting.
-Managed-image onboarding includes it in the secret-free startup profile, while an explicitly selected custom Dockerfile must apply it during the local build.
-Changing or exporting it later does not rewrite `openclaw.json` inside an existing sandbox.
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image.
+Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
 
-If you need a different device-auth setting, rerun onboarding so NemoClaw recreates the sandbox with the desired configuration.
+If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to [Security Best Practices](../security/best-practices).
 
 ### `openclaw.json` is empty after changing inference
@@ -1782,9 +1743,7 @@ To discard the quarantined settings, upgrade the CLI and run `$$nemoclaw <name> 
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
-The messaging channel list is materialized when the sandbox starts during `$$nemoclaw onboard` or `$$nemoclaw rebuild`.
-Managed-image onboarding carries the selected channel names in the startup profile, while a local Dockerfile build uses its build arguments.
-The startup path writes agent config such as `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes.
+The messaging channel list is frozen into the sandbox's container image when the image is built during `$$nemoclaw onboard` or `$$nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into agent config such as `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes).
 Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
@@ -1797,7 +1756,7 @@ $$nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 ```
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
-Both offer to rebuild the sandbox so its startup configuration reflects the new channel set.
+Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
 WeChat and WhatsApp are experimental.
 Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
@@ -1833,7 +1792,7 @@ npm test -- test/repro-2681-group-writable.test.ts
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
-NemoClaw materializes the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
+NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs.
 Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
@@ -1857,15 +1816,15 @@ Host-side `config set` validates any HTTP or HTTPS URLs in the new value, includ
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
 This is expected in NemoClaw-managed sandboxes.
-NemoClaw materializes channel entries in `/sandbox/.openclaw/openclaw.json` when the sandbox starts.
+NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time.
 
-As a result, commands that try to rewrite the managed config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
+As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
 
-If your Discord channel config is wrong, rerun onboarding so NemoClaw recreates the sandbox with the correct messaging selection.
+If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection.
 Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
 
 If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
-Current NemoClaw rebuilds materialize Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
+Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
 
 ### `openclaw doctor --fix` tightened config permissions and the gateway can no longer save config
 
@@ -1916,7 +1875,7 @@ A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw
 
 Separate the problem into two parts:
 
-1. Managed config and provider wiring
+1. Baked config and provider wiring
 
    Check that onboarding selected Discord and that the sandbox was created with the Discord messaging provider attached.
    If Discord was skipped during onboarding, rerun onboarding and select Discord again.
@@ -1925,7 +1884,7 @@ Separate the problem into two parts:
 
    Successful login alone does not prove that Discord works end to end.
    Discord also needs a working gateway connection to `gateway.discord.gg`.
-   If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the managed config.
+   If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the baked config.
 
 Common signs of a native gateway-path failure:
 
@@ -2092,9 +2051,8 @@ export NEMOCLAW_PROXY_PORT=8080
 $$nemoclaw onboard
 ```
 
-These are sandbox-startup settings.
-Managed-image onboarding includes them in the startup profile, while a local Dockerfile path applies them through that build.
-Changing them after onboarding requires rerunning `$$nemoclaw onboard` to recreate the sandbox.
+These are build-time settings baked into the sandbox image.
+Changing them after onboarding requires re-running `$$nemoclaw onboard` to rebuild the image.
 
 When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`.
 This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts.
@@ -2397,9 +2355,9 @@ After standalone vLLM is stable, re-run onboarding and add MCP servers back one 
 If CoreDNS in the embedded k3s cluster crashes shortly after setup, it is usually because it resolves against `127.0.0.11`, which does not route inside the gateway container.
 Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then recreate the sandbox.
 
-### `k3s` cannot find an explicitly built custom image
+### `k3s` cannot find a freshly built image
 
-After an explicit custom Dockerfile build, `k3s` inside the gateway container sometimes fails to pull the resulting image even though it exists on the host.
+After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
 Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
 
 ```bash
@@ -2491,7 +2449,7 @@ The bounds are intentionally fixed.
 Allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent.
 On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof.
 If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
-Managed-image resolution, pull, or startup failures; explicit custom Dockerfile build or upload failures; and TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
+Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility.
 Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
 
@@ -2704,8 +2662,9 @@ For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/qu
 
 ## Podman
 
-Native Podman remains unsupported in this release; the native-runtime follow-up in issue #7744 owns that enablement.
-Use Docker Engine, Docker Desktop, or Colima and rerun onboarding.
+Podman is not a tested runtime.
+OpenShell officially documents Docker-based runtimes only.
+If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
 
 <AgentOnly variant="hermes">
 
@@ -2851,23 +2810,6 @@ The `NEMOCLAW_HERMES_AUTH` and `NEMOCLAW_NOUS_AUTH_METHOD` variables are back-co
 
 If OAuth is selected and onboarding cannot open the host's default browser (a headless host or SSH session), the device-code prompt still prints the verification URL and user code to the terminal.
 Copy them to a browser on any other machine to complete the flow.
-
-### Hermes reports that the managed-tool broker runtime changed
-
-NemoClaw does not replace a healthy Hermes managed-tool broker when its executable hash changes.
-The broker holds each sandbox's raw refresh credential only in process memory, so an automatic restart would simultaneously disconnect every managed-tool Hermes sandbox on the host.
-The existing broker and its already registered sandboxes keep running; a new clone or reauthorization fails closed until the broker is recovered.
-
-Use a planned reauthorization window:
-
-1. Run `$$nemoclaw list --json` to enumerate the Hermes sandboxes, then record each one for which you selected any managed Nous tool during onboarding.
-2. Stop the existing Hermes managed-tool broker through host process or service management. A host restart is the safe fallback when there is no process supervisor.
-3. Run `nemohermes onboard --resume` for the first recorded sandbox and complete a fresh Nous Portal device-code authorization. This starts the current broker runtime.
-4. Run `nemohermes onboard --resume` for every remaining recorded sandbox. Each authorization registers that sandbox's independent refresh credential with the same broker process.
-5. Exercise one selected managed tool in every sandbox before ending the maintenance window.
-
-For non-interactive recovery, export the matching sandbox's fresh `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN` immediately before each `nemohermes onboard --resume --non-interactive` invocation, then unset it before moving to the next sandbox.
-Do not reuse one sandbox's refresh credential for another.
 
 ### API client returns `401 Unauthorized` against port 8642
 

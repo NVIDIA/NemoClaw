@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { PEM } from "../src/lib/onboard/__test-helpers__/corporate-ca-fixtures.ts";
+
 import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-policy.ts";
 
 import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture.ts";
@@ -34,61 +34,6 @@ function readAgentFile(name: string): string {
 afterEach(cleanupPackageFixtures);
 
 describe("LangChain Deep Agents Code managed fetch proxy", () => {
-  it("selects the managed startup corporate-CA merge for the hardened fetch transport", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-ca-"));
-    try {
-      const openshellCa = path.join(tempDir, "openshell-ca.pem");
-      const corporateCa = path.join(tempDir, "corporate-ca.pem");
-      const mergedCa = path.join(tempDir, "managed-startup-ca-bundle.pem");
-      const runtimeFile = path.join(tempDir, "managed-dcode-runtime.py");
-      fs.writeFileSync(openshellCa, "OpenShell test trust\n");
-      fs.writeFileSync(corporateCa, PEM);
-      fs.writeFileSync(mergedCa, `OpenShell test trust\n${PEM}`);
-      for (const file of [openshellCa, corporateCa, mergedCa]) fs.chmodSync(file, 0o444);
-      fs.writeFileSync(
-        runtimeFile,
-        addDarwinFcntlSealConstants(readAgentFile("managed-dcode-runtime.py"))
-          .replace("/run/nemoclaw/managed-startup-ca-bundle.pem", mergedCa)
-          .replace("/etc/openshell-tls/ca-bundle.pem", openshellCa),
-        "utf8",
-      );
-
-      const result = spawnSync(
-        "python3",
-        [
-          "-c",
-          `
-import importlib.util
-import os
-from pathlib import Path
-
-spec = importlib.util.spec_from_file_location("nemoclaw_managed_ca_test", ${JSON.stringify(runtimeFile)})
-runtime = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(runtime)
-runtime._MANAGED_FILE_OWNER_UID = os.getuid()
-
-expected = Path(${JSON.stringify(mergedCa)})
-assert runtime._MANAGED_FETCH_CA_BUNDLE_FILE == expected
-descriptor, descriptor_path = runtime._managed_fetch_ca_bundle()
-try:
-    selected = Path(descriptor_path).read_bytes()
-finally:
-    runtime._close_managed_fetch_ca_bundle(descriptor)
-corporate = Path(${JSON.stringify(corporateCa)}).read_bytes()
-assert selected.endswith(corporate)
-print("managed-corporate-ca-selected")
-`,
-        ],
-        { encoding: "utf8", env: { PATH: process.env.PATH } },
-      );
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("managed-corporate-ca-selected");
-    } finally {
-      fs.rmSync(tempDir, { force: true, recursive: true });
-    }
-  });
-
   it("persists the root-owned proxy as the explicit fetch_url delegation", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fetch-proxy-"));
     try {

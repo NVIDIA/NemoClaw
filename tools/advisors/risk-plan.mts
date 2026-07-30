@@ -27,7 +27,6 @@ export type RiskFamilyId =
   | "openclaw-image"
   | "credentials-security"
   | "e2e-control-plane"
-  | "managed-image-runtime"
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -94,11 +93,6 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
-  ".github/workflows/pr-e2e-gate.yaml",
-  "tools/e2e/pr-e2e-gate.mts",
-  "tools/e2e/pr-e2e-required.mts",
-]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
@@ -112,18 +106,6 @@ const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
 const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/live/cloud-onboard.test.ts",
   "test/e2e/risk-signal-reporter.ts",
-]);
-const MANAGED_IMAGE_RUNTIME_FILES = new Set([
-  ".github/workflows/e2e.yaml",
-  ".github/workflows/managed-images.yaml",
-  "scripts/checks/build-protected-managed-images.sh",
-  "scripts/checks/cleanup-protected-managed-image-e2e.sh",
-  "scripts/checks/managed-image-protected-runtime-contract.ts",
-  "scripts/checks/run-managed-image-openshell-e2e.ts",
-  "src/lib/onboard/sandbox-gpu-create-flow.ts",
-  "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
-  "test/e2e/live/managed-image-bootstrap-rollback.test.ts",
-  "test/e2e/live/managed-image-gpu-e2e.test.ts",
 ]);
 const FOCUSED_E2E_SUMMARY =
   "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
@@ -329,25 +311,6 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith(".github/actions/upload-e2e-artifacts/"),
   },
   {
-    id: "managed-image-runtime",
-    summary:
-      "Managed-image changes must preserve exact-image bootstrap, rollback, GPU access, and host-local inference for every shipped agent.",
-    tier: 3,
-    requiredJobs: ["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"],
-    invariants: [
-      "OpenClaw, Hermes, and Deep Agents Code consume exact same-job protected image digests through real Docker and OpenShell",
-      "post-bootstrap failure removes failed sandboxes, containers, networks, registry state, and harness state",
-      "GPU qualification proves NVIDIA device use and real Ollama and vLLM backend use through inference.local",
-      "NIM source and route contracts remain distinct from vLLM and are not reported as engine-qualified without protected registry credentials",
-    ],
-    matches: (file) =>
-      MANAGED_IMAGE_RUNTIME_FILES.has(file) ||
-      file === "Dockerfile" ||
-      /^agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile$/u.test(file) ||
-      file.startsWith("src/lib/onboard/managed-bootstrap/") ||
-      file.startsWith("src/lib/onboard/managed-startup/"),
-  },
-  {
     id: "sandbox-boundary",
     summary:
       "Sandbox blueprint and agent-runtime changes must preserve equivalent isolation and readiness across supported agents.",
@@ -535,11 +498,4 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
 
 export function riskPlanRequiredTargetIds(plan: RiskPlan): string[] {
   return plan.requiredTargets.map((target) => target.id);
-}
-
-export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
-  const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return (
-    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
-  );
 }

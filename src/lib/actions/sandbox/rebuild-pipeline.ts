@@ -20,10 +20,7 @@ import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
-import {
-  blockRebuildOnPendingBaselineTransition,
-  managedWorkloadRebuildHandoffMatchesRegisteredEntry,
-} from "./rebuild-preflight-guards";
+import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
@@ -138,21 +135,6 @@ async function rebuildSandboxUnlocked(
       getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
       log,
     });
-    const validateManagedWorkloadHandoff = (): boolean => {
-      const handoff = recreateOptions.managedWorkloadRebuild;
-      if (!handoff) return true;
-      if (managedWorkloadRebuildHandoffMatchesRegisteredEntry(sandboxName, handoff)) {
-        return true;
-      }
-      printRebuildPreflightFailure(
-        "the managed workload receipt changed after rebuild preflight.",
-        "Retry the rebuild so the immutable image and startup profile can be validated again.",
-        "Managed workload receipt changed before delete",
-        bail,
-      );
-      return false;
-    };
-    if (!validateManagedWorkloadHandoff()) return;
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
       recoveryRecreate,
@@ -199,7 +181,6 @@ async function rebuildSandboxUnlocked(
         relockShieldsIfNeeded,
       });
       if (!backup) return;
-      if (!validateManagedWorkloadHandoff()) return;
 
       // The post-delete create must consume the exact context that passed the
       // image preflight. Revalidate at the last safe point so mutation of the

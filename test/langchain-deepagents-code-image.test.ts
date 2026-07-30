@@ -155,23 +155,10 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 describe("LangChain Deep Agents Code image contracts", () => {
   it("hardens copied NemoClaw blueprints against sandbox-user mutation", () => {
     const dockerfile = readAgentFile("Dockerfile");
-    const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
-    const runtimeModeReplay = "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
-    expect(dockerfile).toContain(
-      'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',
-    );
-    for (const probe of [
-      "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
-      "/usr/local/bin/dcode --version",
-      "/usr/local/bin/dcode.real --version",
-      "/usr/local/bin/deepagents-code --version",
-    ]) {
-      expect(dockerfile).toContain(`env -i ${probe}`);
-    }
     expect(dockerfile).toContain("chown root:root /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chown -R root:root /sandbox/.nemoclaw/blueprints");
@@ -179,21 +166,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
     );
-    expect(dockerfile.split(managedRuntimeDirectory)).toHaveLength(2);
-    expect(dockerfile.indexOf("COPY --from=mcp-tool-discovery-runtime")).toBeLessThan(
-      dockerfile.indexOf(managedRuntimeDirectory),
-    );
-    expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
-      dockerfile.indexOf("USER root"),
-    );
-    expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
-      dockerfile.indexOf(runtimeModeReplay),
-    );
-    expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
-    expect(dockerfile).toContain("root|sandbox) ;; \\");
-    expect(dockerfile).toContain("&& command -v setpriv >/dev/null 2>&1");
     expect(dockerfile.trimEnd()).toMatch(
-      /USER \$\{NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER\}\nENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]\nCMD \["\/bin\/bash"\]$/,
+      /USER sandbox\nENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]\nCMD \["\/bin\/bash"\]$/,
     );
   });
 

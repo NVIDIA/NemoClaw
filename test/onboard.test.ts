@@ -7,11 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  appendHostProxyEnvArgs,
-  credentialHostProxyReplayEnvArgs,
-  HostProxyEnvironmentError,
-} from "../src/lib/onboard/host-proxy-env.js";
+import { appendHostProxyEnvArgs } from "../src/lib/onboard/host-proxy-env.js";
 import {
   isValidInferenceInputsOverride,
   maybePromptForInferenceInputCapability,
@@ -207,44 +203,6 @@ describe("onboard helpers", () => {
       expect(parts).toContain("inference.local");
       expect(parts).toContain("host.containers.internal");
     }
-  });
-
-  it("replays bounded credential proxies without collapsing upper and lower case aliases", () => {
-    const replay = credentialHostProxyReplayEnvArgs({
-      HTTP_PROXY: "http://upper-http:upper-pass@upper-http.example.test:18080",
-      HTTPS_PROXY: "http://upper-https:upper-pass@upper-https.example.test:18443",
-      NO_PROXY: "upper.internal",
-      http_proxy: "http://lower-http:lower-pass@lower-http.example.test:28080",
-      https_proxy: "http://lower-https:lower-pass@lower-https.example.test:28443",
-      no_proxy: "lower.internal",
-    });
-
-    expect(replay).toEqual([
-      "HTTP_PROXY=http://upper-http:upper-pass@upper-http.example.test:18080",
-      "HTTPS_PROXY=http://upper-https:upper-pass@upper-https.example.test:18443",
-      expect.stringMatching(/^NO_PROXY=upper\.internal,localhost,/u),
-      "http_proxy=http://lower-http:lower-pass@lower-http.example.test:28080",
-      "https_proxy=http://lower-https:lower-pass@lower-https.example.test:28443",
-      expect.stringMatching(/^no_proxy=lower\.internal,localhost,/u),
-    ]);
-  });
-
-  it("fails closed when credential replay is required but absent or unbounded", () => {
-    expect(() =>
-      credentialHostProxyReplayEnvArgs({
-        HTTP_PROXY: "http://proxy.example.test:8080",
-      }),
-    ).toThrow(/requires a credential-bearing proxy/u);
-    expect(() =>
-      credentialHostProxyReplayEnvArgs({
-        HTTP_PROXY: `http://operator:secret@proxy.example.test/${"x".repeat(4096)}`,
-      }),
-    ).toThrow(HostProxyEnvironmentError);
-    expect(() =>
-      credentialHostProxyReplayEnvArgs({
-        HTTP_PROXY: "http://operator:secret@proxy.example.test:8080\ninjected",
-      }),
-    ).toThrow(HostProxyEnvironmentError);
   });
 
   it("propagates NEMOCLAW_MINIMAL_BOOTSTRAP=1 from host into sandbox env (#2598)", () => {

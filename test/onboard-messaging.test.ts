@@ -125,7 +125,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -138,7 +138,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath}); requi
   process.env.KUBECONFIG = "/tmp/host-kubeconfig";
   process.env.SSH_AUTH_SOCK = "/tmp/host-ssh-agent.sock";
   await setupMessagingChannels(null, null, "my-assistant");
-  const sandboxName = await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4");
   console.log(JSON.stringify({
     sandboxName,
     commands,
@@ -398,7 +398,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   for (const key of nonSlackMessagingEnvKeys) delete process.env[key];
@@ -576,7 +576,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -585,7 +585,9 @@ const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksP
   delete process.env.SLACK_APP_TOKEN;
   delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["discord", "slack"]))).toString("base64");
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"], ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"],
+  );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
   console.error(error);
@@ -734,13 +736,15 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["telegram"], ["telegram"]))).toString("base64");
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"], ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
+  );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
   console.error(error);
@@ -881,7 +885,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -891,7 +895,9 @@ const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksP
     }
   }
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["whatsapp"]))).toString("base64");
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"], ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
+  );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
   console.error(error);
@@ -1035,7 +1041,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -1045,7 +1051,9 @@ const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksP
     }
   }
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["whatsapp"], ["whatsapp"]))).toString("base64");
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"], ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
+  );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
   console.error(error);
@@ -1143,7 +1151,7 @@ registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -1211,7 +1219,7 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -1335,7 +1343,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -1343,7 +1351,9 @@ const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksP
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   // Only enable telegram — discord and slack should be filtered out
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"], ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
+  );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1462,7 +1472,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -1470,7 +1480,9 @@ const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksP
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   // Empty array — user deselected all channels
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, [], ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, [],
+  );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);

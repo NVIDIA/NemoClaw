@@ -85,7 +85,7 @@ function expectCredentialBindingFailure({
   expect(() =>
     materializeSandboxCreatePlan({
       intent,
-      fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
+      buildCtx: "/tmp/nemoclaw-build-1",
       messagingTokenDefs: materializedTokenDefs,
       prepareInitialSandboxCreatePolicy: preparePolicy,
       runProviderPreDeleteCleanup: cleanupProviders,
@@ -257,8 +257,7 @@ describe("resolveSandboxCreateIntent", () => {
 
     const result = materializeSandboxCreatePlan({
       intent,
-      fromRef:
-        "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      buildCtx: "/tmp/nemoclaw-build-1",
       messagingTokenDefs: tokenDefs,
       prepareInitialSandboxCreatePolicy: vi.fn(() => {
         events.push("policy");
@@ -283,7 +282,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(events).toEqual(["policy", "disclose", "cleanup", "upsert", "hermes"]);
     expect(result.createArgs).toEqual([
       "--from",
-      "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "/tmp/nemoclaw-build-1/Dockerfile",
       "--name",
       "sandbox",
       "--policy",
@@ -329,7 +328,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(() =>
       materializeSandboxCreatePlan({
         intent,
-        fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
+        buildCtx: "/tmp/nemoclaw-build-1",
         messagingTokenDefs: [],
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
           policyPath: "/tmp/policy.yaml",

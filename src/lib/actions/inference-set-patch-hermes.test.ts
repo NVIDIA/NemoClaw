@@ -62,23 +62,6 @@ describe("patchHermesInferenceConfig", () => {
     }
   });
 
-  it("retains a sandbox-scoped upstream marker while routing through Hermes Provider", () => {
-    const config: ConfigObject = { model: {} };
-
-    patchHermesInferenceConfig(
-      config,
-      "hermes-provider",
-      "openai/gpt-5.4-mini",
-      "openai-completions",
-      "clone-hermes-inference",
-    );
-
-    expect(config._nemoclaw_upstream).toEqual({
-      provider: "clone-hermes-inference",
-      model: "openai/gpt-5.4-mini",
-    });
-  });
-
   it("sets Hermes Anthropic Messages mode for Anthropic routes", () => {
     const config: ConfigObject = {
       model: {

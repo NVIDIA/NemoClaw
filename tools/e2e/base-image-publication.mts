@@ -32,7 +32,6 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
   ],
   ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
-  ["src/lib/onboard/managed-startup/**", /^src\/lib\/onboard\/managed-startup\/.+$/u],
   ["tools/mcp-tool-discovery-runtime/**", /^tools\/mcp-tool-discovery-runtime\/.+$/u],
 ]);
 const PENDING_RUN_STATUSES = new Set(["requested", "waiting", "pending", "queued", "in_progress"]);

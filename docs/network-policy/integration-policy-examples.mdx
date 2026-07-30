@@ -123,7 +123,7 @@ If you already enabled Telegram during onboarding but did not include the preset
 $$nemoclaw my-assistant policy add telegram --yes
 ```
 
-To add Telegram after onboarding, set the token on the host, add the channel, rebuild so the replacement startup configuration includes the channel, and apply the policy preset:
+To add Telegram after onboarding, set the token on the host, add the channel, rebuild so the image picks up the channel config, and apply the policy preset:
 
 ```bash
 export TELEGRAM_BOT_TOKEN=<your-bot-token>
@@ -272,8 +272,7 @@ $$nemoclaw my-assistant policy add tavily --dry-run
 $$nemoclaw my-assistant policy add tavily --yes
 ```
 
-Rerun onboarding when you change providers because the OpenClaw plugin configuration and OpenShell credential attachment are sandbox-creation inputs.
-Stock onboarding carries the non-secret selection in the managed startup profile; an explicit custom Dockerfile applies it during its local build.
+Rerun onboarding when you change providers because the OpenClaw plugin configuration and OpenShell credential attachment are part of the sandbox image.
 Configure the matching `BRAVE_API_KEY` or `TAVILY_API_KEY` during that onboarding run.
 
 </AgentOnly>
@@ -287,8 +286,7 @@ $$nemoclaw my-assistant policy add tavily --dry-run
 $$nemoclaw my-assistant policy add tavily --yes
 ```
 
-Rerun onboarding when you enable or disable Tavily because the Hermes backend and OpenShell credential attachment are sandbox-creation inputs.
-Stock onboarding carries the non-secret selection in the managed startup profile; an explicit custom Dockerfile applies it during its local build.
+Rerun onboarding when you enable or disable Tavily because the Hermes backend and OpenShell credential attachment are part of the sandbox image.
 Configure `TAVILY_API_KEY` during that onboarding run.
 
 </AgentOnly>

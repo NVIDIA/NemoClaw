@@ -348,7 +348,7 @@ describe("runSandboxSnapshot", () => {
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Cannot verify shields state. Refusing to create snapshot.",
     );
-  }, 10_000);
+  });
 
   it("creates a named snapshot after gateway, liveness, and shields checks pass", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});

@@ -29,7 +29,7 @@ I do not know how to use a terminal.
 
 ## Goal
 
-Install NemoClaw, collect onboarding choices before execution, include messaging in the first sandbox creation when the selected agent supports it, launch the selected agent, and verify that it responds.
+Install NemoClaw, collect onboarding choices before execution, include messaging in the first sandbox build when the selected agent supports it, launch the selected agent, and verify that it responds.
 
 ## Agent Selection
 
@@ -212,7 +212,7 @@ Choices:
 
 ## Messaging During Initial Onboarding
 
-For OpenClaw or Hermes, ask before the first sandbox creation: "Do you want to configure a messaging channel during onboarding?"
+For OpenClaw or Hermes, ask before the first sandbox build: "Do you want to configure a messaging channel during onboarding?"
 Choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
 Skip messaging for Deep Agents.
 Configure one channel at a time, then ask whether to add another.

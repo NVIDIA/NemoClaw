@@ -10,8 +10,6 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyMessagingBuildPhase,
-  collectManagedImageHermesUvPackages,
-  collectManagedImageOpenClawPluginInstallSpecs,
   describeMessagingBuildPhase,
   type MessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
@@ -158,9 +156,8 @@ async function buildPlanEnv(
 function runApplierProcess(
   env: Record<string, string>,
   agent: "hermes" | "openclaw",
-  phase: MessagingBuildPhase | "managed-image-capability-union",
+  phase: MessagingBuildPhase,
   dryRun = false,
-  managedStartupRuntime = false,
 ) {
   return spawnSync(
     "node",
@@ -172,7 +169,6 @@ function runApplierProcess(
       "--phase",
       phase,
       ...(dryRun ? ["--dry-run"] : []),
-      ...(managedStartupRuntime ? ["--managed-startup-runtime"] : []),
     ],
     {
       encoding: "utf-8",
@@ -213,63 +209,6 @@ function thrownMessage(run: () => void): string {
 }
 
 describe("messaging-build-applier.mts: agent-install", () => {
-  it("derives the complete managed-image package union from trusted manifests", () => {
-    expect(collectManagedImageOpenClawPluginInstallSpecs({ OPENCLAW_VERSION: "2026.7.1" })).toEqual(
-      [
-        "npm:@openclaw/discord@2026.7.1",
-        "npm:@tencent-weixin/openclaw-weixin@2.4.3",
-        "npm:@openclaw/slack@2026.7.1",
-        "npm:@openclaw/whatsapp@2026.7.1",
-        "npm:@openclaw/msteams@2026.7.1",
-      ],
-    );
-    expect(collectManagedImageHermesUvPackages()).toEqual([
-      "microsoft-teams-apps==2.0.13.4",
-      "aiohttp==3.14.1",
-    ]);
-  });
-
-  it("installs the Hermes managed-image union only in explicit neutral-image mode", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-union-packages-"));
-    const tracePath = path.join(tmp, "uv.trace");
-    fs.writeFileSync(
-      path.join(tmp, "uv"),
-      ["#!/bin/sh", 'printf \'%s\\n\' "$*" >> "$UV_TRACE"', "exit 0", ""].join("\n"),
-      { mode: 0o755 },
-    );
-    try {
-      const env = {
-        ...process.env,
-        PATH: `${tmp}:${TEST_PATH}`,
-        UV_TRACE: tracePath,
-        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-      } as Record<string, string>;
-      const result = runApplierProcess(env, "hermes", "managed-image-capability-union");
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
-        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.1",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects a serialized plan before installing the managed-image union", async () => {
-    const env = await buildPlanEnv({
-      OPENCLAW_VERSION: "2026.7.1",
-      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["discord"]),
-    });
-
-    const result = runApplierProcess(env, "openclaw", "managed-image-capability-union", true);
-
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain(
-      "Managed-image capability union must be built without a serialized messaging plan",
-    );
-  });
-
   it(
     "collects selected messaging plugin install specs",
     async () => {
@@ -1270,7 +1209,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("keeps legacy doctor rerendering while managed startup skips the broad doctor", async () => {
+  it("reapplies OpenClaw messaging render after doctor rewrites config", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-doctor-rewrite-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -1332,29 +1271,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.plugins?.entries?.slack).toEqual({ enabled: true });
       expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
       expect(config.channels?.wechat).toBeUndefined();
-
-      fs.writeFileSync(
-        path.join(tmp, ".openclaw", "openclaw.json"),
-        `${JSON.stringify({ channels: {}, plugins: { entries: {} } }, null, 2)}\n`,
-      );
-      fs.writeFileSync(tracePath, "");
-      const managedResult = runApplierProcess(env, "openclaw", "post-agent-install", false, true);
-      expect(managedResult.status, managedResult.stderr).toBe(0);
-      expect(fs.readFileSync(tracePath, "utf-8")).toBe("");
-      const managedConfig = JSON.parse(
-        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
-      );
-      expect(managedConfig.channels?.telegram?.accounts?.default).toMatchObject({
-        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-        enabled: true,
-      });
-      expect(managedConfig.channels?.discord?.enabled).toBe(true);
-      expect(managedConfig.plugins?.entries?.discord).toEqual({ enabled: true });
-      expect(managedConfig.channels?.slack?.enabled).toBe(true);
-      expect(managedConfig.plugins?.entries?.slack).toEqual({ enabled: true });
-      expect(managedConfig.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-        enabled: true,
-      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

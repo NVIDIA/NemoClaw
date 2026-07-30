@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:61feb0e33fae77ad2fcd1ae3aca2d6c484d7ef2c6ed8ebd431d3e514eab6cf2b
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c4899e00817acb3421037efba013c720a79895bc8c4448b47aa9aca0def3104b
 ARG NEMOCLAW_CORPORATE_CA_B64=
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
@@ -21,20 +21,6 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
-FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
-WORKDIR /opt/nemoclaw-managed-startup-build
-COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
-COPY src/lib/messaging/ ./src/lib/messaging/
-COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/
-COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
-COPY src/lib/security/credential-hash.ts ./src/lib/security/
-COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
-RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
-        src/lib/onboard/managed-startup/image-runtime.ts \
-        --bundle --platform=node --format=cjs --target=node22 \
-        --outfile=/out/managed-startup-image-runtime.cjs \
-    && chmod 0444 /out/managed-startup-image-runtime.cjs
-
 FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
@@ -47,6 +33,7 @@ COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
+COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -57,13 +44,9 @@ FROM scratch AS hermes-runtime-payload
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
-COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
-COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap
-COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
@@ -212,13 +195,10 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 
 COPY --from=hermes-runtime-payload / /
 
-# Keep the root-owned managed-startup handoff in this image-only layer. The
-# following permissions block is replayed on the host by regression tests.
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && test -z "$discovery_unsafe" \
-    && install -d -o root -g root -m 0755 /run/nemoclaw
+    && test -z "$discovery_unsafe"
 
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
@@ -232,11 +212,11 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
+    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
@@ -393,6 +373,41 @@ assert all(path.parent == runtime for path in (
     _get_runtime_status_path(),
 ))
 assert isinstance(home, Path)
+PY
+
+# Hermes v0.19.0 creates its writable cron execution-history database below
+# the high-risk directory that contains cron job definitions. When Shields up
+# is active, NemoClaw seals that directory, so a managed gateway restart cannot
+# reopen the ledger. Relocate
+# only this audit database to the existing cross-UID runtime boundary, and keep
+# Hermes' quick snapshot inventory aligned. Full source hashes plus exact-shape
+# patching force a fresh review when either pinned upstream module changes.
+ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=2f0d3eacc02ee72608cd96d521a457ef57425bdddc00291ed90ae553f7a36039
+ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b37215a27a453191420622f78dc8962fa44feac2521a6f51d71b18831e7cacb7
+ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=1bcef6f736f1d52055837789f24becdba4a670f0a1abb5ac9973b1a1a7306f35
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        "$NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256" /opt/hermes/cron/executions.py \
+        "$NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256" /opt/hermes/hermes_cli/backup.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes cron execution runtime source identity mismatch" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        --executions /opt/hermes/cron/executions.py \
+        --backup /opt/hermes/hermes_cli/backup.py
+RUN set -eu; \
+    probe_home="$(mktemp -d)"; \
+    trap 'rm -rf "$probe_home"' EXIT; \
+    HERMES_HOME="$probe_home" /opt/hermes/.venv/bin/python -I - <<'PY'
+from cron.executions import EXECUTIONS_FILE
+from hermes_cli.backup import _QUICK_STATE_FILES
+from hermes_constants import get_hermes_home
+
+expected = get_hermes_home().resolve() / "runtime" / "cron-executions.db"
+assert EXECUTIONS_FILE == expected
+assert "runtime/cron-executions.db" in _QUICK_STATE_FILES
+assert "cron/executions.db" not in _QUICK_STATE_FILES
 PY
 
 # Hermes v0.19.0 computes `sessions list` preview from the first user message,
@@ -629,10 +644,6 @@ ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # API remains exposed separately on port 8642.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_MESSAGING_PLAN_B64=
-# Release-image mode preinstalls every reviewed optional dependency while
-# keeping the generated Hermes platform configuration disabled by default.
-ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
-ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 ARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
@@ -663,25 +674,10 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     CHAT_UI_URL=${CHAT_UI_URL} \
-    NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
     NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
-
-RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
-        0) ;; \
-        1) \
-            test -z "$NEMOCLAW_MESSAGING_PLAN_B64" \
-                || { echo "ERROR: managed-image capability union requires an empty messaging plan" >&2; exit 1; }; \
-            test "$NEMOCLAW_WEB_SEARCH_ENABLED" = "0" \
-                || { echo "ERROR: managed-image capability union requires web search disabled in the neutral image" >&2; exit 1; }; \
-            test "$NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER" = "0" \
-                || { echo "ERROR: managed-image capability union requires tool gateways disabled in the neutral image" >&2; exit 1; } \
-            ;; \
-        *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION must be 0 or 1" >&2; exit 1 ;; \
-    esac \
-    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "root"
 
 # Bake reduced messaging runtime metadata for the entrypoint. Hermes runtime
 # config refresh consumes generic manifest-owned aliases from this artifact.
@@ -695,11 +691,7 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # /opt/hermes/.venv before the runtime drops to the sandbox user.
 WORKDIR /opt/hermes
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
-    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
-            --agent hermes --phase managed-image-capability-union; \
-    fi
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
 
 # Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
 # when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
@@ -739,9 +731,6 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
     && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
-    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); expected=("telegram","discord","weixin","slack","whatsapp","teams"); assert all(config["platforms"].get(name) == {"enabled": False} for name in expected); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.1"'; \
-    fi \
     && rm -rf /sandbox/.cache
 
 # Prove that the installed dashboard seeder carries every reviewed policy value
@@ -996,11 +985,13 @@ RUN set -eu; \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
-# Prove the cron ledger contract across the real image identities. Hermes'
-# gateway-side scheduler creates the live WAL-backed database, sandbox reads
-# and online-copies it before atomically restoring a sandbox-owned replacement,
-# and gateway then reopens that replacement through the upstream ledger API.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron)" = "gateway:sandbox 2770" \
+# Prove the cron execution ledger contract across the real image identities.
+# Hermes' gateway-side scheduler creates the live WAL-backed database in the
+# writable runtime boundary, sandbox reads and online-copies it before
+# atomically restoring a sandbox-owned replacement, and gateway then reopens
+# that replacement through the upstream ledger API.
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
+    && test ! -e /sandbox/.hermes/cron/executions.db \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
 from cron.executions import create_execution
@@ -1013,14 +1004,14 @@ assert created["job_id"] == "nemoclaw-cross-uid-create-probe"
 assert created["status"] == "claimed"
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "gateway:sandbox 640" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "gateway:sandbox 640" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I - <<'PY'
 import os
 import sqlite3
 from pathlib import Path
 
-path = Path("/sandbox/.hermes/cron/executions.db")
+path = Path("/sandbox/.hermes/runtime/cron-executions.db")
 staged = path.with_name(".nemoclaw-cron-executions-staged")
 staged.unlink(missing_ok=True)
 source = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
@@ -1040,7 +1031,7 @@ for suffix in ("-wal", "-shm"):
     path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
 from cron.executions import create_execution, list_executions
@@ -1058,10 +1049,10 @@ assert {
 }
 PY
 
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \
-    && rm -f /sandbox/.hermes/cron/executions.db \
-        /sandbox/.hermes/cron/executions.db-wal \
-        /sandbox/.hermes/cron/executions.db-shm
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
+    && rm -f /sandbox/.hermes/runtime/cron-executions.db \
+        /sandbox/.hermes/runtime/cron-executions.db-wal \
+        /sandbox/.hermes/runtime/cron-executions.db-shm
 
 # Prove the Discord ledger contract across the real image identities. The
 # gateway creates the live WAL-backed database, sandbox reads and online-copies
@@ -1164,18 +1155,6 @@ RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
     && chmod 640 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 
-# Keep the shared NemoClaw state root consistent across every shipped agent.
-# The root-owned sticky directory protects the managed-startup transaction
-# receipt while leaving the named plugin state directories sandbox-writable.
-RUN chown root:root /sandbox/.nemoclaw \
-    && chmod 1755 /sandbox/.nemoclaw \
-    && chown -R root:root /sandbox/.nemoclaw/blueprints \
-    && chmod -R 755 /sandbox/.nemoclaw/blueprints \
-    && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
-    && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
-    && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
-    && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
-
 # OpenShell's macOS VM backend currently remaps extracted rootfs ownership to
 # the host uid/gid before startup. Hermes uses /sandbox as a read_write path, so
 # that repair walks the trusted rc files too; keep this Darwin-only so Linux
@@ -1183,10 +1162,6 @@ RUN chown root:root /sandbox/.nemoclaw \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.hermes; \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
-        for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
-            chmod a+rwx "$p"; \
-        done; \
-        chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 
@@ -1217,7 +1192,6 @@ RUN check_metadata() { \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \
     && check_absent /sandbox/.cache \
-    && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
@@ -1252,6 +1226,8 @@ RUN set -eu; \
         "vim-tiny=2:9.2.0782-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
     test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
@@ -1261,6 +1237,9 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
+    test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \

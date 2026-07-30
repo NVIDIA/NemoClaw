@@ -387,9 +387,12 @@ describe("agents/hermes/generate-config.ts", () => {
 
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
+    const configYaml = fs.readFileSync(path.join(tmpDir, ".hermes", "config.yaml"), "utf-8");
 
     expect(config._config_version).toBe(33);
     expect(config.agent?.verify_on_stop).toBe(false);
+    expect(config.agent?.reasoning_effort).toBeUndefined();
+    expect(configYaml).not.toContain("reasoning_effort:");
     expect(config.approvals).toEqual({ mode: "manual" });
     expect(config.session_reset).toEqual({
       mode: "both",
@@ -995,27 +998,6 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.platforms.slack).toBeUndefined();
     expect(Object.keys(config.platforms)).toEqual(["api_server"]);
-  });
-
-  it("keeps every managed-image messaging platform explicitly disabled before first start (#7744)", () => {
-    const { config, envFile } = generateBaseConfig({
-      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-    });
-
-    for (const platform of ["telegram", "discord", "weixin", "slack", "whatsapp", "teams"]) {
-      expect(config.platforms[platform], platform).toEqual({ enabled: false });
-      expect(config.platform_toolsets[platform], platform).toBeUndefined();
-    }
-    for (const credential of [
-      "TELEGRAM_BOT_TOKEN",
-      "DISCORD_BOT_TOKEN",
-      "WEIXIN_TOKEN",
-      "SLACK_BOT_TOKEN",
-      "WHATSAPP_ENABLED",
-      "TEAMS_CLIENT_SECRET",
-    ]) {
-      expect(envFile, credential).not.toContain(`${credential}=`);
-    }
   });
 
   it("enables Slack under platforms even when the slack token allowlist is empty", async () => {

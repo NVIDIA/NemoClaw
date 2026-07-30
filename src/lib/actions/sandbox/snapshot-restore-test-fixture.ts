@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import type {
-  ManagedBootstrapAdapter,
-  ManagedBootstrapSequenceInput,
-  ManagedBootstrapSequenceResult,
-} from "../../onboard/managed-bootstrap/adapter";
-import type { ManagedBootstrapRuntimeProvider } from "../../onboard/managed-bootstrap/runtime-provider";
-import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../onboard/managed-startup/hold";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -57,8 +50,6 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  hermesInferenceProvider?: string;
-  hermesToolGateways?: string[];
 };
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
@@ -82,17 +73,10 @@ export function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
-  const result =
-    responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ??
-    (args[0] === "sandbox" && args[1] === "get"
-      ? {
-          status: 0,
-          output: `ID: sandbox-${args[2] ?? "fixture"}\n`,
-        }
-      : {
-          status: 0,
-          output: "",
-        });
+  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
+    status: 0,
+    output: "",
+  };
   return captureOpenshellStreams(args, result);
 }
 
@@ -140,43 +124,6 @@ const lifecycleMock = vi.hoisted(() => {
     ),
   };
 });
-
-const managedCloneCredentialMock = vi.hoisted(() => ({
-  runDeviceCodeFlow: vi.fn(async (): Promise<never> => {
-    throw new Error("production device-code OAuth is disabled in snapshot lifecycle tests");
-  }),
-  bindBrokerState: vi.fn(() => ({
-    file: "/test-only/hermes-tool-gateway-state.json",
-    brokerToken: "test-only-broker-token",
-  })),
-  stageBrokerState: vi.fn(() => ({
-    activationToken: "nc_activate_test-only",
-    brokerToken: "nc_broker_test-only",
-  })),
-  activateBrokerState: vi.fn(() => ({
-    file: "/test-only/hermes-tool-gateway-state.json",
-    brokerToken: "nc_broker_test-only",
-  })),
-  discardBrokerState: vi.fn(() => true),
-  removeBrokerState: vi.fn(() => true),
-  removeBrokerStateForEntry: vi.fn(() => true),
-  preflightBrokerState: vi.fn(),
-}));
-
-export const runDeviceCodeFlowMock = managedCloneCredentialMock.runDeviceCodeFlow;
-export const bindHermesToolGatewayCloneProviderStateMock =
-  managedCloneCredentialMock.bindBrokerState;
-export const stageHermesToolGatewayCloneBindingMock = managedCloneCredentialMock.stageBrokerState;
-export const activateHermesToolGatewayCloneBindingMock =
-  managedCloneCredentialMock.activateBrokerState;
-export const discardHermesToolGatewayCloneBindingMock =
-  managedCloneCredentialMock.discardBrokerState;
-export const removeHermesToolGatewayProviderStateMock =
-  managedCloneCredentialMock.removeBrokerState;
-export const removeHermesToolGatewayProviderStateForSandboxEntryMock =
-  managedCloneCredentialMock.removeBrokerStateForEntry;
-export const preflightHermesToolGatewayCloneBindingMock =
-  managedCloneCredentialMock.preflightBrokerState;
 
 export const backupSandboxStateMock = vi.fn();
 export const loadAgentMock = vi.fn((name: string) => ({
@@ -228,10 +175,9 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   }),
 );
 export const registerSandboxMock = vi.fn();
-export const removeSandboxRegistryEntryMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
-export const runOpenshellMock = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+export const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
@@ -241,153 +187,6 @@ export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(as
   sawProgress: false,
   forcedReady: false,
 }));
-function managedStartupPatchFixture() {
-  let cutover:
-    | {
-        rollback(): Promise<void>;
-        commit(): Promise<void>;
-      }
-    | undefined;
-  return {
-    maybeApplyDuringCreate: vi.fn(),
-    createFailureMessage: vi.fn(() => null),
-    exitOnPatchError: vi.fn(async () => {}),
-    attachManagedBootstrapCutover: vi.fn((value) => {
-      cutover = value;
-    }),
-    rollbackManagedStartupAfterCreateFailure: vi.fn(async () => cutover?.rollback()),
-    ensureApplied: vi.fn(async () => {}),
-    waitForSupervisorReconnectIfNeeded: vi.fn(),
-    commitAfterReady: vi.fn(async () => cutover?.commit()),
-    selectedMode: vi.fn(() => null),
-    printReadinessFailureIfEnabled: vi.fn(),
-    verifyGpuOrExit: vi.fn(async (verifyDirectSandboxGpu: (sandboxName: string) => unknown) =>
-      verifyDirectSandboxGpu("beta"),
-    ),
-  };
-}
-export const createDockerGpuSandboxCreatePatchMock = vi.fn((_options?: unknown) =>
-  managedStartupPatchFixture(),
-);
-let managedBootstrapSequenceFailure: Error | null = null;
-export const managedBootstrapFinalizeMock = vi.fn(
-  async (
-    input: Parameters<ManagedBootstrapAdapter["finalizeBootstrap"]>[0],
-  ): Promise<Awaited<ReturnType<ManagedBootstrapAdapter["finalizeBootstrap"]>>> => ({
-    schemaVersion: 1,
-    sandbox: input.handle.sandbox,
-    bootstrapIdentity: input.handle.bootstrapIdentity,
-    outcome: input.outcome === "commit" ? "committed" : "rolled-back",
-    restoredRuntimeId: input.outcome === "rollback" ? (input.snapshot?.runtimeId ?? null) : null,
-    restoredSpecHash: input.outcome === "rollback" ? (input.snapshot?.specHash ?? null) : null,
-    heldWorkloadRemoved: input.snapshot === null,
-    alreadyRolledBack: false,
-    finalizedAt: "2026-06-15T00:00:00.000Z",
-  }),
-);
-export const createDockerManagedBootstrapAdapterMock = vi.fn(
-  () =>
-    ({
-      finalizeBootstrap: managedBootstrapFinalizeMock,
-    }) as unknown as ManagedBootstrapAdapter,
-);
-
-export async function simulateManagedBootstrapSequence(
-  _adapter: ManagedBootstrapAdapter,
-  input: ManagedBootstrapSequenceInput,
-): Promise<ManagedBootstrapSequenceResult> {
-  const bootstrapIdentity = input.create.bootstrapIdentity ?? "c".repeat(64);
-  const executableIndex = input.create.plan.intendedWorkloadArgv.findIndex(
-    (value, index) => index > 0 && !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(value),
-  );
-  if (executableIndex < 1) {
-    throw new Error("snapshot fixture managed bootstrap intended workload is malformed");
-  }
-  const heldWorkloadArgv = [
-    ...input.create.plan.intendedWorkloadArgv.slice(0, executableIndex),
-    MANAGED_STARTUP_HOLD_EXECUTABLE,
-    "--agent",
-    input.request.agent,
-    "--profile-fingerprint",
-    input.request.profileFingerprint,
-    "--bootstrap-identity",
-    bootstrapIdentity,
-  ];
-  const createReceipt = await input.create.launch({
-    heldWorkloadArgv,
-    bootstrapIdentity,
-  });
-  if (managedBootstrapSequenceFailure) throw managedBootstrapSequenceFailure;
-  const originalRuntimeId = "a".repeat(64);
-  const replacementRuntimeId = "b".repeat(64);
-  const runtimeImageContentId = `sha256:${"d".repeat(64)}`;
-  const specHash = "e".repeat(64);
-  const replacementSpecHash = "f".repeat(64);
-  const handle = {
-    schemaVersion: 1 as const,
-    sandbox: createReceipt.sandbox,
-    bootstrapIdentity,
-    heldWorkloadArgv,
-    intendedWorkloadArgv: input.create.plan.intendedWorkloadArgv,
-    plan: input.create.plan,
-    createReceipt,
-  };
-  const snapshot = {
-    schemaVersion: 1 as const,
-    sandbox: createReceipt.sandbox,
-    runtimeId: originalRuntimeId,
-    bootstrapIdentity,
-    image: input.create.plan.image,
-    runtimeImageContentId,
-    specHash,
-    specCanonicalJson: "{}",
-    agentIdentity: input.create.plan.agentIdentity,
-    supervisorArgv: input.create.plan.expectedSupervisorArgv,
-    heldWorkloadArgv,
-    metadata: input.create.plan.metadata,
-  };
-  const replacement = {
-    schemaVersion: 1 as const,
-    sandbox: createReceipt.sandbox,
-    bootstrapIdentity,
-    originalRuntimeId,
-    replacementRuntimeId,
-    image: input.create.plan.image,
-    runtimeImageContentId,
-    originalSpecHash: specHash,
-    replacementSpecHash,
-    profileFingerprint: input.request.profileFingerprint,
-  };
-  const completion = {
-    schemaVersion: 1 as const,
-    sandbox: createReceipt.sandbox,
-    runtimeId: replacementRuntimeId,
-    image: input.create.plan.image,
-    runtimeImageContentId,
-    originalSpecHash: specHash,
-    replacementSpecHash,
-    profileFingerprint: input.request.profileFingerprint,
-    bootstrapIdentity,
-    transactionPending: false,
-    completedAt: "2026-06-15T00:00:00.000Z",
-  };
-  return { handle, snapshot, replacement, completion };
-}
-
-export const runManagedBootstrapSequenceMock = vi.fn(simulateManagedBootstrapSequence);
-
-const runtimeProviderMockState = vi.hoisted(() => ({
-  defaultResolver: null as
-    | ((driverName: string | null | undefined) => ManagedBootstrapRuntimeProvider)
-    | null,
-  resolvePersisted: vi.fn(),
-}));
-export const resolvePersistedManagedBootstrapRuntimeProviderMock =
-  runtimeProviderMockState.resolvePersisted;
-
-export function setManagedBootstrapSequenceFailure(error: Error | null): void {
-  managedBootstrapSequenceFailure = error;
-}
 export const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
@@ -397,38 +196,7 @@ export { lifecycleMock, shieldsMock };
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
-  dockerForceRm: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
   dockerInspect: dockerInspectMock,
-  dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
-}));
-
-vi.mock("../../onboard/managed-bootstrap/adapter", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../onboard/managed-bootstrap/adapter")>();
-  return {
-    ...actual,
-    runManagedBootstrapSequence: runManagedBootstrapSequenceMock,
-  };
-});
-
-vi.mock("../../onboard/managed-bootstrap/docker", () => ({
-  createDockerManagedBootstrapAdapter: createDockerManagedBootstrapAdapterMock,
-}));
-
-vi.mock("../../onboard/managed-bootstrap/runtime-providers", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../onboard/managed-bootstrap/runtime-providers")>();
-  runtimeProviderMockState.defaultResolver = actual.resolvePersistedManagedBootstrapRuntimeProvider;
-  runtimeProviderMockState.resolvePersisted.mockImplementation(
-    actual.resolvePersistedManagedBootstrapRuntimeProvider,
-  );
-  return {
-    ...actual,
-    resolvePersistedManagedBootstrapRuntimeProvider: runtimeProviderMockState.resolvePersisted,
-  };
-});
-
-vi.mock("../../onboard/docker-gpu-sandbox-create", () => ({
-  createDockerGpuSandboxCreatePatch: createDockerGpuSandboxCreatePatchMock,
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -442,9 +210,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../credentials/store", () => ({
-  getCredential: vi.fn(),
   prompt: vi.fn(),
-  saveCredential: vi.fn(),
 }));
 
 vi.mock("../../domain/sandbox/destroy", () => ({
@@ -454,24 +220,6 @@ vi.mock("../../domain/sandbox/destroy", () => ({
 vi.mock("../../inference/nim", () => ({
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
-}));
-vi.mock("../../oauth-device-code", () => ({
-  runDeviceCodeFlow: managedCloneCredentialMock.runDeviceCodeFlow,
-}));
-vi.mock("../../hermes-tool-gateway-clone-broker", () => ({
-  getHermesToolGatewayCloneBroker: () => ({
-    HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
-    getHermesInferenceProviderName: (sandboxName: string) => `${sandboxName}-hermes-inference`,
-    getHermesToolGatewayProviderName: (sandboxName: string) => `${sandboxName}-hermes-tool-gateway`,
-    preflightHermesToolGatewayCloneBinding: managedCloneCredentialMock.preflightBrokerState,
-    stageHermesToolGatewayCloneBinding: managedCloneCredentialMock.stageBrokerState,
-    activateHermesToolGatewayCloneBinding: managedCloneCredentialMock.activateBrokerState,
-    discardHermesToolGatewayCloneBinding: managedCloneCredentialMock.discardBrokerState,
-    bindHermesToolGatewayCloneProviderState: managedCloneCredentialMock.bindBrokerState,
-    removeHermesToolGatewayProviderState: managedCloneCredentialMock.removeBrokerState,
-    removeHermesToolGatewayProviderStateForSandboxEntry:
-      managedCloneCredentialMock.removeBrokerStateForEntry,
-  }),
 }));
 
 vi.mock("../../policy", () => ({
@@ -550,7 +298,7 @@ vi.mock("../../state/sandbox", () => ({
 
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
-  removeSandboxRegistryEntry: removeSandboxRegistryEntryMock,
+  removeSandboxRegistryEntry: vi.fn(),
 }));
 
 vi.mock("./restore-gateway-pairing", () => ({
@@ -559,8 +307,6 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
-  managedBootstrapSequenceFailure = null;
-  runManagedBootstrapSequenceMock.mockImplementation(simulateManagedBootstrapSequence);
   shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
   shieldsMock.isShieldsDownMock.mockReturnValue(true);
   shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));
@@ -587,32 +333,6 @@ export function resetSnapshotRestoreMocks(): void {
     name,
     policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
   }));
-  managedCloneCredentialMock.runDeviceCodeFlow.mockReset();
-  managedCloneCredentialMock.runDeviceCodeFlow.mockImplementation(async (): Promise<never> => {
-    throw new Error("production device-code OAuth is disabled in snapshot lifecycle tests");
-  });
-  managedCloneCredentialMock.bindBrokerState.mockReset();
-  managedCloneCredentialMock.bindBrokerState.mockReturnValue({
-    file: "/test-only/hermes-tool-gateway-state.json",
-    brokerToken: "test-only-broker-token",
-  });
-  managedCloneCredentialMock.removeBrokerState.mockReset();
-  managedCloneCredentialMock.removeBrokerState.mockReturnValue(true);
-  managedCloneCredentialMock.removeBrokerStateForEntry.mockReset();
-  managedCloneCredentialMock.removeBrokerStateForEntry.mockReturnValue(true);
-  managedCloneCredentialMock.preflightBrokerState.mockReset();
-  managedCloneCredentialMock.stageBrokerState.mockReset();
-  managedCloneCredentialMock.stageBrokerState.mockReturnValue({
-    activationToken: "nc_activate_test-only",
-    brokerToken: "nc_broker_test-only",
-  });
-  managedCloneCredentialMock.activateBrokerState.mockReset();
-  managedCloneCredentialMock.activateBrokerState.mockReturnValue({
-    file: "/test-only/hermes-tool-gateway-state.json",
-    brokerToken: "nc_broker_test-only",
-  });
-  managedCloneCredentialMock.discardBrokerState.mockReset();
-  managedCloneCredentialMock.discardBrokerState.mockReturnValue(true);
   resolveAgentBaselinePolicyMock.mockImplementation((agent: string) => ({
     agent,
     policyPath:
@@ -626,7 +346,6 @@ export function resetSnapshotRestoreMocks(): void {
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
-  removeSandboxRegistryEntryMock.mockReset();
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({
     success: true,
@@ -635,25 +354,12 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
-  runOpenshellMock.mockImplementation((args) => {
-    args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
-    return { status: 0, output: "" };
-  });
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,
     output: "",
     sawProgress: false,
     forcedReady: false,
   }));
-  createDockerGpuSandboxCreatePatchMock.mockReset();
-  createDockerGpuSandboxCreatePatchMock.mockImplementation(() => managedStartupPatchFixture());
-  resolvePersistedManagedBootstrapRuntimeProviderMock.mockReset();
-  resolvePersistedManagedBootstrapRuntimeProviderMock.mockImplementation((driverName) => {
-    if (!runtimeProviderMockState.defaultResolver) {
-      throw new Error("managed bootstrap runtime-provider fixture is not initialized");
-    }
-    return runtimeProviderMockState.defaultResolver(driverName);
-  });
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
 }
 

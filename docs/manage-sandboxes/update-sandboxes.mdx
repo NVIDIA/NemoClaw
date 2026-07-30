@@ -16,11 +16,10 @@ The standard installer follows the admin-promoted `lkg` release tag by default.
 
 ## Understand Agent Version Pins
 
-Each stock sandbox runs an immutable managed image that pins the selected agent version; an explicit custom image owns its own version pin.
-NemoClaw does not update that agent runtime in place.
+NemoClaw pins the selected agent version into the sandbox image at build time rather than updating it at runtime.
 Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer agent version.
 Run `$$nemoclaw <name> status` to see the agent version currently running in a sandbox.
-After updating the host CLI, run `$$nemoclaw <name> rebuild` to resolve the current managed image to an exact digest, apply a fresh startup profile, and preserve the agent state that NemoClaw manages.
+After updating the host CLI, run `$$nemoclaw <name> rebuild` to recreate the sandbox with the newer pin while preserving the agent state that NemoClaw manages.
 
 <AgentOnly variant="openclaw">
 

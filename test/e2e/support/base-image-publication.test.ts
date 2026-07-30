@@ -180,7 +180,6 @@ describe("base-image publication evidence", () => {
         "scripts/**",
         "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
         "src/lib/messaging/**",
-        "src/lib/onboard/managed-startup/**",
         "src/lib/tool-disclosure.ts",
         "tools/mcp-tool-discovery-runtime/**",
         "tsconfig.runtime-preloads.json",
@@ -238,7 +237,7 @@ describe("base-image publication evidence", () => {
     const calls: string[][] = [];
     const expanded = expandBaseImagePushPaths(
       EXPECTED_SHA,
-      ["Dockerfile", "agents/**", "src/lib/messaging/**", "src/lib/onboard/managed-startup/**"],
+      ["Dockerfile", "agents/**", "src/lib/messaging/**"],
       (args) => {
         calls.push(args);
         const pathspec = required(args.at(-1), "glob expansion call is missing a pathspec");
@@ -252,10 +251,6 @@ describe("base-image publication evidence", () => {
               ":(glob)src/lib/messaging/**",
               "src/lib/messaging/channels/slack.ts\nsrc/lib/messaging/types.ts",
             ],
-            [
-              ":(glob)src/lib/onboard/managed-startup/**",
-              "src/lib/onboard/managed-startup/image-runtime.ts\nsrc/lib/onboard/managed-startup/profile.ts",
-            ],
           ]).get(pathspec),
           `unexpected glob expansion: ${args.join(" ")}`,
         );
@@ -268,8 +263,6 @@ describe("base-image publication evidence", () => {
       "agents/openclaw/manifest.yaml",
       "src/lib/messaging/channels/slack.ts",
       "src/lib/messaging/types.ts",
-      "src/lib/onboard/managed-startup/image-runtime.ts",
-      "src/lib/onboard/managed-startup/profile.ts",
     ]);
     expect(calls).toEqual([
       [
@@ -291,16 +284,6 @@ describe("base-image publication evidence", () => {
         EXPECTED_SHA,
         "--",
         ":(glob)src/lib/messaging/**",
-      ],
-      [
-        "log",
-        "--first-parent",
-        "--diff-merges=first-parent",
-        "--format=",
-        "--name-only",
-        EXPECTED_SHA,
-        "--",
-        ":(glob)src/lib/onboard/managed-startup/**",
       ],
     ]);
   });

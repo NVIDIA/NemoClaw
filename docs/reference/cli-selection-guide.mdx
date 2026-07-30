@@ -165,8 +165,7 @@ This section covers common decisions when using the NemoClaw CLI and the OpenShe
 ### First Setup or Full Recreate
 
 Use `$$nemoclaw onboard`.
-It starts the OpenShell gateway when needed, registers providers, resolves the selected agent's immutable managed release image to an exact digest, applies NemoClaw policy choices, and creates the sandbox with a secret-free startup profile.
-An explicit `--from <Dockerfile>` request remains the separate local-build path.
+It starts the OpenShell gateway when needed, registers providers, builds the selected agent sandbox image, applies NemoClaw policy choices, and creates the sandbox.
 
 Avoid running `openshell gateway start --recreate` or `openshell sandbox create` directly for NemoClaw-managed sandboxes.
 Those commands do not update NemoClaw's registry, session metadata, workspace-preservation flow, or agent-specific configuration.
@@ -246,7 +245,7 @@ nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 </AgentOnly>
-For an agent setting that requires sandbox recreation, rerun onboarding so the managed startup configuration is recreated consistently:
+For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox

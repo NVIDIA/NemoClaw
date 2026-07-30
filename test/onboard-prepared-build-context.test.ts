@@ -17,7 +17,7 @@ type PreparedContextResult = {
   commands: string[];
   errorMessage: string | null;
   patchCalls: number;
-  planFromRefs: string[];
+  planBuildContexts: string[];
   registerCalls: Array<{ imageTag?: string | null }>;
   resolvedBuildIds: string[];
   stageCalls: number;
@@ -89,7 +89,7 @@ const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
 const commands = [];
 const registerCalls = [];
-const planFromRefs = [];
+const planBuildContexts = [];
 const resolvedBuildIds = [];
 let cleanupCalls = 0;
 let patchCalls = 0;
@@ -99,10 +99,8 @@ dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
   createFailureMessage: () => null,
   exitOnPatchError: () => {},
-  rollbackManagedStartupAfterCreateFailure: () => {},
   ensureApplied: () => {},
   waitForSupervisorReconnectIfNeeded: () => {},
-  commitAfterReady: () => {},
   selectedMode: () => null,
   printReadinessFailureIfEnabled: () => {},
   verifyGpuOrExit: (verify) => verify(sandboxName),
@@ -119,7 +117,7 @@ dockerfilePatchFlow.prepareSandboxDockerfilePatch = async () => {
 
 const materializeSandboxCreatePlan = sandboxCreatePlanMaterialization.materializeSandboxCreatePlan;
 sandboxCreatePlanMaterialization.materializeSandboxCreatePlan = (input) => {
-  planFromRefs.push(input.fromRef);
+  planBuildContexts.push(input.buildCtx);
   return materializeSandboxCreatePlan(input);
 };
 const resolveSandboxImageTagFromCreateOutput = imageTag.resolveSandboxImageTagFromCreateOutput;
@@ -227,7 +225,7 @@ const { createSandbox } = require(${onboardPath});
     commands,
     errorMessage,
     patchCalls,
-    planFromRefs,
+    planBuildContexts,
     registerCalls,
     resolvedBuildIds,
     stageCalls,
@@ -270,7 +268,7 @@ describe("onboard prepared DCode build context", () => {
     assert.equal(result.errorMessage, null);
     assert.equal(result.stageCalls, 0);
     assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
+    assert.deepEqual(result.planBuildContexts, [result.buildCtx]);
     assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
     assert.equal(result.cleanupCalls, 1);
     assert.ok(
@@ -298,7 +296,7 @@ describe("onboard prepared DCode build context", () => {
     );
     assert.equal(result.stageCalls, 0);
     assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planFromRefs, []);
+    assert.deepEqual(result.planBuildContexts, []);
     assert.deepEqual(result.resolvedBuildIds, []);
     assert.equal(result.cleanupCalls, 0);
     assert.equal(

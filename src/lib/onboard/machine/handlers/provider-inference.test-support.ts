@@ -195,7 +195,7 @@ export function createDeps(
       registryUpdateSandbox: calls.updateSandbox,
       promptValidatedSandboxName: calls.promptName,
       assessHost: () => ({ cpus: 8 }),
-      formatSandboxBuildEstimateNote: vi.fn(() => "estimate"),
+      formatSandboxBuildEstimateNote: () => "estimate",
       formatOnboardConfigSummary: (options: {
         provider: string;
         model: string;

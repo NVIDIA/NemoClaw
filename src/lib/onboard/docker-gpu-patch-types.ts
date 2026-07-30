@@ -113,14 +113,6 @@ export type DockerGpuCloneRunOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
-   * Exact replacement process boundary. Managed bootstrap uses this to enter
-   * the image-owned root trampoline and passes the captured supervisor argv as
-   * data after the trampoline delimiter. Ordinary recreation leaves both
-   * fields unset and preserves the inspected entrypoint/cmd pair.
-   */
-  containerEntrypoint?: string | null;
-  containerCommand?: readonly string[] | null;
-  /**
    * Extra supplementary group IDs to add to the recreated container via
    * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
    * device nodes; granting the sandbox user membership lets CUDA's nvmap init
@@ -188,10 +180,6 @@ export type DockerContainerInspect = {
   Image?: string;
   Name?: string;
   Config?: {
-    ArgsEscaped?: boolean;
-    AttachStderr?: boolean;
-    AttachStdin?: boolean;
-    AttachStdout?: boolean;
     Image?: string;
     Env?: string[] | null;
     Labels?: Record<string, string> | null;
@@ -200,30 +188,8 @@ export type DockerContainerInspect = {
     User?: string;
     WorkingDir?: string;
     Hostname?: string;
-    Domainname?: string;
     Tty?: boolean;
     OpenStdin?: boolean;
-    StdinOnce?: boolean;
-    NetworkDisabled?: boolean;
-    ExposedPorts?: Record<string, Record<string, never> | null> | null;
-    Healthcheck?: {
-      Test?: string[] | null;
-      Interval?: number;
-      Timeout?: number;
-      StartPeriod?: number;
-      StartInterval?: number;
-      Retries?: number;
-    } | null;
-    StopSignal?: string;
-    StopTimeout?: number;
-    Volumes?: Record<string, Record<string, never> | null> | null;
-    Shell?: string[] | null;
-  } | null;
-  State?: {
-    Running?: boolean;
-    Paused?: boolean;
-    Restarting?: boolean;
-    Dead?: boolean;
   } | null;
   HostConfig?: {
     Binds?: string[] | null;
@@ -272,42 +238,12 @@ export type DockerContainerInspect = {
       Hard?: number;
     }> | null;
     Dns?: string[] | null;
-    DnsOptions?: string[] | null;
     DnsSearch?: string[] | null;
-    Devices?: Array<{
-      PathOnHost?: string;
-      PathInContainer?: string;
-      CgroupPermissions?: string;
-    }> | null;
-    DeviceCgroupRules?: string[] | null;
     DeviceRequests?: Array<{
       Driver?: string;
-      Count?: number;
       DeviceIDs?: string[] | null;
-      Capabilities?: string[][] | null;
-      Options?: Record<string, string> | null;
     }> | null;
     ShmSize?: number;
-    ReadonlyRootfs?: boolean;
-    Tmpfs?: Record<string, string> | null;
-    Sysctls?: Record<string, string> | null;
-    CgroupParent?: string;
-    CgroupnsMode?: string;
-    UsernsMode?: string;
-    UTSMode?: string;
-    LogConfig?: {
-      Type?: string;
-      Config?: Record<string, string> | null;
-    } | null;
-    OomKillDisable?: boolean;
-    OomScoreAdj?: number;
-    PidsLimit?: number;
-    Runtime?: string;
-    PublishAllPorts?: boolean;
-    PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> | null;
-    Cgroup?: string;
-    ConsoleSize?: number[];
-    ContainerIDFile?: string;
     ReadonlyPaths?: string[] | null;
     MaskedPaths?: string[] | null;
   } | null;

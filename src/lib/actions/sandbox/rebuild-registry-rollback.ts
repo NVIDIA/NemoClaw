@@ -76,17 +76,12 @@ export function createRebuildRegistryRollback(
       if (!registryEntryRemoved || !removedRegistryReceipt) return;
       rollbackAttempted = true;
       try {
-        const removedEntry = removedRegistryReceipt.entry;
-        const restoresSharedManagedImage =
-          removedEntry.workload?.kind === "managed-image" && removedEntry.workload.shared === true;
         const restored = restoreSandboxEntryIfMissing({
           ...removedRegistryReceipt,
-          entry: restoresSharedManagedImage
-            ? removedEntry
-            : {
-                ...removedEntry,
-                imageTag: null,
-              },
+          entry: {
+            ...removedRegistryReceipt.entry,
+            imageTag: null,
+          },
         });
         const recreateLabel = options.staleRecovery ? "Stale-recovery recreate" : "Recreate";
         options.log(

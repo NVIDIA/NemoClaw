@@ -229,7 +229,7 @@ Use the interactive TUI when you need to inspect each destructive tool request b
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
 In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
 
-Enable the capability for a named sandbox through a transactional rebuild so NemoClaw materializes it in the replacement sandbox's managed startup profile.
+Enable the capability for a named sandbox through a transactional rebuild because NemoClaw bakes the capability into the managed image.
 
 ```bash
 nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
@@ -274,7 +274,7 @@ nemo-deepagents <sandbox-name> config get
 ```
 
 NemoClaw parses `config.toml`, removes gateway auth data, and redacts credential-shaped values before printing it.
-`config set` is not supported for this managed startup configuration; re-onboard the named sandbox to change its managed provider or model selection.
+`config set` is not supported for this image-baked configuration; re-onboard the named sandbox to change its managed provider or model selection.
 
   </Accordion>
 
@@ -301,9 +301,9 @@ The managed `.deepagents/.nemoclaw-mcp.json` projection is also excluded because
 Service credentials remain in OpenShell provider state.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
-Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, resolves the current complete managed-image cohort to an exact Deep Agents Code digest, and stages a replacement startup profile from the current durable provider, model, policy, and agent options.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, policy, and build inputs with a pinned base and fingerprinted context.
 Initial failures stop before backup.
-After backup, NemoClaw rechecks the target, route, and retained catalog/profile handoff before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
+After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice unless explicitly overridden, and recorded custom policies from their exact stored content.
 

@@ -188,12 +188,12 @@ The context tells the agent to try allowed network and filesystem operations bef
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
 The manifest declares Hermes' binary, health probe, config directory, state directories, and OpenAI-compatible API endpoint.
 Messaging channel availability is declared by each channel manifest's `supportedAgents` list under `src/lib/messaging/channels/`, not by the Hermes agent manifest.
-The managed startup-profile applicator turns NemoClaw onboarding choices into Hermes YAML and environment files when the sandbox starts, and the Hermes plugin manifest exposes NemoClaw tools and an `on_session_start` hook.
+The build-time config generator turns NemoClaw onboarding choices into Hermes YAML and environment files, and the Hermes plugin manifest exposes NemoClaw tools and an `on_session_start` hook.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 The Deep Agents integration follows the generic agent-manifest path for terminal runtimes.
 The manifest declares the `dcode` binary, smoke checks, config directory, state directories, and OpenAI-compatible inference route.
-The managed startup-profile applicator turns NemoClaw onboarding choices into `config.toml` when the sandbox starts, and the managed launchers enforce the supported credential, MCP, tracing, and sandbox boundaries before `dcode` starts.
+The build-time config generator turns NemoClaw onboarding choices into `config.toml`, and the managed launchers enforce the supported credential, MCP, tracing, and sandbox boundaries before `dcode` starts.
 </AgentOnly>
 
 ## NemoClaw Blueprint
@@ -375,14 +375,11 @@ This reference does not package an OAuth bootstrap application, an on-behalf-of 
 ## Sandbox Environment
 
 <AgentOnly variant="openclaw,hermes">
-On supported Docker hosts, stock NemoClaw onboarding pulls the selected agent's immutable managed release image at an exact digest.
-Those published images are built from the [`ghcr.io/nvidia/nemoclaw/sandbox-base`](https://github.com/NVIDIA/NemoClaw/pkgs/container/nemoclaw%2Fsandbox-base) base, but stock onboarding does not layer the runtime Dockerfile on the user's host.
-An explicit `--from <Dockerfile>` request remains the separate local-build path.
+Normal NemoClaw onboarding builds from the [`ghcr.io/nvidia/nemoclaw/sandbox-base`](https://github.com/NVIDIA/NemoClaw/pkgs/container/nemoclaw%2Fsandbox-base) base image and layers the NemoClaw runtime Dockerfile on top.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-On supported Docker hosts, stock Deep Agents onboarding pulls the immutable managed release image at an exact digest.
-That published image is built from the agent-specific `agents/langchain-deepagents-code/Dockerfile.base`, which installs Node, Python, shell tools, and the hash-locked `deepagents-code` package needed by the terminal harness.
-Stock onboarding does not layer the managed Deep Agents runtime Dockerfile on the user's host; an explicit `--from <Dockerfile>` request remains the separate local-build path.
+Deep Agents onboarding builds from the agent-specific `agents/langchain-deepagents-code/Dockerfile.base` image and layers the managed Deep Agents runtime Dockerfile on top.
+That base installs Node, Python, shell tools, and the hash-locked `deepagents-code` package needed by the terminal harness.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
@@ -457,9 +454,9 @@ The following environment variables configure optional services and local access
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) you provide before `$$nemoclaw onboard`. Stored as an OpenShell provider; never passed directly to the sandbox. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-...`) required for Socket Mode. Stored alongside `SLACK_BOT_TOKEN` during onboarding. |
 | `SLACK_ALLOWED_USERS` | Comma-separated Slack member IDs for DM and channel `@mention` user allowlisting. |
-| `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Stock onboarding records the value in the managed startup profile and materializes it when the sandbox starts; an explicit custom Dockerfile must apply it during its local build. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
+| `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Baked into the sandbox image at build time. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
-| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Sandbox-creation toggle that disables gateway device pairing when set to `1` before onboarding. Stock onboarding records it in the managed startup profile; an explicit custom Dockerfile must apply it during its local build. |
+| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Build-time-only toggle that disables gateway device pairing when set to `1` before the sandbox image is created. |
 </AgentOnly>
 <AgentOnly variant="hermes">
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `$$nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
@@ -467,7 +464,7 @@ The following environment variables configure optional services and local access
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) you provide before `$$nemoclaw onboard`. Stored as an OpenShell provider; never passed directly to the sandbox. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-...`) required for Socket Mode. Stored alongside `SLACK_BOT_TOKEN` during onboarding. |
 | `SLACK_ALLOWED_USERS` | Comma-separated Slack member IDs for DM and channel `@mention` user allowlisting. |
-| `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Stock onboarding records the value in the managed startup profile and materializes it when the sandbox starts; an explicit custom Dockerfile must apply it during its local build. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
+| `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Baked into the sandbox image at build time. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
 </AgentOnly>
 <AgentOnly variant="deepagents">
 | `NEMOCLAW_POLICY_TIER` | Optional non-interactive policy tier selection during onboarding. |

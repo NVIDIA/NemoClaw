@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Declarative Multi-Agent Manifest"
 sidebar-title: "Declarative Multi-Agent Manifest"
-description: "Apply secondary OpenClaw agents to a NemoClaw sandbox from a checked-in agents.yaml manifest, including per-agent models and OpenClaw-native sub-agent delegation."
+description: "Bake secondary OpenClaw agents into a NemoClaw sandbox image from a checked-in agents.yaml manifest, including per-agent models and OpenClaw-native sub-agent delegation."
 description-agent: "Documents the `nemoclaw onboard --agents <agents.yaml>` flag and the YAML schema it consumes. Use when users ask how to declare a manager-worker layout, how to give a secondary agent its own model, or how to express OpenClaw's `subagents.allowAgents` from NemoClaw."
 keywords:
   - "nemoclaw agents.yaml"
@@ -24,10 +24,9 @@ status: published
 agent-variants: ["openclaw"]
 ---
 
-NemoClaw can apply a multi-agent OpenClaw layout from a single checked-in manifest.
+NemoClaw can bake a multi-agent OpenClaw layout into a sandbox image from a single checked-in manifest.
 Supply the manifest at onboard time with `--agents <path>`.
-Stock onboarding records the resulting `agents.list` entries, per-agent overrides, and `agents.defaults.subagents` block in the managed startup profile and materializes them in `openclaw.json` when the sandbox starts.
-An explicit custom Dockerfile applies the same manifest during its local build.
+During the image build, NemoClaw embeds the resulting `agents.list` entries, per-agent overrides, and `agents.defaults.subagents` block into `openclaw.json`.
 
 The schema mirrors OpenClaw's `agents.list[]` field names.
 The manifest uses the same keys that appear in [OpenClaw's sub-agents reference](https://docs.openclaw.ai/tools/subagents).
@@ -40,7 +39,7 @@ Use `--agents` when:
 - A secondary agent needs its own model (different size, different capability profile).
 - You want OpenClaw's `sessions_spawn` validator to enforce a fixed spawn allowlist, not the broad default.
 
-For a single primary agent on the configured inference route, no manifest is required because NemoClaw always materializes the canonical `main` agent as the default.
+For a single primary agent on the configured inference route, no manifest is required because the canonical `main` agent is always baked in as the default.
 
 ## Invocation
 
@@ -48,10 +47,9 @@ For a single primary agent on the configured inference route, no manifest is req
 nemoclaw onboard --agents ./agents.yaml --name my-assistant
 ```
 
-NemoClaw reads the manifest on the host and transports its validated, secret-free representation in the managed startup profile.
-The trusted config generator in `scripts/generate-openclaw-config.mts` remains the single source of truth for structured schema errors.
-A malformed manifest fails configuration application before the agent process starts.
-For an explicit custom Dockerfile, the same generator runs during the local image build.
+NemoClaw reads the manifest on the host and sets `NEMOCLAW_EXTRA_AGENTS_JSON` for the Dockerfile patcher.
+The build-time validator in `scripts/generate-openclaw-config.mts` is the single source of truth for structured errors.
+A malformed manifest fails the image build with a clear error message.
 
 ## Define the Manifest
 
@@ -88,7 +86,7 @@ agents:                        # required when secondary agents are needed
 
 ### Top-Level Fields
 
-| Field | Purpose | Applies To |
+| Field | Purpose | Bakes Into |
 |---|---|---|
 | `defaults.subagents.maxSpawnDepth` | Maximum nesting depth for sub-agent spawning. Integer 1..5. | `agents.defaults.subagents.maxSpawnDepth` |
 | `main.tools` | Per-agent tool policy for the canonical `main` agent. | `agents.list[id=main].tools` |
@@ -108,7 +106,7 @@ You cannot set `default: true` on a secondary agent or rename the primary slot.
 | `workspace` | auto-filled | Defaults to `/sandbox/.openclaw/workspace-<id>`. Must match the canonical sandbox layout if supplied. |
 | `agentDir` | auto-filled | Defaults to `/sandbox/.openclaw/agents/<id>`. Must match the canonical sandbox layout if supplied. |
 | `tools` | yes | `{profile?, allow?, deny?}`. Must declare a non-empty `allow[]` or `deny[]`; secondary agents inherit no tools by default. |
-| `description` | no | Human-readable. Applied verbatim. |
+| `description` | no | Human-readable. Baked verbatim. |
 | `model` | no | `provider/model` reference. The provider must match the onboard provider; cross-provider manifests are not supported. |
 | `subagents` | no | OpenClaw-native sub-agent delegation policy. Refer to the section below. |
 
@@ -130,7 +128,7 @@ Do not set `maxSpawnDepth` per agent.
 
 ## Configure Multiple Models
 
-When a secondary agent declares its own `model` or `subagents.model`, NemoClaw adds each unique `provider/model` reference to the generated `models.providers[<onboard-provider>].models[]` array.
+When a secondary agent declares its own `model` or `subagents.model`, NemoClaw adds each unique `provider/model` reference to the baked `models.providers[<onboard-provider>].models[]` array.
 The base `contextWindow`, `maxTokens`, `reasoning`, and `input` settings from the onboard route apply to each appended entry.
 Per-model overrides beyond these defaults are out of scope for v1.
 Edit the generated `openclaw.json` in place if you need finer control.
@@ -157,7 +155,7 @@ agents:
       allow: [read]
 ```
 
-This manifest produces the following `openclaw.json` configuration:
+This manifest produces the following baked `openclaw.json` configuration:
 
 - `agents.list[0]` is `main` with `default: true`, the operator-supplied `tools`/`subagents` merged in.
 - `agents.list[1]` is `logs-reader` at the canonical workspace/agentDir paths.
@@ -169,7 +167,7 @@ This manifest produces the following `openclaw.json` configuration:
 
 Edit `agents.yaml`, re-run `nemoclaw onboard --agents ./agents.yaml --recreate-sandbox`.
 Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuilds.
-The runtime startup script provisions them on first boot rather than including their contents in the managed profile or image.
+The runtime startup script provisions them on first boot rather than baking their contents.
 
 For ad-hoc per-agent edits inside an existing sandbox without a rebuild, use the in-sandbox CLI, `nemoclaw <name> agents add|delete|list`.
 To reconcile the roster against a manifest, use `nemoclaw <name> agents apply -f <agents.yaml>`.
@@ -186,7 +184,7 @@ It compares the current roster with the manifest and runs `openclaw agents add|d
 
 Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides require a sandbox rebuild.
 The command reports those unsupported live changes as warnings before it exits.
-Re-run `nemoclaw onboard --agents <file> --recreate-sandbox` to apply them through the replacement startup configuration.
+Re-run `nemoclaw onboard --agents <file> --recreate-sandbox` to bake them.
 
 ```bash
 nemoclaw my-assistant agents apply -f ./agents.yaml --yes

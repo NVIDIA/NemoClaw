@@ -60,7 +60,7 @@ The difference is who owns the integration work.
 
 | Path | What it means |
 |------|---------------|
-| **NemoClaw path** | You adopt the reference stack. Stock onboarding resolves the Deep Agents managed release image to an exact digest, applies the current inference and runtime configuration through a secret-free startup profile, and uses the blueprint's policies and state contract. |
+| **NemoClaw path** | You adopt the reference stack. NemoClaw's Deep Agents blueprint encodes the image, managed `dcode` launchers, default policies, inference configuration, and state handling so `nemo-deepagents onboard` creates a tested Deep Agents-on-OpenShell setup with less custom integration work. |
 | **OpenShell path** | You use OpenShell as the platform and supply your own container, Deep Agents install steps, policy YAML, provider setup, and runtime wrappers. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw's blueprint or CLI. |
 
 ## What NemoClaw Adds Beyond Custom OpenShell
@@ -74,12 +74,12 @@ The following table compares custom OpenShell integration with `nemo-deepagents 
 | Capability | Custom OpenShell + Deep Agents | `nemo-deepagents onboard` |
 |---|---|---|
 | Sandbox isolation | You define and apply OpenShell seccomp, Landlock, network namespace isolation, and no-new-privileges policy. | NemoClaw applies the managed Deep Agents policy through the blueprint and requires the runtime checks that the managed harness depends on. |
-| Credential handling | You create OpenShell providers manually and decide how `dcode` receives endpoint credentials. | NemoClaw creates OpenShell providers during onboarding, points Deep Agents at `https://inference.local/v1`, keeps provider credentials on the host, and carries only non-secret route state in the managed startup profile. |
+| Credential handling | You create OpenShell providers manually and decide how `dcode` receives endpoint credentials. | NemoClaw creates OpenShell providers during onboarding, points Deep Agents at `https://inference.local/v1`, and keeps provider credentials on the host. |
 | Image hardening | Depends on your base image and install steps. | NemoClaw installs the pinned Deep Agents Code package in `/opt/venv`, uses managed launchers, and disables unsupported runtime escape paths such as unmanaged MCP autoloading, tracing exports, nested sandbox providers, and alternate model routes. |
 | Filesystem policy | You define read-only and read-write paths in policy YAML. | NemoClaw defines a targeted layout: system paths are read-only, `/sandbox` and `/tmp` are writable, and Deep Agents state lives under `/sandbox/.deepagents`. |
-| Inference setup | You configure OpenShell inference routing and Deep Agents provider settings manually. | NemoClaw validates the selected provider from the host, configures the OpenShell route, and materializes `/sandbox/.deepagents/config.toml` from the managed startup profile for the OpenAI-compatible path. An explicit custom Dockerfile must apply equivalent configuration during its local build. |
+| Inference setup | You configure OpenShell inference routing and Deep Agents provider settings manually. | NemoClaw validates the selected provider from the host, configures the OpenShell route, and writes `/sandbox/.deepagents/config.toml` for the managed OpenAI-compatible path. |
 | Optional integrations | You decide how web search, MCP, tracing, and other integrations enter the sandbox. | NemoClaw supports a maintained MCP projection and opt-in Tavily policy path, while keeping LangSmith and OpenTelemetry tracing disabled for the managed harness. |
-| Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw verifies the blueprint and accepts the release-image catalog only when one publication cohort contains exact OpenClaw, Hermes, and Deep Agents image digests. |
+| Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw downloads the blueprint artifact, checks version compatibility, and verifies its digest before applying. |
 | State migration | Not included unless you build it. | NemoClaw preserves manifest-declared Deep Agents state and omits credential-bearing user files from snapshots and rebuilds. |
 
 ## When to Use Which

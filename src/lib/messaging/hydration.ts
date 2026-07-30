@@ -42,19 +42,12 @@ import {
   normalizePersistedInputs,
 } from "./persistence";
 
-export interface SandboxMessagingHydrationOptions {
-  /** Explicit environment seam for deterministic rehydration without ambient credentials. */
-  readonly environment?: Readonly<Record<string, string | undefined>>;
-}
-
 export function hydrateDerivedSandboxMessagingPlanFields(
   plan: SandboxMessagingPlan,
-  options: SandboxMessagingHydrationOptions = {},
 ): SandboxMessagingPlan {
-  const environment = options.environment ?? process.env;
   const manifestRegistry = createBuiltInChannelManifestRegistry();
   const channels = plan.channels.map((channel) =>
-    hydrateChannelFromManifest(plan, channel, manifestRegistry.get(channel.channelId), environment),
+    hydrateChannelFromManifest(plan, channel, manifestRegistry.get(channel.channelId)),
   );
   const hydratedPlan = { ...plan, channels };
   const manifests = channels.flatMap((channel) => {
@@ -70,7 +63,7 @@ export function hydrateDerivedSandboxMessagingPlanFields(
     agentRender:
       plan.agentRender.length > 0
         ? plan.agentRender
-        : agentRenderFromManifests(hydratedPlan, manifestRegistry, environment),
+        : agentRenderFromManifests(hydratedPlan, manifestRegistry),
     buildSteps:
       plan.buildSteps.length > 0
         ? plan.buildSteps
@@ -89,7 +82,6 @@ function hydrateChannelFromManifest(
   plan: SandboxMessagingPlan,
   channel: SandboxMessagingChannelPlan,
   manifest: ChannelManifest | undefined,
-  environment: Readonly<Record<string, string | undefined>>,
 ): SandboxMessagingChannelPlan {
   const { hostForward: _oldHostForward, ...channelWithoutHostForward } = channel;
   const disabled = channel.disabled || plan.disabledChannels.includes(channel.channelId);
@@ -99,7 +91,7 @@ function hydrateChannelFromManifest(
   const configured = channel.configured;
   const active = channel.active && !disabled;
   const hostForward = manifest
-    ? planHostForward(manifest, inputs, active, createBuiltInRenderTemplateResolver(), environment)
+    ? planHostForward(manifest, inputs, active, createBuiltInRenderTemplateResolver())
     : undefined;
   return {
     ...channelWithoutHostForward,
@@ -239,7 +231,6 @@ function runtimeSetupHasEntries(setup: SandboxMessagingRuntimeSetupPlan | undefi
 function agentRenderFromManifests(
   plan: SandboxMessagingPlan,
   manifestRegistry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
-  environment: Readonly<Record<string, string | undefined>>,
 ): SandboxMessagingAgentRenderPlan[] {
   const render: SandboxMessagingAgentRenderPlan[] = [];
   const referenceResolver = createBuiltInRenderTemplateResolver();
@@ -248,7 +239,7 @@ function agentRenderFromManifests(
     if (!manifest) continue;
     const context = {
       inputs: channel.inputs,
-      env: environment,
+      env: process.env,
       referenceResolver,
     };
 

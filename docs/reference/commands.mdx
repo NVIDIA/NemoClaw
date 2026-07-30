@@ -207,7 +207,7 @@ langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
 ### `$$nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
-The wizard creates an OpenShell gateway, registers inference providers, prepares the selected workload, and creates the sandbox.
+The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
@@ -286,7 +286,7 @@ It also bypasses locally recorded sandbox base-image resolution metadata and rer
 `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint.
 The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection.
 `--resume` and `--fresh` are mutually exclusive.
-For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting.
+For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or build-time setting.
 Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 #### `--tool-disclosure <progressive|direct>`
@@ -351,46 +351,29 @@ Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/u
 
 </AgentOnly>
 
-On supported `amd64` and `arm64` Docker hosts, stock onboarding requires a complete immutable release image for the selected shipped agent.
-NemoClaw accepts the release catalog only when the same publication cohort contains OpenClaw, Hermes, and Deep Agents images.
-It resolves the selected image to an exact repository digest and builds a secret-free startup profile for the current sandbox configuration.
-The startup applicator verifies and materializes that profile when the sandbox starts.
-Managed rebuilds resolve the current CLI release to an exact digest, while managed clones retain the source image digest and prepare a target-specific profile.
-
-On those Docker hosts, catalog or registry resolution failures stop stock onboarding before it creates a new sandbox or deletes and replaces an existing one.
-Gateway startup and provider preparation can already have completed before managed-image resolution.
-The Docker managed-image path never silently falls back to a Dockerfile.
-Kubernetes drivers continue to use the trusted Dockerfile workflow until they advertise the managed-image startup-profile capability.
-An explicit `--from <Dockerfile>` request remains a separate local Dockerfile build.
-NemoClaw shows a Dockerfile build-time estimate only after that explicit local-build path is known.
-Stock managed-image launch does not show the estimate because it does not run a local Dockerfile build.
-
-On Docker, managed-image onboarding binds startup to the exact OpenShell sandbox ID, Docker runtime ID, image digest, and startup-profile fingerprint.
-It durably commits shared state only after the replacement runtime reports completion.
-If cleanup cannot prove that a mutable sandbox name still identifies that exact sandbox ID, NemoClaw quiesces and retains the exact Docker runtime instead of issuing an unsafe name-only delete.
-Follow [Managed bootstrap quiesced and retained a sandbox](troubleshooting#managed-bootstrap-quiesced-and-retained-a-sandbox) before removing the retained owner.
-
-The base-image resolution controls below apply only to explicit custom Dockerfile workflows.
-When Docker exposes the required identity metadata, NemoClaw records the resolved base identity on a locally built sandbox image.
-During a warm recreate or rebuild of that path, it validates the local image identity and platform, the exact repository digest for a published base, and any active OpenShell ABI requirement before reusing the base.
-Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1` to bypass the recorded Dockerfile base hint without changing onboarding session handling:
+When Docker exposes the required identity metadata, NemoClaw records the base-image resolution on managed sandbox images.
+During a warm recreate or rebuild, it validates the local image identity and platform, plus the exact repository digest for a published image and any active OpenShell ABI requirement, before reusing it.
+A valid match avoids candidate discovery and a network pull.
+Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1` to bypass the recorded hint without changing onboarding session handling:
 
 ```bash
 NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1 $$nemoclaw onboard --recreate-sandbox
 NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1 $$nemoclaw <sandbox-name> rebuild
 ```
 
-Dockerfile base-image selection follows this precedence:
+Base-image selection follows this precedence:
 
 1. `--fresh` or `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1` bypasses recorded metadata and reruns normal candidate resolution. These controls are equivalent for base-image selection.
 2. Without a bypass, NemoClaw validates and reuses the recorded hint when possible.
 3. When the hint is absent or no longer valid, NemoClaw performs normal resolution.
 
-After a Dockerfile base cache miss, source checkouts require a fresh local base build before candidate selection when base-image inputs have dirty or staged changes, or Git cannot inspect the worktree safely.
+After a cache miss, source checkouts require a fresh local build before candidate selection when base-image inputs have dirty or staged changes, or Git cannot inspect the worktree safely.
 For a clean release checkout or versioned install, NemoClaw first accepts the exact release-version image.
 If that tag exists locally but fails compatibility validation, NemoClaw refreshes the same tag from the registry once and validates it again.
 If the release-version image is missing or still incompatible, NemoClaw builds a compatible local base instead of falling back to mutable `:latest`.
-For unversioned development checkouts, NemoClaw tries the image tagged with the newest reachable release version from `origin` before source-commit images, and only uses `:latest` when no version tag is discoverable.
+For clean unversioned development checkouts, NemoClaw first tries the image tagged with the exact source commit.
+If that image is unavailable and committed base-image inputs differ from `main`, NemoClaw requires a compatible local build.
+When committed base-image inputs match `main`, NemoClaw tries the image tagged with the newest reachable release version from `origin` and only uses `:latest` when no version tag is discoverable.
 When a stable tag and a prerelease tag share the same version, NemoClaw prefers the stable tag.
 If `origin` tag lookup is unavailable, NemoClaw uses the newest reachable local release tag as a fallback.
 If that nearest release-version image is missing or incompatible, NemoClaw builds a compatible local base instead of falling back to mutable `:latest`.
@@ -398,7 +381,7 @@ The required-build path does not reuse an older local tag.
 If local builds are disabled or the build fails, resolution stops instead of selecting a stale image.
 When the OpenShell sandbox ABI is required, NemoClaw also rejects a built image that does not report a compatible glibc version.
 
-Explicit Dockerfile base-image overrides are exact: NemoClaw validates the requested ref and fails closed when it cannot be pulled or does not satisfy required ABI, agent runtime, or dependency checks.
+Explicit base-image overrides are exact: NemoClaw validates the requested ref and fails closed when it cannot be pulled or does not satisfy required ABI, agent runtime, or dependency checks.
 Otherwise, normal resolution checks compatible images in Docker's local image store before attempting to pull a missing published candidate.
 For warm-hint reuse and unversioned development resolution, NemoClaw can reuse another validated local fallback when published candidates are unavailable or incompatible.
 When the OpenShell sandbox ABI is required, that local fallback must be ABI-compatible.
@@ -415,8 +398,8 @@ The final Hermes image accepts only the official published digest tracked by its
 
 </AgentOnly>
 
-Bypassing the recorded Dockerfile base hint does not clear Docker's local image store or require a network pull.
-Only `--fresh` also discards the saved onboarding session; the refresh environment variable affects Dockerfile base-image selection only.
+Bypassing the recorded hint does not clear Docker's local image store or require a network pull.
+Only `--fresh` also discards the saved onboarding session; the refresh environment variable affects base-image selection only.
 
 <Warning>
 For NemoClaw-managed environments, use `$$nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -458,10 +441,10 @@ The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` in
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
 <AgentOnly variant="openclaw,hermes">
-It then prompts for optional web search and messaging channels, prepares and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+It then prompts for optional web search and messaging channels, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-It then prompts for optional web search, prepares and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+It then prompts for optional web search, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
 </AgentOnly>
 Three tiers are available:
 
@@ -607,8 +590,7 @@ The `$$nemoclaw onboard --help` output lists installed runtime names inline, and
 
 <AgentOnly variant="openclaw">
 
-Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest.
-Managed-image onboarding applies the manifest through the startup profile, while a local Dockerfile path applies it during that build.
+Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw bakes into the sandbox image at build time.
 Refer to [Declarative Multi-Agent Manifest](../configure-agents/declarative-agents-manifest) for the schema and OpenClaw-native sub-agent field semantics.
 
 </AgentOnly>
@@ -624,10 +606,10 @@ For Hermes sandboxes, do not use port `8642`; NemoClaw reserves it for the Herme
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
 The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
-The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before NemoClaw prepares the sandbox configuration.
+The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before the sandbox image is built.
 
 If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
-NemoClaw includes those values in the Discord guild workspace configuration applied at sandbox startup so the bot can respond in the selected server, not just in DMs.
+NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
 If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
 Guild responses remain mention-gated by default unless you opt into all-message replies.
 If `DISCORD_SERVER_ID` is set and `DISCORD_REQUIRE_MENTION` is unset, NemoClaw records the existing mention-only default (`DISCORD_REQUIRE_MENTION=1`).
@@ -670,9 +652,7 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
-Native Podman remains unsupported in this release; the native-runtime follow-up in issue #7744 owns that enablement.
-Use Docker Engine, Docker Desktop, or Colima.
+It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -1135,7 +1115,7 @@ The command refuses to write `gateway` or any dotpath under `gateway.`, which ho
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, `config set` is unavailable because onboarding materializes the `dcode` configuration when the sandbox starts.
+For Deep Agents sandboxes, `config set` is unavailable because the `dcode` configuration is baked into the sandbox image at build time.
 Run `$$nemoclaw onboard --agent dcode --name <sandbox-name> --fresh` when you need to change it.
 Use `$$nemoclaw <name> config get` to read the current values.
 
@@ -1738,8 +1718,7 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 
 ### `$$nemoclaw <name> destroy`
 
-Stop the NIM container, remove any sandbox-owned local Dockerfile image, and delete the sandbox.
-Shared immutable managed images remain in Docker's cache for other sandboxes.
+Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
@@ -2050,7 +2029,7 @@ $$nemoclaw my-assistant channels list
 
 ### `$$nemoclaw <name> channels add <channel>`
 
-Register a messaging channel with the sandbox and rebuild so the replacement startup configuration includes the new channel.
+Register a messaging channel with the sandbox and rebuild so the image picks up the new channel.
 Channels fall into three login modes:
 
 - **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
@@ -2097,7 +2076,7 @@ If you omit the required `<channel>` argument, the CLI prints the `channels add 
 
 ### `$$nemoclaw <name> channels remove <channel>`
 
-Clear the stored credentials for a messaging channel and rebuild the sandbox so its startup configuration drops the channel.
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
 When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
 If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, `wechat`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
@@ -2121,8 +2100,7 @@ $$nemoclaw my-assistant channels remove telegram
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `$$nemoclaw <name> rebuild`.
 If you omit the required `<channel>` argument, the CLI prints the `channels remove <channel>` usage with the supported channel list.
 
-Host-side removal is the supported path because NemoClaw materializes agent channel config when the sandbox starts (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes).
-Agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
+Host-side removal is the supported path because agent channel config is baked into the container image at build time (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
 
 ### `$$nemoclaw <name> channels stop <channel>`
 
@@ -2362,7 +2340,9 @@ $$nemoclaw my-assistant mcp remove github [--force]
 ### `$$nemoclaw <name> skill install <path>`
 
 Deploy a skill directory to a running sandbox.
-The command validates the `SKILL.md` frontmatter (a `name` field is required), uploads all non-dot files preserving subdirectory structure, and performs agent-specific post-install steps.
+The command validates the `SKILL.md` frontmatter, which requires a `name` field.
+It uploads selected non-dot regular files while preserving their subdirectory structure.
+It then performs agent-specific post-install steps.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2378,6 +2358,7 @@ To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-san
 For OpenClaw, the command uploads the skill to the OpenClaw state directory and mirrors it into `$HOME/.openclaw/skills/<name>` when the agent home directory differs from the state directory.
 That mirror makes skills listed by `openclaw skills list` available at session startup.
 If mirror creation fails, NemoClaw prints a warning so you can reinstall or inspect the home directory permissions.
+OpenClaw caches skill content per session, so the command also refreshes the OpenClaw session index after every install and update to avoid stale `SKILL.md` data.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2388,8 +2369,20 @@ Hermes plugins are different from NemoClaw skills.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents, the command uploads skills under `/sandbox/.deepagents/skills/<name>` and mirrors agent-facing skills under `/sandbox/.deepagents/agent/skills/<name>` when the manifest requires that view.
-The managed `dcode` launchers discover those skills on the next session without accepting executable hook configuration.
+For Deep Agents, the command installs a fresh skill directly into `/sandbox/.deepagents/agent/skills/<name>`, the directory Deep Agents Code loads at session start.
+Before upload, NemoClaw copies each selected regular file into a private host snapshot and rejects a path that changes identity during the copy.
+It creates the archive from that snapshot and records each path, normalized mode, and SHA-256 digest.
+It rejects symlinks and special files.
+Inside the sandbox, it stages the archive and verifies that its paths, normalized modes, and SHA-256 digests match the host snapshot.
+It then moves the staged directory into place only if the destination is still absent.
+Deep Agents Code and its built-in skill creator also write to this directory.
+The command therefore refuses any name whose file, directory, or symlink already exists.
+Updates are not automatic.
+Use `$$nemoclaw <name> connect` to inspect the existing directory.
+Update it manually only after confirming ownership.
+The legacy `/sandbox/.deepagents/skills/<name>` path is not written or treated as ownership proof.
+The managed `dcode` launchers discover newly installed skills on the next session without accepting executable hook configuration.
+Installation does not enable project hooks or unmanaged MCP files.
 
 </AgentOnly>
 
@@ -2398,18 +2391,20 @@ If you pass a plugin-shaped directory to `skill install`, the CLI prints a plugi
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output.
 Files with unsafe path characters are rejected to prevent shell injection.
+Symlinks and other non-regular paths are rejected rather than followed or copied.
 
-If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
-For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
+For OpenClaw and Hermes, an existing sandbox skill is updated in place and chat history is preserved.
+Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content.
+Follow the agent-specific activation guidance above after installation.
 
 ### `$$nemoclaw <name> skill remove <skill>`
 
-Remove an installed skill from a running sandbox by skill name.
-The command validates the skill name, removes the sandbox upload directory, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
+Remove an installed skill from a running sandbox by skill name when the selected agent supports automatic removal.
+The command validates the skill name before it applies the agent-specific removal behavior below.
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw, the command also removes the OpenClaw home-directory mirror when present.
+For OpenClaw, the command also removes the OpenClaw home-directory mirror when present and refreshes the OpenClaw session index.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2419,8 +2414,10 @@ Run `$$nemoclaw <name> gateway restart` if prompted so the removal takes effect.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents, the command removes the uploaded skill from the managed `/sandbox/.deepagents` skill paths and refreshes the session index for future `dcode` sessions.
-It does not enable project hooks or unmanaged MCP files.
+For Deep Agents, automatic removal is refused before any sandbox files change.
+The active `/sandbox/.deepagents/agent/skills/<name>` directory is shared with agent-authored content, so its presence alone cannot prove NemoClaw owns it.
+Use `$$nemoclaw <name> connect` to inspect the existing directory.
+Remove it manually only after confirming ownership.
 
 </AgentOnly>
 
@@ -2470,8 +2467,7 @@ $$nemoclaw my-assistant agents delete work --force --json
 
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../configure-agents/declarative-agents-manifest).
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
-Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped.
-Rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to apply those fields through the replacement sandbox's startup configuration.
+Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
 When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally.
 `--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
 
@@ -2718,9 +2714,7 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 ### `$$nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
-The command backs up workspace state, destroys the old sandbox, recreates it through `onboard --resume`, and restores workspace state into the new sandbox.
-Managed rebuilds resolve the current CLI release to an exact image digest and a fresh startup profile.
-Explicit custom Dockerfile rebuilds retain their local-build behavior.
+The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
@@ -2832,9 +2826,10 @@ When the command is running from a source checkout, it reports that state and do
 
 ### `$$nemoclaw upgrade-sandboxes`
 
-Rebuild managed sandboxes whose agent version or recorded NemoClaw image fingerprint differs from the running CLI.
-For a selected stale sandbox, rebuild resolves the current complete managed-image cohort and pins the replacement agent image to an exact digest before deleting the existing sandbox.
-Sandboxes whose agent version and fingerprint match are left alone.
+Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
+NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
+Sandboxes that match the current digest are left alone.
+NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
 A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
 When the target version is older than the recorded one (for example after reinstalling with an older `NEMOCLAW_INSTALL_TAG`), the stale listing marks the change with a `(downgrade)` suffix instead of framing it as a routine upgrade.
 Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
@@ -2852,8 +2847,7 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 | `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade.
-Managed-image rebuild requires the current complete release cohort and an exact replacement digest.
-If catalog or registry resolution is unavailable, rebuild stops before deleting the existing sandbox; it does not fall back to a Dockerfile or an unpinned managed `:latest` image.
+If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
 During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup.
 That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry.
 The legacy confirmation never overrides recorded custom-image evidence.
@@ -2929,15 +2923,7 @@ The selector accepts any of:
 
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
 When `dst` does not exist, it is auto-created by reusing the source sandbox's container image.
-When the source passes the clone validations below, no re-onboarding is required.
-For a managed release-image source, NemoClaw validates the durable workload receipt and retains the exact source image digest.
-It reconciles the source's current route and configuration before it creates a destination-specific secret-free startup profile and workload receipt.
-Export the credential variables for every enabled messaging or web-search provider before you clone.
-If the source receipt records an authenticated proxy, export the matching proxy environment variables again.
-For a managed Hermes source with enabled Nous tool gateways, NemoClaw acquires a fresh destination OAuth credential during an interactive clone.
-For a non-interactive clone, export `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN` with the destination refresh credential before running restore.
-The destination receives its own OpenShell provider and in-memory host-broker binding; the source credential and broker identity remain active.
-NemoClaw completes these validations before it deletes an existing `--force` destination.
+No re-onboarding is needed.
 A cross-sandbox restore refuses to clone a source or replace an existing destination whose baseline exclusion transaction needs repair, before it creates or deletes anything.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
@@ -3367,8 +3353,7 @@ $$nemoclaw credentials reset nvidia-prod
 ### `$$nemoclaw gc`
 
 Remove orphaned sandbox Docker images from the host.
-Explicit custom Dockerfile creation can build sandbox-owned images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository.
-Shared immutable managed release images are not sandbox-owned orphan candidates.
+Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository.
 The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
 This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
@@ -3687,7 +3672,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
-| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the original onboarding value. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the image's original value. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 
@@ -3743,12 +3728,10 @@ Export the credential before running `$$nemoclaw onboard` for that profile.
 
 #### Extra OpenClaw agents
 
-Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to add them to `agents.list[]`.
-Managed-image onboarding carries the validated values in the startup profile, while a local Dockerfile path carries them through that build.
+Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to bake them into `agents.list[]` at image build time.
 Each entry must declare `id` and `tools`; `workspace`, `agentDir`, `subagents`, `description`, and `model` are optional.
 The generator always writes the canonical `main` entry first with `default: true`, so secondary agents cannot displace the primary agent.
-Malformed JSON or invalid entries fail with a structured error.
-For managed images, the trusted startup config generator refuses to start the agent with invalid configuration; an explicit custom Dockerfile runs the same generator during its local build.
+Malformed JSON or invalid entries fail the image build with a structured error.
 
 Field rules:
 
@@ -3758,8 +3741,8 @@ Field rules:
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
 - `model`, when set, must be a `"provider/model"` string whose provider portion matches the primary onboard provider.
 - `default: true` is rejected because the primary agent is the only default.
-- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails configuration application (no implicit credential or env pass-through).
-- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails configuration application.
+- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
+- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
 
 OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object.
 The value must be an integer between `1` and `5` (OpenClaw's accepted range); to set it, use the object payload shape and pass it under `defaults`:
@@ -3825,8 +3808,8 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark, DGX Station, and Windows WSL express install prompt and continues with the normal interactive onboarding flow. |
 | `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
 | `NEMOCLAW_IGNORE_RUNTIME_RESOURCES` | `1` to enable | Suppresses the under-provisioned runtime warning during preflight. Use only when you know the sandbox host meets the minimums. |
-| `NEMOCLAW_DISABLE_OVERLAY_FIX` | `1` to enable | Skips the Docker overlay-fix step during a local Dockerfile sandbox build. For environments where the fix is incompatible. |
-| `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for local Dockerfile sandbox builds. Empty (default) preserves containerd's choice. |
+| `NEMOCLAW_DISABLE_OVERLAY_FIX` | `1` to enable | Skips the Docker overlay-fix step during sandbox build. For environments where the fix is incompatible. |
+| `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
 | `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION` | `1`, `true`, `yes`, or `on` to enable | Skips the live Slack `auth.test` and `apps.connections.open` credential probes during onboard and `channels add slack`. Use only in restricted networks or hermetic test environments; Slack token format checks still apply. |
@@ -3836,8 +3819,8 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
-| `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded base-image resolution metadata for an explicit custom Dockerfile during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible base from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state and does not override managed complete-image selection. |
-| `NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to enable; `0`, `false`, `no`, or `off` to disable | Controls whether Dockerfile base-image resolution may build a compatible base locally. The default allows builds during normal CLI runs and disables them when `NODE_ENV=test` or `VITEST=true`. When source inputs or a missing or incompatible release-version base require a fresh build, disabling local builds makes Dockerfile resolution fail instead of using an unproven image. This setting does not override managed complete-image selection. |
+| `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded sandbox base-image resolution metadata during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible image from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state. |
+| `NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to enable; `0`, `false`, `no`, or `off` to disable | Controls whether base-image resolution may build a compatible image locally. The default allows builds during normal CLI runs and disables them when `NODE_ENV=test` or `VITEST=true`. When source inputs or a missing/incompatible release-version base require a fresh build, disabling local builds makes resolution fail instead of using an unproven image. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary native Linux. `fallback` explicitly opts into one native attempt followed by one bounded compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts `0` only as a troubleshooting override that bypasses device-group propagation. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.85's directly supported glibc 2.28+ path; see the [OpenShell gateway compatibility review](/user-guide/openclaw/security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the unchanged container boundary. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
@@ -3850,7 +3833,7 @@ Set them before running `$$nemoclaw onboard`.
 
 <AgentOnly variant="openclaw">
 
-Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REF` to an OpenClaw sandbox-base tag or digest to override base-image resolution for a local Dockerfile workflow.
+Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REF` to an OpenClaw sandbox-base tag or digest to override base-image resolution during onboarding.
 Remote overrides must use the official NVIDIA sandbox-base repository and resolve to an immutable repository digest.
 Local bases are accepted only when NemoClaw builds and pins them during the current operation; a local image reference supplied through this environment variable is rejected because it has no trusted build capability.
 
@@ -3858,7 +3841,7 @@ Local bases are accepted only when NemoClaw builds and pins them during the curr
 
 <AgentOnly variant="deepagents">
 
-Set `NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF` to a LangChain Deep Agents Code sandbox-base tag or digest to override base-image resolution for a local Dockerfile workflow.
+Set `NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF` to a LangChain Deep Agents Code sandbox-base tag or digest to override base-image resolution during onboarding.
 NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, then validates the requested image against the manifest-required `deepagents-code` package version before using it.
 Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
@@ -3866,7 +3849,7 @@ Local bases are accepted only when NemoClaw builds and pins them during the curr
 
 <AgentOnly variant="hermes">
 
-Set `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` to a Hermes sandbox-base tag or digest to override base-image resolution for a local Dockerfile workflow.
+Set `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` to a Hermes sandbox-base tag or digest to override base-image resolution during onboarding.
 NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, validates the requested image for the required MCP runtime, and keeps the final image bound to that trusted base.
 Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
@@ -3884,7 +3867,7 @@ NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces $$nemoclaw onboard
 NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json $$nemoclaw onboard
 ```
 
-Trace artifacts include onboard phase timing, managed image resolution or local Dockerfile build progress, sandbox and service readiness waits, policy application, inference validation probes, and curl probe results.
+Trace artifacts include onboard phase timing, sandbox and service readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
 Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
 
 <AgentOnly variant="deepagents">
@@ -3928,7 +3911,7 @@ NEMOCLAW_OPENCLAW_OTEL=1 $$nemoclaw onboard
 ```
 
 Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush.
-If you enabled OTEL after an existing sandbox was created, run `$$nemoclaw <sandbox-name> policy add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled in its startup configuration.
+If you enabled OTEL after an existing sandbox was created, run `$$nemoclaw <sandbox-name> policy add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
 
 Then open `http://localhost:16686` and select the `openclaw-gateway` service.
 The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.
@@ -3961,7 +3944,7 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when managed image pull and startup, a local Dockerfile build and gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default. When the post-create deadline expires, onboarding attempts exact-owner cleanup and prints the retry or retained-owner guidance. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when the sandbox image build, gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 
 <AgentOnly variant="openclaw,hermes">
@@ -3979,8 +3962,7 @@ $$nemoclaw onboard
 
 If the Ollama pull or post-create readiness timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
-The post-create readiness wait removes the orphaned sandbox when exact-owner cleanup is safe so the next `$$nemoclaw onboard` starts clean.
-If OpenShell can delete only by mutable name and NemoClaw cannot prove that name still identifies the exact managed bootstrap owner, it leaves the exact Docker runtime quiesced and prints retained-owner recovery guidance instead.
+The post-create readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
 A post-policy re-registration failure leaves the sandbox in place and reports that OpenShell did not re-register it.
 
 ### Lifecycle Behavior Flags

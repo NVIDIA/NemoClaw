@@ -3,17 +3,38 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dockerCapture } from "../../adapters/docker";
+import {
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
+  HERMES_DASHBOARD_ENABLE_ENV,
+  HERMES_DASHBOARD_INTERNAL_PORT_ENV,
+  HERMES_DASHBOARD_PORT_ENV,
+  HERMES_DASHBOARD_TUI_ENV,
+} from "../../hermes-dashboard";
+import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
+import { listMessagingProviderSuffixes } from "../../messaging/channels";
+import {
+  findAvailableDashboardPort,
+  getRegistryOccupiedDashboardPorts,
+  withDashboardPortReservationLock,
+} from "../../onboard/dashboard-port";
+import { isValidForwardPort } from "../../onboard/dashboard-runtime";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -23,6 +44,7 @@ import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
 import { ROOT, run, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
@@ -50,46 +72,8 @@ import {
   selectSandboxGatewayIfRegistered,
   usesGatewayMetadataProbe,
 } from "./sandbox-gateway-routing";
-import {
-  assertSandboxCreateArgvWithinTransportLimit,
-  captureOpenshell,
-  cleanupHermesSandboxProviders,
-  createManagedBootstrapIdentity,
-  createManagedStartupRootApplyRequest,
-  dockerCapture,
-  findAvailableDashboardPort,
-  formatSnapshotBaselineExclusionSummary,
-  getHermesToolGatewayCloneBroker,
-  getOpenshellBinary,
-  getRegistryOccupiedDashboardPorts,
-  HERMES_DASHBOARD_ENABLE_ENV,
-  HERMES_DASHBOARD_INTERNAL_PORT_ENV,
-  HERMES_DASHBOARD_PORT_ENV,
-  HERMES_DASHBOARD_TUI_ENV,
-  HERMES_SANDBOX_PROVIDER_SUFFIXES,
-  type HermesToolGatewayCloneBroker,
-  isValidForwardPort,
-  MANAGED_STARTUP_CA_ENV,
-  MANAGED_STARTUP_PROFILE_ENV,
-  type ManagedBootstrapRuntimeCreateLifecycle,
-  type ManagedBootstrapRuntimePatch,
-  type ManagedBootstrapRuntimeProvider,
-  type ManagedStartupAgent,
-  type ManagedStartupProfile,
-  type ManagedStartupRootApplyRequest,
-  type PreparedManagedCloneProvider,
-  printHermesGatewayRestoreHint,
-  renderManagedBootstrapHeldCommand,
-  resolveHermesDashboardOnboardState,
-  resolveOpenShellSandboxId,
-  resolvePersistedManagedBootstrapRuntimeProvider,
-  resolveSandboxGatewayName,
-  runOpenshell,
-  runSandboxProviderPreDeleteCleanup,
-  SANDBOX_PROVIDER_SUFFIXES,
-  streamSandboxCreate,
-  withDashboardPortReservationLock,
-} from "./snapshot/dependencies";
+import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
+import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -177,19 +161,6 @@ function resolveSrcPodImage(
   srcEntry?: SandboxEntry | { name: string },
 ): string | null {
   const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
-  const registeredWorkload = (
-    srcEntry as
-      | {
-          workload?: { kind?: string; reference?: string } | null;
-        }
-      | undefined
-  )?.workload;
-  if (
-    registeredWorkload?.kind === "managed-image" &&
-    registeredWorkload.reference === registeredImage
-  ) {
-    return registeredImage ?? null;
-  }
   const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
     ?.openshellDriver;
   if (usesGatewayMetadataProbe(registeredDriver)) {
@@ -304,190 +275,6 @@ function resolveCloneDashboardEnvArgs(
   return envArgs;
 }
 
-interface PreparedManagedSnapshotClone {
-  readonly envArgs: readonly string[];
-  readonly runtimeProvider: ManagedBootstrapRuntimeProvider;
-  readonly rootApplyRequest: ManagedStartupRootApplyRequest;
-  readonly workload: Extract<NonNullable<SandboxEntry["workload"]>, { kind: "managed-image" }>;
-  readonly messaging: SandboxEntry["messaging"];
-  readonly registryFields: Partial<SandboxEntry>;
-  readonly credentialProviders: readonly PreparedManagedCloneProvider[];
-  /** Ephemeral destination-only credentials; never forwarded to sandbox create. */
-  readonly credentialEnvironment: NodeJS.ProcessEnv;
-}
-
-type SnapshotMessagingPlan = NonNullable<SandboxEntry["messaging"]>["plan"];
-
-function managedCloneRegistryFields(
-  profile: ManagedStartupProfile,
-  source: SandboxEntry,
-): Partial<SandboxEntry> {
-  const webSearch =
-    profile.agentConfig.agent === "langchain-deepagents-code"
-      ? null
-      : profile.agentConfig.webSearch;
-  const hermesDashboard = profile.dashboard.agent === "hermes" ? profile.dashboard : null;
-  const dcodeConfig =
-    profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;
-  const hermesInferenceProvider =
-    profile.agent === "hermes" && profile.tools.enabledGateways.length > 0
-      ? profile.inference.upstreamProvider
-      : undefined;
-  return {
-    // Snapshot peers stay on the source gateway's configured route. The
-    // destination-scoped provider below owns only that sandbox's rotating key.
-    provider:
-      hermesInferenceProvider === undefined ? profile.inference.upstreamProvider : source.provider,
-    model: profile.inference.model,
-    endpointUrl: source.endpointUrl ?? null,
-    endpointSource: source.endpointSource ?? null,
-    credentialEnv: source.credentialEnv ?? null,
-    preferredInferenceApi: profile.inference.api,
-    compatibleEndpointReasoning:
-      profile.agent === "openclaw" && profile.inference.upstreamProvider === "compatible-endpoint"
-        ? profile.tuning.reasoning === true
-          ? "true"
-          : "false"
-        : null,
-    compatibleEndpointReasoningEffort:
-      profile.agent === "openclaw" &&
-      profile.inference.upstreamProvider === "compatible-endpoint" &&
-      profile.inference.api === "openai-completions" &&
-      profile.tuning.reasoningEffort !== "default"
-        ? profile.tuning.reasoningEffort
-        : null,
-    toolDisclosure: profile.tools.disclosure,
-    webSearchEnabled: webSearch?.enabled === true,
-    webSearchProvider: webSearch?.enabled === true ? webSearch.provider : null,
-    observabilityEnabled: dcodeConfig?.observabilityEnabled === true,
-    ...(dcodeConfig ? { dcodeAutoApprovalMode: dcodeConfig.autoApprovalMode } : {}),
-    hermesToolGateways:
-      profile.agent === "hermes" && profile.tools.enabledGateways.length > 0
-        ? [...profile.tools.enabledGateways]
-        : undefined,
-    hermesInferenceProvider,
-    hermesDashboardEnabled: hermesDashboard?.mode === "loopback-forwarded" ? true : undefined,
-    hermesDashboardPort:
-      hermesDashboard?.mode === "loopback-forwarded" ? hermesDashboard.publicPort : undefined,
-    hermesDashboardInternalPort:
-      hermesDashboard?.mode === "loopback-forwarded" ? hermesDashboard.internalPort : undefined,
-    hermesDashboardTui:
-      hermesDashboard?.mode === "loopback-forwarded" && hermesDashboard.tuiEnabled
-        ? true
-        : undefined,
-    dashboardRemoteBindPrepared:
-      profile.dashboard.agent === "openclaw" && profile.dashboard.bindAddress === "0.0.0.0",
-  };
-}
-
-async function prepareManagedSnapshotClone(
-  sourceSandboxName: string,
-  destinationSandboxName: string,
-  source: SandboxEntry,
-  fromImage: string,
-  destinationDashboardPort: number | null,
-  destinationWillBeReplaced: boolean,
-): Promise<PreparedManagedSnapshotClone | null> {
-  const workload = source.workload;
-  if (workload?.kind !== "managed-image") return null;
-  const runtimeProvider = resolvePersistedManagedBootstrapRuntimeProvider(source.openshellDriver);
-  if (workload.reference !== fromImage || source.imageTag !== workload.reference) {
-    throw new Error("managed workload receipt does not match the source sandbox image reference");
-  }
-  const { MANAGED_STARTUP_AGENTS, MANAGED_STARTUP_PROFILE_SCHEMA_VERSION } = await import(
-    "../../onboard/managed-startup/profile"
-  );
-  if (
-    typeof source.agent !== "string" ||
-    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(source.agent)
-  ) {
-    throw new Error("managed workload receipt has no exact shipped-agent identity");
-  }
-  if (workload.startupProfileContractVersion !== MANAGED_STARTUP_PROFILE_SCHEMA_VERSION) {
-    throw new Error(
-      `managed workload receipt uses unsupported startup profile contract ${String(
-        workload.startupProfileContractVersion,
-      )}`,
-    );
-  }
-  const { rebindManagedStartupProfileForClone } = await import(
-    "../../onboard/managed-startup/clone-rebinder"
-  );
-  const hermesToolGatewayBroker = getHermesToolGatewayCloneBroker();
-  const destinationHermesInferenceProvider =
-    source.agent === "hermes" &&
-    Array.isArray(source.hermesToolGateways) &&
-    source.hermesToolGateways.length > 0
-      ? hermesToolGatewayBroker.getHermesInferenceProviderName(destinationSandboxName)
-      : undefined;
-  const rebound = rebindManagedStartupProfileForClone({
-    sourceSandboxName,
-    destinationSandboxName,
-    expectedAgent: source.agent as ManagedStartupAgent,
-    destinationDashboardPort,
-    ...(destinationHermesInferenceProvider === undefined
-      ? {}
-      : { destinationHermesInferenceProvider }),
-    encodedProfile: workload.encodedProfile,
-    startupProfileSha256: workload.startupProfileSha256,
-    ...(workload.corporateCaB64 === undefined ? {} : { corporateCaB64: workload.corporateCaB64 }),
-    currentSource: source,
-  });
-  const targetWorkload = {
-    ...workload,
-    encodedProfile: rebound.encodedProfile,
-    startupProfileSha256: rebound.startupProfileSha256,
-    ...(rebound.corporateCaB64 === undefined ? {} : { corporateCaB64: rebound.corporateCaB64 }),
-  } as const;
-  const credentialProxyEnvArgs = workload.credentialProxyReplayRequired
-    ? (await import("../../onboard/host-proxy-env")).credentialHostProxyReplayEnvArgs(process.env)
-    : [];
-  const messaging =
-    rebound.profile.messaging.plan === null
-      ? undefined
-      : {
-          schemaVersion: 1 as const,
-          plan: rebound.profile.messaging.plan as unknown as NonNullable<
-            SandboxEntry["messaging"]
-          >["plan"],
-        };
-  const { prepareManagedCloneProviders, resolveManagedCloneCredentialEnvironment } = await import(
-    "./snapshot/managed-clone-providers"
-  );
-  if (rebound.profile.agent === "hermes" && rebound.profile.tools.enabledGateways.length > 0) {
-    // This read-only compatibility/health proof must precede both interactive
-    // OAuth and the force-restore destination deletion boundary.
-    hermesToolGatewayBroker.preflightHermesToolGatewayCloneBinding(destinationSandboxName);
-  }
-  const credentialEnvironment = await resolveManagedCloneCredentialEnvironment({
-    profile: rebound.profile,
-  });
-  const providerEnvironment = { ...process.env, ...credentialEnvironment };
-  return {
-    envArgs: credentialProxyEnvArgs,
-    runtimeProvider,
-    rootApplyRequest: createManagedStartupRootApplyRequest({
-      agent: rebound.profile.agent,
-      encodedProfile: rebound.encodedProfile,
-      ...(rebound.corporateCaB64 === undefined ? {} : { corporateCaB64: rebound.corporateCaB64 }),
-    }),
-    workload: targetWorkload,
-    registryFields: managedCloneRegistryFields(rebound.profile, source),
-    messaging,
-    credentialEnvironment,
-    credentialProviders: prepareManagedCloneProviders({
-      profile: rebound.profile,
-      messagingPlan: (messaging?.plan ?? null) as SnapshotMessagingPlan | null,
-      destinationSandboxName,
-      destinationWillBeReplaced,
-      environment: providerEnvironment,
-      root: ROOT,
-      runOpenshell,
-      hermesToolGatewayBroker,
-    }),
-  };
-}
-
 async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
   policyPath: string;
   cleanup?: () => boolean;
@@ -520,56 +307,26 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
 // Returns true on success; on failure, logs and throws SnapshotCommandError.
-interface PreparedSnapshotCloneLaunch {
-  readonly command: string;
-  readonly commandArgs: readonly string[];
-  readonly createEnv: NodeJS.ProcessEnv;
-  readonly sourceEntry: SandboxEntry | { name: string };
-  readonly sourceObservabilityEnabled: boolean;
-  readonly managedClone: PreparedManagedSnapshotClone | null;
-  readonly destinationDashboardPort: number | null;
-  readonly startupCommand: readonly string[];
-  readonly intendedStartupCommand: readonly string[];
-  readonly managedBootstrapIdentity: string | null;
-  readonly managedBootstrapRuntimeProvider: ManagedBootstrapRuntimeProvider | null;
-}
-
-function prepareSnapshotCloneLaunch(
+async function autoCreateSandboxFromSource(
+  srcName: string,
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
   fromImage: string,
   createPolicyPath: string,
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
-  managedClone: PreparedManagedSnapshotClone | null,
-): PreparedSnapshotCloneLaunch {
+): Promise<void> {
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
-  const intendedStartupCommand = [
+  const startupCommand = [
     "env",
-    ...(managedClone
-      ? managedClone.envArgs
-      : [`NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`, ...dashboardEnvArgs]),
+    `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
+    ...dashboardEnvArgs,
     "nemoclaw-start",
   ];
-  const managedBootstrapIdentity = managedClone ? createManagedBootstrapIdentity() : null;
-  const managedBootstrapRuntimeProvider = managedClone?.runtimeProvider ?? null;
-  const startupCommand =
-    managedClone && managedBootstrapIdentity
-      ? renderManagedBootstrapHeldCommand(
-          managedClone.rootApplyRequest,
-          managedBootstrapIdentity,
-          intendedStartupCommand,
-        )
-      : intendedStartupCommand;
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
-  delete createEnv[MANAGED_STARTUP_PROFILE_ENV];
-  delete createEnv[MANAGED_STARTUP_CA_ENV];
-  for (const provider of managedClone?.credentialProviders ?? []) {
-    delete createEnv[provider.providerEnvKey];
-  }
 
   const command = openshellBin;
   const commandArgs = [
@@ -582,202 +339,45 @@ function prepareSnapshotCloneLaunch(
     "--policy",
     createPolicyPath,
     "--auto-providers",
-    ...(managedClone
-      ? managedClone.credentialProviders.flatMap((provider) => [
-          "--provider",
-          provider.providerName,
-        ])
-      : []),
     "--",
     ...startupCommand,
   ];
-  assertSandboxCreateArgvWithinTransportLimit([command, ...commandArgs]);
-  return {
-    command,
-    commandArgs,
-    createEnv,
-    sourceEntry: srcEntry,
-    sourceObservabilityEnabled,
-    managedClone,
-    destinationDashboardPort: dstDashboardPort,
-    startupCommand,
-    intendedStartupCommand,
-    managedBootstrapIdentity,
-    managedBootstrapRuntimeProvider,
-  };
-}
 
-function createManagedSnapshotLifecycle(
-  dstName: string,
-  fromImage: string,
-  launch: PreparedSnapshotCloneLaunch,
-): ManagedBootstrapRuntimeCreateLifecycle | null {
-  const managedClone = launch.managedClone;
-  if (!managedClone) return null;
-  const runtimeProvider = launch.managedBootstrapRuntimeProvider;
-  const bootstrapIdentity = launch.managedBootstrapIdentity;
-  if (!runtimeProvider || !bootstrapIdentity) {
-    throw new Error("managed snapshot clone has no runtime provider");
-  }
-  const separator = fromImage.lastIndexOf("@");
-  const repository = separator > 0 ? fromImage.slice(0, separator) : "";
-  const manifestDigest = separator > 0 ? fromImage.slice(separator + 1) : "";
-  if (!repository || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)) {
-    throw new Error("managed snapshot clone image is not one immutable digest reference");
-  }
-  const captureText = (args: string[], options?: Record<string, unknown>) =>
-    captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
-  return runtimeProvider.createCreateLifecycle({
-    bootstrapIdentity,
-    request: managedClone.rootApplyRequest,
-    image: {
-      repository,
-      manifestDigest: manifestDigest as `sha256:${string}`,
-    },
-    agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-    intendedWorkloadArgv: launch.intendedStartupCommand,
-    expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
-    launchArgv: [launch.command, ...launch.commandArgs],
-    heldWorkloadArgv: launch.startupCommand,
-    route: "native",
-    persistStartupCommand: true,
-    sandboxName: dstName,
-    sandboxGpuConfig: {
-      mode: "0",
-      hostGpuDetected: false,
-      hostGpuPlatform: null,
-      sandboxGpuEnabled: false,
-      sandboxGpuDevice: null,
-      errors: [],
-    },
-    requiredLimits: [],
-    timeoutSecs: Math.ceil(OPENSHELL_PROBE_TIMEOUT_MS / 1000),
-    onPatchFailure: (error) => {
-      throw error instanceof Error ? error : new Error(String(error));
-    },
-    network: {
-      inferenceProvider: "",
-      dockerDriverGateway: false,
-      gatewayPort: 0,
-    },
-    dependencies: {
-      runOpenshell,
-      runCaptureOpenshell: captureText,
+  console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
+
+  const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
+    // Use a pre-built image, so skip build+push and jump to pod creation.
+    initialPhase: "create",
+    // Wait until the sandbox actually reaches Ready state, not just appears in the list.
+    readyCheck: () => {
+      const list = captureOpenshell(["sandbox", "list"], {
+        ignoreError: true,
+      });
+      if (list.status !== 0) return false;
+      return isSandboxReady(list.output || "", dstName);
     },
   });
-}
-
-async function autoCreateSandboxFromSource(
-  srcName: string,
-  dstName: string,
-  fromImage: string,
-  launch: PreparedSnapshotCloneLaunch,
-): Promise<void> {
-  const {
-    command,
-    commandArgs,
-    createEnv,
-    sourceEntry,
-    sourceObservabilityEnabled,
-    managedClone,
-    destinationDashboardPort,
-  } = launch;
-  const managedLifecycle = createManagedSnapshotLifecycle(dstName, fromImage, launch);
-  const managedStartupPatch: ManagedBootstrapRuntimePatch | null = managedLifecycle?.patch ?? null;
-  console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
-  const streamCloneCreate = () => {
-    const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? [
-      command,
-      ...commandArgs,
-    ];
-    if (!createExecutable) {
-      throw new Error("managed snapshot clone create executable is missing");
-    }
-    return streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
-      // Use a pre-built image, so skip build+push and jump to pod creation.
-      initialPhase: "create",
-      // Wait until the sandbox actually reaches Ready state, not just appears in the list.
-      readyCheck: () => {
-        const list = captureOpenshell(["sandbox", "list"], {
-          ignoreError: true,
-        });
-        if (list.status !== 0) return false;
-        return isSandboxReady(list.output || "", dstName);
-      },
-    });
-  };
-  await managedLifecycle?.prepareNetwork();
-  let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
-  if (managedClone && managedLifecycle && launch.managedBootstrapIdentity) {
-    const runtimeDriverId = launch.managedBootstrapRuntimeProvider?.driverId;
-    if (!runtimeDriverId) throw new Error("managed snapshot clone has no runtime provider");
-    const captureText = (args: string[], options?: Record<string, unknown>) =>
-      captureOpenshell(args, options as { ignoreError?: boolean }).output ?? "";
-    createResult = await managedLifecycle.runCreate(
-      async ({ heldWorkloadArgv, bootstrapIdentity }) => {
-        if (
-          bootstrapIdentity !== launch.managedBootstrapIdentity ||
-          heldWorkloadArgv.length !== launch.startupCommand.length ||
-          heldWorkloadArgv.some((value, index) => value !== launch.startupCommand[index])
-        ) {
-          throw new Error("managed snapshot clone hold identity changed before create");
-        }
-        const streamed = await streamCloneCreate();
-        if (streamed.status !== 0 && !streamed.forcedReady) {
-          const tail = (streamed.output || "").slice(-600);
-          throw new SnapshotCommandError(
-            [
-              `Failed to create sandbox '${dstName}' (exit ${streamed.status}).`,
-              ...(tail ? [tail] : []),
-            ],
-            1,
-          );
-        }
-        const list = captureText(["sandbox", "list"], { ignoreError: true });
-        if (!isSandboxReady(list, dstName)) {
-          throw new Error("managed snapshot clone did not reach authoritative Ready");
-        }
-        return {
-          value: streamed,
-          receipt: {
-            sandbox: {
-              sandboxName: dstName,
-              sandboxId: resolveOpenShellSandboxId(dstName, captureText),
-              driverId: runtimeDriverId,
-            },
-            ready: true,
-            readyAt: new Date().toISOString(),
-          },
-        };
-      },
-    );
-  } else {
-    createResult = await streamCloneCreate();
-  }
-  await managedStartupPatch?.exitOnPatchError();
 
   if (createResult.status !== 0 && !createResult.forcedReady) {
-    await managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
     snapshotExit(1);
   }
+
   // Double-check Ready after stream exit.
   const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
-    await managedStartupPatch?.rollbackManagedStartupAfterCreateFailure();
     console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
     snapshotExit(1);
   }
-  await managedStartupPatch?.commitAfterReady();
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
-  const srcDriver = (sourceEntry as { openshellDriver?: string | null }).openshellDriver;
+  const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
   if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
     const srcGatewayName = resolveSandboxGatewayName(
-      sourceEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+      srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
     );
     run(["bash", dnsScript, srcGatewayName, dstName], { ignoreError: true });
   }
@@ -786,14 +386,11 @@ async function autoCreateSandboxFromSource(
   // Policies are cleared here — the caller replays them from the snapshot
   // manifest after the restore succeeds and writes them back into this entry.
   registry.registerSandbox({
-    ...sourceEntry,
-    ...(managedClone ? managedClone.registryFields : {}),
+    ...srcEntry,
     name: dstName,
     createdAt: new Date().toISOString(),
     policies: [],
     observabilityEnabled: sourceObservabilityEnabled,
-    workload: managedClone ? managedClone.workload : (sourceEntry as SandboxEntry).workload,
-    messaging: managedClone ? managedClone.messaging : (sourceEntry as SandboxEntry).messaging,
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
     nimContainer: null,
@@ -801,14 +398,14 @@ async function autoCreateSandboxFromSource(
     // so clear src's proof rather than inheriting it — otherwise dst could show
     // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
     sandboxGpuProof: null,
-    dashboardPort: destinationDashboardPort,
+    dashboardPort: dstDashboardPort,
     // The shared image keeps Hermes' image-baked internal listener port, but
     // the public WebUI port is a per-sandbox host resource and must follow the
     // clone's newly allocated dashboard port so rebuild validation converges.
     hermesDashboardPort:
-      (sourceEntry as SandboxEntry).hermesDashboardEnabled === true
-        ? destinationDashboardPort
-        : (sourceEntry as SandboxEntry).hermesDashboardPort,
+      (srcEntry as SandboxEntry).hermesDashboardEnabled === true
+        ? dstDashboardPort
+        : (srcEntry as SandboxEntry).hermesDashboardPort,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
@@ -842,19 +439,6 @@ function deleteSandboxForRestore(name: string): void {
         allowLegacyHermesProtocol: true,
       });
     }
-    const providerCleanup = runSandboxProviderPreDeleteCleanup(name, {
-      runOpenshell,
-      // Snapshot restore treats detach failures as fatal below and emits only
-      // generated provider names, so never echo untrusted gateway diagnostics.
-      warn: () => {},
-    });
-    if (providerCleanup.failures.length > 0) {
-      console.error(
-        `  Failed to detach destination provider(s) before deleting '${name}': ` +
-          providerCleanup.failures.map((failure) => failure.name).join(", "),
-      );
-      snapshotExit(1);
-    }
     const deleteResult = runOpenshell(["sandbox", "delete", name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -882,63 +466,16 @@ function deleteSandboxForRestore(name: string): void {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    const hermesSuffixes = new Set<string>(HERMES_SANDBOX_PROVIDER_SUFFIXES);
-    for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
-      if (hermesSuffixes.has(suffix)) continue;
-      runOpenshell(["provider", "delete", `${name}-${suffix}`], {
+    for (const suffix of listMessagingProviderSuffixes()) {
+      runOpenshell(["provider", "delete", `${name}${suffix}`], {
         ignoreError: true,
         stdio: ["ignore", "ignore", "ignore"],
       });
-    }
-    const hasHermesBrokerIdentity =
-      Boolean(sbMeta?.hermesInferenceProvider) ||
-      (Array.isArray(sbMeta?.hermesToolGateways) && sbMeta.hermesToolGateways.length > 0);
-    const hermesBroker = getHermesToolGatewayCloneBroker();
-    const hermesCleanup = cleanupHermesSandboxProviders(name, hasHermesBrokerIdentity, {
-      runOpenshell,
-      removeHermesToolGatewayProviderState: () =>
-        sbMeta ? hermesBroker.removeHermesToolGatewayProviderStateForSandboxEntry(sbMeta) : false,
-    });
-    if (
-      hasHermesBrokerIdentity &&
-      (!hermesCleanup.providerCleanupSucceeded || !hermesCleanup.brokerStateRemoved)
-    ) {
-      console.error(
-        `  Destination '${name}' was deleted, but its identity-bound Hermes provider cleanup is incomplete.`,
-      );
-      console.error(
-        `  Its registry ownership was preserved. Run '${CLI_NAME} ${name} destroy' to finish cleanup, then retry restore.`,
-      );
-      snapshotExit(1);
     }
     cleanupShieldsDestroyArtifacts(name);
     removeSandboxRegistryEntry(name);
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
-}
-
-function cleanupFailedSnapshotCloneTarget(name: string): void {
-  const providerCleanup = runSandboxProviderPreDeleteCleanup(name, {
-    runOpenshell,
-    tolerateMissingSandbox: true,
-    warn: () => {},
-  });
-  if (providerCleanup.failures.length > 0) {
-    console.warn(
-      `  Warning: could not detach all providers from failed clone '${name}': ` +
-        providerCleanup.failures.map((failure) => failure.name).join(", "),
-    );
-  }
-  const deleteResult = runOpenshell(["sandbox", "delete", name], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-  if (deleteResult.status !== 0 && !alreadyGone) {
-    console.warn(
-      `  Warning: could not remove incomplete clone '${name}' before credential-provider rollback.`,
-    );
-  }
 }
 
 function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
@@ -1544,125 +1081,27 @@ async function runSnapshotRestoreUnlocked(
       // validation the image and gateway-route checks above already do (#3756).
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      let managedClone: PreparedManagedSnapshotClone | null;
-      try {
-        managedClone = await prepareManagedSnapshotClone(
-          sandboxName,
-          targetSandbox,
-          lockedSourceEntry,
-          lockedFromImage,
-          dstDashboardPort,
-          targetExists,
-        );
-      } catch (error) {
-        console.error(
-          `  Cannot prepare managed clone '${targetSandbox}': ${
-            error instanceof Error ? error.message : String(error)
-          }.`,
-        );
-        console.error(
-          `  Destination '${targetSandbox}' was not changed. Re-onboard the source before retrying this restore.`,
-        );
-        snapshotExit(1);
-      }
       const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
       try {
-        // Render and bound the complete argv before a forced restore can delete
-        // the destination. Managed clone profile/CA transports therefore use
-        // the same exec-safe argument gate as ordinary managed onboarding.
-        const cloneLaunch = prepareSnapshotCloneLaunch(
+        if (targetExists) {
+          if (targetEntry) {
+            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+          }
+          deleteSandboxForRestore(targetSandbox);
+          requireLiveSandboxesOnSandboxGateway(
+            sandboxName,
+            "  Failed to re-select source sandbox gateway after deleting destination.",
+          );
+        }
+        await autoCreateSandboxFromSource(
+          sandboxName,
           targetSandbox,
           lockedSourceEntry,
           lockedFromImage,
           clonePolicy.policyPath,
           dstDashboardPort,
           dashboardEnvArgs,
-          managedClone,
         );
-        // Keep the managed credential-provider graph lazy. Legacy/custom
-        // snapshot operations must retain their narrow runtime and test seam.
-        const managedProviderLifecycle = managedClone
-          ? await import("./snapshot/managed-clone-providers")
-          : null;
-        let mutatedCredentialProviders: string[] = [];
-        let cloneCreateAttempted = false;
-        let stagedHermesBinding:
-          | { readonly activationToken: string; readonly brokerToken: string }
-          | undefined;
-        let stagedHermesBroker: HermesToolGatewayCloneBroker | undefined;
-        try {
-          const hasHermesToolGateway = managedClone?.credentialProviders.some(
-            (provider) => provider.source === "hermes-tool-gateway",
-          );
-          if (hasHermesToolGateway && managedClone) {
-            // Recheck boot/control viability, then complete OAuth refresh and
-            // agent-key mint into an identity-bound in-memory stage. Every
-            // network/register failure therefore occurs before force deletion.
-            stagedHermesBroker = getHermesToolGatewayCloneBroker();
-            stagedHermesBroker.preflightHermesToolGatewayCloneBinding(targetSandbox);
-            const refreshToken =
-              managedClone.credentialEnvironment.NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN;
-            if (!refreshToken) {
-              throw new Error("Hermes destination refresh credential disappeared before staging");
-            }
-            stagedHermesBinding = stagedHermesBroker.stageHermesToolGatewayCloneBinding(
-              targetSandbox,
-              refreshToken,
-            );
-          }
-          if (targetExists) {
-            if (targetEntry) {
-              verifyRestoreDestinationOnOwnGateway(targetSandbox);
-            }
-            deleteSandboxForRestore(targetSandbox);
-            requireLiveSandboxesOnSandboxGateway(
-              sandboxName,
-              "  Failed to re-select source sandbox gateway after deleting destination.",
-            );
-          }
-          mutatedCredentialProviders =
-            managedProviderLifecycle?.provisionManagedCloneProviders(
-              managedClone?.credentialProviders ?? [],
-              {
-                ...(managedClone
-                  ? {
-                      environment: {
-                        ...process.env,
-                        ...managedClone.credentialEnvironment,
-                      },
-                    }
-                  : {}),
-                runOpenshell,
-                ...(targetExists ? { rollbackSandboxName: targetSandbox } : {}),
-                ...(stagedHermesBinding === undefined ? {} : { stagedHermesBinding }),
-              },
-            ) ?? [];
-          stagedHermesBinding = undefined;
-          cloneCreateAttempted = true;
-          await autoCreateSandboxFromSource(
-            sandboxName,
-            targetSandbox,
-            lockedFromImage,
-            cloneLaunch,
-          );
-          // The mutated providers are now attached to the successfully created
-          // destination and owned by its rebound messaging plan.
-          mutatedCredentialProviders = [];
-        } catch (error) {
-          if (stagedHermesBinding && stagedHermesBroker) {
-            stagedHermesBroker.discardHermesToolGatewayCloneBinding(
-              targetSandbox,
-              stagedHermesBinding,
-            );
-          }
-          if (cloneCreateAttempted) cleanupFailedSnapshotCloneTarget(targetSandbox);
-          managedProviderLifecycle?.cleanupManagedCloneProviders(
-            mutatedCredentialProviders,
-            runOpenshell,
-            targetSandbox,
-          );
-          throw error;
-        }
       } finally {
         clonePolicy.cleanup?.();
       }

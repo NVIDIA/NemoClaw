@@ -3,7 +3,6 @@
 
 import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
-import { reportsExactProviderNotFound } from "./extra-provider-diagnostic-parser";
 
 export {
   applyExtraProviderReconciliation,
@@ -58,70 +57,13 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
   redact?: (input: string) => string;
 };
 
-export const HERMES_SANDBOX_PROVIDER_SUFFIXES = [
-  "hermes-inference",
-  "hermes-tool-gateway",
-] as const;
-
 export const SANDBOX_PROVIDER_SUFFIXES = [
   ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
   "brave-search",
   "tavily-search",
-  ...HERMES_SANDBOX_PROVIDER_SUFFIXES,
 ] as readonly string[];
 
 export type SandboxProviderSuffix = string;
-
-export type CleanupHermesSandboxProvidersDeps = {
-  runOpenshell?: SandboxProviderRunOpenshell;
-  removeHermesToolGatewayProviderState?: (sandboxName: string) => boolean;
-  warn?: (message: string) => void;
-};
-
-export function cleanupHermesSandboxProviders(
-  sandboxName: string,
-  removeIdentityBoundState: boolean,
-  deps: CleanupHermesSandboxProvidersDeps = {},
-): { providerCleanupSucceeded: boolean; brokerStateRemoved: boolean } {
-  if (
-    sandboxName.length === 0 ||
-    sandboxName.length > NAME_MAX_LENGTH ||
-    !NAME_VALID_PATTERN.test(sandboxName)
-  ) {
-    throw new Error("Invalid sandbox name for Hermes provider cleanup.");
-  }
-  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
-  let providerCleanupSucceeded = true;
-  for (const suffix of HERMES_SANDBOX_PROVIDER_SUFFIXES) {
-    const providerName = `${sandboxName}-${suffix}`;
-    const result = runOpenshell(["provider", "delete", providerName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status === 0) continue;
-    const output = `${bufferOrStringToText(result.stdout)}\n${bufferOrStringToText(result.stderr)}`;
-    if (result.status !== 1 || !reportsExactProviderNotFound(output, providerName, 64 * 1024)) {
-      providerCleanupSucceeded = false;
-    }
-  }
-  if (!removeIdentityBoundState) {
-    return { providerCleanupSucceeded, brokerStateRemoved: false };
-  }
-  const warn = deps.warn ?? ((message: string) => console.warn(message));
-  if (!providerCleanupSucceeded) {
-    warn(
-      `Hermes provider cleanup for '${sandboxName}' failed; preserving broker state for recovery.`,
-    );
-    return { providerCleanupSucceeded, brokerStateRemoved: false };
-  }
-  const removeHermesToolGatewayProviderState = deps.removeHermesToolGatewayProviderState;
-  if (!removeHermesToolGatewayProviderState) {
-    throw new Error("Hermes broker-state cleanup dependency is required.");
-  }
-  const brokerStateRemoved = removeHermesToolGatewayProviderState(sandboxName);
-  if (!brokerStateRemoved) warn(`Failed to remove Hermes broker state for '${sandboxName}'.`);
-  return { providerCleanupSucceeded, brokerStateRemoved };
-}
 
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;

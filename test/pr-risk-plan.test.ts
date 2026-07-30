@@ -6,7 +6,6 @@ import {
   buildRiskPlan,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
-  requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../tools/advisors/risk-plan.mts";
@@ -56,40 +55,6 @@ describe("deterministic PR risk plan", () => {
       "cloud-onboard",
       "security-posture",
     ]);
-  });
-
-  it("requires protected all-agent GPU and rollback evidence for managed-image runtime changes", () => {
-    const result = plan(
-      "src/lib/onboard/managed-bootstrap/sequence.ts",
-      "scripts/checks/run-managed-image-openshell-e2e.ts",
-    );
-
-    expect(result.families).toContainEqual(
-      expect.objectContaining({
-        id: "managed-image-runtime",
-        requiredJobs: ["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"],
-      }),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"]),
-    );
-  });
-
-  it.each([
-    ".github/workflows/e2e.yaml",
-    "scripts/checks/cleanup-protected-managed-image-e2e.sh",
-  ])("keeps protected managed-image evidence selected when %s changes", (file) => {
-    const result = plan(file);
-
-    expect(result.families).toContainEqual(
-      expect.objectContaining({
-        id: "managed-image-runtime",
-        requiredJobs: ["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"],
-      }),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["managed-image-bootstrap-rollback", "managed-image-gpu-e2e"]),
-    );
   });
 
   it("hashes trusted focused E2E selections into their canonical jobs", () => {
@@ -204,7 +169,6 @@ describe("deterministic PR risk plan", () => {
     );
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
@@ -249,7 +213,6 @@ describe("deterministic PR risk plan", () => {
     ]);
     expect(riskPlanRequiredTargetIds(adjacentStatusFile)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -334,14 +297,8 @@ describe("deterministic PR risk plan", () => {
     expect(rootImage.families.map((family) => family.id)).toEqual([
       "platform-install",
       "openclaw-image",
-      "managed-image-runtime",
     ]);
-    expect(riskPlanRequiredJobIds(rootImage)).toEqual([
-      "cloud-onboard",
-      "full-e2e",
-      "managed-image-bootstrap-rollback",
-      "managed-image-gpu-e2e",
-    ]);
+    expect(riskPlanRequiredJobIds(rootImage)).toEqual(["cloud-onboard", "full-e2e"]);
     expect(adjacentImage.families.map((family) => family.id)).toEqual(["platform-install"]);
     expect(riskPlanRequiredJobIds(adjacentImage)).toEqual(["cloud-onboard"]);
   });
@@ -419,31 +376,6 @@ describe("deterministic PR risk plan", () => {
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
     expect(result.requiredTargets).toEqual([]);
-  });
-
-  it("runs controller-only changes without credentialed E2E authorization", () => {
-    const result = plan(
-      ".github/workflows/pr-e2e-gate.yaml",
-      "tools/e2e/pr-e2e-gate.mts",
-      "tools/e2e/pr-e2e-required.mts",
-    );
-
-    expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
-  });
-
-  it.each([
-    ".github/workflows/e2e.yaml",
-    "test/e2e/risk-signal-reporter.ts",
-    "tools/e2e/workflow-plan.mts",
-  ])("requires authorization before credentialed E2E can execute %s", (file) => {
-    expect(requiresCredentialedE2eAuthorization(plan(file))).toBe(true);
-  });
-
-  it("keeps mixed controller and credentialed execution changes behind authorization", () => {
-    const result = plan(".github/workflows/pr-e2e-gate.yaml", "test/e2e/risk-signal-reporter.ts");
-
-    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it.each([

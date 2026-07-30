@@ -16,7 +16,6 @@ import {
 } from "./extra-providers";
 import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
-import { cloneSandboxWorkloadReceipt } from "./registry/workload";
 import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizeBaselineExclusions,
@@ -71,7 +70,6 @@ export type {
   SandboxGpuProofResult,
   SandboxGpuProofStatus,
   SandboxRegistry,
-  SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
 
@@ -164,7 +162,6 @@ export function registerSandbox(entry: SandboxEntry): void {
           ? entry.hermesAuthMethod
           : null,
       imageTag: entry.imageTag || null,
-      workload: cloneSandboxWorkloadReceipt(entry.workload),
       messaging: cloneSandboxMessagingState(entry.messaging),
       mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:

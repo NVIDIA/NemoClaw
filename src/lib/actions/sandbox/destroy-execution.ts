@@ -44,7 +44,6 @@ export type SandboxDestroyExecutionResult =
       deleteOutput: string;
       exitCode: number;
       gatewayUnreachable: boolean;
-      hermesOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
     };
@@ -192,9 +191,6 @@ export async function executeSandboxDestroy({
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
     const hasMcpOwnership = mcpPreparation.entries.length > 0;
-    const hasHermesProviderOwnership =
-      Boolean(sandbox?.hermesInferenceProvider) ||
-      (Array.isArray(sandbox?.hermesToolGateways) && sandbox.hermesToolGateways.length > 0);
     const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent);
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
@@ -209,12 +205,7 @@ export async function executeSandboxDestroy({
       gatewayUnreachable,
     } = getSandboxDeleteOutcome(deleteResult);
     const forcedLocalCleanup =
-      deleteResult.status !== 0 &&
-      !alreadyGone &&
-      gatewayUnreachable &&
-      force &&
-      !hasMcpOwnership &&
-      !hasHermesProviderOwnership;
+      deleteResult.status !== 0 && !alreadyGone && gatewayUnreachable && force && !hasMcpOwnership;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
@@ -225,7 +216,6 @@ export async function executeSandboxDestroy({
         deleteOutput,
         exitCode: deleteResult.status || 1,
         gatewayUnreachable,
-        hermesOwnershipRequiresGateway: gatewayUnreachable && hasHermesProviderOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
       };

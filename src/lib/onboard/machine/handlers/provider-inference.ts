@@ -28,7 +28,6 @@ import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
 } from "../../rebuild-route-handoff";
-import type { SandboxLocalBuildKind } from "../../summary";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 import { createRecovery, type RecoveryAuthority } from "./provider-inference-recovery";
@@ -124,8 +123,6 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     webSearchConfig: WebSearchConfig | null;
   };
   selectedMessagingChannels: string[];
-  /** True only for an explicit custom Dockerfile known before workload resolution. */
-  customDockerfileRequested?: boolean;
   env: NodeJS.ProcessEnv;
   constants: {
     hermesProviderName: string;
@@ -237,7 +234,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
-    formatSandboxBuildEstimateNote(host: Host, buildKind: SandboxLocalBuildKind): string | null;
+    formatSandboxBuildEstimateNote(host: Host): string | null;
     formatOnboardConfigSummary(options: {
       provider: string;
       model: string;
@@ -376,7 +373,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   providerRecoveryReceiptLedger,
   initial,
   selectedMessagingChannels,
-  customDockerfileRequested = false,
   env,
   constants,
   deps,
@@ -900,9 +896,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
       const confirmedSandboxName = sandboxName;
       const buildEstimateNote =
-        env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" || !customDockerfileRequested
+        env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
           ? null
-          : deps.formatSandboxBuildEstimateNote(deps.assessHost(), "custom-dockerfile");
+          : deps.formatSandboxBuildEstimateNote(deps.assessHost());
       deps.log(
         deps.formatOnboardConfigSummary({
           provider,

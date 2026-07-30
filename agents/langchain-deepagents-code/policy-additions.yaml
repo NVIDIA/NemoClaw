@@ -20,9 +20,6 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /run/nemoclaw                 # Root-owned managed-startup handoff. This
-                                    # directory must exist before strict Landlock
-                                    # prepares the sandbox workload ruleset.
   read_write:
     - /sandbox
     - /sandbox/.deepagents

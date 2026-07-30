@@ -20,7 +20,6 @@ import {
 import * as reversibleRemoval from "../registry-reversible-removal";
 import { nemoclawStateRoot } from "../state-root";
 import type { SandboxEntry, SandboxRegistry } from "./types";
-import { cloneSandboxWorkloadReceipt } from "./workload";
 
 export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
@@ -84,7 +83,6 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
-  const workload = cloneSandboxWorkloadReceipt(entry.workload);
   const mcp = normalizeSandboxMcpState(entry.mcp);
   const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -92,7 +90,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   );
   const {
     messaging: _messaging,
-    workload: _workload,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
@@ -100,7 +97,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   } = entry;
   return {
     ...rest,
-    ...(workload ? { workload } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
@@ -129,7 +125,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     providerCredentialHashes?: unknown;
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
-  const workload = cloneSandboxWorkloadReceipt(durable.workload);
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
   const baselineExclusions = normalizeBaselineExclusions(durable.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -137,7 +132,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   );
   const {
     messaging: _messaging,
-    workload: _workload,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
@@ -146,7 +140,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
-    ...(workload ? { workload } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),

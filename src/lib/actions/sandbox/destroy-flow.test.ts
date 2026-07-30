@@ -191,69 +191,6 @@ describe("destroySandbox flow", () => {
     expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
   });
 
-  it("fails closed when --force cannot confirm deletion of Hermes provider ownership", async () => {
-    const harness = createDestroyHarness({
-      agent: "hermes",
-      deleteStatus: 1,
-      deleteOutput: "error trying to connect: connection refused",
-      hermesInferenceProvider: "alpha-hermes-inference",
-      hermesToolGateways: ["nous-web"],
-      registeredSandboxCount: 1,
-    });
-
-    await expect(harness.destroySandbox("alpha", { force: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-    expect(
-      harness.runOpenshellSpy.mock.calls.some(
-        ([args]) =>
-          args[0] === "provider" && args[1] === "delete" && String(args[2]).includes("-hermes-"),
-      ),
-    ).toBe(false);
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "Hermes provider ownership required for exact credential cleanup",
-    );
-  });
-
-  it("preserves registry ownership when confirmed Hermes provider cleanup fails", async () => {
-    const harness = createDestroyHarness({
-      agent: "hermes",
-      hermesInferenceProvider: "alpha-hermes-inference",
-      hermesProviderDeleteError: "gateway transport unavailable",
-      hermesToolGateways: ["nous-web"],
-      registeredSandboxCount: 1,
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
-
-    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "identity-bound Hermes provider cleanup is incomplete",
-    );
-  });
-
-  it("preserves registry ownership when exact Hermes broker-state cleanup fails", async () => {
-    const harness = createDestroyHarness({
-      agent: "hermes",
-      hermesInferenceProvider: "alpha-hermes-inference",
-      hermesStateCleanupSucceeds: false,
-      hermesToolGateways: ["nous-web"],
-      registeredSandboxCount: 1,
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
-
-    expect(harness.removeHermesToolGatewayProviderStateForSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "alpha",
-        hermesInferenceProvider: "alpha-hermes-inference",
-      }),
-    );
-    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-  });
-
   it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {
     const harness = createDestroyHarness({ activeTimer: true });
 

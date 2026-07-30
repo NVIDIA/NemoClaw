@@ -7,10 +7,6 @@ import {
 } from "../../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../../cli/branding";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import {
-  type ManagedWorkloadRebuildHandoff,
-  managedWorkloadRebuildHandoffMatchesEntry,
-} from "../../onboard/workload/rebuild";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
@@ -56,13 +52,6 @@ export function getRebuildSandboxEntryOrBail(
     return null;
   }
   return sb;
-}
-
-export function managedWorkloadRebuildHandoffMatchesRegisteredEntry(
-  sandboxName: string,
-  handoff: ManagedWorkloadRebuildHandoff,
-): boolean {
-  return managedWorkloadRebuildHandoffMatchesEntry(handoff, registry.getSandbox(sandboxName));
 }
 
 /** Keep the pending baseline-policy transaction guard identical at every rebuild boundary. */

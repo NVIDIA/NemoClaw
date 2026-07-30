@@ -71,7 +71,6 @@ registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",
-  openclawImagePluginInstalls: [],
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -80,14 +79,7 @@ registry.removeSandbox = () => true;
 
 sandboxState.getLatestBackup = (name) => {
   events.push({ kind: "getLatestBackup", name });
-  return {
-    agentType: "openclaw",
-    dir: "/sandbox/.openclaw",
-    backupPath: PRE_UPGRADE_BACKUP,
-    timestamp: "2026-05-25T00:00:00Z",
-    reconcileOpenClawImagePluginProvenance: true,
-    openclawImagePluginInstalls: [],
-  };
+  return { backupPath: PRE_UPGRADE_BACKUP, timestamp: "2026-05-25T00:00:00Z" };
 };
 sandboxState.backupSandboxState = (name) => {
   events.push({ kind: "backup", name });
@@ -128,7 +120,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 const { runSandboxExecCommand } = require(${execActionPath});
 
 const MARKER_PATH = "/sandbox/workspace/marker.txt";
@@ -138,7 +130,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, ${JSON.stringify(path.join(repoRoot, "Dockerfile"))});
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
 
   // Prove the recreated + restored sandbox is reachable through the real
   // "nemoclaw <name> exec" boundary and can read a preserved workspace marker.
@@ -286,7 +278,7 @@ childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
 
-const { createSandbox } = require(${onboardPath}); require(${onboardScriptMocksPath}).mockEmptyOpenClawImagePluginDiscovery(${JSON.stringify(repoRoot)});
+const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";

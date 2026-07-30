@@ -101,46 +101,6 @@ describe("createRebuildRegistryRollback", () => {
     expect(log).toHaveBeenCalledWith("Recreate failed: restored registry metadata for retry");
   });
 
-  it("preserves the image tag when restoring a shared managed workload receipt", () => {
-    const removed = sandboxEntry({
-      workload: {
-        schemaVersion: 1,
-        kind: "managed-image",
-        reference: "ghcr.io/nvidia/nemoclaw-openclaw@sha256:managed",
-        release: "v0.0.99",
-        sourceRevision: "0123456789abcdef0123456789abcdef01234567",
-        sourceCohort: "ghrun-123456-1",
-        capabilityContractVersion: 1,
-        startupProfileContractVersion: 1,
-        encodedProfile: "e30",
-        startupProfileSha256: "beab987bef9c00dfc301b490ddb45321517e7d6a6bb3d31d259898b7d46393d8",
-        credentialProxyReplayRequired: false,
-        shared: true,
-      },
-    });
-    const restoreSandboxEntryIfMissing = vi.fn(() => true);
-    const rollback = createRebuildRegistryRollback(
-      {
-        sandboxName: "alpha",
-        preparedBackupRecovery: false,
-        staleRecovery: false,
-        getRecoveryRegistrySnapshot: () => null,
-        log: vi.fn(),
-      },
-      { restoreSandboxEntryIfMissing },
-    );
-    rollback.recordRemoval(removalReceipt(removed));
-
-    rollback.restoreForRetry();
-
-    expect(restoreSandboxEntryIfMissing).toHaveBeenCalledWith({
-      entry: removed,
-      wasDefault: true,
-      fallbackDefault: "beta",
-      postRemovalDefaultSelectionRevision: 17,
-    });
-  });
-
   it("keeps a replacement registered by failed onboarding", () => {
     const restoreSandboxEntryIfMissing = vi.fn(() => false);
     const log = vi.fn();

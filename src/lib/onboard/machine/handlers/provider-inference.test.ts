@@ -62,7 +62,6 @@ describe("handleProviderInferenceState", () => {
     expect(selectionUpdates).not.toHaveProperty("endpointSource");
     expect(selectionUpdates).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.promptName).toHaveBeenCalledWith(null);
-    expect(deps.formatSandboxBuildEstimateNote).not.toHaveBeenCalled();
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
       provider: "nvidia-prod",

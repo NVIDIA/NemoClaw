@@ -28,7 +28,6 @@ export type DestroyHarness = {
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   promptSpy: MockInstance;
-  removeHermesToolGatewayProviderStateForSandboxEntrySpy: MockInstance;
   removeSandboxSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
@@ -48,10 +47,6 @@ type DestroyHarnessOptions = {
   dockerPsOutput?: string;
   endpointUrl?: string;
   finalizeMcpError?: string;
-  hermesInferenceProvider?: string;
-  hermesProviderDeleteError?: string;
-  hermesStateCleanupSucceeds?: boolean;
-  hermesToolGateways?: string[];
   liveListOutput?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
@@ -121,7 +116,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
   const httpsPinRuntimeAdapter = requireDist("../../inference/https-pin-runtime-adapter.js");
-  const hermesToolGatewayBroker = requireDist("../../hermes-tool-gateway-broker.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
@@ -144,10 +138,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     ...sandboxEntry,
     agent: options.agent ?? sandboxEntry.agent,
     ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
-    ...(options.hermesInferenceProvider
-      ? { hermesInferenceProvider: options.hermesInferenceProvider }
-      : {}),
-    ...(options.hermesToolGateways ? { hermesToolGateways: options.hermesToolGateways } : {}),
     ...(options.mcpServers?.length
       ? {
           mcp: {
@@ -177,9 +167,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const revokeHttpsPinRuntimeAdapterRouteSpy = vi
     .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
     .mockResolvedValue(true);
-  const removeHermesToolGatewayProviderStateForSandboxEntrySpy = vi
-    .spyOn(hermesToolGatewayBroker, "removeHermesToolGatewayProviderStateForSandboxEntry")
-    .mockReturnValue(options.hermesStateCleanupSucceeds ?? true);
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({
     sandboxName: "alpha",
   });
@@ -210,16 +197,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
           stdout: options.deleteOutput ?? "",
           stderr: "",
         };
-      case "provider:delete":
-        return options.hermesProviderDeleteError &&
-          (String(argv[2]).endsWith("-hermes-inference") ||
-            String(argv[2]).endsWith("-hermes-tool-gateway"))
-          ? {
-              status: 1,
-              stdout: "",
-              stderr: options.hermesProviderDeleteError,
-            }
-          : { status: 0, stdout: "", stderr: "" };
       default:
         return { status: 0, stdout: "", stderr: "" };
     }
@@ -348,7 +325,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     promptSpy,
-    removeHermesToolGatewayProviderStateForSandboxEntrySpy,
     removeSandboxSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,

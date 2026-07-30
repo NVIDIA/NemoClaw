@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure Model Limits"
 sidebar-title: "Configure Model Limits"
-description: "Set the context-window and output-token limits applied to a NemoClaw-managed sandbox."
+description: "Set the context-window and output-token limits baked into a NemoClaw-managed sandbox."
 description-agent: "Configures model context and output limits. Use when changing the context window or maximum output tokens."
 keywords: ["nemoclaw context window", "nemoclaw max tokens", "model limits"]
 content:
   type: "how_to"
 ---
-Configure model limits before onboarding so NemoClaw can include them in the sandbox's managed startup profile.
-Changing a startup model limit on an existing sandbox requires fresh recreation.
+Configure model limits before onboarding so NemoClaw can bake them into the sandbox image.
+Changing a build-time model limit on an existing sandbox requires fresh recreation.
 
 ## Set OpenClaw Limits
 
@@ -56,7 +56,7 @@ When NemoClaw starts Local Ollama on macOS or Linux, it requests at least `64000
 Fresh onboarding then verifies the loaded model's actual `context_length` through `/api/ps`.
 Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
 When `NEMOCLAW_CONTEXT_WINDOW` is larger than `64000`, the Ollama runtime must provide at least that larger value.
-Onboarding stops before creating the sandbox when Ollama reports a smaller, missing, or malformed value and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+Onboarding stops before building the sandbox when Ollama reports a smaller, missing, or malformed value and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
 Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the Ollama daemon's runtime context or bypass this check.
 
 </AgentOnly>
@@ -75,8 +75,7 @@ Set `NEMOCLAW_CONTEXT_WINDOW` when you need to override the detected value.
 
 ## Recreate an Existing Sandbox
 
-For stock onboarding, model limits are managed startup-profile settings.
-An explicit custom Dockerfile applies them during its local build.
+Model limits are build-time settings.
 Recreate the named sandbox after changing a supported value.
 
 ```bash

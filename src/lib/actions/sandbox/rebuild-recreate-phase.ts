@@ -274,7 +274,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   if (recoveryRecreate) shields.clearShieldsState(sandboxName);
   const preservedRegistryFields = {
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
-    ...(sb.hermesInferenceProvider ? { hermesInferenceProvider: sb.hermesInferenceProvider } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {
     registry.updateSandbox(sandboxName, preservedRegistryFields);

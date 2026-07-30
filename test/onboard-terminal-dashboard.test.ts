@@ -38,9 +38,6 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
-  const preparedDcodeRebuildPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "prepared-dcode-rebuild.ts"),
-  );
   const dockerGpuSandboxCreatePath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
@@ -56,7 +53,6 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
-const preparedDcodeRebuild = require(${preparedDcodeRebuildPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
@@ -72,18 +68,11 @@ dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
   createFailureMessage: () => null,
   exitOnPatchError: () => {},
-  rollbackManagedStartupAfterCreateFailure: () => {},
   ensureApplied: () => {},
   waitForSupervisorReconnectIfNeeded: () => {},
-  commitAfterReady: () => {},
   selectedMode: () => null,
   printReadinessFailureIfEnabled: () => {},
   verifyGpuOrExit: (verify) => verify(sandboxName),
-});
-
-preparedDcodeRebuild.resolveSandboxBuildPatch = async () => ({
-  buildId: "terminal-dashboard-test",
-  dashboardRemoteBindPrepared: false,
 });
 
 agentOnboard.createAgentSandbox = () => {
@@ -167,19 +156,7 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.test:19000";
   process.env.NEMOCLAW_DASHBOARD_PORT = "19000";
-  // Dashboard behavior is workload-source neutral. Explicitly select the
-  // trusted recipe path so this child harness never reaches a live catalog.
-  const resultName = await createSandbox(
-    null,
-    "gpt-5.4",
-    "nvidia-prod",
-    null,
-    sandboxName,
-    null,
-    null,
-    agent.dockerfilePath,
-    agent,
-  );
+  const resultName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, sandboxName, null, null, null, agent);
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
   clearInterval(keepAlive);
 })().catch((error) => {

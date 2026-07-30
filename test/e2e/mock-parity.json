@@ -252,29 +252,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/managed-image-bootstrap-rollback.test.ts",
-      "fast": [
-        "src/lib/onboard/managed-bootstrap/adapter.test.ts",
-        "src/lib/onboard/managed-bootstrap/docker.test.ts",
-        "src/lib/onboard/managed-startup-shared-state-transaction.test.ts",
-        "test/managed-image-publication-workflow.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/managed-image-gpu-e2e.test.ts",
-      "fast": [
-        "src/lib/onboard/docker-gpu-local-inference.test.ts",
-        "src/lib/onboard/docker-gpu-sandbox-create-lifecycle.test.ts",
-        "src/lib/onboard/sandbox-gpu-create-managed-incomplete.test.ts",
-        "test/managed-image-publication-workflow.test.ts",
-        "test/e2e/support/gpu-e2e-helpers.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/hermes-discord.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",

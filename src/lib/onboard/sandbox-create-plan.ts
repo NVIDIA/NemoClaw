@@ -154,7 +154,7 @@ export function prepareSandboxCreatePlan({
 
   return materializeSandboxCreatePlan({
     intent,
-    fromRef: `${buildCtx}/Dockerfile`,
+    buildCtx,
     messagingTokenDefs,
     runProviderPreDeleteCleanup,
     upsertMessagingProviders,

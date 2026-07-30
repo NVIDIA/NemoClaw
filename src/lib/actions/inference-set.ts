@@ -538,12 +538,11 @@ export function patchHermesInferenceConfig(
   provider: string,
   model: string,
   preferredInferenceApi: string | null = null,
-  upstreamProviderMarker: string = provider,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
   const upstream = ensureObject(config, "_nemoclaw_upstream");
-  upstream.provider = upstreamProviderMarker;
+  upstream.provider = provider;
   upstream.model = model;
   const modelConfig = ensureObject(config, "model");
   modelConfig.default = model;
@@ -558,24 +557,6 @@ export function patchHermesInferenceConfig(
   }
 
   return { changed: before !== JSON.stringify(config), route };
-}
-
-function resolveHermesUpstreamProviderMarker(
-  sandboxName: string,
-  entry: SandboxEntry,
-  selectedProvider: string,
-): string {
-  if (selectedProvider !== "hermes-provider" || !entry.hermesInferenceProvider) {
-    return selectedProvider;
-  }
-  const expected = `${sandboxName}-hermes-inference`;
-  if (entry.hermesInferenceProvider !== expected) {
-    throw new InferenceSetError(
-      `Recorded Hermes inference identity for '${sandboxName}' is invalid; rebuild the sandbox before changing inference.`,
-      2,
-    );
-  }
-  return expected;
 }
 
 function updateMatchingOnboardSession(
@@ -796,10 +777,6 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const hermesUpstreamProviderMarker =
-    agentName === "hermes"
-      ? resolveHermesUpstreamProviderMarker(sandboxName, entry, provider)
-      : provider;
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1190,13 +1167,7 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      patched = patchHermesInferenceConfig(
-        config,
-        provider,
-        model,
-        preferredInferenceApi,
-        hermesUpstreamProviderMarker,
-      );
+      patched = patchHermesInferenceConfig(config, provider, model, preferredInferenceApi);
     } else {
       // Recompute the context window for the model being switched to, so it does
       // not inherit the prior model's window (#context-window-on-switch).

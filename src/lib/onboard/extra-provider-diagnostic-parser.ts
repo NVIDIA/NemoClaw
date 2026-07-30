@@ -208,10 +208,6 @@ export function reportsExactProviderNotFound(
   providerName: string,
   diagnosticLimit: number,
 ): boolean {
-  // A capture at the byte ceiling may have omitted a later transport,
-  // authentication, or gateway diagnostic. Never classify a truncated
-  // diagnostic from its prefix alone.
-  if (Buffer.byteLength(output) >= diagnosticLimit) return false;
   const lines = output.slice(0, diagnosticLimit).split(/\r?\n/);
   const diagnosticLines = lines.map(stripIssueDecoration).filter(Boolean);
   if (diagnosticLines.length === 0) return false;

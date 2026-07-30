@@ -27,15 +27,6 @@ const REMOTE_PLATFORM_TOOLSETS = [
   "audio",
 ];
 
-export const MANAGED_IMAGE_HERMES_OPTIONAL_PLATFORMS = [
-  "telegram",
-  "discord",
-  "weixin",
-  "slack",
-  "whatsapp",
-  "teams",
-] as const;
-
 function hermesApiMode(inferenceApi: string): string | null {
   switch (inferenceApi) {
     case "":
@@ -112,21 +103,6 @@ export function buildHermesConfig(
     model: settings.model,
   };
 
-  const platforms: Record<string, unknown> = {
-    api_server: {
-      enabled: true,
-      extra: {
-        port: 18642,
-        host: "127.0.0.1",
-      },
-    },
-  };
-  if (settings.managedImageCapabilityUnion) {
-    for (const platform of MANAGED_IMAGE_HERMES_OPTIONAL_PLATFORMS) {
-      platforms[platform] = { enabled: false };
-    }
-  }
-
   const config: Record<string, unknown> = {
     _config_version: 33,
     _nemoclaw_upstream: upstream,
@@ -141,7 +117,6 @@ export function buildHermesConfig(
     },
     agent: {
       max_turns: 60,
-      reasoning_effort: "medium",
       // Hermes config migrations v30 -> v32 disable the old implicit
       // verify-on-stop behavior once. Generated configs start at v32, so
       // persist the same migrated value instead of inheriting "auto".
@@ -235,7 +210,15 @@ export function buildHermesConfig(
     platform_toolsets: {
       api_server: remotePlatformToolsets,
     },
-    platforms,
+    platforms: {
+      api_server: {
+        enabled: true,
+        extra: {
+          port: 18642,
+          host: "127.0.0.1",
+        },
+      },
+    },
   };
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);

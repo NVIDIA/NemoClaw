@@ -51,11 +51,7 @@ const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-prefligh
 const rebuildInference = requireDist("./rebuild-inference-preflight.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
-const rebuildManagedWorkloadProfile = requireDist("./agents/managed-workload-rebuild-profile.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
-const computePlan = requireDist("../../onboard/compute/plan.js");
-const managedWorkloadRebuild = requireDist("../../onboard/workload/rebuild.js");
-const workloadRuntime = requireDist("../../onboard/workload/runtime.js");
 const shields = requireDist("../../shields/index.js");
 
 type RebuildFlowStep = {
@@ -141,9 +137,6 @@ export type RebuildFlowOverrides = {
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
-  managedWorkloadReplacement?: Record<string, unknown>;
-  managedContextWindow?: number | null;
-  prepareManagedRebuildProfileHandoff?: (input: Record<string, unknown>) => Record<string, unknown>;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -157,7 +150,6 @@ export type RebuildFlowHarness = {
   applyPresetContentSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
   disposePreparedDcodeRebuildImageSpy: MockInstance;
-  dockerBuildSpy: MockInstance;
   errorSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;
   pinTrustedAgentBaseImageOverrideForOperationSpy: MockInstance;
@@ -170,12 +162,9 @@ export type RebuildFlowHarness = {
   openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
   preflightAuthoritativeRebuildTargetSpy: MockInstance;
-  preflightRebuildImageSpy: MockInstance;
   preflightMessagingConflictsSpy: MockInstance;
   preflightDcodeRouteSpy: MockInstance;
   prepareManagedDcodeRebuildImageSpy: MockInstance;
-  prepareManagedRebuildProfileHandoffSpy: MockInstance;
-  prepareManagedWorkloadSourceSpy: MockInstance;
   removePresetSpy: MockInstance;
   removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
@@ -315,9 +304,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     expectedVersion: "0.2.0",
     dockerfileBasePath: "/tmp/Dockerfile.base",
     runtime: { kind: "terminal" },
-    ...(overrides.managedWorkloadReplacement && agentName !== "langchain-deepagents-code"
-      ? { forwardPort: 8_000 }
-      : {}),
   };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -326,54 +312,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
-  const dockerBuildSpy = vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
-  const preflightRebuildImageSpy = vi
-    .spyOn(rebuildCustomImagePreflight, "preflightRebuildImage")
-    .mockResolvedValue({
-      ok: true,
-      imageTag: null,
-    });
-  const prepareManagedWorkloadSourceSpy = vi
-    .spyOn(
-      managedWorkloadRebuild.managedWorkloadRebuildDependencies,
-      "prepareSandboxWorkloadSource",
-    )
-    .mockImplementation(async () => {
-      if (!overrides.managedWorkloadReplacement) {
-        throw new Error("managed workload replacement fixture was not configured");
-      }
-      return overrides.managedWorkloadReplacement;
-    });
-  vi.spyOn(computePlan, "resolveCurrentOpenShellComputePlan").mockReturnValue({
-    driverName: "docker",
-    gatewayLauncher: "nemoclaw",
+  vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
+  vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue({
+    ok: true,
+    imageTag: null,
   });
-  vi.spyOn(workloadRuntime, "resolveSandboxWorkloadRuntimeCapabilities").mockReturnValue({
-    driverName: "docker",
-    managedImageSelectionPolicy: "prefer-managed",
-    legacyDockerfileBuilds: true,
-    managedImages: {
-      exactDigestReferences: true,
-      platforms: ["linux/amd64"],
-      startupProfileContractVersions: [1],
-      capabilityContractVersions: [1],
-    },
-  });
-  vi.spyOn(
-    rebuildManagedWorkloadProfile.managedRebuildProfileDependencies,
-    "resolveContextWindowForModel",
-  ).mockReturnValue(
-    overrides.managedContextWindow === undefined ? 131_072 : overrides.managedContextWindow,
-  );
-  const prepareManagedRebuildProfileHandoff =
-    rebuildManagedWorkloadProfile.prepareManagedRebuildProfileHandoff;
-  const prepareManagedRebuildProfileHandoffSpy = vi
-    .spyOn(rebuildManagedWorkloadProfile, "prepareManagedRebuildProfileHandoff")
-    .mockImplementation((input: unknown) =>
-      overrides.prepareManagedRebuildProfileHandoff
-        ? overrides.prepareManagedRebuildProfileHandoff((input ?? {}) as Record<string, unknown>)
-        : prepareManagedRebuildProfileHandoff(input),
-    );
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -632,9 +575,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const removeSandboxRegistryEntrySpy = vi
     .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
     .mockReturnValue({
-      entry: overrides.managedWorkloadReplacement
-        ? sandboxEntry
-        : { name: "alpha", imageTag: "old-image" },
+      entry: { name: "alpha", imageTag: "old-image" },
       wasDefault: preDeleteDefaultSandbox === "alpha",
       fallbackDefault: null,
       postRemovalDefaultSelectionRevision: 1,
@@ -790,7 +731,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     applyPresetContentSpy,
     backupSandboxStateSpy,
     disposePreparedDcodeRebuildImageSpy,
-    dockerBuildSpy,
     errorSpy,
     ensureAgentBaseImageSpy,
     pinTrustedAgentBaseImageOverrideForOperationSpy,
@@ -803,12 +743,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     openShieldsSpy,
     onboardSpy,
     preflightAuthoritativeRebuildTargetSpy,
-    preflightRebuildImageSpy,
     preflightMessagingConflictsSpy,
     preflightDcodeRouteSpy,
     prepareManagedDcodeRebuildImageSpy,
-    prepareManagedRebuildProfileHandoffSpy,
-    prepareManagedWorkloadSourceSpy,
     removePresetSpy,
     removeSandboxRegistryEntrySpy,
     registryUpdateSpy,

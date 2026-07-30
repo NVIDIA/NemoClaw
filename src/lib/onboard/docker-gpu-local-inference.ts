@@ -11,7 +11,6 @@ import {
 import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-provider";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
@@ -386,9 +385,9 @@ export type GpuSandboxAfterReadyOptions = {
   verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
   verifyGpuOrExit?: (
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
-  ) => Promise<SandboxGpuProofResult>;
+  ) => SandboxGpuProofResult;
   reportGpuProofFailure?: boolean;
-  selectedMode: ManagedBootstrapRuntimePatch["selectedMode"];
+  selectedMode: () => DockerGpuPatchMode | null;
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -397,47 +396,33 @@ export type GpuSandboxAfterReadyOptions = {
   deps?: DockerGpuSandboxInferenceVerifyDeps;
 };
 
-function asDockerGpuPatchMode(
-  selected: ReturnType<ManagedBootstrapRuntimePatch["selectedMode"]>,
-): DockerGpuPatchMode | null {
-  if (!selected || !["gpus", "nvidia-runtime", "cdi", "startup-command"].includes(selected.kind)) {
-    return null;
-  }
-  return {
-    kind: selected.kind as DockerGpuPatchMode["kind"],
-    label: selected.label,
-    device: selected.device,
-    args: [...selected.args],
-  };
-}
-
 /**
  * Post-readiness GPU sandbox verification orchestrator (kept out of the
  * ~12k-line onboard.ts entrypoint per the codebase-growth guardrail). Runs the
  * direct GPU proof, then — only when the Docker GPU patch is active for a local
  * inference provider — gates on local inference reachability from the sandbox
- * runtime (#4509). Throws with actionable output if either proof fails so the
- * caller can complete rollback before selecting a terminal exit status.
+ * runtime (#4509). Exits the process with actionable output if either proof
+ * fails.
  */
-export async function verifyGpuSandboxAfterReady(
+export function verifyGpuSandboxAfterReady(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
   options: GpuSandboxAfterReadyOptions,
-): Promise<void> {
-  await verifyGpuSandboxAccessAfterReady(config, options);
+): void {
+  verifyGpuSandboxAccessAfterReady(config, options);
   verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
 }
 
-export async function verifyGpuSandboxAccessAfterReady(
+export function verifyGpuSandboxAccessAfterReady(
   config: DockerGpuLocalInferenceConfig,
   options: GpuSandboxAfterReadyOptions,
-): Promise<SandboxGpuProofResult> {
+): SandboxGpuProofResult {
   try {
     // Capture the CUDA-usability proof result and write it back onto the shared
     // config so onboarding can persist it to the registry and `status` can
     // report proven usability rather than mere configuration (#4231).
     const proof = options.verifyGpuOrExit
-      ? await options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
+      ? options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
       : options.verifyDirectSandboxGpu(options.sandboxName);
     config.sandboxGpuProof = proof;
     return proof;
@@ -446,16 +431,11 @@ export async function verifyGpuSandboxAccessAfterReady(
     // prints the richer Error-phase / patched-container diagnostics before
     // rethrowing. Avoid a second generic proof-failure block in that path.
     if (!options.verifyGpuOrExit && options.reportGpuProofFailure !== false) {
-      printDockerGpuProofFailure(
-        options.sandboxName,
-        error,
-        asDockerGpuPatchMode(options.selectedMode()),
-        {
-          runCaptureOpenshell: options.runCaptureOpenshell,
-          additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
-            .additionalSummaryLines,
-        },
-      );
+      printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
+        runCaptureOpenshell: options.runCaptureOpenshell,
+        additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
+          .additionalSummaryLines,
+      });
     }
     throw error;
   }
@@ -489,8 +469,6 @@ export function verifyGpuSandboxLocalInferenceAfterReady(
       verification,
       options.logError ?? ((message) => console.error(message)),
     );
-    throw new Error(
-      `GPU sandbox local inference reachability failed for ${verification.endpoint}.`,
-    );
+    process.exit(1);
   }
 }

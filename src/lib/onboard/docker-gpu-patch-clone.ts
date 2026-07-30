@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isIP } from "node:net";
-
 import type {
   DockerContainerInspect,
   DockerGpuCloneRunOptions,
@@ -69,143 +67,6 @@ function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | 
 function pushStringFlag(args: string[], flag: string, value: unknown): void {
   const normalized = String(value ?? "").trim();
   if (normalized) args.push(flag, normalized);
-}
-
-function exactFlagValue(value: unknown, label: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value !== value.trim() ||
-    value.includes("\0")
-  ) {
-    throw new Error(`Docker ${label} must be one non-empty trimmed value.`);
-  }
-  return value;
-}
-
-function dockerDurationNanos(value: unknown, label: string): string | null {
-  if (value === undefined || value === null || value === 0) return null;
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error(`Docker ${label} must be a non-negative nanosecond integer.`);
-  }
-  return `${String(value)}ns`;
-}
-
-function appendDockerHealthcheckArgs(
-  args: string[],
-  healthcheck: NonNullable<NonNullable<DockerContainerInspect["Config"]>["Healthcheck"]>,
-): void {
-  const test = stringArray(healthcheck.Test);
-  if (test.length === 0) {
-    throw new Error("Docker Healthcheck.Test must be a non-empty exact command.");
-  }
-  if (test[0] === "NONE" && test.length === 1) {
-    args.push("--no-healthcheck");
-    return;
-  }
-  if (test[0] !== "CMD-SHELL" || test.length !== 2) {
-    throw new Error("Docker recreation supports only exact CMD-SHELL health checks.");
-  }
-  args.push("--health-cmd", exactFlagValue(test[1], "health command"));
-  const interval = dockerDurationNanos(healthcheck.Interval, "health interval");
-  const timeout = dockerDurationNanos(healthcheck.Timeout, "health timeout");
-  const startPeriod = dockerDurationNanos(healthcheck.StartPeriod, "health start period");
-  const startInterval = dockerDurationNanos(healthcheck.StartInterval, "health start interval");
-  if (interval) args.push("--health-interval", interval);
-  if (timeout) args.push("--health-timeout", timeout);
-  if (startPeriod) args.push("--health-start-period", startPeriod);
-  if (startInterval) args.push("--health-start-interval", startInterval);
-  if (healthcheck.Retries !== undefined && healthcheck.Retries !== null) {
-    if (!Number.isSafeInteger(healthcheck.Retries) || healthcheck.Retries < 0) {
-      throw new Error("Docker health retries must be a non-negative safe integer.");
-    }
-    args.push("--health-retries", String(healthcheck.Retries));
-  }
-}
-
-function appendDockerPortArgs(
-  args: string[],
-  config: NonNullable<DockerContainerInspect["Config"]>,
-  host: NonNullable<DockerContainerInspect["HostConfig"]>,
-): void {
-  for (const port of Object.keys(config.ExposedPorts ?? {}).sort()) {
-    args.push("--expose", exactFlagValue(port, "exposed port"));
-  }
-  for (const containerPort of Object.keys(host.PortBindings ?? {}).sort()) {
-    for (const binding of host.PortBindings?.[containerPort] ?? []) {
-      const hostIp = String(binding.HostIp ?? "").trim();
-      const hostPort = String(binding.HostPort ?? "").trim();
-      if (!/^\d{1,5}\/(?:tcp|udp|sctp)$/u.test(containerPort)) {
-        throw new Error(`Docker published container port '${containerPort}' is invalid.`);
-      }
-      const numericHostPort = Number(hostPort);
-      if (!/^\d{1,5}$/u.test(hostPort) || numericHostPort < 1 || numericHostPort > 65_535) {
-        throw new Error(
-          `Docker published port '${containerPort}' must retain one exact assigned host port.`,
-        );
-      }
-      let hostPrefix = "";
-      if (hostIp) {
-        const family = isIP(hostIp);
-        if (family === 0 || hostIp.includes("%")) {
-          throw new Error(`Docker published host IP '${hostIp}' is invalid or ambiguous.`);
-        }
-        hostPrefix = family === 6 ? `[${hostIp}]:` : `${hostIp}:`;
-      }
-      args.push("--publish", `${hostPrefix}${hostPort}:${containerPort}`);
-    }
-  }
-}
-
-function appendDockerDeviceArgs(
-  args: string[],
-  host: NonNullable<DockerContainerInspect["HostConfig"]>,
-  gpuAugment: boolean,
-): void {
-  for (const device of host.Devices ?? []) {
-    const source = exactFlagValue(device.PathOnHost, "device host path");
-    const target = exactFlagValue(device.PathInContainer, "device container path");
-    const permissions = exactFlagValue(device.CgroupPermissions ?? "rwm", "device permissions");
-    args.push("--device", `${source}:${target}:${permissions}`);
-  }
-  for (const rule of stringArray(host.DeviceCgroupRules)) {
-    args.push("--device-cgroup-rule", exactFlagValue(rule, "device cgroup rule"));
-  }
-  for (const request of host.DeviceRequests ?? []) {
-    if (gpuAugment) {
-      throw new Error(
-        "Docker GPU augmentation cannot silently replace an existing device request.",
-      );
-    }
-    if (
-      request.Driver !== "cdi" ||
-      ![-1, 0].includes(Number(request.Count ?? 0)) ||
-      (request.DeviceIDs?.length ?? 0) === 0 ||
-      (request.Capabilities?.length ?? 0) > 0 ||
-      Object.keys(request.Options ?? {}).length > 0
-    ) {
-      throw new Error(
-        `Docker device request driver '${String(request.Driver)}' cannot be reproduced exactly.`,
-      );
-    }
-    for (const deviceId of request.DeviceIDs ?? []) {
-      if (!deviceId.trim() || deviceId.includes("\0")) {
-        throw new Error("Docker CDI device request contains an invalid device identity.");
-      }
-    }
-  }
-}
-
-function appendDockerMapFlags(
-  args: string[],
-  flag: string,
-  values: Readonly<Record<string, string>> | null | undefined,
-  label: string,
-): void {
-  for (const key of Object.keys(values ?? {}).sort()) {
-    const value = values?.[key];
-    args.push(flag, `${exactFlagValue(key, `${label} key`)}=${String(value ?? "")}`);
-  }
 }
 
 function normalizeRequiredUlimit(ulimit: DockerUlimit): DockerUlimit {
@@ -483,20 +344,10 @@ export function buildDockerGpuCloneRunArgs(
     for (const deviceId of cdiDeviceIds) args.push("--device", deviceId);
   }
   pushStringFlag(args, "--hostname", config.Hostname);
-  pushStringFlag(args, "--domainname", config.Domainname);
   pushStringFlag(args, "--user", config.User);
   pushStringFlag(args, "--workdir", config.WorkingDir);
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
-  if (config.Healthcheck) appendDockerHealthcheckArgs(args, config.Healthcheck);
-  pushStringFlag(args, "--stop-signal", config.StopSignal);
-  if (config.StopTimeout !== undefined && config.StopTimeout !== null) {
-    if (!Number.isSafeInteger(config.StopTimeout) || config.StopTimeout < 0) {
-      throw new Error("Docker stop timeout must be a non-negative safe integer.");
-    }
-    args.push("--stop-timeout", String(config.StopTimeout));
-  }
-  appendDockerPortArgs(args, config, host);
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   let sawSandboxCommand = false;
@@ -522,13 +373,6 @@ export function buildDockerGpuCloneRunArgs(
   }
   for (const bind of stringArray(host.Binds)) args.push("--volume", bind);
   args.push(...dockerStructuredMountArgs(inspect));
-  for (const target of Object.keys(host.Tmpfs ?? {}).sort()) {
-    const options = String(host.Tmpfs?.[target] ?? "");
-    args.push(
-      "--tmpfs",
-      `${exactFlagValue(target, "tmpfs target")}${options ? `:${options}` : ""}`,
-    );
-  }
   const networkMode = options.networkMode ?? host.NetworkMode;
   pushStringFlag(args, "--network", networkMode);
   for (const alias of dockerNetworkAliases(inspect, networkMode))
@@ -568,7 +412,6 @@ export function buildDockerGpuCloneRunArgs(
   if (networkMode !== "host") {
     const dnsServers = stringArray(host.Dns);
     for (const dns of dnsServers) args.push("--dns", dns);
-    for (const dnsOption of stringArray(host.DnsOptions)) args.push("--dns-option", dnsOption);
     for (const dnsSearch of stringArray(host.DnsSearch)) args.push("--dns-search", dnsSearch);
     const fallbackDns = getDockerGpuCloneFallbackDns(inspect, options);
     if (fallbackDns) args.push("--dns", fallbackDns);
@@ -588,48 +431,12 @@ export function buildDockerGpuCloneRunArgs(
   pushStringFlag(args, "--cpuset-mems", host.CpusetMems);
   pushStringFlag(args, "--ipc", host.IpcMode);
   pushStringFlag(args, "--pid", host.PidMode);
-  pushStringFlag(args, "--cgroup-parent", host.CgroupParent);
-  pushStringFlag(args, "--cgroupns", host.CgroupnsMode);
-  pushStringFlag(args, "--userns", host.UsernsMode);
-  pushStringFlag(args, "--uts", host.UTSMode);
-  if (mode.kind !== "nvidia-runtime") {
-    pushStringFlag(args, "--runtime", host.Runtime);
-  }
-  if (typeof host.PidsLimit === "number" && host.PidsLimit !== 0) {
-    if (!Number.isSafeInteger(host.PidsLimit) || host.PidsLimit < -1) {
-      throw new Error("Docker pids limit must be -1 or a positive safe integer.");
-    }
-    args.push("--pids-limit", String(host.PidsLimit));
-  }
-  if (typeof host.OomScoreAdj === "number" && host.OomScoreAdj !== 0) {
-    if (!Number.isSafeInteger(host.OomScoreAdj) || Math.abs(host.OomScoreAdj) > 1000) {
-      throw new Error("Docker OOM score adjustment must be an integer from -1000 to 1000.");
-    }
-    args.push("--oom-score-adj", String(host.OomScoreAdj));
-  }
-  if (host.OomKillDisable) args.push("--oom-kill-disable");
-  if (host.ReadonlyRootfs) args.push("--read-only");
-  appendDockerMapFlags(args, "--sysctl", host.Sysctls, "sysctl");
-  if (host.LogConfig?.Type && host.LogConfig.Type !== "json-file") {
-    args.push("--log-driver", exactFlagValue(host.LogConfig.Type, "log driver"));
-  }
-  appendDockerMapFlags(args, "--log-opt", host.LogConfig?.Config, "log option");
-  appendDockerDeviceArgs(args, host, gpuAugment);
   if (host.Privileged) args.push("--privileged");
   if (host.Init) args.push("--init");
 
   const entrypoint = stringArray(config.Entrypoint);
-  const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  if (replacementEntrypoint) {
-    args.push("--entrypoint", replacementEntrypoint);
-  } else if (entrypoint.length > 0) {
-    args.push("--entrypoint", entrypoint[0]);
-  }
-  const commandArgs = options.containerCommand
-    ? [...options.containerCommand]
-    : sandboxCommand
-      ? []
-      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  if (entrypoint.length > 0) args.push("--entrypoint", entrypoint[0]);
+  const commandArgs = sandboxCommand ? [] : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }

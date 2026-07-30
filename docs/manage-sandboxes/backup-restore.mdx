@@ -40,7 +40,10 @@ Treat snapshot directories as private local data.
 
 <AgentOnly variant="hermes">
 Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
-NemoClaw uses SQLite's online backup API and restores those databases through SQLite instead of copying live raw database files.
+The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
+NemoClaw captures cron job definitions from `.hermes/cron` as directory state.
+NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
+Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use raw directory capture and can be inconsistent if a write overlaps the snapshot.
 
 Kanban backup is limited to the backward-compatible default board in `kanban.db`.
 Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included; back up that state separately.
@@ -117,15 +120,6 @@ If the destination sandbox already exists, NemoClaw refuses to overwrite it unle
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
-
-For a managed release-image source, NemoClaw validates the durable workload receipt and retains the exact source image digest.
-It reconciles the source's current route and configuration before it creates a destination-specific secret-free startup profile and workload receipt.
-Export the credential variables for every enabled messaging or web-search provider before you clone.
-If the source receipt records an authenticated proxy, export the matching proxy environment variables again.
-For a managed Hermes source with enabled Nous tool gateways, NemoClaw acquires a fresh destination OAuth credential during an interactive clone.
-For a non-interactive clone, export `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN` with the destination refresh credential before running restore.
-The destination receives its own OpenShell provider and in-memory host-broker binding; the source credential and broker identity remain active.
-NemoClaw completes these validations before it deletes an existing `--force` destination.
 
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
