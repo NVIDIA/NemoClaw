@@ -578,7 +578,37 @@ describe("docker-driver-gateway-service", () => {
       statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
       stopped: true,
     });
-    expect(events).toEqual(["stop nemoclaw-openshell-gateway"]);
+    expect(events).toEqual([
+      "show nemoclaw-openshell-gateway --property=FragmentPath --property=ExecStart",
+      "stop nemoclaw-openshell-gateway",
+    ]);
+  });
+
+  it("refuses to stop a systemd unit that no longer has the trusted identity (#7904)", () => {
+    const events: string[] = [];
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: systemdSpawn(
+        events,
+        `${home}/.config/systemd/user/unrelated.service`,
+        "/usr/bin/unrelated",
+      ),
+    });
+
+    expect(result).toMatchObject({ attempted: true, stopped: false });
+    expect(result.reason).toContain("service identity is not a trusted OpenShell gateway");
+    expect(events).toEqual([
+      "show nemoclaw-openshell-gateway --property=FragmentPath --property=ExecStart",
+    ]);
   });
 
   it("stops the official Homebrew gateway service on macOS (#7904)", () => {

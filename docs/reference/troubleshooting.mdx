@@ -993,7 +993,7 @@ Create a snapshot first when the sandbox is reachable enough to back up state.
 For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 </Warning>
 
-### Gateway port stays bound after destroying the last sandbox
+### Gateway Port Stays Bound After Destroying the Last Sandbox
 
 Destroying the final sandbox with `--cleanup-gateway` stops the packaged OpenShell gateway service before it reaps host gateway processes, so the gateway port is released.
 The service is stopped, not disabled or removed, and the next onboarding run starts it again.
@@ -1006,7 +1006,13 @@ On Apple Silicon macOS with Homebrew:
 brew services stop openshell
 ```
 
-On Linux, use the service name that matches the install: `openshell-gateway` for package installs, `nemoclaw-openshell-gateway` for tarball installs.
+On Linux, use the service name that matches the install. For package installs:
+
+```bash
+systemctl --user stop openshell-gateway
+```
+
+For tarball installs:
 
 ```bash
 systemctl --user stop nemoclaw-openshell-gateway

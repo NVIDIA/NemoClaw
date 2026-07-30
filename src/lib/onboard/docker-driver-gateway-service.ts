@@ -685,6 +685,10 @@ export function stopOpenShellGatewayUserService(
   });
   const command = stopServiceCommandName(service);
   if (!commandExists(command)) return describe(false, `${command} is not available`);
+  if (service.manager === "systemd") {
+    const identity = validateSystemdServiceIdentity(service, { env, spawnSyncImpl });
+    if (!identity.ok) return describe(false, identity.reason ?? "service identity is invalid");
+  }
   const stop = runStopService(service, { env, spawnSyncImpl });
   if (stop.ok) return describe(true);
   const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
