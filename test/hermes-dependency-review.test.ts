@@ -33,7 +33,7 @@ function arg(name: string): string {
   return match?.[1] ?? "";
 }
 
-function uvVersionCheckStatus(output: string): number | null {
+function uvVersionCheckStatus(output: string, expectedVersion: string): number | null {
   const script = [
     'uv() { printf "%s\\n" "$UV_OUTPUT"; }',
     'uv_version_output="$(uv --version)"',
@@ -41,7 +41,7 @@ function uvVersionCheckStatus(output: string): number | null {
     'test "${uv_version%% *}" = "${UV_VERSION}"',
   ].join("\n");
   return spawnSync("/bin/sh", ["-c", script], {
-    env: { ...process.env, UV_OUTPUT: output, UV_VERSION: "0.11.33" },
+    env: { ...process.env, UV_OUTPUT: output, UV_VERSION: expectedVersion },
   }).status;
 }
 
@@ -93,10 +93,19 @@ describe("Hermes 0.19.0 dependency review", () => {
   });
 
   it("accepts uv build metadata and rejects a different semantic version", () => {
+    const expectedVersion = arg("UV_VERSION");
+    const differentVersion = expectedVersion.replace(/\d+$/u, (patch) =>
+      String(Number.parseInt(patch, 10) + 1),
+    );
     expect(
-      uvVersionCheckStatus("uv 0.11.33 (fece32fc5 2026-07-28 aarch64-unknown-linux-gnu)"),
+      uvVersionCheckStatus(
+        `uv ${expectedVersion} (fece32fc5 2026-07-28 aarch64-unknown-linux-gnu)`,
+        expectedVersion,
+      ),
     ).toBe(0);
-    expect(uvVersionCheckStatus("uv 0.11.32 (different build metadata)")).not.toBe(0);
+    expect(
+      uvVersionCheckStatus(`uv ${differentVersion} (different build metadata)`, expectedVersion),
+    ).toBe(1);
   });
 
   it("ships the reviewed Python dependency remediations and records residual debt", () => {
