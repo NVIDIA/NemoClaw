@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  dockerForceRm as defaultDockerForceRm,
   dockerRename as defaultDockerRename,
   dockerRm as defaultDockerRm,
   dockerStart as defaultDockerStart,
@@ -26,6 +27,7 @@ type DockerRenameFn = (
 ) => DockerRunResult;
 
 export type ResolvedDockerGpuPatchRollbackDeps = {
+  dockerForceRm: DockerContainerFn;
   dockerStop: DockerContainerFn;
   dockerRm: DockerContainerFn;
   dockerRename: DockerRenameFn;
@@ -36,6 +38,7 @@ export function resolveDockerGpuPatchRollbackDeps(
   deps: DockerGpuPatchDeps,
 ): ResolvedDockerGpuPatchRollbackDeps {
   return {
+    dockerForceRm: deps.dockerForceRm ?? defaultDockerForceRm,
     dockerStop: deps.dockerStop ?? defaultDockerStop,
     dockerRm: deps.dockerRm ?? defaultDockerRm,
     dockerRename: deps.dockerRename ?? defaultDockerRename,
@@ -44,7 +47,12 @@ export function resolveDockerGpuPatchRollbackDeps(
 }
 
 export function rollbackToBackupContainer(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  refs: {
+    newContainerId: string;
+    backupContainerName: string;
+    originalName: string;
+    backupWasRunning?: boolean;
+  },
   deps: ResolvedDockerGpuPatchRollbackDeps,
 ): boolean {
   const containerOpts = {
@@ -56,13 +64,19 @@ export function rollbackToBackupContainer(
   deps.dockerRm(refs.newContainerId, containerOpts);
   const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
   if (!hasZeroDockerExitStatus(restored)) return false;
+  if (refs.backupWasRunning) return true;
   const started = deps.dockerStart(refs.originalName, containerOpts);
   return hasZeroDockerExitStatus(started);
 }
 
 /** Restore the original sandbox after `docker run` fails during GPU recreation. */
 export function restoreDockerGpuPatchBackupAfterRecreateFailure(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  refs: {
+    newContainerId: string;
+    backupContainerName: string;
+    originalName: string;
+    backupWasRunning?: boolean;
+  },
   deps: DockerGpuPatchDeps = {},
 ): boolean {
   return rollbackToBackupContainer(refs, resolveDockerGpuPatchRollbackDeps(deps));

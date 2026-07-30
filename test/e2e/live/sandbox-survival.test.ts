@@ -115,7 +115,7 @@ test(
         "NemoClaw registry, nemoclaw list/status, and openshell sandbox list discover the sandbox",
         "OpenShell version supports gateway resume and state persistence",
         "sandbox exec/SSH-equivalent access works before and after gateway restart",
-        "OpenClaw gateway health is restored after the OpenShell gateway restart",
+        "OpenClaw gateway passes its health check after the OpenShell gateway restart",
         "inference.local returns a live PONG before and after gateway restart",
         "markers under /sandbox/.openclaw survive the gateway stop/start cycle",
         "final destroy removes the sandbox from NemoClaw registry/list state",

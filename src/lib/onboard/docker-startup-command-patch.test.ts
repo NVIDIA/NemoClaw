@@ -43,6 +43,99 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("Docker startup-command patch", () => {
+  it("keeps the registered supervisor running until deferred recovery finalizes", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? "old-container-id\n"
+        : args[0] === "inspect"
+          ? JSON.stringify([inspectFixture()])
+          : "",
+    );
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    const result = recreateStartupCommandForTest(
+      {
+        sandboxName: "alpha",
+        keepOriginalRunningUntilFinalize: true,
+        waitForSupervisor: false,
+        openshellSandboxCommand: ["env", "nemoclaw-start"],
+      },
+      {
+        dockerCapture,
+        dockerRunDetached,
+        dockerRename,
+        dockerStop,
+        now: () => new Date("2026-07-10T00:00:00Z"),
+      },
+    );
+
+    expect(result).toMatchObject({
+      newContainerId: "new-container-id",
+      backupWasRunning: true,
+      backupRemoved: false,
+    });
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRename.mock.invocationCallOrder[0]).toBeLessThan(
+      dockerRunDetached.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("requires deferred finalization when preserving the registered supervisor", () => {
+    const dockerCapture = vi.fn();
+
+    expect(() =>
+      recreateStartupCommandForTest(
+        {
+          sandboxName: "alpha",
+          keepOriginalRunningUntilFinalize: true,
+          openshellSandboxCommand: ["env", "nemoclaw-start"],
+        },
+        { dockerCapture },
+      ),
+    ).toThrow(/requires deferred supervisor finalization/);
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
+  it("rolls back to the running original container without restarting it when replacement creation fails", () => {
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      recreateStartupCommandForTest(
+        {
+          sandboxName: "alpha",
+          keepOriginalRunningUntilFinalize: true,
+          waitForSupervisor: false,
+          openshellSandboxCommand: ["env", "nemoclaw-start"],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspectFixture()])
+                : "",
+          ),
+          dockerRunDetached: vi.fn(() => ({ status: 1, stderr: "boom" })),
+          dockerRename,
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStart,
+          dockerStop: vi.fn(() => ({ status: 0 })),
+          now: () => new Date("2026-07-10T00:00:00Z"),
+        },
+      ),
+    ).toThrow(/Could not start recreated sandbox container: boom; pre-patch sandbox restored/);
+
+    expect(dockerRename).toHaveBeenLastCalledWith(
+      expect.stringContaining("openshell-alpha-nemoclaw-gpu-backup-"),
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
   it("persists the startup command without adding GPU-only container privileges", () => {
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
