@@ -1366,7 +1366,11 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const readinessFailureDetail = relaunch
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
-            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
+            ...(confirmRelaunchedManagedHealth
+              ? {
+                  beforeProbe: (timeoutMs: number) => confirmRelaunchedManagedHealth(timeoutMs),
+                }
+              : {}),
           };
           const readiness =
             waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
