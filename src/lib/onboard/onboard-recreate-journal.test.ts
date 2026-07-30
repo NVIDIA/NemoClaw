@@ -86,6 +86,11 @@ function livePresentProbe(phase = "Ready") {
   return { status: 0, output: rendered, stdout: rendered, stderr: "" };
 }
 
+function replacementProbe(phase = "Ready") {
+  const rendered = `Name: alpha\nId: sbx-2f80d5a613\nPhase: ${phase}\n`;
+  return { status: 0, output: rendered, stdout: rendered, stderr: "" };
+}
+
 function absentProbe() {
   return {
     status: 1,
@@ -218,6 +223,54 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
 
     runtime.complete();
 
+    expect(session.checkpoint?.sandboxRecreate).toBeNull();
+  });
+
+  it("accepts the proven replacement instead of deleting it again (#7734)", () => {
+    const first = open();
+    first.advance("deleting");
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    first.confirmDeleted();
+    first.advance("creating");
+    mocks.captureOpenshell.mockReturnValue(replacementProbe());
+    first.recordCreated();
+    first.advance("registry_committing");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      ...first.registrationFields,
+    } as registry.SandboxEntry);
+
+    const resumed = open();
+
+    expect(resumed.acceptedTarget).toBe(true);
+    resumed.complete();
+    expect(session.checkpoint?.sandboxRecreate).toBeNull();
+  });
+
+  it("retires a replacement whose registration already reached completion", () => {
+    const first = open();
+    first.advance("deleting");
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    first.confirmDeleted();
+    first.advance("creating");
+    mocks.captureOpenshell.mockReturnValue(replacementProbe());
+    first.recordCreated();
+    first.advance("completed");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      ...first.registrationFields,
+    } as registry.SandboxEntry);
+
+    const resumed = open();
+
+    expect(resumed.acceptedTarget).toBe(true);
+    expect(() => resumed.complete()).not.toThrow();
     expect(session.checkpoint?.sandboxRecreate).toBeNull();
   });
 

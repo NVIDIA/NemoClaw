@@ -20,6 +20,7 @@ import {
   fingerprintSandboxRecreateValue,
   planSandboxRecreateRecovery,
   type SandboxRecreateRuntime,
+  sandboxRecreatePhaseReached,
 } from "./sandbox-recreate-transaction";
 
 export interface OnboardRecreateTargetIntent {
@@ -151,8 +152,11 @@ export function openOnboardRecreateJournal(
     // the replacement registry row commits.
     complete: () => {
       onboardSession.updateSession((current) => {
-        advanceSandboxRecreateTransaction(current, transaction.id, "registry_committing");
-        advanceSandboxRecreateTransaction(current, transaction.id, "completed");
+        for (const next of ["registry_committing", "completed"] as const) {
+          const phase = current.checkpoint?.sandboxRecreate?.phase;
+          if (phase && sandboxRecreatePhaseReached(phase, next)) continue;
+          advanceSandboxRecreateTransaction(current, transaction.id, next);
+        }
         clearCompletedSandboxRecreateTransaction(current, transaction.id);
         return current;
       });
