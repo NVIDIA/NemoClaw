@@ -68,6 +68,7 @@ describe("authenticated MCP rediscovery evidence", () => {
 
   it.each([
     ["initialize HTTP response", 0, { responseStatus: 401 }],
+    ["initialized notification response with HTTP 200", 1, { responseStatus: 200 }],
     ["tools/list JSON-RPC response", 2, { responseHasResult: false }],
   ])("rejects a failed %s", (_failure, failedRequestIndex, response) => {
     const requests = [
