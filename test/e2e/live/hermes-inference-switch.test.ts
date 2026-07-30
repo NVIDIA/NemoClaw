@@ -259,6 +259,15 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
   expect(dashboardModel.base_url).toBe(expectedBaseUrl());
   expect(dashboardModel.api_mode).toBe(expectedApiMode());
+  for (const reviewedPolicySection of [
+    "approvals",
+    "browser",
+    "session_reset",
+    "display",
+    "updates",
+  ]) {
+    expect(dashboardConfig.stdout).toMatch(new RegExp(`^${reviewedPolicySection}:`, "mu"));
+  }
 
   const dashboardModelInfo = await sandbox.exec(
     SANDBOX_NAME,
