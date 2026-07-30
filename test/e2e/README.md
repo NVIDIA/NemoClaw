@@ -692,7 +692,12 @@ permission. It then revalidates the open PR, PR SHA and base SHA, deterministic
 plan, matching pending coordination state, compatible trusted controller
 commit, and final live revision. It updates coordination to
 `Running <count> E2E check(s)` and dispatches the selected jobs and targets in
-one workflow run.
+one workflow run. The approval is valid only while coordination has the exact
+maintainer-approval title for the live internal or fork route. An early or
+stale approval remains fail-closed and reports whether coordination is still
+preparing, waiting for a different route, already executing, terminal, or
+malformed, together with the safe wait, follow, refresh, or inspect action. The
+diagnostic does not echo the observed check output.
 
 The child workflow receives the controller-owned coordination check ID. Before
 checking out the PR revision, it requires a GitHub Actions dispatch and verifies

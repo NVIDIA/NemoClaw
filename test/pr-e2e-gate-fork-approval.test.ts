@@ -999,7 +999,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         },
       });
       await expect(approvePrE2E(approvalCommand(workDirs[1]!))).rejects.toThrow(
-        /matching pending E2E authorization state/u,
+        /coordination is terminal/u,
       );
       expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
@@ -1044,7 +1044,63 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     }
   });
 
-  it("rejects control-plane authorization when the gate is already completed", async () => {
+  it.each([
+    {
+      name: "approval is early",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Waiting for PR CI" },
+      },
+      expected: /coordination is still preparing.*Wait for the coordination title/u,
+    },
+    {
+      name: "the pending route is for a fork",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Maintainer approval required to run fork E2E" },
+      },
+      expected: /coordination is waiting for a different approval route/u,
+    },
+    {
+      name: "E2E is already running",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Running 3 E2E checks" },
+      },
+      expected: /E2E is already executing.*do not launch another approval/u,
+    },
+    {
+      name: "the gate is terminal",
+      check: {
+        status: "completed",
+        conclusion: "failure",
+        output: { title: "Maintainer approval required to run E2E" },
+      },
+      expected: /coordination is terminal.*do not reuse this approval/u,
+    },
+    {
+      name: "the coordination title is malformed",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "unexpected remote title" },
+      },
+      expected: /coordination is malformed or unknown.*do not retry/u,
+      hidden: "unexpected remote title",
+    },
+    {
+      name: "the coordination title is missing",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: {},
+      },
+      expected: /coordination is malformed or unknown.*do not retry/u,
+    },
+  ])("rejects control-plane authorization when $name", async ({ check, expected, hidden }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
@@ -1064,20 +1120,21 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
-          existingPrGateCheckRunsRoute({
-            status: "completed",
-            conclusion: "failure",
-            output: { title: "Maintainer approval required to run E2E" },
-          }),
+          existingPrGateCheckRunsRoute(check),
         ],
         requests,
       ),
     );
 
     try {
-      await expect(approvePrE2E(approvalCommand(workDir))).rejects.toThrow(
-        /matching pending E2E authorization state/u,
+      const error = await approvePrE2E(approvalCommand(workDir)).then(
+        () => undefined,
+        (reason: unknown) => reason,
       );
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(expected);
+      expect((error as Error).message).toContain("Maintainer approval required to run E2E");
+      if (hidden !== undefined) expect((error as Error).message).not.toContain(hidden);
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
