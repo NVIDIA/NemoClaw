@@ -369,7 +369,7 @@ These dashboard ports are separate from the gateway-wide inference route.
 
 </AgentOnly>
 
-### A gateway port stays bound after uninstall or re-onboard
+### A Gateway Port Stays Bound After Uninstall or Re-Onboard
 
 A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, is a second environment rather than a leaked listener.
 
@@ -398,7 +398,7 @@ $$nemoclaw uninstall --all-gateway-ports
 The same scoping applies to `$$nemoclaw <name> stop`.
 When stop reports that no valid gateway binding is registered for a sandbox, the sandbox was most likely onboarded under a different gateway port; re-run stop with that `NEMOCLAW_GATEWAY_PORT` value set.
 
-Refer to [Uninstall NemoClaw](../manage-sandboxes/uninstall-nemoclaw) for the full sweep contract.
+Refer to [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the full sweep contract.
 
 ### A shared inference route conflicts with another sandbox
 

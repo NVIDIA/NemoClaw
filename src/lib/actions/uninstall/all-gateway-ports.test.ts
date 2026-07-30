@@ -88,6 +88,24 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("9000"));
   });
 
+  it("carries a failed port into the final pass so shared cleanup stays scoped (#7791)", () => {
+    const { deps, runSelectedPass } = sweepDeps({
+      runPortPass: vi.fn((port: number) => (port === 9000 ? 1 : 0)),
+    });
+
+    runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({ retainedGatewayPorts: [9000] });
+  });
+
+  it("retains no port for the final pass when every other port uninstalled", () => {
+    const { deps, runSelectedPass } = sweepDeps();
+
+    runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({ retainedGatewayPorts: [] });
+  });
+
   it("runs a single scoped pass when no other gateway port exists", () => {
     const { deps, runPortPass, runSelectedPass } = sweepDeps({ listGatewayPorts: () => [8080] });
 

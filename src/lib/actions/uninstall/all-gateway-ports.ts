@@ -22,7 +22,7 @@
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 
-import { getAgentBranding } from "../../cli/branding";
+import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import { spawnExitCode } from "../../core/process-exit";
 import { readLineFromStdin } from "../../core/stdin";
@@ -100,12 +100,11 @@ function defaultRunPortPass(
 function confirmSweep(
   options: UninstallRunOptions,
   ports: readonly number[],
-  env: NodeJS.ProcessEnv,
+  branding: AgentBranding,
   log: (message: string) => void,
   readLine: () => string | null,
 ): boolean {
   if (options.assumeYes) return true;
-  const branding = getAgentBranding(env.NEMOCLAW_AGENT);
   log(`This will remove ${branding.display} resources for every gateway port on this host:`);
   for (const port of ports) {
     log(`  · gateway '${resolveGatewayName(port)}' on port ${String(port)}`);
@@ -128,7 +127,8 @@ export function runUninstallAllGatewayPorts(
   deps: AllGatewayPortsDeps = {},
 ): AllGatewayPortsOutcome {
   const env = { ...process.env, ...(deps.env ?? {}) };
-  const home = deps.home ?? env.HOME ?? os.homedir();
+  const branding = getAgentBranding(deps.env?.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT);
+  const home = deps.home ?? deps.env?.HOME ?? process.env.HOME ?? os.homedir();
   const log = deps.log ?? ((message: string) => console.log(message));
   const error = deps.error ?? ((message: string) => console.error(message));
   const readLine = deps.readLine ?? (() => readLineFromStdin());
@@ -142,7 +142,7 @@ export function runUninstallAllGatewayPorts(
     discovered = listPorts(home);
   } catch (failure) {
     error(
-      `Cannot enumerate ${getAgentBranding(env.NEMOCLAW_AGENT).display} gateway ports: ${
+      `Cannot enumerate ${branding.display} gateway ports: ${
         failure instanceof Error ? failure.message : String(failure)
       }`,
     );
@@ -157,21 +157,27 @@ export function runUninstallAllGatewayPorts(
   }
 
   const ordered = [...otherPorts, GATEWAY_PORT];
-  if (!confirmSweep(options, ordered, env, log, readLine)) {
+  if (!confirmSweep(options, ordered, branding, log, readLine)) {
     return { exitCode: 0, ports: ordered };
   }
 
   let exitCode = 0;
+  const retainedGatewayPorts: number[] = [];
   for (const port of otherPorts) {
     log(`Uninstalling gateway '${resolveGatewayName(port)}' on port ${String(port)}.`);
     if (runPortPass(port, options, env) !== 0) {
       exitCode = 1;
+      retainedGatewayPorts.push(port);
       error(`Uninstall failed for gateway port ${String(port)}; its resources may remain on disk.`);
     }
   }
   log(
     `Uninstalling gateway '${resolveGatewayName(GATEWAY_PORT)}' on port ${String(GATEWAY_PORT)}.`,
   );
-  if (runSelectedPass({ ...options, assumeYes: true }, runDeps).exitCode !== 0) exitCode = 1;
+  const selected = runSelectedPass(
+    { ...options, assumeYes: true },
+    { ...runDeps, retainedGatewayPorts },
+  );
+  if (selected.exitCode !== 0) exitCode = 1;
   return { exitCode, ports: ordered };
 }

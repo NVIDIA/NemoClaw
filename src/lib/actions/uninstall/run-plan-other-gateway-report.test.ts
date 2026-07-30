@@ -36,7 +36,11 @@ function managedAuthority(): Pick<UninstallRunDeps, "resolveGatewayTeardownAutho
   };
 }
 
-function uninstallLogsFor(registry: string | null, liveGatewayNames: readonly string[]): string[] {
+function uninstallLogsFor(
+  registry: string | null,
+  liveGatewayNames: readonly string[],
+  retainedGatewayPorts: readonly number[] = [],
+): string[] {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-report-"));
   const logs: string[] = [];
   try {
@@ -60,6 +64,7 @@ function uninstallLogsFor(registry: string | null, liveGatewayNames: readonly st
         isTty: false,
         kill: vi.fn(() => true),
         log: (message: string) => logs.push(message),
+        retainedGatewayPorts,
         rmSync: fs.rmSync,
         run: (command, args) =>
           command === "openshell" && args.join(" ") === "gateway list -o json"
@@ -102,5 +107,17 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
       expect.stringContaining("gateway-port environments remain on this host"),
     );
     expect(logs).not.toContainEqual(expect.stringContaining("--all-gateway-ports"));
+  });
+
+  it("keeps shared host resources for a failed sweep port whose gateway is already gone (#7791)", () => {
+    const logs = uninstallLogsFor(null, ["nemoclaw"], [9000]);
+
+    expect(logs).toContainEqual("  · gateway 'nemoclaw-9000' on port 9000");
+    expect(logs).toContainEqual(
+      "Sibling gateways remain; kept shared runtime files and OpenShell binaries.",
+    );
+    expect(logs).toContainEqual(
+      "Sibling gateways remain; kept shared OpenShell and NemoClaw config.",
+    );
   });
 });

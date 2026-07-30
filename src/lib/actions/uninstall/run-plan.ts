@@ -86,6 +86,7 @@ export interface UninstallRunDeps {
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readLine?: () => string | null;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+  retainedGatewayPorts?: readonly number[];
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -344,6 +345,7 @@ interface UninstallRuntime {
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readLine: () => string | null;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
+  retainedGatewayPorts: readonly number[];
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -378,6 +380,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readLine: deps.readLine ?? readLineFromStdin,
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
+    retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -1367,7 +1370,28 @@ function collectLiveOpenShellGatewayNames(runtime: UninstallRuntime): Set<string
   }
 }
 
+/**
+ * A caller that already uninstalled the other gateway ports knows which of them
+ * failed, and a failed port keeps residual state even when its gateway is gone.
+ * Observation alone can no longer see such a port, so the caller's list is added
+ * to whatever this run discovers, keeping cleanup gateway-scoped (#7791).
+ */
 function inspectOtherGatewayEnvironments(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): OtherGatewayInspection {
+  const discovered = discoverOtherGatewayEnvironments(paths, runtime);
+  if (runtime.retainedGatewayPorts.length === 0) return discovered;
+  // A retained port may still own rows in the shared registry, so keep the
+  // shared default-root state rather than pruning it out from under it.
+  return otherGatewaysRemain(
+    [...discovered.otherGatewayPorts, ...runtime.retainedGatewayPorts],
+    true,
+    discovered.unidentifiedOtherGateways,
+  );
+}
+
+function discoverOtherGatewayEnvironments(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
 ): OtherGatewayInspection {

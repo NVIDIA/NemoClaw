@@ -34,13 +34,14 @@ Do not use `--gateway` to select another instance; when supplied for compatibili
 
 One uninstall removes one gateway port.
 A host that onboarded under more than one `NEMOCLAW_GATEWAY_PORT` keeps the other ports bound after that uninstall, because each port is a separate environment with its own sandboxes, registry, and gateway.
-When other ports remain, uninstall names them and prints the command that removes each one:
+When other ports remain, uninstall names them and prints the command that removes them.
+An environment whose port cannot be read is reported as unidentified, and the per-port command appears only when at least one port is known:
 
 ```text
 Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:
   · gateway 'nemoclaw-9000' on port 9000
-  Remove one of them: NEMOCLAW_GATEWAY_PORT=9000 nemoclaw uninstall
-  Remove every gateway port: nemoclaw uninstall --all-gateway-ports
+  Remove one of them: NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw uninstall
+  Remove every gateway port: $$nemoclaw uninstall --all-gateway-ports
 ```
 
 Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to uninstall all of them in one run:
