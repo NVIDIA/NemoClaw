@@ -14,8 +14,8 @@
 #   npx prek run --all-files
 #   npx prek run --all-files --stage manual  # full CLI/plugin coverage
 #
-# Diff-only fallback for automatic commit, commit-message, and push checks:
-#   npm run check:diff
+# Routine PR validation for automatic commit, commit-message, and push checks:
+#   npm run validate:pr
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
@@ -169,9 +169,9 @@ repos:
 
       - id: repository-checks
         name: Repository checks
-        entry: npm run checks
+        entry: npm run checks:repository
         language: system
-        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|docs/resources/starter-prompt\.md$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
+        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|docs/resources/starter-prompt\.md$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 

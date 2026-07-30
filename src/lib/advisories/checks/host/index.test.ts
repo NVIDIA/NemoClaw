@@ -44,6 +44,7 @@ describe("host advisory registry (#3213)", () => {
     expect(ids).toEqual([
       "enable_docker_desktop_wsl_integration",
       "install_docker",
+      "invalid_docker_host",
       "docker_group_permission",
       "start_docker",
       "container_runtime_under_provisioned",

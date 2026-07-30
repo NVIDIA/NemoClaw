@@ -63,9 +63,7 @@ describe("PR E2E controller commands", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      "--mode must be seed, start, start-control-plane, start-approved-fork, finish",
-    );
+    expect(result.stderr).toContain("--mode must be seed, start, approve-e2e, finish");
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
@@ -287,52 +285,12 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("parses an approved fork E2E run", () => {
+  it("parses a maintainer-approved E2E run inside a private workspace", () => {
     withPrivateWorkDir((workDir) => {
       expect(
         parseControllerCommand([
           "--mode",
-          "start-approved-fork",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--approval-run-id",
-          "101",
-          "--approval-run-attempt",
-          "1",
-          "--gate-run-id",
-          "102",
-          "--workflow-run-attempt",
-          "1",
-          "--work-dir",
-          workDir,
-        ]),
-      ).toMatchObject({
-        mode: "start-approved-fork",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        approvalRunId: 101,
-        approvalRunAttempt: 1,
-        gateRunId: 102,
-        workflowRunAttempt: 1,
-        planPath: path.join(workDir, "risk-plan.json"),
-      });
-    });
-  });
-
-  it("parses an authorized control-plane run inside a private workspace", () => {
-    withPrivateWorkDir((workDir) => {
-      expect(
-        parseControllerCommand([
-          "--mode",
-          "start-control-plane",
+          "approve-e2e",
           "--pr",
           "42",
           "--head",
@@ -353,7 +311,7 @@ describe("PR E2E controller commands", () => {
           workDir,
         ]),
       ).toMatchObject({
-        mode: "start-control-plane",
+        mode: "approve-e2e",
         prNumber: 42,
         headSha: HEAD_SHA,
         baseSha: BASE_SHA,
@@ -367,10 +325,13 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("rejects the removed control-plane bypass mode", () => {
-    expect(() => parseControllerCommand(["--mode", "resolve-control-plane"])).toThrow(
-      /--mode must be/u,
-    );
+  it.each([
+    "resolve-control-plane",
+    "start-control-plane",
+    "start-approved-control-plane",
+    "start-approved-fork",
+  ])("rejects removed approval mode %s", (mode) => {
+    expect(() => parseControllerCommand(["--mode", mode])).toThrow(/--mode must be/u);
   });
 
   it("parses an abandon command", () => {
