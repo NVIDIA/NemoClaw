@@ -412,7 +412,9 @@ RUN printf '%s\n' \
 # skip rather than doing a nondeterministic dependency resolve during image
 # build.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
-    && test "$(uv --version)" = "uv ${UV_VERSION}"
+    && uv_version_output="$(uv --version)" \
+    && uv_version="${uv_version_output#uv }" \
+    && test "${uv_version%% *}" = "${UV_VERSION}"
 # Upstream tests are not part of the production runtime and can contain
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
