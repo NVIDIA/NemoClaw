@@ -121,7 +121,7 @@ describe("DGX Station documentation ownership", () => {
     );
     expect(stationPreparation).not.toContain("owner-only pair state");
     expect(stationPreparation).not.toContain("Trusted Pair Boundary");
-    expect(stationPreparation).not.toContain("The dual-Station path is a Deferred evaluation");
+    expect(stationPreparation).not.toContain("The two-Station path is a Deferred evaluation");
     expect(dualStationVllmSetup).not.toContain("two-Station CX8 fabric playbook");
     expect(dualStationVllmSetup).not.toContain(
       "Configure SSH host-key trust and non-interactive authentication",
