@@ -1164,8 +1164,12 @@ In a direct root-entrypoint container, the request reaches the root PID 1 superv
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaunch as a fallback.
 When the root-owned managed controller attests two unchanged zero-supervisor process scans with a stable PID 1 and reports `SUPERVISOR_NOT_RUNNING`, a local Docker-driver sandbox with the legacy keepalive startup can enter a transactional container recreation.
-The recreation uses a credential-free managed startup command, pins the registered container identity, retains the previous container for rollback, and commits only after managed gateway health and the settle check pass.
-The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+The recreation uses a credential-free managed startup command, pins the registered container identity, and retains the previous container for rollback.
+Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
+It commits only after managed gateway health, the settle check, exact replacement identity, and state restoration pass.
+NemoClaw removes the temporary state backup after a successful restore or rollback.
+If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
+Mounted state remains available, but a committed swap does not retain other writable-layer changes.
 It is idempotent.
 When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
 The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
