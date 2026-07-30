@@ -237,6 +237,10 @@ async function runProbeOnly(
     result.exitCode,
     `${artifactName} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).toBe(0);
+  expect(
+    result.stdout,
+    `${artifactName} did not exercise connect-driven recovery\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toContain(`Probe complete: recovered OpenClaw gateway in '${sandboxName}'.`);
 }
 
 async function killGatewayPid(
@@ -251,15 +255,11 @@ async function killGatewayPid(
   pid: number,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.exec(
-    sandboxName,
-    ["sh", "-c", `kill -9 ${pid} 2>/dev/null || true; sleep 1`],
-    {
-      artifactName,
-      env: probeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
+  const result = await sandbox.exec(sandboxName, ["kill", "-9", String(pid)], {
+    artifactName,
+    env: probeEnv(),
+    timeoutMs: 30_000,
+  });
   expect(
     result.exitCode,
     `${artifactName}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
