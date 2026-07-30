@@ -82,8 +82,31 @@ export class ManagedImageCatalogError extends Error {
   }
 }
 
+export class ManagedImageCatalogUnavailableError extends ManagedImageCatalogError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ManagedImageCatalogUnavailableError";
+  }
+}
+
 function invalid(message: string, options?: ErrorOptions): never {
   throw new ManagedImageCatalogError(message, options);
+}
+
+function unavailable(message: string, options?: ErrorOptions): never {
+  throw new ManagedImageCatalogUnavailableError(message, options);
+}
+
+function isRegistryAvailabilityStatus(status: number): boolean {
+  return status === 404 || status === 408 || status === 410 || status === 429 || status >= 500;
+}
+
+function registryHttpError(description: string, status: number): never {
+  const message = `${description} request returned HTTP ${status}`;
+  if (isRegistryAvailabilityStatus(status)) {
+    return unavailable(message);
+  }
+  return invalid(message);
 }
 
 async function withRegistryFetch<T>(
@@ -235,13 +258,16 @@ async function requestRegistry(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return invalid(`${description} request failed`, { cause: error });
+    return unavailable(`${description} request failed`, { cause: error });
   }
   return response;
 }
 
 function redirectedBlobUrl(response: Response, digest: `sha256:${string}`): URL {
   if (response.status !== 307) {
+    if (isRegistryAvailabilityStatus(response.status)) {
+      return registryHttpError("GHCR image config", response.status);
+    }
     return invalid(`GHCR image config request returned HTTP ${response.status}, expected 307`);
   }
   const location = response.headers.get("location");
@@ -274,7 +300,7 @@ async function getAnonymousToken(
 ): Promise<string> {
   const tokenUrl = bearerChallenge(challengeResponse, expectedScope);
   const response = await requestRegistry(fetchImpl, tokenUrl, { method: "GET" }, "GHCR token");
-  if (!response.ok) return invalid(`GHCR token request returned HTTP ${response.status}`);
+  if (!response.ok) return registryHttpError("GHCR token", response.status);
   const document = requireObject(await readBoundedJson(response, "GHCR token response"), "token");
   const token = document.token;
   if (typeof token !== "string" || token.length < 16 || token.length > 16_384) {
@@ -317,7 +343,7 @@ async function getManifest(
     );
   }
   if (!resolvedToken) return invalid("GHCR manifest did not establish anonymous pull identity");
-  if (!response.ok) return invalid(`GHCR manifest request returned HTTP ${response.status}`);
+  if (!response.ok) return registryHttpError("GHCR manifest", response.status);
   const digest = requireDigest(response.headers.get("docker-content-digest"), "manifest digest");
   if (DIGEST_PATTERN.test(reference) && digest !== reference) {
     return invalid("GHCR returned a manifest digest different from the requested digest");
@@ -405,7 +431,7 @@ async function getImageConfig(
   if (response.status >= 300 && response.status < 400) {
     return invalid("GHCR image config redirect target attempted another redirect");
   }
-  if (!response.ok) return invalid(`GHCR image config request returned HTTP ${response.status}`);
+  if (!response.ok) return registryHttpError("GHCR redirected image config", response.status);
   return requireObject(
     await readBoundedJson(response, "GHCR image config", digest),
     "image config",
@@ -561,7 +587,7 @@ export async function resolveManagedImageCatalogFromGhcr(options: {
       fetchImpl,
     });
     const cohortReference = `cohort-${openclaw.source.cohort}`;
-    const dependentEntries = await Promise.all(
+    const dependentResults = await Promise.allSettled(
       SHIPPED_MANAGED_IMAGE_AGENTS.filter((agent) => agent !== "openclaw").map(async (agent) => [
         agent,
         await resolveManagedImageContractAtReferenceFromGhcr({
@@ -574,6 +600,20 @@ export async function resolveManagedImageCatalogFromGhcr(options: {
           expectedRevision: openclaw.source.revision,
         }),
       ]),
+    );
+    for (const result of dependentResults) {
+      if (
+        result.status === "rejected" &&
+        !(result.reason instanceof ManagedImageCatalogUnavailableError)
+      ) {
+        throw result.reason;
+      }
+    }
+    for (const result of dependentResults) {
+      if (result.status === "rejected") throw result.reason;
+    }
+    const dependentEntries = dependentResults.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
     );
     return Object.fromEntries([["openclaw", openclaw], ...dependentEntries]);
   });

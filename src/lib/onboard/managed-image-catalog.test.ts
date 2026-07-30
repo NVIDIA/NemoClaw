@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  ManagedImageCatalogError,
+  ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
   resolveManagedImageCatalogFromGhcr,
   resolveManagedImageContractFromGhcr,
@@ -265,6 +267,20 @@ describe("managed image GHCR catalog", () => {
     });
   });
 
+  it("classifies a registry transport failure as unavailable (#7744)", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      resolveManagedImageContractFromGhcr({
+        agent: "openclaw",
+        release: RELEASE,
+        fetchImpl,
+      }),
+    ).rejects.toBeInstanceOf(ManagedImageCatalogUnavailableError);
+  });
+
   it.each(
     MANAGED_IMAGE_PLATFORMS,
   )("selects and validates the exact %s child manifest", async (platform) => {
@@ -366,12 +382,12 @@ describe("managed image GHCR catalog", () => {
   it("fails closed when a dependent cohort alias is torn or absent", async () => {
     const fixture = catalogFixture({ hermes: { missingRoot: true } });
 
-    await expect(
-      resolveManagedImageCatalogFromGhcr({
-        release: RELEASE,
-        fetchImpl: fixture.fetchImpl,
-      }),
-    ).rejects.toThrow(/GHCR manifest request returned HTTP 404/);
+    const resolution = resolveManagedImageCatalogFromGhcr({
+      release: RELEASE,
+      fetchImpl: fixture.fetchImpl,
+    });
+    await expect(resolution).rejects.toBeInstanceOf(ManagedImageCatalogUnavailableError);
+    await expect(resolution).rejects.toThrow(/GHCR manifest request returned HTTP 404/);
 
     const hermesRepository = MANAGED_IMAGE_REPOSITORIES.hermes.replace("ghcr.io/", "");
     const hermesManifestRequests = fixture.fetchMock.mock.calls
@@ -381,6 +397,29 @@ describe("managed image GHCR catalog", () => {
       `/v2/${hermesRepository}/manifests/cohort-${COHORT}`,
       `/v2/${hermesRepository}/manifests/cohort-${COHORT}`,
     ]);
+  });
+
+  it("prioritizes cohort integrity failure over concurrent unavailability (#7744)", async () => {
+    const fixture = catalogFixture({
+      hermes: { missingRoot: true },
+      "langchain-deepagents-code": {
+        labels: { "io.nvidia.nemoclaw.managed-image.contract": "2" },
+      },
+    });
+
+    const error = await resolveManagedImageCatalogFromGhcr({
+      release: RELEASE,
+      fetchImpl: fixture.fetchImpl,
+    }).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ManagedImageCatalogError);
+    expect(error).not.toBeInstanceOf(ManagedImageCatalogUnavailableError);
+    expect(error).toHaveProperty(
+      "message",
+      expect.stringContaining(
+        "'langchain-deepagents-code' image label io.nvidia.nemoclaw.managed-image.contract does not match",
+      ),
+    );
   });
 
   it("rejects a dependent image whose label does not match the OpenClaw cohort", async () => {
