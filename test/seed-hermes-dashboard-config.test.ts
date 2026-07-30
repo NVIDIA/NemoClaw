@@ -247,6 +247,53 @@ finally:
     expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("current\n");
   });
 
+  it("fails closed if the empty destination changes before removal (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+
+    const harness = `
+import errno
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("seed_dashboard_config", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+original_rmdir = module.os.rmdir
+def fail_dashboard_removal(name, *, dir_fd=None):
+    if name == "dashboard-home":
+        raise OSError(errno.ENOTEMPTY, "directory changed")
+    return original_rmdir(name, dir_fd=dir_fd)
+
+module.os.rmdir = fail_dashboard_removal
+ok, dashboard_fd = module._prepare_dashboard_destination(sys.argv[2])
+if dashboard_fd is not None:
+    os.close(dashboard_fd)
+raise SystemExit(0 if not ok and dashboard_fd is None else 2)
+`;
+    const res = spawnSync(
+      "python3",
+      ["-c", harness, SCRIPT_PATH, path.join(dashboardHome, "config.yaml")],
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 10_000,
+      },
+    );
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("changed unexpectedly");
+    expect(res.stderr).not.toContain("Traceback");
+    expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
+  });
+
   it("refuses to migrate a symlinked legacy dashboard profile (#7200)", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const hermesHome = path.join(tmpDir, ".hermes");

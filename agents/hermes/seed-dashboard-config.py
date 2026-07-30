@@ -227,7 +227,15 @@ def _prepare_dashboard_destination(dst: str) -> tuple[bool, int | None]:
                     file=sys.stderr,
                 )
                 return False, None
-            os.rmdir("dashboard-home", dir_fd=profiles_fd)
+            try:
+                os.rmdir("dashboard-home", dir_fd=profiles_fd)
+            except OSError as exc:
+                print(
+                    f"[SECURITY] Refusing to migrate legacy dashboard profile because "
+                    f"{dashboard_home} changed unexpectedly ({exc})",
+                    file=sys.stderr,
+                )
+                return False, None
             current_stat = None
 
         if legacy_stat is not None:
