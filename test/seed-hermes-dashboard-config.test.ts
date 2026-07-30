@@ -168,6 +168,67 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(readYaml(path.join(dashboardHome, "config.yaml")).model).toEqual(GATEWAY_CONFIG.model);
   });
 
+  it("keeps seeding anchored when profiles is swapped after migration (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const profilesDir = path.join(hermesHome, "profiles");
+    const heldProfiles = path.join(hermesHome, "profiles-before-swap");
+    const outsideProfiles = path.join(tmpDir, "outside-profiles");
+    const dashboardHome = path.join(profilesDir, "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(path.join(outsideProfiles, "dashboard-home"), { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "keep me\n");
+
+    const harness = `
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("seed_dashboard_config", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+ok, dashboard_fd = module._prepare_dashboard_destination(sys.argv[3])
+if not ok or dashboard_fd is None:
+    raise SystemExit(2)
+try:
+    os.rename(sys.argv[4], sys.argv[5])
+    os.symlink(sys.argv[6], sys.argv[4])
+    raise SystemExit(module._seed_dashboard([sys.argv[1], sys.argv[2], sys.argv[3]], dashboard_fd))
+finally:
+    os.close(dashboard_fd)
+`;
+    const res = spawnSync(
+      "python3",
+      [
+        "-c",
+        harness,
+        SCRIPT_PATH,
+        src,
+        path.join(dashboardHome, "config.yaml"),
+        profilesDir,
+        heldProfiles,
+        outsideProfiles,
+      ],
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 10_000,
+      },
+    );
+
+    expect(res.status).toBe(0);
+    expect(fs.lstatSync(profilesDir).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(outsideProfiles, "dashboard-home", "config.yaml"))).toBe(false);
+    expect(readYaml(path.join(heldProfiles, "dashboard-home", "config.yaml")).model).toEqual(
+      GATEWAY_CONFIG.model,
+    );
+    expect(fs.readFileSync(path.join(heldProfiles, "dashboard-home", "MEMORY.md"), "utf-8")).toBe(
+      "keep me\n",
+    );
+  });
+
   it("refuses to merge two populated dashboard profiles (#7200)", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const hermesHome = path.join(tmpDir, ".hermes");

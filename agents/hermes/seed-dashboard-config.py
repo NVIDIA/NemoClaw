@@ -157,8 +157,8 @@ def _open_profile_parent(config_fd: int, path: str) -> int | None:
         return None
 
 
-def _migrate_legacy_dashboard_profile(dst: str) -> bool:
-    """Move the legacy dashboard home into the canonical profiles directory."""
+def _prepare_dashboard_destination(dst: str) -> tuple[bool, int | None]:
+    """Migrate and securely open the canonical dashboard profile when applicable."""
 
     dashboard_home = os.path.dirname(dst)
     profiles_dir = os.path.dirname(dashboard_home)
@@ -168,7 +168,7 @@ def _migrate_legacy_dashboard_profile(dst: str) -> bool:
         or os.path.basename(dashboard_home) != "dashboard-home"
         or os.path.basename(profiles_dir) != "profiles"
     ):
-        return True
+        return True, None
 
     legacy_home = os.path.join(config_dir, "dashboard-home")
     try:
@@ -178,39 +178,40 @@ def _migrate_legacy_dashboard_profile(dst: str) -> bool:
             f"[SECURITY] Refusing to inspect dashboard profile root {config_dir} ({exc})",
             file=sys.stderr,
         )
-        return False
+        return False, None
 
     profiles_fd = -1
+    dashboard_fd = -1
     try:
         try:
             legacy_stat = os.stat("dashboard-home", dir_fd=config_fd, follow_symlinks=False)
         except FileNotFoundError:
-            return True
-        if not stat.S_ISDIR(legacy_stat.st_mode):
+            legacy_stat = None
+        if legacy_stat is not None and not stat.S_ISDIR(legacy_stat.st_mode):
             print(
                 f"[SECURITY] Refusing to migrate legacy dashboard profile because {legacy_home} "
                 "is not a safe directory",
                 file=sys.stderr,
             )
-            return False
+            return False, None
 
         opened_profiles_fd = _open_profile_parent(config_fd, profiles_dir)
         if opened_profiles_fd is None:
-            return False
+            return False, None
         profiles_fd = opened_profiles_fd
 
         try:
             current_stat = os.stat("dashboard-home", dir_fd=profiles_fd, follow_symlinks=False)
         except FileNotFoundError:
             current_stat = None
-        if current_stat is not None:
+        if legacy_stat is not None and current_stat is not None:
             if not stat.S_ISDIR(current_stat.st_mode):
                 print(
                     f"[SECURITY] Refusing to migrate legacy dashboard profile because "
                     f"{dashboard_home} is not a safe directory",
                     file=sys.stderr,
                 )
-                return False
+                return False, None
             try:
                 destination_is_empty = _directory_is_empty_at(profiles_fd, "dashboard-home")
             except OSError as exc:
@@ -218,39 +219,58 @@ def _migrate_legacy_dashboard_profile(dst: str) -> bool:
                     f"[SECURITY] Refusing to inspect dashboard profile {dashboard_home} ({exc})",
                     file=sys.stderr,
                 )
-                return False
+                return False, None
             if not destination_is_empty:
                 print(
                     "[dashboard] Refusing to merge legacy and current dashboard profiles; "
                     "move the legacy files manually before restarting",
                     file=sys.stderr,
                 )
-                return False
+                return False, None
             os.rmdir("dashboard-home", dir_fd=profiles_fd)
+            current_stat = None
 
-        try:
-            os.rename(
-                "dashboard-home",
-                "dashboard-home",
-                src_dir_fd=config_fd,
-                dst_dir_fd=profiles_fd,
-            )
-        except OSError as exc:
+        if legacy_stat is not None:
+            try:
+                os.rename(
+                    "dashboard-home",
+                    "dashboard-home",
+                    src_dir_fd=config_fd,
+                    dst_dir_fd=profiles_fd,
+                )
+            except OSError as exc:
+                print(
+                    f"[dashboard] failed to migrate legacy dashboard profile ({exc})",
+                    file=sys.stderr,
+                )
+                return False, None
             print(
-                f"[dashboard] failed to migrate legacy dashboard profile ({exc})",
+                f"[dashboard] migrated legacy dashboard profile to {dashboard_home}",
                 file=sys.stderr,
             )
-            return False
+        elif current_stat is None:
+            try:
+                os.mkdir("dashboard-home", 0o700, dir_fd=profiles_fd)
+            except OSError as exc:
+                print(
+                    f"[dashboard] failed to create dashboard profile {dashboard_home} ({exc})",
+                    file=sys.stderr,
+                )
+                return False, None
+
+        try:
+            dashboard_fd = _open_directory_no_follow("dashboard-home", dir_fd=profiles_fd)
+        except OSError as exc:
+            print(
+                f"[SECURITY] Refusing to open dashboard profile {dashboard_home} ({exc})",
+                file=sys.stderr,
+            )
+            return False, None
+        return True, dashboard_fd
     finally:
         if profiles_fd >= 0:
             os.close(profiles_fd)
         os.close(config_fd)
-
-    print(
-        f"[dashboard] migrated legacy dashboard profile to {dashboard_home}",
-        file=sys.stderr,
-    )
-    return True
 
 
 def _lookup_uid(value: str) -> int:
@@ -278,11 +298,12 @@ def _seed_owner_ids() -> tuple[int, int] | None:
     return uid, gid
 
 
-def _read_regular_text_no_follow(path: str, label: str) -> str:
+def _read_regular_text_no_follow(path: str, label: str, *, dir_fd: int | None = None) -> str:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     fd = -1
     try:
-        fd = os.open(path, flags)
+        name = os.path.basename(path) if dir_fd is not None else path
+        fd = os.open(name, flags, dir_fd=dir_fd)
         file_stat = os.fstat(fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise UnsafeDashboardSeedPathError(f"{label} {path} is not a regular file")
@@ -304,11 +325,11 @@ def _read_regular_text_no_follow(path: str, label: str) -> str:
                 pass
 
 
-def _load_yaml(path: str, label: str) -> dict:
+def _load_yaml(path: str, label: str, *, dir_fd: int | None = None) -> dict:
     import yaml
 
     try:
-        data = yaml.safe_load(_read_regular_text_no_follow(path, label))
+        data = yaml.safe_load(_read_regular_text_no_follow(path, label, dir_fd=dir_fd))
     except yaml.YAMLError as exc:
         raise InvalidDashboardSeedDocumentError(f"{label} is malformed") from exc
     if not isinstance(data, dict):
@@ -316,7 +337,13 @@ def _load_yaml(path: str, label: str) -> dict:
     return data
 
 
-def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], None]) -> bool:
+def _atomic_write_no_follow(
+    dst: str,
+    label: str,
+    writer: Callable[[TextIO], None],
+    *,
+    parent_fd: int | None = None,
+) -> bool:
     parent, basename = os.path.split(dst)
     parent = parent or "."
     tmp_basename = f"{basename}.nemoclaw.tmp"
@@ -326,12 +353,16 @@ def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], Non
         flags |= getattr(os, flag_name, 0)
 
     owner_ids = _seed_owner_ids()
-    parent_fd = -1
+    opened_parent_fd = -1
     fd = -1
     created = False
     try:
-        parent_fd = _open_directory_no_follow(parent)
-        fd = os.open(tmp_basename, flags, 0o600, dir_fd=parent_fd)
+        if parent_fd is None:
+            opened_parent_fd = _open_directory_no_follow(parent)
+            write_parent_fd = opened_parent_fd
+        else:
+            write_parent_fd = parent_fd
+        fd = os.open(tmp_basename, flags, 0o600, dir_fd=write_parent_fd)
         created = True
         with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
             writer(handle)
@@ -341,7 +372,12 @@ def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], Non
         os.fchmod(fd, 0o600)
         os.close(fd)
         fd = -1
-        os.replace(tmp_basename, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.replace(
+            tmp_basename,
+            basename,
+            src_dir_fd=write_parent_fd,
+            dst_dir_fd=write_parent_fd,
+        )
         created = False
         return True
     except FileExistsError:
@@ -367,13 +403,13 @@ def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], Non
                 pass
         if created:
             try:
-                os.unlink(tmp_basename, dir_fd=parent_fd)
+                os.unlink(tmp_basename, dir_fd=write_parent_fd)
             except OSError:
                 # Best-effort temp cleanup after a failed atomic write; the
                 # caller already gets the seed failure above.
                 pass
-        if parent_fd >= 0:
-            os.close(parent_fd)
+        if opened_parent_fd >= 0:
+            os.close(opened_parent_fd)
 
 
 def _provider_key(raw: object, fallback: str = "nemoclaw-inference") -> str:
@@ -668,7 +704,7 @@ def _merge_policy(dashboard: dict, policy: dict) -> None:
         dashboard[section_name] = merged
 
 
-def _mirror_env(src: str, dst: str) -> bool:
+def _mirror_env(src: str, dst: str, *, dst_parent_fd: int | None = None) -> bool:
     try:
         env_text = _read_regular_text_no_follow(src, "gateway env")
     except MissingDashboardSeedPathError:
@@ -686,7 +722,15 @@ def _mirror_env(src: str, dst: str) -> bool:
         )
         return False
 
-    if os.path.islink(dst):
+    try:
+        dst_stat = os.stat(
+            os.path.basename(dst) if dst_parent_fd is not None else dst,
+            dir_fd=dst_parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        dst_stat = None
+    if dst_stat is not None and stat.S_ISLNK(dst_stat.st_mode):
         print(f"[SECURITY] Refusing to seed dashboard env because {dst} is a symlink", file=sys.stderr)
         return False
 
@@ -727,23 +771,26 @@ def _mirror_env(src: str, dst: str) -> bool:
         for line in mirrored_lines:
             dst_handle.write(line)
 
-    if not _atomic_write_no_follow(dst, "dashboard env", write_env):
+    if not _atomic_write_no_follow(
+        dst,
+        "dashboard env",
+        write_env,
+        parent_fd=dst_parent_fd,
+    ):
         return False
 
     print(f"[dashboard] seeded env into {dst}", file=sys.stderr)
     return True
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) not in (3, 5):
-        print(
-            "[dashboard] usage: seed-dashboard-config.py "
-            "<gateway-config.yaml> <dashboard-config.yaml> [<gateway.env> <dashboard.env>]",
-            file=sys.stderr,
-        )
-        return 1
-
+def _seed_dashboard(argv: list[str], dashboard_fd: int | None) -> int:
+    """Seed dashboard state using an optional validated profile descriptor."""
     src, dst = argv[1], argv[2]
+    env_parent_fd = (
+        dashboard_fd
+        if len(argv) == 5 and os.path.dirname(argv[4]) == os.path.dirname(dst)
+        else None
+    )
 
     try:
         import yaml  # noqa: F401
@@ -762,7 +809,7 @@ def main(argv: list[str]) -> int:
         print(f"[dashboard] gateway config {src} missing; skipping model seed", file=sys.stderr)
         env_ok = True
         if len(argv) == 5:
-            env_ok = _mirror_env(argv[3], argv[4])
+            env_ok = _mirror_env(argv[3], argv[4], dst_parent_fd=env_parent_fd)
         return 0 if env_ok else 1
     except UnsafeDashboardSeedPathError as exc:
         print(f"[SECURITY] Refusing to seed dashboard config because {exc}", file=sys.stderr)
@@ -794,7 +841,7 @@ def main(argv: list[str]) -> int:
 
     dashboard: dict = {}
     try:
-        dashboard = _load_yaml(dst, "existing dashboard config")
+        dashboard = _load_yaml(dst, "existing dashboard config", dir_fd=dashboard_fd)
     except MissingDashboardSeedPathError:
         dashboard = {}
     except UnsafeDashboardSeedPathError as exc:
@@ -813,7 +860,11 @@ def main(argv: list[str]) -> int:
     # Validate both YAML documents before mirroring dotenv or replacing either
     # config. A malformed policy source must not partially update the dashboard
     # environment before startup refuses the config.
-    if len(argv) == 5 and not _mirror_env(argv[3], argv[4]):
+    if len(argv) == 5 and not _mirror_env(
+        argv[3],
+        argv[4],
+        dst_parent_fd=env_parent_fd,
+    ):
         return 1
 
     # The seeder owns only web.backend. Merge or remove that field while
@@ -836,11 +887,37 @@ def main(argv: list[str]) -> int:
     def write_dashboard(handle: TextIO) -> None:
         yaml.safe_dump(dashboard, handle, sort_keys=False)
 
-    if not _atomic_write_no_follow(dst, "dashboard config", write_dashboard):
+    if not _atomic_write_no_follow(
+        dst,
+        "dashboard config",
+        write_dashboard,
+        parent_fd=dashboard_fd,
+    ):
         return 1
 
     print(f"[dashboard] seeded model routing and reviewed policy into {dst}", file=sys.stderr)
     return 0
+
+
+def main(argv: list[str]) -> int:
+    """Validate arguments, anchor the destination, and run the dashboard seed."""
+    if len(argv) not in (3, 5):
+        print(
+            "[dashboard] usage: seed-dashboard-config.py "
+            "<gateway-config.yaml> <dashboard-config.yaml> [<gateway.env> <dashboard.env>]",
+            file=sys.stderr,
+        )
+        return 1
+
+    destination_ok, dashboard_fd = _prepare_dashboard_destination(argv[2])
+    if not destination_ok:
+        return 1
+
+    try:
+        return _seed_dashboard(argv, dashboard_fd)
+    finally:
+        if dashboard_fd is not None:
+            os.close(dashboard_fd)
 
 
 if __name__ == "__main__":
