@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { parseManagedImageDirectE2eInputs } from "../scripts/checks/run-managed-image-direct-e2e.ts";
 import {
+  managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
@@ -485,6 +486,11 @@ describe("complete managed-image publication workflow", () => {
     const dependencies = step(prBuilder, "Install managed-image OpenShell harness dependencies");
     const install = step(prBuilder, "Install pinned OpenShell runtime");
     const openshell = step(prBuilder, "Exercise exact PR image through real OpenShell");
+    const exportDiagnostics = step(
+      prBuilder,
+      "Export sanitized managed-image OpenShell failure diagnostics",
+    );
+    const diagnostics = step(prBuilder, "Upload managed-image OpenShell failure diagnostics");
     const prPaths = workflow.on?.pull_request?.paths ?? [];
 
     expect(prBuilder).toMatchObject({
@@ -638,6 +644,42 @@ describe("complete managed-image publication workflow", () => {
     ]) {
       expect(openshell.run).toContain(marker);
     }
+    expect(steps.indexOf(openshell)).toBeLessThan(steps.indexOf(exportDiagnostics));
+    expect(exportDiagnostics).toMatchObject({
+      id: "managed_image_openshell_diagnostics",
+      if: "failure()",
+      run: expect.stringContaining('diagnostics_root="$HOME/.nemoclaw/onboard-failures"'),
+    });
+    expect(exportDiagnostics.run).toContain(
+      'sanitized_root="$(mktemp -d "$RUNNER_TEMP/managed-image-openshell-diagnostics.XXXXXX")"',
+    );
+    expect(exportDiagnostics.run).toContain(
+      "scripts/checks/export-managed-image-failure-diagnostics.ts",
+    );
+    expect(exportDiagnostics.run).toContain('--source "$diagnostics_root"');
+    expect(exportDiagnostics.run).toContain('--output "$sanitized_root"');
+    expect(exportDiagnostics.run).toContain(
+      'printf \'path=%s\\n\' "$sanitized_root" >> "$GITHUB_OUTPUT"',
+    );
+    expect(exportDiagnostics.run).not.toContain(
+      'printf \'path=%s\\n\' "$diagnostics_root" >> "$GITHUB_OUTPUT"',
+    );
+    expect(exportDiagnostics.run).toContain("sed -n '1,160p' \"$summary\"");
+    expect(exportDiagnostics.run).toContain('find "$sanitized_root"');
+    expect(exportDiagnostics.run).not.toContain('find "$diagnostics_root"');
+    expect(steps.indexOf(openshell)).toBeLessThan(steps.indexOf(diagnostics));
+    expect(diagnostics).toMatchObject({
+      if: "${{ failure() && steps.managed_image_openshell_diagnostics.outcome == 'success' }}",
+      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      with: {
+        name: "managed-image-openshell-pr-${{ matrix.agent }}-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ steps.managed_image_openshell_diagnostics.outputs.path }}",
+        "include-hidden-files": true,
+        "if-no-files-found": "ignore",
+        "retention-days": 14,
+      },
+    });
+    expect(String(diagnostics.with?.path)).not.toContain("onboard-failures");
     const harness = fs.readFileSync(
       path.join(repoRoot, "scripts", "checks", "run-managed-image-openshell-e2e.ts"),
       "utf8",
@@ -652,7 +694,9 @@ describe("complete managed-image publication workflow", () => {
       "createChild.signalCode",
       'killSignal: "SIGKILL"',
       "prepareSandboxCreateManagedImageLaunch",
-      'createArgs: ["--from", input.image, "--name", input.sandbox]',
+      "prepareInitialSandboxCreatePolicy(",
+      '"--policy",',
+      "initialSandboxPolicy.policyPath",
       "openshellArgv: onboard.openshellArgv",
       '"sandbox",\n        "exec"',
       'commandResult(["docker", "inspect", candidate], env)',
@@ -665,6 +709,8 @@ describe("complete managed-image publication workflow", () => {
       '["docker", "network", "inspect", networkName]',
       "15_000",
       "managedStartupE2eProfile(input.agent, false, true, true)",
+      "collectDockerGpuPatchDiagnostics(",
+      "collectSandboxCreateFailureDiagnostics(",
     ]) {
       expect(harness).toContain(marker);
     }
@@ -683,11 +729,17 @@ describe("complete managed-image publication workflow", () => {
       "startupPatch.rollbackManagedStartupAfterCreateFailure();",
       transactionAbsenceProbe,
     );
+    const failureDiagnosticCapture = harness.indexOf(
+      "captureFailureDiagnosticsBeforeRollback(onboard, input, createLog, startupPatch, error);",
+      transactionAbsenceProbe,
+    );
     expect(probeFunctionStart).toBeGreaterThanOrEqual(0);
     expect(supervisorReconnect).toBeGreaterThan(probeFunctionStart);
     expect(exactHealthProbe).toBeGreaterThan(supervisorReconnect);
     expect(transactionCommit).toBeGreaterThan(exactHealthProbe);
     expect(transactionAbsenceProbe).toBeGreaterThan(transactionCommit);
+    expect(failureDiagnosticCapture).toBeGreaterThan(transactionAbsenceProbe);
+    expect(failureDiagnosticCapture).toBeLessThan(rollback);
     expect(rollback).toBeGreaterThan(transactionAbsenceProbe);
     expect(harness).not.toContain("Dockerfile");
     expect(harness).not.toContain("packages: write");
@@ -729,6 +781,16 @@ describe("complete managed-image publication workflow", () => {
         "nemoclaw-pr-unshipped",
       ]),
     ).toThrow("--agent must identify a shipped managed-image agent");
+
+    expect(managedImageOpenShellBasePolicyPath("openclaw")).toBe(
+      path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+    );
+    expect(managedImageOpenShellBasePolicyPath("hermes")).toBe(
+      path.join(repoRoot, "agents", "hermes", "policy-additions.yaml"),
+    );
+    expect(managedImageOpenShellBasePolicyPath("langchain-deepagents-code")).toBe(
+      path.join(repoRoot, "agents", "langchain-deepagents-code", "policy-additions.yaml"),
+    );
 
     const probes = {
       openclaw: managedImageOpenShellProbe("openclaw"),
@@ -948,6 +1010,11 @@ fi
       builder,
       "Exercise exact candidate through real OpenShell before promotion",
     );
+    const exportDiagnostics = step(
+      builder,
+      "Export sanitized managed-image OpenShell failure diagnostics",
+    );
+    const diagnostics = step(builder, "Upload managed-image OpenShell failure diagnostics");
     expect(buildSteps.indexOf(guard)).toBeLessThan(buildSteps.indexOf(build));
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
     expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
@@ -983,6 +1050,10 @@ fi
     expect(buildSteps.indexOf(validate)).toBeLessThan(buildSteps.indexOf(install));
     expect(buildSteps.indexOf(install)).toBeLessThan(buildSteps.indexOf(openshell));
     expect(buildSteps.indexOf(openshell)).toBeLessThan(buildSteps.indexOf(candidate));
+    expect(buildSteps.indexOf(openshell)).toBeLessThan(buildSteps.indexOf(exportDiagnostics));
+    expect(buildSteps.indexOf(exportDiagnostics)).toBeLessThan(buildSteps.indexOf(diagnostics));
+    expect(buildSteps.indexOf(openshell)).toBeLessThan(buildSteps.indexOf(diagnostics));
+    expect(buildSteps.indexOf(diagnostics)).toBeLessThan(buildSteps.indexOf(candidate));
     expect(dependencies.run).toContain("npm ci --ignore-scripts");
     expect(dependencies.run).toContain("npm run build:policy-boundary");
     expect(install.env).toMatchObject({
@@ -1005,6 +1076,40 @@ fi
     ]) {
       expect(openshell.run).toContain(marker);
     }
+    expect(exportDiagnostics).toMatchObject({
+      id: "managed_image_openshell_diagnostics",
+      if: "failure()",
+      run: expect.stringContaining('diagnostics_root="$HOME/.nemoclaw/onboard-failures"'),
+    });
+    expect(exportDiagnostics.run).toContain(
+      'sanitized_root="$(mktemp -d "$RUNNER_TEMP/managed-image-openshell-diagnostics.XXXXXX")"',
+    );
+    expect(exportDiagnostics.run).toContain(
+      "scripts/checks/export-managed-image-failure-diagnostics.ts",
+    );
+    expect(exportDiagnostics.run).toContain('--source "$diagnostics_root"');
+    expect(exportDiagnostics.run).toContain('--output "$sanitized_root"');
+    expect(exportDiagnostics.run).toContain(
+      'printf \'path=%s\\n\' "$sanitized_root" >> "$GITHUB_OUTPUT"',
+    );
+    expect(exportDiagnostics.run).not.toContain(
+      'printf \'path=%s\\n\' "$diagnostics_root" >> "$GITHUB_OUTPUT"',
+    );
+    expect(exportDiagnostics.run).toContain("sed -n '1,160p' \"$summary\"");
+    expect(exportDiagnostics.run).toContain('find "$sanitized_root"');
+    expect(exportDiagnostics.run).not.toContain('find "$diagnostics_root"');
+    expect(diagnostics).toMatchObject({
+      if: "${{ failure() && steps.managed_image_openshell_diagnostics.outcome == 'success' }}",
+      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      with: {
+        name: "managed-image-openshell-publish-${{ matrix.agent }}-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ steps.managed_image_openshell_diagnostics.outputs.path }}",
+        "include-hidden-files": true,
+        "if-no-files-found": "ignore",
+        "retention-days": 14,
+      },
+    });
+    expect(String(diagnostics.with?.path)).not.toContain("onboard-failures");
     for (const marker of [
       "--arg baseReference",
       "--arg digest",

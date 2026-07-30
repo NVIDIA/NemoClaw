@@ -278,6 +278,37 @@ jobs:
             --image "$IMAGE_REFERENCE" \
             --sandbox "$SANDBOX_NAME"
 
+      # Generic sandbox-create diagnostics can contain raw gateway or console
+      # output. Export only a bounded, fully redacted allowlist into a fresh
+      # runner-temporary tree before printing or uploading any evidence.
+      - name: Export sanitized managed-image OpenShell failure diagnostics
+        id: managed_image_openshell_diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          diagnostics_root="$HOME/.nemoclaw/onboard-failures"
+          sanitized_root="$(mktemp -d "$RUNNER_TEMP/managed-image-openshell-diagnostics.XXXXXX")"
+          npx --no-install tsx \
+            scripts/checks/export-managed-image-failure-diagnostics.ts \
+            --source "$diagnostics_root" \
+            --output "$sanitized_root"
+          printf 'path=%s\n' "$sanitized_root" >> "$GITHUB_OUTPUT"
+          while IFS= read -r summary; do
+            printf '\n===== %s =====\n' "${summary#"$sanitized_root"/}"
+            sed -n '1,160p' "$summary"
+          done < <(find "$sanitized_root" -type f -name summary.txt | sort)
+
+      - name: Upload managed-image OpenShell failure diagnostics
+        if: ${{ failure() && steps.managed_image_openshell_diagnostics.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-openshell-pr-${{ matrix.agent }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.managed_image_openshell_diagnostics.outputs.path }}
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image
     if: github.event_name != 'pull_request'
@@ -680,6 +711,34 @@ jobs:
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --sandbox "$SANDBOX_NAME"
+
+      - name: Export sanitized managed-image OpenShell failure diagnostics
+        id: managed_image_openshell_diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          diagnostics_root="$HOME/.nemoclaw/onboard-failures"
+          sanitized_root="$(mktemp -d "$RUNNER_TEMP/managed-image-openshell-diagnostics.XXXXXX")"
+          npx --no-install tsx \
+            scripts/checks/export-managed-image-failure-diagnostics.ts \
+            --source "$diagnostics_root" \
+            --output "$sanitized_root"
+          printf 'path=%s\n' "$sanitized_root" >> "$GITHUB_OUTPUT"
+          while IFS= read -r summary; do
+            printf '\n===== %s =====\n' "${summary#"$sanitized_root"/}"
+            sed -n '1,160p' "$summary"
+          done < <(find "$sanitized_root" -type f -name summary.txt | sort)
+
+      - name: Upload managed-image OpenShell failure diagnostics
+        if: ${{ failure() && steps.managed_image_openshell_diagnostics.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-openshell-publish-${{ matrix.agent }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.managed_image_openshell_diagnostics.outputs.path }}
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Matrix children publish immutable candidates only. No consumer alias can
       # move until the aggregate job has accepted the complete three-agent set.
