@@ -98,6 +98,11 @@ export interface DockerDriverRecoveryResult {
   via: DockerDriverRecoveryVia | null;
   /** Container name (post-rename if applicable) the recovery acted on. */
   containerName?: string;
+  /** Last structured Docker readiness state when recovery did not become ready. */
+  readiness?: {
+    runtime: string;
+    health: string;
+  };
   /**
    * Human-readable detail when recovery did not succeed — surface in
    * logs / guidance. Empty when recovery succeeded.
@@ -231,6 +236,8 @@ function buildBackupRestoreName(originalName: string): string {
 interface ContainerReadinessResult {
   ready: boolean;
   detail: string;
+  runtime: string;
+  health: string;
 }
 
 /**
@@ -244,6 +251,8 @@ function waitForRecoveredContainerReady(
   deps: ReturnType<typeof depsWithDefaults>,
 ): ContainerReadinessResult {
   let lastState = "unknown";
+  let lastRuntimeState = "unknown";
+  let lastHealthState = "unknown";
   const deadlineMs = deps.now() + DOCKER_RECOVERY_READY_TIMEOUT_MS;
   for (let attempt = 0; attempt < DOCKER_RECOVERY_READY_MAX_ATTEMPTS; attempt += 1) {
     const remainingMs = deadlineMs - deps.now();
@@ -260,16 +269,28 @@ function waitForRecoveredContainerReady(
       { ignoreError: true, timeout: Math.min(DOCKER_PROBE_TIMEOUT_MS, remainingMs) },
     );
     const [runtimeState = "", healthState = ""] = raw.trim().toLowerCase().split(/\s+/);
+    lastRuntimeState = runtimeState || "unknown";
+    lastHealthState = healthState || "unknown";
     lastState = healthState
-      ? `runtime=${runtimeState || "unknown"}, health=${healthState}`
-      : `runtime=${runtimeState || "unknown"}`;
+      ? `runtime=${lastRuntimeState}, health=${lastHealthState}`
+      : `runtime=${lastRuntimeState}`;
 
     if (runtimeState === "running" && (healthState === "healthy" || healthState === "none")) {
-      return { ready: true, detail: lastState };
+      return {
+        ready: true,
+        detail: lastState,
+        runtime: lastRuntimeState,
+        health: lastHealthState,
+      };
     }
     // These states cannot become ready without another lifecycle action.
     if (["dead", "exited", "removing"].includes(runtimeState)) {
-      return { ready: false, detail: lastState };
+      return {
+        ready: false,
+        detail: lastState,
+        runtime: lastRuntimeState,
+        health: lastHealthState,
+      };
     }
     if (attempt + 1 >= DOCKER_RECOVERY_READY_MAX_ATTEMPTS) break;
 
@@ -277,7 +298,12 @@ function waitForRecoveredContainerReady(
     if (postInspectRemainingMs <= 0) break;
     deps.sleep(Math.min(DOCKER_RECOVERY_READY_POLL_INTERVAL_MS, postInspectRemainingMs));
   }
-  return { ready: false, detail: lastState };
+  return {
+    ready: false,
+    detail: lastState,
+    runtime: lastRuntimeState,
+    health: lastHealthState,
+  };
 }
 
 function recoveredAfterReadiness(
@@ -291,6 +317,10 @@ function recoveredAfterReadiness(
       recovered: false,
       via: null,
       containerName,
+      readiness: {
+        runtime: readiness.runtime,
+        health: readiness.health,
+      },
       detail:
         `docker container ${containerName} did not become ready after recovery ` +
         `(${readiness.detail})`,

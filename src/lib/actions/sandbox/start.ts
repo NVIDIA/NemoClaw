@@ -37,10 +37,7 @@ function isRunningContainerStillStarting(
   recovery: ReturnType<typeof recoverDockerDriverSandbox>,
 ): boolean {
   if (recovery.recovered || !recovery.containerName) return false;
-  return (
-    recovery.detail ===
-    `docker container ${recovery.containerName} did not become ready after recovery (runtime=running, health=starting)`
-  );
+  return recovery.readiness?.runtime === "running" && recovery.readiness.health === "starting";
 }
 
 // Paused containers report `Up N minutes (Paused)` from `docker ps`, so the

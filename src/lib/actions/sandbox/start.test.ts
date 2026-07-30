@@ -87,6 +87,10 @@ describe("startSandbox", () => {
       recovered: false,
       via: null,
       containerName: "openshell-my-sandbox",
+      readiness: {
+        runtime: "running",
+        health: "starting",
+      },
       detail:
         "docker container openshell-my-sandbox did not become ready after recovery " +
         "(runtime=running, health=starting)",
@@ -107,6 +111,10 @@ describe("startSandbox", () => {
       recovered: false,
       via: null,
       containerName: "openshell-my-sandbox",
+      readiness: {
+        runtime: "exited",
+        health: "unhealthy",
+      },
       detail:
         "docker container openshell-my-sandbox did not become ready after recovery " +
         "(runtime=exited, health=unhealthy)",

@@ -231,6 +231,10 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
       recovered: false,
       via: null,
       containerName: "openshell-e2e-x",
+      readiness: {
+        runtime: runtimeState,
+        health: "none",
+      },
       detail:
         "docker container openshell-e2e-x did not become ready after recovery " +
         `(runtime=${runtimeState}, health=none)`,
@@ -264,6 +268,10 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
 
     expect(result.recovered).toBe(false);
     expect(result.via).toBeNull();
+    expect(result.readiness).toEqual({
+      runtime: "running",
+      health: "starting",
+    });
     expect(result.detail).toContain("runtime=running, health=starting");
     expect(currentMs).toBe(90_000);
     expect(inspectStartTimes.every((startedAt) => startedAt < 90_000)).toBe(true);
