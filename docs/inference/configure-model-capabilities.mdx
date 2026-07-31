@@ -8,6 +8,7 @@ description-agent: "Configures OpenClaw reasoning mode, reasoning effort, and te
 keywords: ["nemoclaw reasoning model", "nemoclaw reasoning effort", "nemoclaw vision model"]
 content:
   type: "how_to"
+agent-variants: ["openclaw"]
 ---
 
 Declare model capabilities before onboarding so NemoClaw can bake them into the OpenClaw configuration.
@@ -85,7 +86,10 @@ Onboarding records the reasoning flag and the reasoning effort in the sandbox's 
 A resumed onboard and `nemoclaw <sandbox-name> rebuild` both replay those recorded values, so exporting `NEMOCLAW_REASONING` or `NEMOCLAW_REASONING_EFFORT` before either command does not change them.
 When a resumed onboard on the `compatible-endpoint` provider sees an explicit `NEMOCLAW_REASONING` or `NEMOCLAW_REASONING_EFFORT` that disagrees with the recorded value, it reports the recorded value and the recreate command instead of applying the variable.
 
-To change the reasoning effort on a running sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
+Deep Agents Code applies the recorded reasoning effort from the sandbox image instead, and has no `inference set` path.
+Refer to [Quickstart with Deep Agents](/user-guide/deepagents/get-started/quickstart) for that agent's behavior.
+
+To change the reasoning effort on a running OpenClaw sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
 
 ```bash
 nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --endpoint-url <recorded-url> --reasoning-effort high

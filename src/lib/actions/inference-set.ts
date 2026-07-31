@@ -79,6 +79,7 @@ import {
 import {
   type EnsureHttpsPinRuntimeAdapterFn,
   finalizeInferenceSetRoute,
+  type InferenceSetProviderBinding,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
 } from "./inference-set-route-containment";
@@ -640,6 +641,20 @@ function openshellInferenceSetArgs(options: {
   return args;
 }
 
+function recordedDirectProviderBindingMismatches(options: {
+  entry: SandboxEntry;
+  provider: string;
+  binding: InferenceSetProviderBinding;
+}): string[] {
+  return [
+    options.entry.provider === options.provider ? null : "provider",
+    options.entry.endpointUrl === options.binding.baseUrl ? null : "endpoint URL",
+    options.entry.credentialEnv === options.binding.credentialEnv
+      ? null
+      : "credential environment variable",
+  ].filter((field): field is string => field !== null);
+}
+
 function getPreferredInferenceApi(config: ConfigObject): string | null {
   const models = config.models;
   if (!isConfigObject(models)) return null;
@@ -964,6 +979,27 @@ async function runInferenceSetWithoutHostLock(
         binding: providerBinding,
         captureOpenshell: deps.captureOpenshell,
       });
+      if (directProviderBinding && providerMutation.action === "update") {
+        const bindingMismatches = recordedDirectProviderBindingMismatches({
+          entry,
+          provider,
+          binding: directProviderBinding,
+        });
+        if (bindingMismatches.length > 0) {
+          throw new InferenceSetError(
+            `Cannot replace existing provider '${provider}' because the requested binding differs in: ${bindingMismatches.join(", ")}. ` +
+              `OpenShell does not expose the previous provider configuration required for rollback. ` +
+              `Re-run onboarding with the requested binding. If this sandbox already uses '${provider}', omit the endpoint options to switch only the model.`,
+            2,
+          );
+        }
+        // OpenShell redacts provider configuration values. The matching
+        // registry route is the only durable evidence that this request does
+        // not replace the provider binding.
+        providerMutation = null;
+      }
+    }
+    if (providerMutation) {
       appliedProvider = providerMutation.action === "create";
       if (providerMutation.action === "update" && (!previousProvider || !previousModel)) {
         throw new InferenceSetError(

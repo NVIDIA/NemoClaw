@@ -41,6 +41,8 @@ export interface ServiceOptions {
   repoDir?: string;
   /** Override PID directory (default: /tmp/nemoclaw-services-{sandbox}). */
   pidDir?: string;
+  /** Injectable process operations (identity + signalling) for tests. */
+  processControl?: ProcessControl;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -140,6 +142,23 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
     .filter(Boolean)
     .some((token) => basename(token) === "cloudflared");
 }
+
+// Process operations behind a small seam so lifecycle tests can model PID
+// reuse deterministically (per the tunnel adapter/fake test convention)
+// instead of spawning real processes or reading /proc.
+export interface ProcessControl {
+  isAlive(pid: number): boolean;
+  commandLine(pid: number): string | null;
+  signal(pid: number, sig: NodeJS.Signals): void;
+}
+
+const REAL_PROCESS_CONTROL: ProcessControl = {
+  isAlive,
+  commandLine: readProcessCommandLine,
+  signal: (pid, sig) => {
+    process.kill(pid, sig);
+  },
+};
 
 function extractTryCloudflareUrl(log: string): string | null {
   for (const rawToken of log.split(/\s+/)) {
@@ -335,15 +354,33 @@ function startService(
   info(`${name} started (PID ${String(pid)})`);
 }
 
+/**
+ * The recorded process may have exited and had its PID recycled by the OS to an
+ * unrelated (possibly system) process. Signalling it would terminate a
+ * bystander, so only report a live PID as ours when its command line still
+ * names cloudflared. A null/unreadable command line stays conservative and is
+ * treated as ours, matching readCloudflaredState.
+ */
+function pidIsOurs(pid: number, pc: ProcessControl): boolean {
+  const cmdline = pc.commandLine(pid);
+  return cmdline === null || commandLineNamesCloudflared(cmdline);
+}
+
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
-function stopService(pidDir: string, name: ServiceName): void {
+function stopService(
+  pidDir: string,
+  name: ServiceName,
+  pc: ProcessControl = REAL_PROCESS_CONTROL,
+): void {
   const pid = readPid(pidDir, name);
   if (pid === null) {
     info(`${name} was not running`);
     return;
   }
 
-  if (!isAlive(pid)) {
+  // A dead PID, or a live PID recycled to a non-cloudflared process, means our
+  // service is not running. Drop the stale pid file without signalling.
+  if (!pc.isAlive(pid) || !pidIsOurs(pid, pc)) {
     info(`${name} was not running`);
     removePid(pidDir, name);
     return;
@@ -351,7 +388,7 @@ function stopService(pidDir: string, name: ServiceName): void {
 
   // Send SIGTERM
   try {
-    process.kill(pid, "SIGTERM");
+    pc.signal(pid, "SIGTERM");
   } catch {
     // Already dead between the check and the signal
     removePid(pidDir, name);
@@ -361,7 +398,7 @@ function stopService(pidDir: string, name: ServiceName): void {
 
   // Poll for exit (up to 3 seconds)
   const deadline = Date.now() + 3000;
-  while (Date.now() < deadline && isAlive(pid)) {
+  while (Date.now() < deadline && pc.isAlive(pid)) {
     // Busy-wait in 100ms increments (synchronous — matches stop being sync)
     const start = Date.now();
     while (Date.now() - start < 100) {
@@ -369,10 +406,16 @@ function stopService(pidDir: string, name: ServiceName): void {
     }
   }
 
-  // Escalate to SIGKILL if still alive
-  if (isAlive(pid)) {
+  // Escalate to SIGKILL if still alive. Re-verify identity first: the PID could
+  // have exited and been recycled to an unrelated process during the poll.
+  if (pc.isAlive(pid)) {
+    if (!pidIsOurs(pid, pc)) {
+      removePid(pidDir, name);
+      info(`${name} was not running`);
+      return;
+    }
     try {
-      process.kill(pid, "SIGKILL");
+      pc.signal(pid, "SIGKILL");
     } catch {
       /* already dead */
     }
@@ -487,7 +530,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
   if (pidDir) {
-    stopService(pidDir, "cloudflared");
+    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
   } else {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }

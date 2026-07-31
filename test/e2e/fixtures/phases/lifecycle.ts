@@ -30,13 +30,13 @@ export {
 // probe.
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const DOCKER_PROBE_TIMEOUT_MS = 15_000;
-// Status invocation can take several minutes on unfixed code while
-// the gateway recovery path retries. Keep the budget generous; the
-// bug is independent of latency.
+// Recovery can take several minutes while gateway and host-forward
+// readiness converge, so keep the status budget generous.
 const STATUS_TIMEOUT_MS = 5 * 60_000;
 const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
+const STOPPED_SANDBOX_STATUS = "Failure layer: sandbox_container_stopped";
 const USER_SERVICE_UNAVAILABLE_EXIT = 75;
 const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
   "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
@@ -355,10 +355,9 @@ export class LifecyclePhaseFixture {
    *      make `openshell status` report the named gateway connected
    *      without running `nemoclaw onboard --resume`.
    *
-   *   We deliberately do NOT assert on the status exit code here
-   *   because the bug is precisely that status "succeeds" at
-   *   destroying state. The state-validation phase that follows is
-   *   what catches the regression via the
+   *   Status must exit zero to prove that the restored sandbox delivery
+   *   path is ready. The state-validation phase that follows additionally
+   *   verifies preservation via the
    *   `local-registry-entry-present` and `docker-sandbox-container-present`
    *   probes.
    *
@@ -444,20 +443,43 @@ export class LifecyclePhaseFixture {
     // We invoke status through the host CLI client so artifacts are
     // captured and the command goes through the same
     // shellProbe/redaction layer the rest of the fixture code uses.
-    // Status is allowed to fail (exit non-zero) because on unfixed
-    // code it intentionally fails after destroying state — the
-    // post-action invariants are checked by state-validation.
-    const statusResult = await this.host.nemoclaw([instance.sandboxName, "status"], {
-      artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: STATUS_TIMEOUT_MS,
-    });
+    // OpenShell can report the gateway as connected before it starts the
+    // preserved sandbox container. Retry only that observed transition.
+    // Other status failures remain terminal.
+    const statusResult = await this.waitForPostRebootSandboxStatus(instance.sandboxName);
     steps.push({
       id: `nemoclaw-status:${instance.sandboxName}`,
       results: [statusResult],
     });
 
     return { profile: "post-reboot-recovery", steps };
+  }
+
+  private async waitForPostRebootSandboxStatus(sandboxName: string): Promise<ShellProbeResult> {
+    let last: ShellProbeResult | undefined;
+    const deadlineMs = Date.now() + STATUS_TIMEOUT_MS;
+    for (let attempt = 1; attempt <= SANDBOX_READY_ATTEMPTS; attempt += 1) {
+      const remainingMs = deadlineMs - Date.now();
+      if (remainingMs <= 0) break;
+      last = await this.host.nemoclaw([sandboxName, "status"], {
+        artifactName:
+          `lifecycle-post-reboot-nemoclaw-status-${sandboxName}-` +
+          `attempt-${String(attempt).padStart(2, "0")}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: Math.min(60_000, remainingMs),
+      });
+      if (last.exitCode === 0) return last;
+      const detail = `${last.stdout}\n${last.stderr}`;
+      if (!detail.includes(STOPPED_SANDBOX_STATUS)) {
+        assertExitZero(last, `nemoclaw ${sandboxName} status`);
+      }
+      if (attempt < SANDBOX_READY_ATTEMPTS && Date.now() < deadlineMs) {
+        await sleep(Math.min(SANDBOX_READY_DELAY_MS, deadlineMs - Date.now()));
+      }
+    }
+    if (!last) throw new Error(`nemoclaw ${sandboxName} status did not run before its deadline`);
+    assertExitZero(last, `nemoclaw ${sandboxName} status`);
+    return last;
   }
 
   private async ensureOpenShellGatewayUserService(): Promise<UserServiceStageResult> {

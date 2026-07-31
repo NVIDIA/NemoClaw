@@ -71,6 +71,7 @@
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/managed-gateway-control.test.ts",
         "test/nemoclaw-start-guard-recovery.test.ts",
+        "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
         "test/process-recovery-supervisor-relaunch.test.ts"
       ]
     },
@@ -413,13 +414,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/sandbox-rebuild.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -470,13 +464,6 @@
     },
     {
       "live": "test/e2e/live/token-rotation.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/upgrade-stale-sandbox.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"

@@ -1121,6 +1121,8 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "patch-hermes-session-list-preview.py"),
+      path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
+      path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1323,7 +1325,7 @@ describe("Hermes sandbox provisioning", () => {
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
-    for (const cache of ["npm", "electron", "node-gyp"]) {
+    for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
       const cachePath = path.join(rootCache, cache);
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
@@ -1336,7 +1338,8 @@ describe("Hermes sandbox provisioning", () => {
       .replaceAll("/opt/hermes", hermesRoot)
       .replaceAll("/root/.npm", path.join(rootCache, "npm"))
       .replaceAll("/root/.cache/electron", path.join(rootCache, "electron"))
-      .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"));
+      .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"))
+      .replaceAll("/root/.cache/uv", path.join(rootCache, "uv"));
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
@@ -1347,7 +1350,7 @@ describe("Hermes sandbox provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
       expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
-      for (const cache of ["npm", "electron", "node-gyp"]) {
+      for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
       }
     } finally {
@@ -1412,7 +1415,12 @@ describe("Hermes sandbox provisioning", () => {
           "runtime/gateway_state.json",
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
-        expect(run.calls).toContain(`chown gateway:sandbox ${path.join(hermesDir, "runtime")}`);
+        expect(run.calls).toContain(
+          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+            hermesDir,
+            "gateway",
+          )} ${path.join(hermesDir, "runtime")}`,
+        );
       }
     } finally {
       for (const run of runs) {

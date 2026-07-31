@@ -18,6 +18,7 @@ const { detectGpu, detectNvidiaPlatform } = vi.hoisted(() => ({
 vi.mock("../inference/nim", () => ({ detectGpu, detectNvidiaPlatform }));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
+const SOURCE_REVISION = "21e60ae287e8c2a184f71406ac8b418f046330d1";
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 ajv.addFormat("date-time", { type: "string", validate: () => true });
 const validateReport = ajv.compile(systemReadinessSchema as AnySchema);
@@ -80,7 +81,7 @@ function report(
       detectHostGpuPlatform: collectionOptions.detectHostGpuPlatform,
       wslDockerDesktopGpuProofPassed: collectionOptions.wslDockerDesktopGpuProofPassed,
     }),
-    { nemoclawVersion: "0.1.0", now: () => NOW },
+    { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
   );
 }
 
@@ -111,7 +112,11 @@ describe("host readiness projection (#7408)", () => {
     expect(assess).toHaveBeenCalledOnce();
     expect(snapshot.observations).toMatchObject({ platform: "linux", architecture: process.arch });
     expect(
-      projectHostReadiness(snapshot, { nemoclawVersion: "0.1.0", now: () => NOW }).mutated,
+      projectHostReadiness(snapshot, {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: SOURCE_REVISION,
+        now: () => NOW,
+      }).mutated,
     ).toBe(false);
   });
 
@@ -184,7 +189,7 @@ describe("host readiness projection (#7408)", () => {
     detectNvidiaPlatform.mockReturnValue("jetson");
 
     const result = createHostReadinessReport(
-      { nemoclawVersion: "0.1.0", now: () => NOW },
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
       {
         assess: () => host({ cdiNvidiaGpuSpecMissing: true }),
         architecture: "arm64",
@@ -209,7 +214,7 @@ describe("host readiness projection (#7408)", () => {
     });
 
     const result = createHostReadinessReport(
-      { nemoclawVersion: "0.1.0", now: () => NOW },
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
       {
         assess: () => host({ isWsl: true, runtime: "docker-desktop" }),
         architecture: "arm64",
@@ -227,7 +232,7 @@ describe("host readiness projection (#7408)", () => {
     }));
 
     createHostReadinessReport(
-      { nemoclawVersion: "0.1.0", now: () => NOW },
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
       {
         assess: () =>
           host({
@@ -263,10 +268,28 @@ describe("host readiness projection (#7408)", () => {
     expect(result.status).toBe("supported");
   });
 
-  it("projects nested overlay conflicts as incompatible storage", () => {
-    const result = report({ hasNestedOverlayConflict: true });
+  it("reports supported remediation for the containerd overlay conflict (#7770)", () => {
+    const result = report({
+      dockerStorageDriver: "overlayfs",
+      dockerUsesContainerdSnapshotter: true,
+      hasNestedOverlayConflict: true,
+    });
 
     expect(state(result, "host.docker.storage_compatible")).toBe("absent");
+    expect(state(result, "host.docker.storage_remediation_available")).toBe("present");
+    expect(findingIds(result)).toContain("host.docker.storage_incompatible");
+    expect(result).toMatchObject({ status: "incompatible", exitCode: 2 });
+  });
+
+  it("reports no remediation when the containerd snapshotter is absent (#7770)", () => {
+    const result = report({
+      dockerStorageDriver: "overlayfs",
+      dockerUsesContainerdSnapshotter: false,
+      hasNestedOverlayConflict: true,
+    });
+
+    expect(state(result, "host.docker.storage_compatible")).toBe("absent");
+    expect(state(result, "host.docker.storage_remediation_available")).toBe("absent");
     expect(findingIds(result)).toContain("host.docker.storage_incompatible");
     expect(result).toMatchObject({ status: "incompatible", exitCode: 2 });
   });
@@ -300,6 +323,7 @@ describe("host readiness projection (#7408)", () => {
 
     expect(state(result, "host.docker.runtime_supported")).toBe("unknown");
     expect(state(result, "host.docker.resources_sufficient")).toBe("unknown");
+    expect(state(result, "host.docker.storage_remediation_available")).toBe("unknown");
     expect(result.observations.find(({ id }) => id === "host.docker.runtime")?.state).toBe(
       "unknown",
     );
@@ -313,7 +337,11 @@ describe("host readiness projection (#7408)", () => {
       },
       now: () => NOW,
     });
-    const result = projectHostReadiness(snapshot, { nemoclawVersion: "0.1.0", now: () => NOW });
+    const result = projectHostReadiness(snapshot, {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: SOURCE_REVISION,
+      now: () => NOW,
+    });
 
     expect(result.status).toBe("inconclusive");
     expect(
@@ -331,7 +359,11 @@ describe("host readiness projection (#7408)", () => {
       now: () => NOW,
     });
     const snapshot = { ...current, observedAt: "2026-06-01T11:00:00Z", reusable: false };
-    const result = projectHostReadiness(snapshot, { nemoclawVersion: "0.1.0", now: () => NOW });
+    const result = projectHostReadiness(snapshot, {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: SOURCE_REVISION,
+      now: () => NOW,
+    });
 
     expect(result.status).toBe("inconclusive");
     expect(result.evidence.map(({ id }) => id)).toContain("host.probe.stale");
@@ -351,7 +383,7 @@ describe("host readiness projection (#7408)", () => {
     });
     const result = projectHostReadiness(
       { ...current, observedAt, reusable },
-      { nemoclawVersion: "0.1.0", now: () => NOW },
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
     );
 
     expect(result.status).toBe("supported");

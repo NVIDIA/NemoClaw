@@ -45,7 +45,15 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 14. Retries transient provider failures such as HTTP 429 within the same session using one bounded exponential-backoff layer. GPT waits 6s, 12s, 24s, and 48s; Nemotron waits 9s, 18s, 36s, and 72s so parallel lanes do not retry in lockstep. The workflow still publishes the primary comment and lane artifacts after an incomplete analysis. An incomplete primary review fails its outcome step; the artifact-only evaluation lane does not affect the workflow result.
 15. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with a limitation; a post-validation ledger mismatch still fails closed.
 16. Writes artifacts under the model-specific artifact directory in the writable runtime subtree, downloads them to the trusted host, and uploads them from the read-only analysis job. Example directories are `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
-17. Uses a separate publisher job with no model credential or untrusted worktree. It validates the primary artifact and live PR head/base, then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`. The evaluation lane does not publish another review. Previous sticky-comment ingestion is disabled for both lanes.
+17. Uses a separate publisher job with no model credential or untrusted worktree.
+    It validates the primary artifact and live PR head/base.
+    It then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`.
+    The primary lane remains authoritative for the assessment and recommended E2E guidance.
+    When the completed second-opinion lane includes a trusted E2E selector that the primary lane omits, the publisher shows an optional disagreement.
+    The disagreement includes the selector and a publisher-authored coverage-gap reason in the same comment.
+    A missing, malformed, or incomplete second-opinion result cannot suppress the primary result.
+    The evaluation lane does not publish another review.
+    Previous sticky-comment ingestion is disabled for both lanes.
 
 The ordered stage array in `buildPromptTurns` is the source of truth for stage order, evidence, and
 prompt text. Runtime numbering and prompt artifact names derive from that array, so adding or
@@ -99,6 +107,18 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
+
+Risk plan version 10 maps runtime changes from these paths to the `focused-e2e` family:
+
+- `src/lib/onboard/managed-startup/**`.
+- `src/lib/onboard/sandbox-create-launch.ts`.
+- `scripts/lib/entrypoint-env-wrapper.sh`.
+
+Each match selects these focused E2E jobs:
+
+- `device-auth-health`.
+- `issue-4462-scope-upgrade-approval`.
+- `openclaw-inference-switch`.
 
 ## Required secret
 
@@ -170,6 +190,9 @@ reports how many more IDs exist. The trusted normalizer
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
 and supported selector tuples, and replaces model-authored reasons with trusted
 reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
+The publisher compares the completed lanes after this normalization. It lists trusted
+second-opinion-only selectors with a publisher-authored coverage-gap reason as optional
+disagreements without adding them to the primary lane's recommended E2E guidance.
 For a changed credential-free test, the normalizer also records structured head evidence only
 after the trusted module-tag parser accepts the source; model-provided evidence is overwritten. The
 trusted publisher independently repeats the ID and tuple checks, verifies that evidence against the

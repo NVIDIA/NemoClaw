@@ -1,5 +1,6 @@
 # Build artifacts and caches
 .version
+.source-revision
 *.pyc
 *.tsbuildinfo
 .pytest_cache/
@@ -19,6 +20,7 @@ Thumbs.db
 
 # Project-specific
 .nemoclaw-maintainer/
+.dori_user_status
 draft_newsletter_*
 research/
 specs/

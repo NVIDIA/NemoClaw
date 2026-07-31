@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   type CommandRunner,
@@ -126,6 +126,10 @@ function restoreEnv(name: string, value: string | undefined): void {
   Object.assign(process.env, value === undefined ? {} : { [name]: value });
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("LifecyclePhaseFixture.preparePostReboot", () => {
   it("installs OpenShell and stages the gateway user service when openshell-gateway is unavailable", async () => {
     const runner = new FakeRunner();
@@ -168,7 +172,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
-    runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status (non-zero on unfixed)
+    runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate("post-reboot-recovery", instance());
 
@@ -198,7 +202,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     ]);
   });
 
-  it("tolerates a non-zero status exit (the bug succeeds at destroying state)", async () => {
+  it("fails when status cannot prove post-reboot recovery", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup);
@@ -212,11 +216,44 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status non-zero
 
-    const result = await prepared.simulate("post-reboot-recovery", instance());
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /nemoclaw e2e-ubuntu-repo-cloud-openclaw status failed: Removed stale local registry entry/,
+    );
+  });
 
-    // simulate() does not throw; the post-status invariants belong
-    // to the state-validation phase that runs after.
-    expect(result.steps.find((step) => step.id.startsWith("nemoclaw-status:"))).toBeTruthy();
+  it("retries the stopped-container status until the sandbox starts", async () => {
+    vi.useFakeTimers();
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
+    runner.enqueue(shellResult(0, "container-1\n")); // discover
+    runner.enqueue(shellResult(0)); // docker stop
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0)); // gateway stop
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(0)); // user service restart
+    runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
+    runner.enqueue(
+      shellResult(
+        1,
+        "Failure layer: sandbox_container_stopped — sandbox container exists but is not running.",
+      ),
+    );
+    runner.enqueue(shellResult(0)); // status after OpenShell starts the container
+
+    const simulation = prepared.simulate("post-reboot-recovery", instance());
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await simulation;
+
+    expect(result.steps.at(-1)?.results[0]?.exitCode).toBe(0);
+    expect(
+      runner.calls.filter(
+        (call) =>
+          call.command === "nemoclaw" &&
+          call.args.join(" ") === "e2e-ubuntu-repo-cloud-openclaw status",
+      ),
+    ).toHaveLength(2);
   });
 
   it("fails when no Docker container carries the OpenShell sandbox-name label", async () => {
@@ -277,7 +314,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
-    runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status
+    runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate(
       "post-reboot-recovery",

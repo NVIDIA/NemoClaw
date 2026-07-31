@@ -383,7 +383,10 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     '"$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '[[ -n "$JOBS" || -n "$TARGETS" ]]',
-    '[[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]]',
+    'case "$TARGETS" in',
+    "ubuntu-repo-cloud-langchain-deepagents-code",
+    "ubuntu-repo-docker-post-reboot-recovery",
+    "PR E2E target is not approved by the trusted controller",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "'.state'",
     "'.head.repo.full_name // \"\"'",
@@ -748,6 +751,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "runtimeAudit.formatRuntimeAuditSummary",
     "scripts/scorecard/analyze-runtime-history.mts",
     "runtimeHistory.buildRuntimeHistory",
+    "scripts/scorecard/analyze-first-turn-latency.mts",
+    "firstTurnLatency.readCurrentFirstTurnLatencySample",
+    "currentFirstTurnLatency",
+    "runtimeHistory.loadPriorNightlySummaries",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -812,8 +819,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   requirePinnedAction(errors, runtimeUpload, "scorecard runtime summary upload");
   if (
     !String(runtimeUpload.uses ?? "").startsWith(E2E_ARTIFACT_ACTION) ||
-    runtimeUpload.if !==
-      "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}" ||
+    runtimeUpload.if !== "${{ always() && github.event_name == 'schedule' }}" ||
     runtimeUpload.with?.name !== "e2e-runtime-summary" ||
     runtimeUpload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json"
   ) {
