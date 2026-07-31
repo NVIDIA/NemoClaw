@@ -207,7 +207,7 @@ export function relaunchManagedSupervisorSession(
           }
           return completed.outcome;
         }
-        if (!supervisorReady) {
+        const finalizeFailure = () => {
           const finalized = finalize({ result, supervisorReady: false });
           const outcome = {
             ...finalized,
@@ -216,6 +216,9 @@ export function relaunchManagedSupervisorSession(
           };
           completed = { supervisorReady, outcome };
           return outcome;
+        };
+        if (!supervisorReady) {
+          return finalizeFailure();
         }
         let replacementOwned = false;
         try {
@@ -227,14 +230,7 @@ export function relaunchManagedSupervisorSession(
           replacementOwned = false;
         }
         if (!replacementOwned) {
-          const finalized = finalize({ result, supervisorReady: false });
-          const outcome = {
-            ...finalized,
-            stateRestored: false,
-            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
-          };
-          completed = { supervisorReady, outcome };
-          return outcome;
+          return finalizeFailure();
         }
         let stateRestored = false;
         try {
@@ -243,14 +239,7 @@ export function relaunchManagedSupervisorSession(
           stateRestored = false;
         }
         if (!stateRestored) {
-          const finalized = finalize({ result, supervisorReady: false });
-          const outcome = {
-            ...finalized,
-            stateRestored: false,
-            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
-          };
-          completed = { supervisorReady, outcome };
-          return outcome;
+          return finalizeFailure();
         }
         let restoredManagedHealth = false;
         try {
@@ -262,14 +251,7 @@ export function relaunchManagedSupervisorSession(
           // State restoration can trigger a gateway reload. Re-prove the
           // pinned replacement after that mutation while the previous
           // container is still available for rollback.
-          const finalized = finalize({ result, supervisorReady: false });
-          const outcome = {
-            ...finalized,
-            stateRestored: false,
-            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
-          };
-          completed = { supervisorReady, outcome };
-          return outcome;
+          return finalizeFailure();
         }
         const outcome = {
           ...finalize({ result, supervisorReady: true }),
