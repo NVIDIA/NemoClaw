@@ -111,4 +111,83 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     expect(finalizeBackup).toHaveBeenCalledWith({ result: RESULT, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
   });
+
+  it("forwards the pre-rollback classification to the failure printer (#7996)", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const deps = {
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      sleep: vi.fn(),
+      dockerCapture: vi.fn(() => ""),
+    };
+    const classification = {
+      kind: "patched_container_failed" as const,
+      headline: "Patched GPU container exited with code 127 (--gpus all).",
+      summaryLines: ["patched_container_exit_code=127"],
+      hints: ["Exit code 127 means the sandbox image does not provide ..."],
+    };
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        recreatePatch: vi.fn(() => RESULT),
+        waitForSupervisor: vi.fn(() => false),
+        capturePreRollbackDiagnostics: vi.fn(() => ({
+          dir: "/tmp/pre-rollback",
+          cleanupCommands: [],
+          summaryLines: [],
+          classification,
+        })),
+        finalizeBackup: vi.fn(() => ({ backupRemoved: false, rolledBack: true })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.ensureApplied();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    // Rollback has already removed the container by the time the printer runs,
+    // so this hand-off is the only surviving path for the exit-code evidence.
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Error),
+      expect.objectContaining({ preRollbackClassification: classification }),
+    );
+  });
+
+  it("passes a null pre-rollback classification when capture returns nothing (#7996)", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const deps = {
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      sleep: vi.fn(),
+      dockerCapture: vi.fn(() => ""),
+    };
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        recreatePatch: vi.fn(() => RESULT),
+        waitForSupervisor: vi.fn(() => false),
+        capturePreRollbackDiagnostics: vi.fn(() => null),
+        finalizeBackup: vi.fn(() => ({ backupRemoved: false, rolledBack: true })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.ensureApplied();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Error),
+      expect.objectContaining({ preRollbackClassification: null }),
+    );
+  });
 });

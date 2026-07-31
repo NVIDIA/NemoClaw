@@ -15,6 +15,7 @@ import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import type {
   DockerGpuPatchBackend,
   DockerGpuPatchDeps,
+  DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
   DockerGpuPatchMode,
   DockerGpuPatchResult,
@@ -229,9 +230,16 @@ export function createDockerGpuSandboxCreatePatch(
           sleep: options.deps.sleep,
         },
       );
+      // Keep the pre-rollback verdict: it is computed while the replacement
+      // container is still inspectable, so it is the only classification that
+      // can name the exit code. Rollback removes that container a few lines
+      // below, after which the failure printer can only observe the restored
+      // pre-patch sandbox (#7996).
+      let preRollbackClassification: DockerGpuPatchFailureClassification | null = null;
       if (!supervisorReady && result) {
         try {
-          captureFailedClone(options.sandboxName, result, options.deps);
+          preRollbackClassification =
+            captureFailedClone(options.sandboxName, result, options.deps)?.classification ?? null;
         } catch (error) {
           console.warn(
             `  ⚠ Could not capture the failed GPU container before rollback: ${error instanceof Error ? error.message : String(error)}`,
@@ -277,6 +285,7 @@ export function createDockerGpuSandboxCreatePatch(
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        preRollbackClassification,
         context: {
           sandboxName: options.sandboxName,
           oldContainerId: result?.oldContainerId,

@@ -147,6 +147,29 @@ describe("Docker GPU patch diagnostics", () => {
     expect(flat).toContain("patched_create_option=--gpus all");
   });
 
+  it("explains exit code 127 as a sandbox image without the managed startup command (#7996)", () => {
+    const result = classify(
+      failureSnapshot("Error", { Status: "restarting", ExitCode: 127 }, "alpha   Error   1m ago"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    const hints = (result.hints ?? []).join("\n");
+    expect(hints).toContain("does not provide the NemoClaw-managed startup command");
+    expect(hints).toContain("uses the supplied Dockerfile as the complete sandbox image");
+    expect(hints).toContain("intermediate dependency image");
+    // The prose stays out of the machine-readable on-disk summary.
+    expect(result.summaryLines.join("\n")).not.toContain("intermediate dependency image");
+  });
+
+  it("does not attach the missing-startup-command hints to other non-zero exits (#7996)", () => {
+    const result = classify(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 125 }, "alpha   Error   1m ago"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.hints ?? []).toEqual([]);
+  });
+
   it("classifies an Error-phase sandbox with unknown container state as sandbox_error_phase", () => {
     const result = classify(failureSnapshot("Error", null, null));
 

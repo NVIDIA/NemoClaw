@@ -143,6 +143,7 @@ function printDockerGpuPatchClassificationLines(
   if (!classification) return;
   if (classification.headline) console.error(`  ${classification.headline}`);
   for (const line of classification.summaryLines) console.error(`    ${line}`);
+  for (const hint of classification.hints ?? []) console.error(`  ${hint}`);
 }
 
 function patchedContainerIdFromContext(
@@ -177,6 +178,12 @@ export function printDockerGpuPatchFailureAndExit(
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
     additionalSummaryLines?: readonly string[];
+    /**
+     * Classification captured while the replacement container still existed.
+     * Rollback removes that container before this printer runs, so a fresh
+     * snapshot can no longer read its exit state (#7996).
+     */
+    preRollbackClassification?: DockerGpuPatchFailureClassification | null;
   },
 ): never {
   const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
@@ -187,7 +194,17 @@ export function printDockerGpuPatchFailureAndExit(
     { patchedContainerId: patchedContainerIdFromContext(context) },
     inspectDeps,
   );
-  const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
+  // Rollback deletes the replacement container before we get here, so this
+  // snapshot degrades to the weaker `sandbox_error_phase` story ("entered Error
+  // phase") even when the pre-rollback capture already proved *why* the
+  // container died. Prefer the earlier, strictly better-evidenced verdict; it
+  // is the only one that can carry the exit code and its hints (#7996).
+  const observedClassification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
+  const classification =
+    deps.preRollbackClassification?.kind === "patched_container_failed" &&
+    observedClassification.kind !== "patched_container_failed"
+      ? deps.preRollbackClassification
+      : observedClassification;
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
     {
@@ -419,6 +436,19 @@ export function captureDockerGpuPatchSandboxSnapshot(
   return { sandboxPhase, sandboxListLine, patchedContainerState };
 }
 
+// The sandbox entrypoint launches the managed startup command through `env`,
+// which exits 127 when that command does not exist in the image. For a sandbox
+// container the signature is therefore unambiguous: the image does not carry
+// the NemoClaw-managed runtime, so every restart dies before the supervisor can
+// reconnect. Nothing about the Docker GPU/startup-command patch itself is
+// broken, so the generic patch escape hatches do not apply here (#7996).
+const SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE = 127;
+const SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS: readonly string[] = [
+  "Exit code 127 means the sandbox image does not provide the NemoClaw-managed startup command, so the container exits on every restart.",
+  "`nemoclaw onboard --from` uses the supplied Dockerfile as the complete sandbox image; it does not layer it over the managed runtime.",
+  "Rebuild the custom image from the full NemoClaw Dockerfile and source context for the same release. `ghcr.io/nvidia/nemoclaw/sandbox-base` is an intermediate dependency image and is not a usable final image on its own.",
+];
+
 function describePatchedContainerState(state: DockerContainerState | null): string[] {
   if (!state) return [];
   const lines: string[] = [];
@@ -474,6 +504,7 @@ export function classifyDockerGpuPatchFailure(
   const sandboxNotLive =
     !!snapshot.sandboxPhase && !SANDBOX_LIVE_PHASE_TOKENS.has(snapshot.sandboxPhase);
 
+  const hints: string[] = [];
   let kind: DockerGpuPatchFailureKind = "unknown";
   let headline: string;
   if (containerFailed) {
@@ -484,6 +515,9 @@ export function classifyDockerGpuPatchFailure(
       typeof exit === "number" && exit !== 0
         ? `Patched GPU container exited with code ${exit}${opt}.`
         : `Patched GPU container is not running${opt}.`;
+    if (exit === SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE) {
+      hints.push(...SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS);
+    }
   } else if (sandboxInErrorPhase) {
     kind = "sandbox_error_phase";
     headline = `OpenShell sandbox entered ${snapshot.sandboxPhase} phase before the GPU proof could run.`;
@@ -514,5 +548,7 @@ export function classifyDockerGpuPatchFailure(
       options.proofError instanceof Error ? options.proofError.message : String(options.proofError);
     if (proofText) lines.push(`proof_error=${proofText}`);
   }
-  return { kind, headline, summaryLines: lines };
+  return hints.length > 0
+    ? { kind, headline, summaryLines: lines, hints }
+    : { kind, headline, summaryLines: lines };
 }

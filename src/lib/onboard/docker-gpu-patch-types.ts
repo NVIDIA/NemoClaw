@@ -173,6 +173,12 @@ export type DockerGpuPatchFailureClassification = {
   kind: DockerGpuPatchFailureKind;
   headline: string;
   summaryLines: string[];
+  /**
+   * Prose guidance for failure signatures whose cause is unambiguous from the
+   * container state alone. Kept separate from `summaryLines` so the on-disk
+   * summary stays machine-readable `key=value` (#7996).
+   */
+  hints?: string[];
 };
 
 export type DockerContainerInspect = {

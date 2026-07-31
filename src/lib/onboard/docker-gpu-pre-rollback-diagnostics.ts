@@ -17,6 +17,7 @@ import type {
   DockerContainerInspect,
   DockerGpuPatchDeps,
   DockerGpuPatchDiagnostics,
+  DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
@@ -118,11 +119,21 @@ function primeSensitiveDiagnosticValues(
   return [...sensitiveValues];
 }
 
+/**
+ * Diagnostics bundle plus the verdict computed while the replacement container
+ * was still inspectable. Rollback removes that container immediately after this
+ * returns, so `classification` is the only place the exit-state evidence
+ * survives for the caller's user-facing failure message (#7996).
+ */
+export type DockerGpuPreRollbackDiagnostics = DockerGpuPatchDiagnostics & {
+  classification: DockerGpuPatchFailureClassification;
+};
+
 export function captureDockerGpuPreRollbackDiagnostics(
   sandboxName: string,
   result: DockerGpuPatchResult,
   deps: PreRollbackDiagnosticsDeps = {},
-): DockerGpuPatchDiagnostics | null {
+): DockerGpuPreRollbackDiagnostics | null {
   const context: DockerGpuPatchFailureContext = {
     sandboxName,
     oldContainerId: result.oldContainerId,
@@ -167,5 +178,5 @@ export function captureDockerGpuPreRollbackDiagnostics(
   if (!diagnostics) return null;
 
   console.error(`  Pre-rollback diagnostics saved: ${diagnostics.dir}`);
-  return diagnostics;
+  return { ...diagnostics, classification };
 }
