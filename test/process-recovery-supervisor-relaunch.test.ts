@@ -130,7 +130,7 @@ function scriptedPinnedGatewayProbes(
       order.push("post-restore-health");
       return postRestoreProbe;
     })
-    .mockReturnValue(acceptedProbe);
+    .mockReturnValue(postRestoreProbe);
 }
 
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
@@ -344,6 +344,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       forwardRecovered: false,
     });
     expect(order).toEqual(["restore-state", "post-restore-health", "rollback-container"]);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(3);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ supervisorReady: false }),
