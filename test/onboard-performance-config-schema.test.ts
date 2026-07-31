@@ -587,6 +587,7 @@ describe("full-E2E cold-path calibration", () => {
       expect(run.workflowHeadSha).toMatch(/^[0-9a-f]{40}$/u);
       expect(run.testedSha).toMatch(/^[0-9a-f]{40}$/u);
       expect(gitIsAncestor(startupAdjustment.changeSha, run.workflowHeadSha)).toBe(true);
+      expect(gitIsAncestor(startupAdjustment.changeSha, run.testedSha)).toBe(true);
       expect(
         gitIsAncestor(run.workflowHeadSha, startupAdjustment.runtimeInputsVerifiedThroughSha),
       ).toBe(true);
