@@ -24,14 +24,10 @@ export const CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S = 10;
 export const CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS = 10;
 export const CONNECT_AUTO_PAIR_PENDING_READ_POLL_S = 0.1;
 export const CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S = 4;
-// Preserve a bounded 30s transport allowance outside the in-sandbox work so a
-// newly restored sandbox can finish OpenShell transport and interpreter startup
-// before the canonical approval path returns its fixed receipt.
-export const CONNECT_AUTO_PAIR_TRANSPORT_HEADROOM_MS = 30_000;
 // Outer spawnSync cap (ms). Must exceed the internal worst case
 // for either ordinary listing or restored-clone publication and observation.
 // The outer timer starts at `openshell sandbox exec`, before the remote shell
-// sources the proxy environment and launches Python. Keep 30s beyond the longer
+// sources the proxy environment and launches Python. Keep 10s beyond the longer
 // inner path so the outer timer cannot terminate a legitimate approval before
 // its fixed receipt is returned.
-export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 45_000;
+export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 25_000;

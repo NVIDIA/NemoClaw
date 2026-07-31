@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAutoPairApprovalScript,
+  classifyAutoPairApprovalExecReceipt,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
 } from "./auto-pair-approval";
@@ -91,5 +92,40 @@ process.exit(Number(process.env.NEMOCLAW_LIST_EXIT_CODE || "0"));
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("distinguishes host execution failures without returning their details", () => {
+    const timeoutError = Object.assign(new Error("private timeout detail"), {
+      code: "ETIMEDOUT",
+    });
+    const spawnError = Object.assign(new Error("private spawn detail"), { code: "ENOENT" });
+
+    expect(
+      classifyAutoPairApprovalExecReceipt(
+        { error: timeoutError, status: null, signal: "SIGTERM" },
+        "private output",
+      ),
+    ).toBe("exec-timeout");
+    expect(
+      classifyAutoPairApprovalExecReceipt(
+        { error: spawnError, status: null, signal: null },
+        "private output",
+      ),
+    ).toBe("exec-spawn-failed");
+    expect(
+      classifyAutoPairApprovalExecReceipt({ status: null, signal: "SIGKILL" }, "private output"),
+    ).toBe("exec-signal");
+    expect(classifyAutoPairApprovalExecReceipt({ status: 1, signal: null }, "private output")).toBe(
+      "exec-command-failed",
+    );
+    expect(classifyAutoPairApprovalExecReceipt({ status: 0, signal: null }, "private output")).toBe(
+      "exec-invalid-receipt",
+    );
+    expect(
+      classifyAutoPairApprovalExecReceipt(
+        { status: 0, signal: null },
+        "__NEMOCLAW_AUTO_PAIR_RECEIPT__=approved-one\n",
+      ),
+    ).toBe("approved-one");
   });
 });

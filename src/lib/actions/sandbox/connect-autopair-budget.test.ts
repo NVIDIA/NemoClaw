@@ -10,7 +10,6 @@ import {
   CONNECT_AUTO_PAIR_PENDING_READ_POLL_S,
   CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S,
   CONNECT_AUTO_PAIR_TIMEOUT_MS,
-  CONNECT_AUTO_PAIR_TRANSPORT_HEADROOM_MS,
 } from "./connect-autopair-budget";
 
 const ordinaryInnerWorstCaseMs =
@@ -31,10 +30,8 @@ describe("connect auto-pair budget", () => {
     expect(CONNECT_AUTO_PAIR_TIMEOUT_MS).toBeGreaterThan(innerWorstCaseMs);
   });
 
-  it("keeps 30 seconds of transport headroom beyond inner work", () => {
-    expect(CONNECT_AUTO_PAIR_TIMEOUT_MS - innerWorstCaseMs).toBeGreaterThanOrEqual(
-      CONNECT_AUTO_PAIR_TRANSPORT_HEADROOM_MS,
-    );
+  it("keeps 10 seconds beyond inner work for OpenShell and interpreter startup", () => {
+    expect(CONNECT_AUTO_PAIR_TIMEOUT_MS - innerWorstCaseMs).toBeGreaterThanOrEqual(10_000);
   });
 
   it("uses positive whole numbers for attempt, command, and outer budgets", () => {
@@ -44,7 +41,6 @@ describe("connect auto-pair budget", () => {
       CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
       CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS,
       CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S,
-      CONNECT_AUTO_PAIR_TRANSPORT_HEADROOM_MS,
       CONNECT_AUTO_PAIR_TIMEOUT_MS,
     ]) {
       expect(Number.isInteger(value)).toBe(true);

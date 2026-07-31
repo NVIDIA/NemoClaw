@@ -64,7 +64,7 @@ const AUTO_PAIR_POST_TIMEOUT_POLL_S = 0.1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
-// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 45s
+// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 25s
 // outer cap — via ./connect-autopair-budget. The doctor surface (#4616) uses
 // the defaults above to drain a backlog. Callers that omit a field inherit the
 // default, so the historical doctor payload stays byte-stable.
@@ -96,6 +96,11 @@ export type AutoPairApprovalResult = {
 export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
+  | "exec-timeout"
+  | "exec-spawn-failed"
+  | "exec-command-failed"
+  | "exec-signal"
+  | "exec-invalid-receipt"
   | "list-failed"
   | "list-pending-unavailable"
   | "list-timeout"
@@ -130,6 +135,35 @@ export function parseAutoPairApprovalReceipt(output: string): AutoPairApprovalRe
   }
   const match = receiptLines[0].match(AUTO_PAIR_RECEIPT_LINE_RE);
   return (match?.[1] as AutoPairApprovalReceipt | undefined) ?? null;
+}
+
+type AutoPairApprovalExecResult = {
+  error?: Error;
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+};
+
+/**
+ * Collapse host-side sandbox-exec failures into fixed, non-secret receipts.
+ * Command output, error messages, signal names, and identifiers stay private.
+ */
+export function classifyAutoPairApprovalExecReceipt(
+  result: AutoPairApprovalExecResult,
+  output: string,
+): AutoPairApprovalReceipt {
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    return "exec-timeout";
+  }
+  if (result.error) {
+    return "exec-spawn-failed";
+  }
+  if (result.signal) {
+    return "exec-signal";
+  }
+  if (result.status !== 0) {
+    return "exec-command-failed";
+  }
+  return parseAutoPairApprovalReceipt(output) ?? "exec-invalid-receipt";
 }
 
 export function readAutoPairApprovalPolicyModule(): string | null {
@@ -1039,11 +1073,9 @@ export function runSandboxAutoPairApprovalPass(
       },
     );
     const output = String(result.stdout || "");
-    const receipt: AutoPairApprovalReceipt | null = !emitReceipt
-      ? null
-      : result.error || result.status !== 0 || result.signal
-        ? "exec-failed"
-        : (parseAutoPairApprovalReceipt(output) ?? "exec-failed");
+    const receipt: AutoPairApprovalReceipt | null = emitReceipt
+      ? classifyAutoPairApprovalExecReceipt(result, output)
+      : null;
     if (!options.capture) {
       return { attempted: true, reported: false, approved: 0, receipt };
     }
