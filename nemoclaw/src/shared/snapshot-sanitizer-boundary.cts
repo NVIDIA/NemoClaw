@@ -2,14 +2,74 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
+import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 const HELPER_TIMEOUT_MS = 60_000;
 const HELPER_MAX_BUFFER_BYTES = 48 * 1024 * 1024;
+const TRUSTED_PYTHON_LOCATIONS = [
+  "/usr/bin/python3",
+  "/usr/local/bin/python3",
+  "/opt/homebrew/bin/python3",
+  "/opt/local/bin/python3",
+] as const;
+let snapshotSanitizerPythonPathForTest: string | null | undefined;
 
-function snapshotSanitizerEnvironment(): Record<string, string> {
-  return typeof process.env.PATH === "string" ? { PATH: process.env.PATH } : {};
+function isTrustedAbsoluteExecutable(candidate: string): string | null {
+  try {
+    const canonical = realpathSync(candidate);
+    const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+    let inspected = canonical;
+    while (true) {
+      const metadata = statSync(inspected);
+      if ((metadata.mode & 0o022) !== 0) return null;
+      if (currentUid !== null && metadata.uid !== 0 && metadata.uid !== currentUid) return null;
+      const parent = path.dirname(inspected);
+      if (parent === inspected) break;
+      inspected = parent;
+    }
+    const executable = statSync(canonical);
+    if (!executable.isFile()) return null;
+    accessSync(canonical, constants.R_OK | constants.X_OK);
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a verified interpreter without consulting attacker-controlled PATH entries. */
+export function resolveTrustedSnapshotSanitizerPythonPath(): string | null {
+  const candidates: string[] = [...TRUSTED_PYTHON_LOCATIONS];
+  try {
+    candidates.push(path.join(path.dirname(realpathSync(process.execPath)), "python3"));
+  } catch {
+    // The fixed system locations remain authoritative when Node cannot be canonicalized.
+  }
+  for (const candidate of new Set(candidates)) {
+    const trusted = isTrustedAbsoluteExecutable(candidate);
+    if (trusted !== null) return trusted;
+  }
+  return null;
+}
+
+/** @visibleForTesting Install an explicit helper substitute without weakening production lookup. */
+export function setSnapshotSanitizerPythonPathForTest(
+  pythonPath: string | null | undefined,
+): void {
+  if (process.env.VITEST !== "true") {
+    throw new Error("Snapshot sanitizer Python substitution is only available under Vitest");
+  }
+  if (typeof pythonPath === "string" && !path.isAbsolute(pythonPath)) {
+    throw new Error("Snapshot sanitizer test Python path must be absolute");
+  }
+  snapshotSanitizerPythonPathForTest = pythonPath;
+}
+
+function snapshotSanitizerPythonPath(): string | null {
+  if (process.env.VITEST === "true" && snapshotSanitizerPythonPathForTest !== undefined) {
+    return snapshotSanitizerPythonPathForTest;
+  }
+  return resolveTrustedSnapshotSanitizerPythonPath();
 }
 
 export interface SnapshotFileIdentity {
@@ -567,8 +627,10 @@ export function scanDescriptorSnapshot(
   targetName?: string,
 ): DescriptorSnapshotScan | null {
   const mode = targetName === undefined ? "scan-tree" : "scan-file";
+  const pythonPath = snapshotSanitizerPythonPath();
+  if (pythonPath === null) return null;
   const result = spawnSync(
-    "python3",
+    pythonPath,
     [
       "-I",
       "-c",
@@ -581,7 +643,7 @@ export function scanDescriptorSnapshot(
     ],
     {
       encoding: "utf-8",
-      env: snapshotSanitizerEnvironment(),
+      env: {},
       maxBuffer: HELPER_MAX_BUFFER_BYTES,
       timeout: HELPER_TIMEOUT_MS,
     },
@@ -597,12 +659,14 @@ export function applyDescriptorSnapshotActions(
   actions: readonly SnapshotSanitizationAction[],
 ): boolean {
   if (actions.length === 0) return true;
+  const pythonPath = snapshotSanitizerPythonPath();
+  if (pythonPath === null) return false;
   const result = spawnSync(
-    "python3",
+    pythonPath,
     ["-I", "-c", SNAPSHOT_SANITIZER_PYTHON, "apply", root.canonicalPath],
     {
       encoding: "utf-8",
-      env: snapshotSanitizerEnvironment(),
+      env: {},
       input: JSON.stringify({ root: scan.root, directories: scan.directories, actions }),
       maxBuffer: HELPER_MAX_BUFFER_BYTES,
       timeout: HELPER_TIMEOUT_MS,

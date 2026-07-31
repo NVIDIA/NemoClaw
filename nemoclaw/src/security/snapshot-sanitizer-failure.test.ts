@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,8 +9,10 @@ import {
   applyDescriptorSnapshotActions,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
+  resolveTrustedSnapshotSanitizerPythonPath,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
+  setSnapshotSanitizerPythonPathForTest,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
@@ -32,11 +33,18 @@ function writePythonWrapper(lines: readonly string[]): string {
   const wrapper = path.join(wrapperRoot, "python3");
   writeFileSync(wrapper, ["#!/bin/sh", ...lines].join("\n"));
   chmodSync(wrapper, 0o755);
-  vi.stubEnv("PATH", `${wrapperRoot}:${process.env.PATH ?? ""}`);
+  setSnapshotSanitizerPythonPathForTest(wrapper);
   return wrapper;
 }
 
+function requireTrustedPython(): string {
+  const python = resolveTrustedSnapshotSanitizerPythonPath();
+  if (python === null) throw new Error("A trusted Python 3 interpreter is required for this test");
+  return python;
+}
+
 afterEach(() => {
+  setSnapshotSanitizerPythonPathForTest(undefined);
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
@@ -56,11 +64,66 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    vi.stubEnv("PATH", makeRoot());
+    setSnapshotSanitizerPythonPathForTest(null);
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
+
+  it("fails closed when the descriptor apply helper is unavailable", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    setSnapshotSanitizerPythonPathForTest(null);
+
+    expect(
+      applyDescriptorSnapshotActions(root, { root: identity, directories: {}, files: [] }, [
+        { kind: "remove", path: "config.json", metadata: identity },
+      ]),
+    ).toBe(false);
+  });
+
+  it("accepts only absolute helper substitutions under Vitest", () => {
+    expect(() => setSnapshotSanitizerPythonPathForTest("python3")).toThrow(
+      /test Python path must be absolute/u,
+    );
+
+    const originalVitest = process.env.VITEST;
+    try {
+      process.env.VITEST = "false";
+      expect(() => setSnapshotSanitizerPythonPathForTest(null)).toThrow(
+        /only available under Vitest/u,
+      );
+    } finally {
+      process.env.VITEST = originalVitest;
+    }
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "ignores a PATH-preceding helper before it can read unsanitized credentials",
+    () => {
+      const root = makeRoot();
+      const configPath = path.join(root, "openclaw.json");
+      const attackerRoot = makeRoot();
+      const stolen = path.join(attackerRoot, "stolen-config");
+      const wrapper = path.join(attackerRoot, "python3");
+      writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
+      writeFileSync(
+        wrapper,
+        [
+          "#!/bin/sh",
+          'if [ "${4-}" = scan-file ]; then',
+          `  cp "$5/$7" ${shellQuote(stolen)}`,
+          "fi",
+          "exit 1",
+        ].join("\n"),
+      );
+      chmodSync(wrapper, 0o755);
+      vi.stubEnv("PATH", `${attackerRoot}:${process.env.PATH ?? ""}`);
+
+      expect(sanitizeOpenClawConfigFile(configPath)).toBe(true);
+      expect(() => readFileSync(stolen)).toThrow();
+      expect(readFileSync(configPath, "utf-8")).not.toContain("sk-secret-value");
+    },
+  );
 
   it("rejects invalid output from the descriptor helper", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
@@ -124,15 +187,10 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    const python = spawnSync(
-      "python3",
-      ["-I", "-c", "import os, sys; print(os.path.realpath(sys.executable))"],
-      { encoding: "utf-8" },
-    );
-    expect(python.status, python.stderr).toBe(0);
+    const python = requireTrustedPython();
     writePythonWrapper([
       'if [ "${4-}" = apply ]; then exit 1; fi',
-      `exec ${shellQuote(python.stdout.trim())} "$@"`,
+      `exec ${shellQuote(python)} "$@"`,
     ]);
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
@@ -166,15 +224,10 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const movedRoot = `${root}-moved`;
       roots.push(movedRoot);
       writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
-      const python = spawnSync(
-        "python3",
-        ["-I", "-c", "import os, sys; print(os.path.realpath(sys.executable))"],
-        { encoding: "utf-8" },
-      );
-      expect(python.status, python.stderr).toBe(0);
+      const python = requireTrustedPython();
       writePythonWrapper([
         `if [ "\${4-}" = scan-tree ]; then mv ${shellQuote(root)} ${shellQuote(movedRoot)}; fi`,
-        `exec ${shellQuote(python.stdout.trim())} "$@"`,
+        `exec ${shellQuote(python)} "$@"`,
       ]);
 
       expect(() => sanitizeMigrationDirectory(root)).toThrow(

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -16,6 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  resolveTrustedSnapshotSanitizerPythonPath,
+  setSnapshotSanitizerPythonPathForTest,
+} from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeBackupDirectory } from "./sandbox.js";
 
 const testDirectories: string[] = [];
@@ -28,6 +31,7 @@ function createBackup(): string {
 }
 
 afterEach(() => {
+  setSnapshotSanitizerPythonPathForTest(undefined);
   vi.unstubAllEnvs();
   for (const testDirectory of testDirectories.splice(0)) {
     rmSync(testDirectory, { recursive: true, force: true });
@@ -125,7 +129,8 @@ describe("rebuild backup credential sanitization", () => {
     const outsideContents = '{"apiKey":"sk-outside-secret"}';
     writeFileSync(outsideConfigPath, outsideContents);
 
-    const realPython = execFileSync("which", ["python3"], { encoding: "utf-8" }).trim();
+    const realPython = resolveTrustedSnapshotSanitizerPythonPath();
+    if (realPython === null) throw new Error("A trusted Python 3 interpreter is required");
     const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
     const pythonWrapper = join(wrapperPath, "python3");
     writeFileSync(
@@ -133,7 +138,7 @@ describe("rebuild backup credential sanitization", () => {
       `#!/bin/sh\nif [ "$4" = "apply" ]; then\n  mv ${shellQuote(nestedPath)} ${shellQuote(movedPath)}\n  ln -s ${shellQuote(outsidePath)} ${shellQuote(nestedPath)}\nfi\nexec ${shellQuote(realPython)} "$@"\n`,
     );
     chmodSync(pythonWrapper, 0o755);
-    vi.stubEnv("PATH", `${wrapperPath}:${process.env.PATH ?? ""}`);
+    setSnapshotSanitizerPythonPathForTest(pythonWrapper);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
       "Credential sanitization failed; removed the incomplete backup",

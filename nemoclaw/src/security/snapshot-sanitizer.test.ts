@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -14,6 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  resolveTrustedSnapshotSanitizerPythonPath,
+  setSnapshotSanitizerPythonPathForTest,
+} from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
 const temporaryRoots: string[] = [];
@@ -25,6 +28,7 @@ function makeRoot(): string {
 }
 
 afterEach(() => {
+  setSnapshotSanitizerPythonPathForTest(undefined);
   vi.unstubAllEnvs();
   for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
@@ -182,12 +186,8 @@ describe("migration snapshot sanitizer", () => {
       );
       writeFileSync(outsideConfig, JSON.stringify({ apiKey: "outside-must-not-change" }));
 
-      const python = spawnSync(
-        "python3",
-        ["-I", "-c", "import os, sys; print(os.path.realpath(sys.executable))"],
-        { encoding: "utf-8" },
-      );
-      expect(python.status, python.stderr).toBe(0);
+      const python = resolveTrustedSnapshotSanitizerPythonPath();
+      if (python === null) throw new Error("A trusted Python 3 interpreter is required");
       writeFileSync(
         wrapper,
         [
@@ -197,11 +197,11 @@ describe("migration snapshot sanitizer", () => {
           `  ln -s ${shellQuote(outside)} ${shellQuote(nested)}`,
           `  : > ${shellQuote(marker)}`,
           "fi",
-          `exec ${shellQuote(python.stdout.trim())} \"$@\"`,
+          `exec ${shellQuote(python)} \"$@\"`,
         ].join("\n"),
       );
       chmodSync(wrapper, 0o755);
-      vi.stubEnv("PATH", `${wrapperRoot}:${process.env.PATH ?? ""}`);
+      setSnapshotSanitizerPythonPathForTest(wrapper);
 
       expect(() => sanitizeMigrationDirectory(root)).toThrow(
         /Failed to sanitize migration artifacts safely/u,
