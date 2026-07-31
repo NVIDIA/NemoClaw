@@ -80,6 +80,7 @@ Audit each workaround against target source and its removal condition:
 | Latest session-list preview | `agents/hermes/patch-session-list-preview.py` and the Dockerfile smoke test. |
 | Config-less profile policy defaults | `agents/hermes/patch-profile-policy-defaults.py`, `test/hermes-profile-policy-defaults.test.ts`, and the final-image named-profile probe. |
 | Writable managed gateway runtime metadata | `agents/hermes/patch-gateway-runtime-metadata.py`, `test/hermes-gateway-runtime-metadata-patch.test.ts`, and the final-image source-shape, integrity, and path probes. Preserve Hermes' process-scoped home selector while relocating central default-gateway PID, lock, and status helpers. Search the full pinned tree for explicit metadata paths before claiming broader support; patch and runtime-test each supported direct consumer or document inherited `--replace`, marker, profile/multiplexer, service/boot, and packaging residuals. |
+| Writable cron execution history | `agents/hermes/patch-cron-execution-runtime.py`, `test/hermes-cron-execution-runtime-patch.test.ts`, the manifest path, and the final-image cross-identity probe. Keep cron job definitions inside the high-risk `cron` directory, relocate only the mutable SQLite audit ledger below `runtime`, and patch the upstream quick snapshot inventory in the same guarded patch operation. |
 | OpenShell Langfuse placeholders | `agents/hermes/patch-langfuse-credentials.mts` and its Dockerfile source-shape probe. |
 | Managed light-terminal skin | `src/lib/domain/sandbox/connect-env.ts` and `test/hermes-light-skin-boundary.test.ts`. |
 | Config output masking and gateway secret boundary | `agents/hermes/hermes-wrapper.py`, validator scripts, and live secret-boundary tests. |
@@ -125,10 +126,15 @@ parent's owner, shared group, and setgid mode. Record the real producer-selected
 the live source must be group-readable for online backup, while the sandbox-owned restored
 replacement must be group-writable so the gateway can reopen it. Prove both identities' behavior
 instead of assuming every SQLite creator uses mode `0660`.
-Do not assume a state directory inherited the shared contract because a neighboring ledger did:
-Hermes 0.19 creates both `cron/executions.db` and
+Do not assume a state directory inherited the shared contract because a neighboring ledger did.
+Hermes 0.19 creates cron execution history and
 `gateway/discord_message_recovery.db` from gateway-owned processes, while sandbox performs the
 snapshot restore.
+NemoClaw keeps cron job definitions in the high-risk `cron` directory and removes group write
+access during Shields up.
+NemoClaw relocates only the execution ledger to `runtime/cron-executions.db`.
+Making the whole `cron` directory cross-identity writable would let the `sandbox` group modify
+cron job definitions.
 Use distinct-user image or runtime probes; a single-uid temporary-directory test cannot prove this contract.
 Resolve whether each ledger follows `get_hermes_home()` or the default root.
 Hermes named profiles relocate profile-local state below `profiles/<name>/`; a static default-profile `state_files` entry does not online-back up those copies.
