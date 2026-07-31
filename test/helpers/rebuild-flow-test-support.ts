@@ -67,6 +67,9 @@ export type RebuildFlowOverrides = {
   agentPolicyAdditionsContent?: string;
   preflightWithProductionBaselineResolver?: boolean;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
+  revalidateRebuildRouteBeforeDelete?: (
+    receipt: Record<string, unknown>,
+  ) => { ok: true; receipt: Record<string, unknown> } | { ok: false; message: string };
   sandboxEntry?: Record<string, unknown>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;

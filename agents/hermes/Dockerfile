@@ -140,7 +140,7 @@ RUN set -eu; \
             exit 1; \
         fi; \
     fi; \
-    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp; \
+    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
@@ -555,7 +555,7 @@ PY
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=cd851746da14162ac4701d56c274dac20024ea6a11f6ffcf2ce7fb89dff388a0
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=87c1b02e0fb2becd26f79ae5dec6e0d21f78c6b08862b880e926708faf46ecb3
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -1239,6 +1239,7 @@ RUN check_metadata() { \
     && check_absent /root/.npm \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \
+    && check_absent /root/.cache/uv \
     && check_absent /sandbox/.cache \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \

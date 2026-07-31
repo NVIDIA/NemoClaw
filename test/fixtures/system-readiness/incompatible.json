@@ -1,10 +1,11 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "status": "incompatible",
   "exitCode": 2,
   "mutated": false,
   "provenance": {
     "nemoclawVersion": "0.1.0",
+    "sourceRevision": "21e60ae287e8c2a184f71406ac8b418f046330d1",
     "observedAt": "2026-06-01T12:00:00Z"
   },
   "observations": [
