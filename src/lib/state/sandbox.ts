@@ -56,6 +56,12 @@ import {
   parseOpenClawImagePluginInstalls,
   planOpenClawPluginRestore,
 } from "./openclaw-plugin-restore.js";
+import {
+  cloneSandboxRuntimeSnapshot,
+  type SandboxRuntimeSnapshot,
+} from "./registry/runtime-snapshot.js";
+import type { SandboxWorkloadReceipt } from "./registry/types.js";
+import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
@@ -109,6 +115,16 @@ export interface RebuildManifest {
    * zero-custom snapshot); absent only on legacy manifests.
    */
   customPolicies?: CustomPolicyEntry[];
+  /**
+   * Provider-neutral runtime and acceleration state captured before the
+   * filesystem copy. Required when `workload` is a managed-image receipt.
+   */
+  runtimeSnapshot?: SandboxRuntimeSnapshot;
+  /**
+   * Exact immutable managed workload/profile authority associated with this
+   * snapshot. Older and explicit Dockerfile snapshots omit this field.
+   */
+  workload?: SandboxWorkloadReceipt;
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -121,6 +137,8 @@ export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
   name?: string | null;
+  runtimeSnapshot?: SandboxRuntimeSnapshot;
+  workload?: SandboxWorkloadReceipt;
 }
 
 export interface InstanceBackup {
@@ -265,6 +283,12 @@ export function hasAuthoritativeOpenClawImagePluginProvenance(value: {
 function isRebuildManifest(value: unknown): value is RebuildManifest {
   if (!isObjectRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   const dir = typeof value.dir === "string" ? value.dir : value.writableDir;
+  const runtimeSnapshot =
+    value.runtimeSnapshot === undefined
+      ? undefined
+      : cloneSandboxRuntimeSnapshot(value.runtimeSnapshot);
+  const workload =
+    value.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(value.workload as never);
   return (
     typeof value.version === "number" &&
     typeof value.sandboxName === "string" &&
@@ -290,6 +314,9 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       typeof value.blueprintDigest === "string") &&
     (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
     (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
+    (value.runtimeSnapshot === undefined || runtimeSnapshot !== undefined) &&
+    (value.workload === undefined || workload !== undefined) &&
+    (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
         value.instances.every((entry) => isInstanceBackup(entry)))) &&
@@ -883,6 +910,32 @@ export { buildStateFileRestoreCommand } from "./state-file-restore.js";
 // module. Prefer importing directly from ./ssh-transport in new code.
 export { isSshTransportFailure };
 
+function normalizeSnapshotBackupAuthority(options: BackupOptions): {
+  readonly runtimeSnapshot?: SandboxRuntimeSnapshot;
+  readonly workload?: SandboxWorkloadReceipt;
+  readonly error?: string;
+} {
+  const runtimeSnapshot =
+    options.runtimeSnapshot === undefined
+      ? undefined
+      : cloneSandboxRuntimeSnapshot(options.runtimeSnapshot);
+  const workload =
+    options.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(options.workload);
+  if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
+    return { error: "snapshot runtime state is invalid or cannot be represented" };
+  }
+  if (options.workload !== undefined && workload === undefined) {
+    return { error: "snapshot workload authority is invalid" };
+  }
+  if (workload?.kind === "managed-image" && runtimeSnapshot === undefined) {
+    return { error: "managed snapshot is missing provider runtime state" };
+  }
+  return {
+    ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
+    ...(workload === undefined ? {} : { workload }),
+  };
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -897,6 +950,18 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   _log(
     `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
   );
+
+  const snapshotAuthority = normalizeSnapshotBackupAuthority(options);
+  if (snapshotAuthority.error) {
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: snapshotAuthority.error,
+    };
+  }
 
   const reconcileOpenClawImagePluginProvenance =
     agentName === "openclaw" && Boolean(sb?.fromDockerfile);
@@ -995,6 +1060,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
     customPolicies,
+    ...snapshotAuthority,
     ...(providedName !== null ? { name: providedName } : {}),
   };
 
@@ -1853,6 +1919,12 @@ function readManifest(backupPath: string): RebuildManifest | null {
     const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
     const dir = manifest.dir ?? manifest.writableDir;
     if (!dir) return null;
+    const runtimeSnapshot =
+      manifest.runtimeSnapshot === undefined
+        ? undefined
+        : cloneSandboxRuntimeSnapshot(manifest.runtimeSnapshot);
+    const workload =
+      manifest.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(manifest.workload);
     return {
       ...manifest,
       dir,
@@ -1860,6 +1932,8 @@ function readManifest(backupPath: string): RebuildManifest | null {
       // restore contract can reject them instead of silently de-duplicating.
       stateFiles: normalizeStateFileSpecsPreservingDuplicates(manifest.stateFiles ?? []),
       blueprintDigest: manifest.blueprintDigest ?? null,
+      ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
+      ...(workload === undefined ? {} : { workload }),
     };
   } catch {
     return null;

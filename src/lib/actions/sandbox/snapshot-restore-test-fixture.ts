@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import type { SandboxWorkloadReceipt } from "../../state/registry/types";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -41,12 +42,7 @@ export type SandboxRecord = {
   fromDockerfile?: string | null;
   gatewayName?: string | null;
   imageTag?: string | null;
-  workload?: {
-    schemaVersion: 1;
-    kind: "legacy-dockerfile";
-    reference: string | null;
-    shared: false;
-  };
+  workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
   provider?: string | null;
