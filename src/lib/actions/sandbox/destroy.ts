@@ -23,6 +23,13 @@ import {
   emitProviderDetachResidualHint,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderBundleRegistry,
+  RuntimeProviderWorkloadCleanupResult,
+  requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderMutationAuthority,
+} from "../../onboard/runtime-provider/access";
 import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -39,20 +46,20 @@ import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { classifyDestroySandboxPresence } from "./destroy-presence";
 
-type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
-
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
-  dockerRmi?: DockerRmi;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
 };
 
 type RemoveSandboxRegistryEntryDeps = {
-  removeImage?: (sandboxName: string) => void;
+  removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandbox?: typeof registry.removeSandbox;
 };
 
 type RemoveSandboxRegistryEntryWithReceiptDeps = {
-  removeImage?: (sandboxName: string) => void;
+  removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
 
@@ -216,23 +223,42 @@ export function removeShieldsState(
 }
 
 /**
- * Remove the host-side Docker image that was built for a sandbox during onboard.
+ * Remove only a provider-owned per-sandbox workload image. Shared managed
+ * cohorts and ambiguous ownership are never deleted.
  * Must be called before registry.removeSandbox() since the imageTag is stored there.
  */
-export function removeSandboxImage(sandboxName: string, deps: RemoveSandboxImageDeps = {}): void {
+export function removeSandboxImage(
+  sandboxName: string,
+  deps: RemoveSandboxImageDeps = {},
+): RuntimeProviderWorkloadCleanupResult {
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const removeImage =
-    deps.dockerRmi ?? (require("../../adapters/docker") as { dockerRmi: DockerRmi }).dockerRmi;
   const sb = getSandbox(sandboxName);
-  if (!sb?.imageTag) return;
-  const result = removeImage(sb.imageTag, { ignoreError: true });
-  if (result.status === 0) {
-    console.log(`  Removed Docker image ${sb.imageTag}`);
-  } else {
-    console.warn(
-      `  ${YW}⚠${R} Failed to remove Docker image ${sb.imageTag}; run '${CLI_NAME} gc' to clean up.`,
+  if (!sb) return { status: "skipped", reason: "no-owned-image" };
+  let result: RuntimeProviderWorkloadCleanupResult;
+  try {
+    const provider = requireRuntimeProviderBundleForSandbox(
+      sb,
+      deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+    );
+    requireRuntimeProviderMutationAuthority(provider, "workload-cleanup");
+    if (provider.cleanup.supported !== true) {
+      return { status: "skipped", reason: "authority-unproven" };
+    }
+    result = provider.cleanup.removeOwnedWorkload({ sandbox: sb, sandboxName });
+  } catch {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  const log = deps.log ?? console.log;
+  const warn = deps.warn ?? console.warn;
+  if (result.status === "removed") {
+    log(`  Removed ${result.engineDisplayName} image ${result.reference}`);
+  } else if (result.status === "failed") {
+    warn(
+      `  ${YW}⚠${R} Failed to remove ${result.engineDisplayName} image ${result.reference}; ` +
+        `run '${CLI_NAME} gc' to clean up.`,
     );
   }
+  return result;
 }
 
 export function removeSandboxRegistryEntry(
@@ -241,7 +267,10 @@ export function removeSandboxRegistryEntry(
 ): boolean {
   const removeImage = deps.removeImage ?? removeSandboxImage;
   const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
-  removeImage(sandboxName);
+  const imageResult = removeImage(sandboxName);
+  if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
+    return false;
+  }
   return removeSandbox(sandboxName);
 }
 
@@ -252,7 +281,10 @@ export function removeSandboxRegistryEntryWithReceipt(
   const removeImage = deps.removeImage ?? removeSandboxImage;
   const removeSandboxWithReceipt =
     deps.removeSandboxWithReceipt ?? registry.removeSandboxWithReceipt;
-  removeImage(sandboxName);
+  const imageResult = removeImage(sandboxName);
+  if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
+    return null;
+  }
   return removeSandboxWithReceipt(sandboxName);
 }
 

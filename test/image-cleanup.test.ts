@@ -21,13 +21,17 @@ import { resolveNemoclawStateDir } from "../src/lib/state/paths";
 import { help as renderRootHelp } from "../src/lib/actions/root-help";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
+import { createDockerRuntimeProviderBundle } from "../src/lib/onboard/runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "../src/lib/onboard/runtime-provider/registry";
 
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   it("removes sandbox images before deleting the registry entry", () => {
     const calls: string[] = [];
 
     const removed = removeSandboxRegistryEntry("alpha", {
-      removeImage: (sandboxName) => calls.push(`image:${sandboxName}`),
+      removeImage: (sandboxName) => {
+        calls.push(`image:${sandboxName}`);
+      },
       removeSandbox: (sandboxName) => {
         calls.push(`registry:${sandboxName}`);
         return true;
@@ -40,13 +44,21 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
 
   it("removeSandboxImage calls docker rmi for recorded image tags", () => {
     const removedTags: string[] = [];
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      [
+        "docker",
+        createDockerRuntimeProviderBundle({
+          removeImage: (tag) => {
+            removedTags.push(tag);
+            return { status: 0 };
+          },
+        }),
+      ],
+    ]);
 
     removeSandboxImage("alpha", {
       getSandbox: () => ({ name: "alpha", imageTag: "openshell/sandbox-from:123" }) as any,
-      dockerRmi: (tag) => {
-        removedTags.push(tag);
-        return { status: 0 } as any;
-      },
+      runtimeProviders,
     });
 
     expect(removedTags).toEqual(["openshell/sandbox-from:123"]);
@@ -54,16 +66,45 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
 
   it("removeSandboxImage gracefully handles missing imageTag", () => {
     const removedTags: string[] = [];
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      [
+        "docker",
+        createDockerRuntimeProviderBundle({
+          removeImage: (tag) => {
+            removedTags.push(tag);
+            return { status: 0 };
+          },
+        }),
+      ],
+    ]);
 
     removeSandboxImage("alpha", {
       getSandbox: () => ({ name: "alpha", imageTag: null }) as any,
-      dockerRmi: (tag) => {
-        removedTags.push(tag);
-        return { status: 0 } as any;
-      },
+      runtimeProviders,
     });
 
     expect(removedTags).toEqual([]);
+  });
+
+  it("never deletes a shared managed workload image", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+
+    const result = removeSandboxImage("alpha", {
+      getSandbox: () =>
+        ({
+          name: "alpha",
+          openshellDriver: "docker",
+          imageTag: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+          workload: { shared: true, kind: "managed-image" },
+        }) as any,
+      runtimeProviders,
+    });
+
+    expect(result).toEqual({ status: "skipped", reason: "shared-image" });
+    expect(removeImage).not.toHaveBeenCalled();
   });
 
   it("treats missing sandbox delete results as already gone", () => {

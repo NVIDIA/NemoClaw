@@ -3,6 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  createDockerRuntimeProviderBundle,
+  createKubernetesRuntimeProviderBundle,
+  type DockerRuntimeProviderDependencies,
+} from "../../onboard/runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
 
@@ -12,35 +18,44 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => sandbox());
-  const isDockerRuntimeDown = vi.fn<NonNullable<SandboxStartDeps["isDockerRuntimeDown"]>>(
+  const isDockerRuntimeDown = vi.fn<DockerRuntimeProviderDependencies["isRuntimeDown"]>(
     () => false,
   );
   const printDockerRuntimeDownGuidance =
-    vi.fn<NonNullable<SandboxStartDeps["printDockerRuntimeDownGuidance"]>>();
+    vi.fn<DockerRuntimeProviderDependencies["printRuntimeDownGuidance"]>();
   const findLabeledSandboxContainers = vi.fn<
-    NonNullable<SandboxStartDeps["findLabeledSandboxContainers"]>
+    DockerRuntimeProviderDependencies["findLabeledSandboxContainers"]
   >(() => [{ name: "openshell-my-sandbox", status: "Exited (0) 2 hours ago", running: false }]);
-  const recoverDockerDriverSandbox = vi.fn<
-    NonNullable<SandboxStartDeps["recoverDockerDriverSandbox"]>
-  >(() => ({
-    recovered: true,
-    via: "started-stopped-original",
-    containerName: "openshell-my-sandbox",
-  }));
-  const dockerUnpause = vi.fn<NonNullable<SandboxStartDeps["dockerUnpause"]>>(() => ({
+  const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
+    () => ({
+      recovered: true,
+      via: "started-stopped-original",
+      containerName: "openshell-my-sandbox",
+    }),
+  );
+  const dockerUnpause = vi.fn<DockerRuntimeProviderDependencies["unpauseContainer"]>(() => ({
     status: 0,
   }));
   const probeSandbox = vi.fn<NonNullable<SandboxStartDeps["probeSandbox"]>>(() =>
     Promise.resolve(),
   );
   const log = vi.fn<(message: string) => void>();
+  const runtimeProviders = createRuntimeProviderBundleRegistry([
+    [
+      "docker",
+      createDockerRuntimeProviderBundle({
+        findLabeledSandboxContainers,
+        isRuntimeDown: isDockerRuntimeDown,
+        printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
+        recoverSandbox: recoverDockerDriverSandbox,
+        unpauseContainer: dockerUnpause,
+      }),
+    ],
+    ["kubernetes", createKubernetesRuntimeProviderBundle()],
+  ]);
   const deps: SandboxStartDeps = {
     getSandbox,
-    isDockerRuntimeDown,
-    printDockerRuntimeDownGuidance,
-    findLabeledSandboxContainers,
-    recoverDockerDriverSandbox,
-    dockerUnpause,
+    runtimeProviders,
     probeSandbox,
     log,
     ...overrides,

@@ -104,6 +104,19 @@ describe("destroySandbox flow", () => {
     expectFailedDeletePreservesHostState(harness, exitSpy);
   });
 
+  it("preserves provider and registry ownership when runtime authority is unknown", async () => {
+    const harness = createDestroyHarness({ openshellDriver: "unknown-runtime" });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(
+      harness.runOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+      ),
+    ).toBe(false);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it("refuses shields-up Hermes MCP destroy before stopping services or preparing MCP state", async () => {
     const harness = createDestroyHarness({
       agent: "hermes",
