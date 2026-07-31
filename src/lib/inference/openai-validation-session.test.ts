@@ -147,7 +147,6 @@ describe("OpenAI validation keepalive sequence", () => {
 
   it("falls back after native streaming stalls without capping the initial request (#7792)", async () => {
     const paths: string[] = [];
-    let responsesCalls = 0;
     let initialResponse: http.ServerResponse | undefined;
     let resolveInitialStarted!: () => void;
     let resolveStreamingStarted!: () => void;
@@ -157,23 +156,25 @@ describe("OpenAI validation keepalive sequence", () => {
     const streamingStarted = new Promise<void>((resolve) => {
       resolveStreamingStarted = resolve;
     });
+    const responsePlan = [
+      (response: http.ServerResponse) => {
+        initialResponse = response;
+        resolveInitialStarted();
+      },
+      (response: http.ServerResponse) => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("event: response.created\ndata: {}\n\n");
+        resolveStreamingStarted();
+      },
+      (response: http.ServerResponse) => {
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      },
+    ];
     const server = http.createServer((request, response) => {
       const path = request.url ?? "";
       paths.push(path);
       request.resume();
-      if (path.endsWith("/responses")) {
-        responsesCalls += 1;
-        if (responsesCalls === 1) {
-          initialResponse = response;
-          resolveInitialStarted();
-          return;
-        }
-        response.writeHead(200, { "content-type": "text/event-stream" });
-        response.write("event: response.created\ndata: {}\n\n");
-        resolveStreamingStarted();
-        return;
-      }
-      response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      responsePlan[paths.length - 1](response);
     });
     const port = await listen(server);
     const harness = createOpenAiValidationTestDeps();
