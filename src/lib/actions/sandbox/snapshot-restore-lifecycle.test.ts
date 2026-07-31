@@ -246,6 +246,63 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
+  it("stops after deleting a destination when registry removal loses authority", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const destination = {
+      name: "beta",
+      agent: "openclaw",
+      imageTag: "nemoclaw-beta:test",
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+    };
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : name === "beta"
+          ? destination
+          : null,
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.removeSandboxRegistryEntryOutcomeMock.mockReturnValue({
+      status: "blocked",
+      reason: "authority-unproven",
+      removed: false,
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(f.lifecycleMock.events).toContain("delete");
+    expect(f.lifecycleMock.events).toContain("cleanup-shields");
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("registry entry was preserved");
+    expect(f.getSandboxMock("beta")).toBe(destination);
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     f.getSandboxMock.mockImplementation((name) => ({
