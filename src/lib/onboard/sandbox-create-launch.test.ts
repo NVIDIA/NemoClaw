@@ -129,9 +129,10 @@ describe("prepareSandboxCreateLaunch", () => {
       env: {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
         NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: " 0.25 ",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: " 99 ",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "99",
         NEMOCLAW_PROVIDER_KEY: "must-not-enter-the-sandbox",
       },
       extraPlaceholderKeys: [],
@@ -150,12 +151,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "OPENCLAW_WORKSPACE_DIR=/sandbox/.openclaw/workspace",
       "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=30",
       "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
       "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
     ]);
-    expect(result.sandboxStartupCommand.join(" ")).not.toContain(
-      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
-    );
     expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
   });
 
@@ -164,7 +164,11 @@ describe("prepareSandboxCreateLaunch", () => {
       agent: loadAgent("hermes"),
       chatUiUrl: "http://127.0.0.1:18789/",
       createArgs: [],
-      env: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30" },
+      env: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "18789",
       hermesDashboardState: {
