@@ -6,6 +6,20 @@ import { InferenceSetError, runInferenceSet } from "./inference-set";
 import { createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet failure handling", () => {
+  it("fails before OpenShell or config mutation for an unknown durable runtime provider", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", openshellDriver: "unknown-runtime" },
+    });
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+    ).rejects.toThrow(/unknown-runtime.*not registered/u);
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   it("resolves the OpenShell runner before entering the async mutation lock", async () => {
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },

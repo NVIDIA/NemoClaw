@@ -3,6 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  createDockerRuntimeProviderBundle,
+  createKubernetesRuntimeProviderBundle,
+  type DockerRuntimeProviderDependencies,
+} from "../../onboard/runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { type SandboxStopDeps, stopSandbox } from "./stop";
@@ -15,33 +21,54 @@ function container(name: string, running: boolean) {
   return { name, status: running ? "Up 5 minutes" : "Exited (0) 2 hours ago", running };
 }
 
-function harness(overrides: Partial<SandboxStopDeps> = {}) {
+type StopHarnessOverrides = Partial<SandboxStopDeps> & {
+  dockerStop?: DockerRuntimeProviderDependencies["stopContainer"];
+  findLabeledSandboxContainers?: DockerRuntimeProviderDependencies["findLabeledSandboxContainers"];
+};
+
+function harness(overrides: StopHarnessOverrides = {}) {
+  const {
+    dockerStop: dockerStopOverride,
+    findLabeledSandboxContainers: findContainersOverride,
+    ...actionOverrides
+  } = overrides;
   const getSandbox = vi.fn<NonNullable<SandboxStopDeps["getSandbox"]>>(() => sandbox());
-  const isDockerRuntimeDown = vi.fn<NonNullable<SandboxStopDeps["isDockerRuntimeDown"]>>(
+  const isDockerRuntimeDown = vi.fn<DockerRuntimeProviderDependencies["isRuntimeDown"]>(
     () => false,
   );
   const printDockerRuntimeDownGuidance =
-    vi.fn<NonNullable<SandboxStopDeps["printDockerRuntimeDownGuidance"]>>();
+    vi.fn<DockerRuntimeProviderDependencies["printRuntimeDownGuidance"]>();
   const findLabeledSandboxContainers = vi.fn<
-    NonNullable<SandboxStopDeps["findLabeledSandboxContainers"]>
-  >(() => [container("openshell-my-sandbox", true)]);
+    DockerRuntimeProviderDependencies["findLabeledSandboxContainers"]
+  >(findContainersOverride ?? (() => [container("openshell-my-sandbox", true)]));
   const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
-  const dockerStop = vi.fn<NonNullable<SandboxStopDeps["dockerStop"]>>(() => ({ status: 0 }));
+  const dockerStop = vi.fn<DockerRuntimeProviderDependencies["stopContainer"]>(
+    dockerStopOverride ?? (() => ({ status: 0 })),
+  );
   const teardownSandboxDashboardForward =
     vi.fn<NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>>();
   const log = vi.fn<(message: string) => void>();
   const warn = vi.fn<(message: string) => void>();
+  const runtimeProviders = createRuntimeProviderBundleRegistry([
+    [
+      "docker",
+      createDockerRuntimeProviderBundle({
+        findLabeledSandboxContainers,
+        isRuntimeDown: isDockerRuntimeDown,
+        printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
+        stopContainer: dockerStop,
+      }),
+    ],
+    ["kubernetes", createKubernetesRuntimeProviderBundle()],
+  ]);
   const deps: SandboxStopDeps = {
     getSandbox,
-    isDockerRuntimeDown,
-    printDockerRuntimeDownGuidance,
-    findLabeledSandboxContainers,
+    runtimeProviders,
     stopSandboxChannels,
     teardownSandboxDashboardForward,
-    dockerStop,
     log,
     warn,
-    ...overrides,
+    ...actionOverrides,
   };
   return {
     deps,
