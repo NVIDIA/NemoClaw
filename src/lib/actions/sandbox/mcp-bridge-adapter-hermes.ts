@@ -5,7 +5,10 @@ import { runOpenshellProviderCommand } from "../../actions/global";
 import { waitUntil } from "../../core/wait";
 import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
-import { classifyGatewayRestartFailure } from "./gateway-restart";
+import {
+  classifyGatewayRestartFailure,
+  parseManagedGatewayControlCompletion,
+} from "./gateway-restart";
 import {
   type AdapterMutationOptions,
   type AdapterRegistrationInspection,
@@ -100,18 +103,6 @@ export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void 
   );
 }
 
-function isExactGatewayRecoveryCompletion(
-  result: ReturnType<typeof executeGatewaySupervisorAction>,
-): boolean {
-  if (!result || result.status !== 0 || result.stderr.trim()) return false;
-  const lines = result.stdout.trim().split(/\r?\n/);
-  if (lines.length !== 2) return false;
-  const completion = lines[0]?.match(
-    /^v1 ([0-9a-f]{64}) complete (?:ok|already-running) ([0-9]+) ([1-9][0-9]*)$/,
-  );
-  return completion !== null && lines[1] === `GATEWAY_PID=${completion[3]}`;
-}
-
 /**
  * Prove the running Hermes sandbox contains the packaged transaction helper
  * and can invoke it through OpenShell current main's ordinary exec path before
@@ -177,7 +168,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
   } catch (error) {
     recoveryFailureDetail = error instanceof Error ? error.message : String(error);
   }
-  const recoveryCompleted = isExactGatewayRecoveryCompletion(recovery);
+  const recoveryCompleted = parseManagedGatewayControlCompletion(recovery) !== null;
   if (!recoveryCompleted) {
     recoveryFailureDetail ||= recovery ? commandOutput(recovery).trim() : "no controller result";
     const classification = classifyGatewayRestartFailure(recovery);
