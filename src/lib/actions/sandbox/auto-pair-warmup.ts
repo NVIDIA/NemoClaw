@@ -140,7 +140,8 @@ export const RESTORED_CLONE_WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
-unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD || exit 0
+unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD \
+  NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || exit 0
 session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
 params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
@@ -186,7 +187,10 @@ export function runSandboxScopeWarmupRun(sandboxName: string): void {
   runSandboxWarmupScript(sandboxName, WARMUP_SCRIPT);
 }
 
-/** Publish a restored clone's write-scope request without an embedded fallback. */
+/**
+ * Attempt to publish a restored clone's write-scope request without an
+ * embedded fallback. Failures remain non-blocking.
+ */
 export function runRestoredSandboxScopeWarmupRun(sandboxName: string): void {
   runSandboxWarmupScript(sandboxName, RESTORED_CLONE_WARMUP_SCRIPT);
 }

@@ -93,6 +93,7 @@ export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
   | "list-failed"
+  | "list-pending-unavailable"
   | "list-timeout"
   | "list-exec-failed"
   | "list-scope-upgrade-pending"
@@ -110,7 +111,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-pending-unavailable|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -237,7 +238,9 @@ def exit_with_receipt(receipt):
     else:
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`
-    : "approve_env = gateway_approval_env(os.environ)";
+    : `approve_env = gateway_approval_env(os.environ)
+    approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+    approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`;
   const pairedTokenSuccess = options.localDeviceOnly
     ? `            if local_approval_auth_mode == 'paired-token':
                 previous_approval_token = local_paired_operator_token
@@ -427,11 +430,16 @@ def read_clone_json(directory_fd, directory_name, entry_name):
 
 try:
     clone_devices_dir_fd = open_clone_directory('devices')
+except OSError:
+    ${exitWithReceipt("list-failed")}
+try:
     local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
         clone_devices_dir_fd,
         'devices',
         'pending.json',
     )
+except FileNotFoundError:
+    ${exitWithReceipt("list-pending-unavailable")}
 except (OSError, ValueError):
     ${exitWithReceipt("list-failed")}
 if not isinstance(local_pending_by_id, dict):

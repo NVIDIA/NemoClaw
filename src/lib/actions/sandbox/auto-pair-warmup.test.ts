@@ -81,6 +81,9 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       `session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`,
     );
     expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1");
+    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(
+      "NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || exit 0",
+    );
     expect(RESTORED_CLONE_WARMUP_SCRIPT).not.toContain("openclaw agent");
   });
 
@@ -117,6 +120,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
         "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
         "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
+        "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
         "  printf 'argv=%s\\n' \"$*\"",
         '} > "$NEMOCLAW_TEST_CALL_LOG"',
         "exit 23",
@@ -131,6 +135,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         encoding: "utf-8",
         env: {
           ...process.env,
+          NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING: "1",
           NEMOCLAW_TEST_CALL_LOG: callLog,
           PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
         },
@@ -138,7 +143,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       });
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(callLog, "utf8")).toMatch(
-        /^token=unset\npassword=unset\nport=18789\nforce=1\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
+        /^token=unset\npassword=unset\nport=18789\nforce=1\nrestored=unset\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
       );
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });

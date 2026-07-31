@@ -496,6 +496,9 @@ ${persistentRaceNeedle}`,
         timeoutAfterCommit = false,
         devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
       ) => {
+        const approvalEnv = { ...process.env };
+        delete approvalEnv.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+        delete approvalEnv.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
         const approvalScript = timeoutAfterCommit
           ? timeoutScript
           : devicesRace === "child-entry"
@@ -509,7 +512,7 @@ ${persistentRaceNeedle}`,
           encoding: "utf-8",
           input: approvalScript,
           env: {
-            ...process.env,
+            ...approvalEnv,
             PATH: `${tmpDir}:/usr/bin:/bin`,
             NEMOCLAW_APPROVE_FAIL: failApproval ? "1" : "0",
             NEMOCLAW_APPROVE_WATCHER_RACE: watcherRace ? "1" : "0",
@@ -1056,8 +1059,19 @@ ${persistentRaceNeedle}`,
       }
 
       const clonePendingPath = path.join(devicesDir, "pending.json");
+      resetLogs();
+      fs.rmSync(clonePendingPath, { force: true });
+      const unavailable = execute();
+      expect(unavailable.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(unavailable.stdout)).toBe("list-pending-unavailable");
+      expect(readApprovals()).toEqual([]);
+      expect(`${unavailable.stdout}${unavailable.stderr}`.includes("raw list output")).toBe(false);
+      expect(fs.existsSync(listEnvFile)).toBe(false);
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryPending,
+      );
+
       for (const preparePendingState of [
-        () => fs.rmSync(clonePendingPath, { force: true }),
         () => fs.writeFileSync(clonePendingPath, "{"),
         () => fs.writeFileSync(clonePendingPath, "[]"),
       ]) {
