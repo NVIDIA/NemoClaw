@@ -310,6 +310,52 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledWith(false);
   });
 
+  it("reports a managed health failure during the recreated gateway wait", () => {
+    mockOpenClawSandbox("wait-failed-box");
+    setImmediateRecoveryPolling();
+    const finalize = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_NOT_RUNNING",
+    }));
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "GATEWAY_UNSAFE_CONFIG_PATH",
+    }));
+
+    const result = checkAndRecoverSandboxProcesses("wait-failed-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailureDetail: expect.stringContaining(
+        "unsafe config path: GATEWAY_UNSAFE_CONFIG_PATH",
+      ),
+    });
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledWith(
+      "wait-failed-box",
+      "probe",
+      210000,
+      "replacement-container-id",
+    );
+    expect(finalize).toHaveBeenCalledWith(false);
+  });
+
   it("commits only after managed health accepts the recreated supervisor", () => {
     mockOpenClawSandbox("recovered-box");
     setImmediateRecoveryPolling();
@@ -664,7 +710,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       .mockReturnValue({
         status: 1,
         stdout: "",
-        stderr: "SUPERVISOR_UNAVAILABLE",
+        stderr: "GATEWAY_UNSAFE_CONFIG_PATH",
       });
     const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell");
 
@@ -684,6 +730,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining("failed the managed health guard"),
     });
+    expect(result.forwardRecoveryFailureDetail).toContain(
+      "unsafe config path: GATEWAY_UNSAFE_CONFIG_PATH",
+    );
     expect(finalize).toHaveBeenCalledWith(true);
     expect(captureOpenshell).not.toHaveBeenCalled();
   });
