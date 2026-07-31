@@ -64,7 +64,7 @@ const AUTO_PAIR_POST_TIMEOUT_POLL_S = 0.1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
-// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 25s
+// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 45s
 // outer cap — via ./connect-autopair-budget. The doctor surface (#4616) uses
 // the defaults above to drain a backlog. Callers that omit a field inherit the
 // default, so the historical doctor payload stays byte-stable.
