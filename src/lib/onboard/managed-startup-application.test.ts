@@ -364,6 +364,7 @@ describe("managed startup application", () => {
       inference: {
         ...profileFor("openclaw").inference,
         model: "nvidia/a-different-model",
+        primaryModelRef: "inference/nvidia/a-different-model",
       },
     };
     expect(() =>
