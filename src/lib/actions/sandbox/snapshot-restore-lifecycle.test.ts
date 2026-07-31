@@ -277,6 +277,86 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
   });
 
+  it("proves the clone supervisor is ready before restoring snapshot state (#7818)", async () => {
+    const events: string[] = [];
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : null,
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "Sandbox reported Ready before create stream exited; continuing.",
+      sawProgress: true,
+      forcedReady: true,
+    });
+    f.waitForRestoredSandboxGatewaySupervisorMock.mockImplementation(() => {
+      events.push("supervisor-ready");
+      return true;
+    });
+    f.restoreSandboxStateMock.mockImplementation(() => {
+      events.push("snapshot-restored");
+      return {
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+    expect(f.waitForRestoredSandboxGatewaySupervisorMock).toHaveBeenCalledWith("beta");
+    expect(events).toEqual(["supervisor-ready", "snapshot-restored"]);
+  });
+
+  it("leaves snapshot state untouched when the clone supervisor never becomes ready (#7818)", async () => {
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : null,
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.waitForRestoredSandboxGatewaySupervisorMock.mockReturnValue(false);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+  });
+
   it("blocks a cross-sandbox clone before deleting the target when source policy repair is pending (#7178)", async () => {
     const common = {
       agent: "openclaw",

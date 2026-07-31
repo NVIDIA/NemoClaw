@@ -33,14 +33,17 @@
  *   - Deliberately out of scope for this merge gate: physical DGX Spark /
  *     GB10 / aarch64 hardware, provider breadth beyond `cloud-openclaw`, and
  *     destructive host reboot / OOM / manual `kubectl delete pod` triggers.
- *     The Docker-driver branch below restarts the registered sandbox
- *     container, then proves that its persisted startup command restores the
- *     managed supervisor topology without relying on ordinary sandbox exec.
+ *     The Docker-driver branch below first restarts the registered sandbox
+ *     container with its persisted startup command, then recreates the legacy
+ *     keepalive state and proves both routes restore the managed supervisor
+ *     topology without relying on ordinary sandbox exec.
  *     Kubernetes triggers still need a dedicated platform-runtime job.
  *
  * This Vitest coverage owns both the #2478 WARNING assertion lineage and the
  * #2701 guard-chain assertion.
  */
+
+import { fileURLToPath } from "node:url";
 
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -60,6 +63,9 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-2701";
+const LEGACY_KEEPALIVE_FIXTURE = fileURLToPath(
+  new URL("./gateway-guard-legacy-keepalive-fixture.ts", import.meta.url),
+);
 
 const STARTUP_COMMAND_INSPECT_SCRIPT = String.raw`
 const { spawnSync } = require("node:child_process");
@@ -147,8 +153,10 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       "wipe guard chain and gateway tree",
       "recover gateway through connect probe",
       "validate recovered guard and stable PID",
-      "restart Docker sandbox with persisted startup command",
+      "restart sandbox container with persisted startup command",
       "recover managed supervisor and inference",
+      "recreate and restart sandbox container with legacy keepalive",
+      "recover legacy managed supervisor and inference",
     ],
   },
 }, async ({
@@ -167,7 +175,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   await artifacts.target.declare({
     id: "gateway-guard-recovery",
     boundary: "sandbox-lifecycle",
-    issues: ["#2701", "#2478"],
+    issues: ["#2701", "#2478", "#6635"],
     acceptanceCoverage: {
       covered: [
         "production connect --probe-only recovery route",
@@ -175,6 +183,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
         "pod-recreate-equivalent empty /tmp guard chain plus missing gateway process",
         "Docker container restart with a persisted managed startup command",
         "container identity preservation with managed supervisor health proof",
+        "Docker container recreation with the legacy keepalive startup command",
+        "container-identity-pinned legacy supervisor migration with managed health proof",
         "no rebuild required for the recovered runtime state",
       ],
       intentionallyOutOfScope: [
@@ -282,7 +292,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
 
   expect(stablePid).toBeGreaterThan(0);
 
-  progress.phase("restart Docker sandbox with persisted startup command");
+  progress.phase("restart sandbox container with persisted startup command");
   // A Docker restart must reuse the container and its credential-free managed
   // startup command. The command must restore the supervisor without a
   // container recreation transaction.
@@ -376,4 +386,110 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   );
   expect(inference.exitCode, resultText(inference)).toBe(0);
   expect(containsInteger42Answer(inference.stdout), resultText(inference)).toBe(true);
+
+  progress.phase("recreate and restart sandbox container with legacy keepalive");
+  // ── Assert #6635 legacy Docker restart recovery ────────────────
+  // Existing sandboxes may still persist the historical keepalive. Recreate
+  // that exact state from the identity-pinned modern container so recovery
+  // proves the compatibility migration independently of fresh onboarding.
+  await host.cleanupForward(18789, {
+    artifactName: "legacy-restart-stop-dashboard-forward",
+    env: buildAvailabilityProbeEnv(),
+  });
+  const createLegacyKeepalive = await host.command(
+    "npx",
+    ["--no-install", "tsx", LEGACY_KEEPALIVE_FIXTURE, instance.sandboxName, recoveredContainerId],
+    {
+      artifactName: "legacy-restart-create-keepalive",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 240_000,
+    },
+  );
+  expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
+
+  const legacyContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
+  expect(legacyContainerId).not.toBe(recoveredContainerId);
+  expect(
+    await inspectStartupCommand(host, legacyContainerId, "legacy-restart-command-before"),
+  ).toBe("sleep infinity");
+  const legacyRestart = await host.command("docker", ["restart", legacyContainerId], {
+    artifactName: "legacy-restart-docker-restart",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 120_000,
+  });
+  expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
+
+  progress.phase("recover legacy managed supervisor and inference");
+  const legacyCredentialCanary = "nemoclaw-e2e-recovery-secret-6635";
+  const legacyRecovery = await host.nemoclaw([instance.sandboxName, "recover"], {
+    artifactName: "legacy-restart-trusted-recover",
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
+      CUSTOM_PROVIDER_CREDENTIAL: legacyCredentialCanary,
+    },
+    redactionValues: [legacyCredentialCanary],
+    timeoutMs: 240_000,
+  });
+  expect(legacyRecovery.timedOut, resultText(legacyRecovery)).toBe(false);
+  expect(legacyRecovery.exitCode, resultText(legacyRecovery)).toBe(0);
+  expect(resultText(legacyRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
+
+  const legacyRecoveredContainerId = await findSandboxContainer(
+    host,
+    "legacy-restart-container-after",
+  );
+  expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
+  const legacyRecoveredStartupCommand = await inspectStartupCommand(
+    host,
+    legacyRecoveredContainerId,
+    "legacy-restart-command-after",
+  );
+  expect(legacyRecoveredStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
+  expect(legacyRecoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
+  expect(legacyRecoveredStartupCommand).not.toContain(legacyCredentialCanary);
+
+  const legacyTopology = await sandbox.exec(
+    instance.sandboxName,
+    ["python3", "-c", SUPERVISOR_TOPOLOGY_SCRIPT],
+    {
+      artifactName: "legacy-restart-managed-supervisor-topology",
+      env: buildAvailabilityProbeEnv(),
+    },
+  );
+  expect(legacyTopology.exitCode, resultText(legacyTopology)).toBe(0);
+  expect(legacyTopology.stdout).toMatch(/MANAGED_SUPERVISOR=[0-9]+:PPID1/);
+
+  const legacyForwardedHealth = await host.command(
+    "curl",
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:18789/health"],
+    {
+      artifactName: "legacy-restart-forwarded-health",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(legacyForwardedHealth.exitCode, resultText(legacyForwardedHealth)).toBe(0);
+  expect(legacyForwardedHealth.stdout.trim()).toMatch(/^(200|401)$/);
+
+  const legacyInference = await host.nemoclaw(
+    [
+      instance.sandboxName,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--session-id",
+      `e2e-6635-${Date.now()}-${process.pid}`,
+      "-m",
+      "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+    ],
+    {
+      artifactName: "legacy-restart-agent-inference",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 120_000,
+    },
+  );
+  expect(legacyInference.exitCode, resultText(legacyInference)).toBe(0);
+  expect(containsInteger42Answer(legacyInference.stdout), resultText(legacyInference)).toBe(true);
 });
