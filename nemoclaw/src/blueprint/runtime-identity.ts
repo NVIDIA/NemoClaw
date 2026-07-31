@@ -35,7 +35,7 @@ const MAX_PROFILE_BYTES = 64 * 1024;
 const MAX_PROFILE_ENDPOINTS = 32;
 const MAX_DESTINATION_URL_LENGTH = 2048;
 const PROVIDERS_V2_SETTING = "providers_v2_enabled";
-const OKTA_RUNTIME_BINARIES = Object.freeze([
+const RUNTIME_IDENTITY_BINARIES = Object.freeze([
   "/usr/local/bin/node",
   "/usr/bin/node",
   "/usr/local/bin/curl",
@@ -124,8 +124,16 @@ export interface RuntimeIdentityProfilePolicy {
   providerType: string;
   clientIdEnvironmentName: string;
   dnsResolution: "reject" | "identity-platform-controlled";
-  trustedHostnames: readonly string[];
-  trustedHostSuffixes: readonly string[];
+  tokenIssuer: {
+    trustedHostnames: readonly string[];
+    trustedHostSuffixes: readonly string[];
+  };
+  credentialDelivery: {
+    method: "GET";
+    path: string;
+    trustedHostnames: readonly string[];
+    trustedHostSuffixes: readonly string[];
+  };
   trustedBinaries: readonly string[];
 }
 
@@ -135,9 +143,33 @@ const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentity
       providerType: "okta-runtime-v1",
       clientIdEnvironmentName: "OKTA_CLIENT_ID",
       dnsResolution: "identity-platform-controlled",
-      trustedHostnames: Object.freeze([]),
-      trustedHostSuffixes: Object.freeze(["okta.com"]),
-      trustedBinaries: OKTA_RUNTIME_BINARIES,
+      tokenIssuer: Object.freeze({
+        trustedHostnames: Object.freeze([]),
+        trustedHostSuffixes: Object.freeze(["okta.com"]),
+      }),
+      credentialDelivery: Object.freeze({
+        method: "GET",
+        path: "/**",
+        trustedHostnames: Object.freeze([]),
+        trustedHostSuffixes: Object.freeze(["okta.com"]),
+      }),
+      trustedBinaries: RUNTIME_IDENTITY_BINARIES,
+    }),
+    "entra-runtime-v1": Object.freeze({
+      providerType: "entra-runtime-v1",
+      clientIdEnvironmentName: "ENTRA_CLIENT_ID",
+      dnsResolution: "identity-platform-controlled",
+      tokenIssuer: Object.freeze({
+        trustedHostnames: Object.freeze(["login.microsoftonline.com"]),
+        trustedHostSuffixes: Object.freeze([]),
+      }),
+      credentialDelivery: Object.freeze({
+        method: "GET",
+        path: "/v1.0/me",
+        trustedHostnames: Object.freeze(["graph.microsoft.com"]),
+        trustedHostSuffixes: Object.freeze([]),
+      }),
+      trustedBinaries: RUNTIME_IDENTITY_BINARIES,
     }),
   });
 
@@ -223,14 +255,16 @@ function requireTrustedBinaries(
 
 function requireTrustedProfileHostname(
   hostname: string,
-  policy: RuntimeIdentityProfilePolicy,
+  trustedHostnamesInput: readonly string[],
+  trustedHostSuffixesInput: readonly string[],
+  providerType: string,
   label: string,
 ): void {
   const normalized = hostname.toLowerCase().replace(/\.$/u, "");
-  const trustedHostnames = policy.trustedHostnames.map((candidate) =>
+  const trustedHostnames = trustedHostnamesInput.map((candidate) =>
     candidate.toLowerCase().replace(/\.$/u, ""),
   );
-  const trustedSuffixes = policy.trustedHostSuffixes.map((candidate) =>
+  const trustedSuffixes = trustedHostSuffixesInput.map((candidate) =>
     candidate.toLowerCase().replace(/\.$/u, ""),
   );
   if (
@@ -238,14 +272,16 @@ function requireTrustedProfileHostname(
     !trustedSuffixes.some((suffix) => normalized === suffix || normalized.endsWith(`.${suffix}`))
   ) {
     throw new Error(
-      `${label} host '${hostname}' is outside the trusted destination policy for '${policy.providerType}'`,
+      `${label} host '${hostname}' is outside the trusted destination policy for '${providerType}'`,
     );
   }
 }
 
 function requireHttpsDestination(
   value: string,
-  policy: RuntimeIdentityProfilePolicy,
+  trustedHostnames: readonly string[],
+  trustedHostSuffixes: readonly string[],
+  providerType: string,
   label: string,
 ): string {
   if (value.length === 0 || value.length > MAX_DESTINATION_URL_LENGTH) {
@@ -263,7 +299,13 @@ function requireHttpsDestination(
   if (parsed.username !== "" || parsed.password !== "") {
     throw new Error(`${label} must not include URL credentials`);
   }
-  requireTrustedProfileHostname(parsed.hostname, policy, label);
+  requireTrustedProfileHostname(
+    parsed.hostname,
+    trustedHostnames,
+    trustedHostSuffixes,
+    providerType,
+    label,
+  );
   return parsed.toString();
 }
 
@@ -292,6 +334,13 @@ function parseRuntimeIdentityEndpoint(
   if (unbracketedHost.includes("[") || unbracketedHost.includes("]")) {
     throw new Error(`${label} must declare a valid host`);
   }
+  requireTrustedProfileHostname(
+    unbracketedHost,
+    policy.credentialDelivery.trustedHostnames,
+    policy.credentialDelivery.trustedHostSuffixes,
+    policy.providerType,
+    `${label} credential delivery`,
+  );
   if (
     protocol !== "rest" ||
     enforcement !== "enforce" ||
@@ -301,20 +350,36 @@ function parseRuntimeIdentityEndpoint(
     !hasOnlyKeys(rules[0], ["allow"]) ||
     !isPlainObject(rules[0].allow) ||
     !hasOnlyKeys(rules[0].allow, ["method", "path"]) ||
-    rules[0].allow.method !== "GET" ||
-    rules[0].allow.path !== "/**"
+    rules[0].allow.method !== policy.credentialDelivery.method ||
+    rules[0].allow.path !== policy.credentialDelivery.path
   ) {
-    throw new Error(`${label} must enforce the reviewed REST GET /** credential-delivery policy`);
+    throw new Error(
+      `${label} must enforce the reviewed REST ${policy.credentialDelivery.method} ` +
+        `${policy.credentialDelivery.path} credential-delivery policy`,
+    );
   }
   const urlHost = unbracketedHost.includes(":") ? `[${unbracketedHost}]` : unbracketedHost;
   return {
-    destination: requireHttpsDestination(`https://${urlHost}:${String(port)}/`, policy, label),
+    destination: requireHttpsDestination(
+      `https://${urlHost}:${String(port)}/`,
+      policy.credentialDelivery.trustedHostnames,
+      policy.credentialDelivery.trustedHostSuffixes,
+      policy.providerType,
+      label,
+    ),
     document: {
       host,
       port,
       protocol: "rest",
       enforcement: "enforce",
-      rules: [{ allow: { method: "GET", path: "/**" } }],
+      rules: [
+        {
+          allow: {
+            method: policy.credentialDelivery.method,
+            path: policy.credentialDelivery.path,
+          },
+        },
+      ],
     },
   };
 }
@@ -387,7 +452,13 @@ function parseRuntimeIdentityProfile(
     throw new Error(`${label} must declare a refresh token_url`);
   }
   const material = requireExactRefreshMaterial(refresh.material, `${label} refresh material`);
-  const tokenUrl = requireHttpsDestination(refresh.token_url, policy, `${label} refresh token_url`);
+  const tokenUrl = requireHttpsDestination(
+    refresh.token_url,
+    policy.tokenIssuer.trustedHostnames,
+    policy.tokenIssuer.trustedHostSuffixes,
+    policy.providerType,
+    `${label} refresh token_url`,
+  );
   const endpoints = parsed.endpoints;
   if (
     !Array.isArray(endpoints) ||
