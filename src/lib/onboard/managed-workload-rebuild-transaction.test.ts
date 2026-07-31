@@ -410,6 +410,204 @@ function transactionHarness(
   };
 }
 
+type RebuildOperationName =
+  | "create"
+  | "waitUntilReady"
+  | "restoreState"
+  | "rebindProviders"
+  | "retirePrevious";
+
+interface InvalidProviderArtifactCase {
+  readonly name: string;
+  readonly phase: Exclude<FailurePhase, null>;
+  readonly install: (operations: ManagedWorkloadRebuildProviderOperations) => void;
+  readonly events: readonly string[];
+  readonly notCalled: readonly RebuildOperationName[];
+  readonly abortCalls: number;
+  readonly rollbackCalls: number;
+}
+
+const INVALID_PROVIDER_ARTIFACT_CASES: readonly InvalidProviderArtifactCase[] = [
+  {
+    name: "rejects a prepared artifact bound to another provider",
+    phase: "prepare",
+    install: (operations) => {
+      const prepare = operations.prepare;
+      operations.prepare = vi.fn(async (plan) => ({
+        ...(await prepare(plan)),
+        providerId: "other-provider",
+      }));
+    },
+    events: ["prepare", "abort-preparation:transaction-1"],
+    notCalled: ["create", "waitUntilReady", "restoreState", "rebindProviders", "retirePrevious"],
+    abortCalls: 1,
+    rollbackCalls: 0,
+  },
+  {
+    name: "rejects a prepared artifact with a NUL-bearing preparation handle",
+    phase: "prepare",
+    install: (operations) => {
+      const prepare = operations.prepare;
+      operations.prepare = vi.fn(async (plan) => ({
+        ...(await prepare(plan)),
+        preparationHandle: "preparation\0invalid",
+      }));
+    },
+    events: ["prepare", "abort-preparation:transaction-1"],
+    notCalled: ["create", "waitUntilReady", "restoreState", "rebindProviders", "retirePrevious"],
+    abortCalls: 1,
+    rollbackCalls: 0,
+  },
+  {
+    name: "rejects a staged artifact that changes the exact old handle",
+    phase: "create",
+    install: (operations) => {
+      const create = operations.create;
+      operations.create = vi.fn(async (plan, prepared) => ({
+        ...(await create(plan, prepared)),
+        previousRuntimeHandle: "runtime-old-substituted",
+      }));
+    },
+    events: ["prepare", "create", "abort-preparation:transaction-1"],
+    notCalled: ["waitUntilReady", "restoreState", "rebindProviders", "retirePrevious"],
+    abortCalls: 1,
+    rollbackCalls: 0,
+  },
+  {
+    name: "rejects a staged artifact with an oversized staging handle",
+    phase: "create",
+    install: (operations) => {
+      const create = operations.create;
+      operations.create = vi.fn(async (plan, prepared) => ({
+        ...(await create(plan, prepared)),
+        stagingHandle: "x".repeat(16 * 1024 + 1),
+      }));
+    },
+    events: ["prepare", "create", "abort-preparation:transaction-1"],
+    notCalled: ["waitUntilReady", "restoreState", "rebindProviders", "retirePrevious"],
+    abortCalls: 1,
+    rollbackCalls: 0,
+  },
+  {
+    name: "rejects a ready artifact that changes the exact staging handle",
+    phase: "readiness",
+    install: (operations) => {
+      const waitUntilReady = operations.waitUntilReady;
+      operations.waitUntilReady = vi.fn(async (plan, staged) => {
+        const result = await waitUntilReady(plan, staged);
+        const ready = result as Extract<typeof result, { readonly state: "ready" }>;
+        return {
+          state: "ready" as const,
+          replacement: {
+            ...ready.replacement,
+            stagingHandle: "runtime-new-substituted",
+          },
+        };
+      });
+    },
+    events: ["prepare", "create", "readiness", "rollback:runtime-new-staged-exact"],
+    notCalled: ["restoreState", "rebindProviders", "retirePrevious"],
+    abortCalls: 0,
+    rollbackCalls: 1,
+  },
+  {
+    name: "rejects a ready artifact with a NUL-bearing readiness receipt",
+    phase: "readiness",
+    install: (operations) => {
+      const waitUntilReady = operations.waitUntilReady;
+      operations.waitUntilReady = vi.fn(async (plan, staged) => {
+        const result = await waitUntilReady(plan, staged);
+        const ready = result as Extract<typeof result, { readonly state: "ready" }>;
+        return {
+          state: "ready" as const,
+          replacement: {
+            ...ready.replacement,
+            readinessReceipt: "ready\0invalid",
+          },
+        };
+      });
+    },
+    events: ["prepare", "create", "readiness", "rollback:runtime-new-staged-exact"],
+    notCalled: ["restoreState", "rebindProviders", "retirePrevious"],
+    abortCalls: 0,
+    rollbackCalls: 1,
+  },
+  {
+    name: "rejects a restored artifact that alters the readiness receipt",
+    phase: "restore",
+    install: (operations) => {
+      const restoreState = operations.restoreState;
+      operations.restoreState = vi.fn(async (plan, ready) => ({
+        ...(await restoreState(plan, ready)),
+        readinessReceipt: "ready-substituted",
+      }));
+    },
+    events: ["prepare", "create", "readiness", "restore", "rollback:runtime-new-staged-exact"],
+    notCalled: ["rebindProviders", "retirePrevious"],
+    abortCalls: 0,
+    rollbackCalls: 1,
+  },
+  {
+    name: "rejects a restored artifact with an oversized restore receipt",
+    phase: "restore",
+    install: (operations) => {
+      const restoreState = operations.restoreState;
+      operations.restoreState = vi.fn(async (plan, ready) => ({
+        ...(await restoreState(plan, ready)),
+        restoreReceipt: "x".repeat(16 * 1024 + 1),
+      }));
+    },
+    events: ["prepare", "create", "readiness", "restore", "rollback:runtime-new-staged-exact"],
+    notCalled: ["rebindProviders", "retirePrevious"],
+    abortCalls: 0,
+    rollbackCalls: 1,
+  },
+  {
+    name: "rejects a rebound artifact that alters the restore receipt",
+    phase: "provider-rebind",
+    install: (operations) => {
+      const rebindProviders = operations.rebindProviders;
+      operations.rebindProviders = vi.fn(async (plan, restored) => ({
+        ...(await rebindProviders(plan, restored)),
+        restoreReceipt: "restore-substituted",
+      }));
+    },
+    events: [
+      "prepare",
+      "create",
+      "readiness",
+      "restore",
+      "provider-rebind",
+      "rollback:runtime-new-staged-exact",
+    ],
+    notCalled: ["retirePrevious"],
+    abortCalls: 0,
+    rollbackCalls: 1,
+  },
+  {
+    name: "rejects a rebound artifact bound to another transaction",
+    phase: "provider-rebind",
+    install: (operations) => {
+      const rebindProviders = operations.rebindProviders;
+      operations.rebindProviders = vi.fn(async (plan, restored) => ({
+        ...(await rebindProviders(plan, restored)),
+        transactionId: "other-transaction",
+      }));
+    },
+    events: [
+      "prepare",
+      "create",
+      "readiness",
+      "restore",
+      "provider-rebind",
+      "rollback:runtime-new-staged-exact",
+    ],
+    notCalled: ["retirePrevious"],
+    abortCalls: 0,
+    rollbackCalls: 1,
+  },
+];
+
 describe("managed workload rebuild transaction", () => {
   it.each(
     AGENTS.flatMap((agent) =>
@@ -489,6 +687,28 @@ describe("managed workload rebuild transaction", () => {
       "rollback:runtime-new-staged-exact",
     ]);
     expect(harness.currentEntry().lifecycleGeneration).toBe("generation-old");
+  });
+
+  it.each(INVALID_PROVIDER_ARTIFACT_CASES)("$name and stops at the invalid transition", async ({
+    phase,
+    install,
+    events,
+    notCalled,
+    abortCalls,
+    rollbackCalls,
+  }) => {
+    const harness = transactionHarness("langchain-deepagents-code", "mxc");
+    install(harness.operations);
+
+    await expect(harness.run()).rejects.toMatchObject({ phase });
+
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+    expect(harness.events).toEqual(events);
+    expect(harness.operations.abortPreparation).toHaveBeenCalledTimes(abortCalls);
+    expect(harness.operations.rollback).toHaveBeenCalledTimes(rollbackCalls);
+    for (const operation of notCalled) {
+      expect(harness.operations[operation]).not.toHaveBeenCalled();
+    }
   });
 
   it("aborts preparation when non-authority registry metadata drifts", async () => {
