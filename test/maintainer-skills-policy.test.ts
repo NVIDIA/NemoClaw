@@ -321,6 +321,51 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
   });
 
+  it("requires replacement PRs to preserve transferred contributor attribution", () => {
+    const policy = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/workflow-policy.md",
+    );
+    const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");
+    const tiebreakers = read(".agents/skills/nemoclaw-maintainer-pr-comparator/tiebreakers.md");
+    const verdict = read(".agents/skills/nemoclaw-maintainer-pr-comparator/templates/verdict.md");
+    const finder = read(".agents/skills/nemoclaw-maintainer-find-review-pr/SKILL.md");
+
+    expect(policy).toContain("Supersedes #<number>");
+    expect(policy).toContain("Preserve the source contributor as the Git author");
+    expect(policy).toContain("Co-authored-by: Name <email>");
+    expect(policy).toContain("Use the exact author name and email from the source commit");
+    expect(policy).toContain("Never guess or substitute an attribution identity");
+    expect(policy).toContain("Never add or copy a DCO declaration");
+    expect(policy).toContain("leave the winner unset and ask the contributor");
+    expect(policy).toContain("does not require co-authorship");
+    expect(policy).toContain("does not replace attribution in the merged PR history");
+
+    expect(comparator).toContain("../nemoclaw-maintainer-policies/references/workflow-policy.md");
+    expect(comparator).toContain("They do not rank a candidate");
+    expect(comparator).toContain("`transferred`");
+    expect(comparator).toContain("`unclear`");
+    expect(comparator).toContain("leave `winner` null");
+
+    expect(tiebreakers).toContain("it does not rank a candidate");
+    expect(tiebreakers).not.toContain("**Supersession.**");
+    expect(tiebreakers).toContain("rerun the comparator before selecting a winner");
+
+    expect(verdict).toContain("git cherry-pick -S -x <source-sha>");
+    expect(verdict).toContain("Co-authored-by: Name <email>");
+    expect(verdict).toContain("using the exact author identity from the source commit");
+    expect(verdict).toContain("run the comparator again on the updated SHA");
+    expect(verdict).toContain("Transfer the test from PR #B before merge");
+    expect(verdict).toContain("Merge PR #A only if the new verdict selects it");
+    expect(verdict.indexOf("Transfer the test from PR #B before merge")).toBeLessThan(
+      verdict.indexOf("Merge PR #A only if the new verdict selects it"),
+    );
+
+    expect(finder).toContain("../nemoclaw-maintainer-policies/references/workflow-policy.md");
+    expect(finder).toContain(
+      "Do not recommend closing the source PR until the target contains the required attribution",
+    );
+  });
+
   it("keeps PR workflow writes behind their safety checks", () => {
     const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
     const judgment = read(

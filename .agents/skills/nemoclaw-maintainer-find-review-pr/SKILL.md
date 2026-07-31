@@ -68,6 +68,13 @@ Flag a PR when its body contains one of these phrases:
 - `follow-up to #NNN` / `supersedes #NNN` / `replaces #NNN` / `folds in #NNN`
 
 The phrase must name another open candidate PR. It indicates that one PR can include the other.
+It records a relationship but does not prove that the target carries the source PR's work.
+
+When the target claims the source PR's full scope, compare their commits and diffs.
+If material code, tests, or documentation from another contributor remains in the target,
+apply the canonical policy in
+`../nemoclaw-maintainer-policies/references/workflow-policy.md`.
+Do not recommend closing the source PR until the target contains the required attribution.
 
 ## Step 5: Present results
 
@@ -92,7 +99,7 @@ For superseded PRs:
 ### Superseded PRs
 
 - #1416 supersedes/folds in #1392 (shell-quote sandboxName)
-  Consider closing #1392 if #1416 contains its full scope.
+  Consider closing #1392 only if #1416 contains its full scope and preserves any required contributor attribution.
 ```
 
 ### Clean candidates
