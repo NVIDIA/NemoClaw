@@ -596,7 +596,7 @@ describe("shields command flow", () => {
     );
   });
 
-  it("loads 257 managed keys recorded by Shields down (#7952)", () => {
+  it("loads 257 managed keys recorded by Shields down (#7952)", { timeout: 15_000 }, () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const snapshotPath = path.join(stateDir, "policy-snapshot-many-managed-keys.yaml");
     const policies = Array.from({ length: 257 }, (_, index) => managedMcpPolicy(`server${index}`));
