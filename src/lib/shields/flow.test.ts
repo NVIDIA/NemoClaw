@@ -102,6 +102,10 @@ function throwHarnessError(error: Error): never {
   throw error;
 }
 
+function recordPolicySetBody(policySetBodies: string[], file: unknown): void {
+  policySetBodies.push(fs.readFileSync(String(file), "utf-8"));
+}
+
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   vi.stubEnv("NEMOCLAW_INVOKED_AS", options.invokedAs ?? "nemoclaw");
   delete require.cache[requireDist.resolve(shieldsModulePath)];
@@ -136,10 +140,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   options.fork && vi.spyOn(childProcess, "fork").mockImplementation(options.fork);
   vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
   vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((file: unknown) => {
-    const policyFile = String(file);
-    if (fs.existsSync(policyFile)) {
-      policySetBodies.push(fs.readFileSync(policyFile, "utf-8"));
-    }
+    recordPolicySetBody(policySetBodies, file);
     return ["openshell", "policy", "set"];
   });
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));

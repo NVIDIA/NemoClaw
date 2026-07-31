@@ -72,6 +72,16 @@ describe("shields timer authorization", () => {
     }
   }
 
+  async function waitForRetryBoundary(deadlinePath: string, auditPath: string): Promise<void> {
+    await vi.waitFor(
+      () => {
+        expect(fs.existsSync(deadlinePath)).toBe(true);
+        expect(fs.existsSync(auditPath)).toBe(true);
+      },
+      { interval: 1, timeout: 200 },
+    );
+  }
+
   async function invokeTimerAndExpectRetry(
     runRestoreTimer: (args: any, options?: { retryDelayMs?: number }) => Promise<void>,
     args: unknown,
@@ -79,38 +89,25 @@ describe("shields timer authorization", () => {
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
-    const markerPath = (args as { markerPath?: string }).markerPath;
-    const markerContents =
-      markerPath && fs.existsSync(markerPath) ? fs.readFileSync(markerPath) : null;
+    const { markerPath, sandboxName } = args as {
+      markerPath: string;
+      sandboxName: string;
+    };
+    const markerContents = fs.readFileSync(markerPath);
+    const deadlinePath = `${getMcpLifecycleLockPath(
+      sandboxName,
+      path.join(tmpHome, ".nemoclaw", "state"),
+    )}.deadline`;
+    const auditPath = path.join(path.dirname(markerPath), "shields-audit.jsonl");
     try {
       const pending = runRestoreTimer(args, { retryDelayMs: 50 });
-      const sandboxName = (args as { sandboxName?: string }).sandboxName;
-      const deadlinePath = sandboxName
-        ? `${getMcpLifecycleLockPath(
-            sandboxName,
-            path.join(tmpHome, ".nemoclaw", "state"),
-          )}.deadline`
-        : null;
-      const auditPath = markerPath
-        ? path.join(path.dirname(markerPath), "shields-audit.jsonl")
-        : null;
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        if (
-          (!deadlinePath || fs.existsSync(deadlinePath)) &&
-          (!auditPath || fs.existsSync(auditPath))
-        ) {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
+      await waitForRetryBoundary(deadlinePath, auditPath);
       expect(exitSpy).not.toHaveBeenCalled();
-      if (deadlinePath) expect(fs.existsSync(deadlinePath)).toBe(true);
-      if (markerPath) fs.rmSync(markerPath, { force: true });
+      expect(fs.existsSync(deadlinePath)).toBe(true);
+      fs.rmSync(markerPath, { force: true });
       await pending;
     } finally {
-      if (markerPath && markerContents) {
-        fs.writeFileSync(markerPath, markerContents);
-      }
+      fs.writeFileSync(markerPath, markerContents);
       exitSpy.mockRestore();
     }
   }

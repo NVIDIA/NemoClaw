@@ -55,6 +55,15 @@ function writeTimerMarker(sandboxName: string, processToken: string): void {
   );
 }
 
+function routeLinkToPath(
+  targetPath: string,
+  targetLink: typeof fs.promises.link,
+  fallback: typeof fs.promises.link,
+): typeof fs.promises.link {
+  const routes = new Map([[targetPath, targetLink]]);
+  return (from, to) => (routes.get(String(to)) ?? fallback)(from, to);
+}
+
 function waitForLine(child: ChildProcess, expected: string): Promise<void> {
   return new Promise((resolve, reject) => {
     let output = "";
@@ -698,14 +707,14 @@ const releasePath = process.argv[3];
     const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
     writeTimerMarker("alpha", firstProcessToken);
     const link = fs.promises.link.bind(fs.promises);
-    let replaced = false;
-    const linkSpy = vi.spyOn(fs.promises, "link").mockImplementation(async (from, to) => {
+    const lockPathLink = vi.fn(link);
+    lockPathLink.mockImplementationOnce(async (from, to) => {
       await link(from, to);
-      if (!replaced && String(to) === lockPath) {
-        replaced = true;
-        writeTimerMarker("alpha", replacementProcessToken);
-      }
+      writeTimerMarker("alpha", replacementProcessToken);
     });
+    const linkSpy = vi
+      .spyOn(fs.promises, "link")
+      .mockImplementation(routeLinkToPath(lockPath, lockPathLink, link));
 
     try {
       await lifecycleLock.withMcpLifecycleLock(
@@ -720,7 +729,7 @@ const releasePath = process.argv[3];
     } finally {
       linkSpy.mockRestore();
     }
-    expect(replaced).toBe(true);
+    expect(lockPathLink).toHaveBeenCalled();
   });
 
   it("keeps the deadline fence closed through restore and configuration relock", async () => {
@@ -769,29 +778,23 @@ const releasePath = process.argv[3];
     const timerEntered = deferred();
     const releaseTimer = deferred();
     const link = fs.promises.link.bind(fs.promises);
-    let mainLinkCalls = 0;
     let ordinaryEntered = false;
-    const linkSpy = vi.spyOn(fs.promises, "link").mockImplementation(async (from, to) => {
-      if (String(to) !== lockPath) {
-        await link(from, to);
-        return;
-      }
-
-      mainLinkCalls += 1;
-      if (mainLinkCalls === 1) {
-        ordinaryLinkStarted.resolve();
-        await allowOrdinaryPublication.promise;
-        await link(from, to);
-        ordinaryPublished.resolve();
-        await allowOrdinaryLinkReturn.promise;
-        return;
-      }
-      if (mainLinkCalls === 2) {
-        timerMainLinkStarted.resolve();
-        await ordinaryPublished.promise;
-      }
+    const lockPathLink = vi.fn(link);
+    lockPathLink.mockImplementationOnce(async (from, to) => {
+      ordinaryLinkStarted.resolve();
+      await allowOrdinaryPublication.promise;
+      await link(from, to);
+      ordinaryPublished.resolve();
+      await allowOrdinaryLinkReturn.promise;
+    });
+    lockPathLink.mockImplementationOnce(async (from, to) => {
+      timerMainLinkStarted.resolve();
+      await ordinaryPublished.promise;
       await link(from, to);
     });
+    const linkSpy = vi
+      .spyOn(fs.promises, "link")
+      .mockImplementation(routeLinkToPath(lockPath, lockPathLink, link));
 
     try {
       const ordinary = lifecycleLock.withMcpLifecycleLock(
@@ -828,7 +831,7 @@ const releasePath = process.argv[3];
       releaseTimer.resolve();
       await Promise.all([deadline, ordinary]);
       expect(ordinaryEntered).toBe(true);
-      expect(mainLinkCalls).toBeGreaterThanOrEqual(3);
+      expect(lockPathLink.mock.calls.length).toBeGreaterThanOrEqual(3);
     } finally {
       allowOrdinaryPublication.resolve();
       allowOrdinaryLinkReturn.resolve();

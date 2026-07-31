@@ -18,11 +18,16 @@ const mocks = vi.hoisted(() => ({
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
   openBackupShieldsWindow: vi.fn(),
   relockBackupShieldsWindow: vi.fn(),
-  withSandboxMutationLock: vi.fn(
-    async (_sandboxName: string, action: () => unknown, _options?: { timeoutMs?: number }) =>
-      action(),
-  ),
+  withSandboxMutationLock: vi.fn(),
 }));
+
+async function runSandboxMutationAction(
+  _sandboxName: string,
+  action: () => unknown,
+  _options?: { timeoutMs?: number },
+): Promise<unknown> {
+  return action();
+}
 
 vi.mock("../state/registry", () => ({
   isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
@@ -89,10 +94,7 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
-    mocks.withSandboxMutationLock.mockImplementation(
-      async (_sandboxName: string, action: () => unknown, _options?: { timeoutMs?: number }) =>
-        action(),
-    );
+    mocks.withSandboxMutationLock.mockImplementation(runSandboxMutationAction);
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
       status: 0,
@@ -467,21 +469,19 @@ describe("backupAll", () => {
       throw backupError;
     });
     const relockLockError = new Error("mutation lock timed out");
-    let lockAttempt = 0;
-    mocks.withSandboxMutationLock.mockImplementation(
-      async (_sandboxName: string, action: () => unknown, options?: { timeoutMs?: number }) => {
-        lockAttempt += 1;
-        if (lockAttempt === 2) {
-          expect(options).toEqual({ timeoutMs: 30_000 });
-          throw relockLockError;
-        }
-        return action();
-      },
-    );
+    mocks.withSandboxMutationLock
+      .mockImplementationOnce(runSandboxMutationAction)
+      .mockRejectedValueOnce(relockLockError);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     const failure = await backupAll().catch((error: unknown) => error);
 
+    expect(mocks.withSandboxMutationLock).toHaveBeenNthCalledWith(
+      2,
+      "alpha",
+      expect.any(Function),
+      { timeoutMs: 30_000 },
+    );
     expect(failure).toBeInstanceOf(AggregateError);
     expect((failure as AggregateError).message).toContain(
       "Backup for 'alpha' failed and Shields lockdown could not be restored",

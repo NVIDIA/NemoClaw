@@ -103,6 +103,35 @@ function withDefaultNodeExecFileSync(
   return defaultNodeExecFileSync(file, argv) || fallback();
 }
 
+function throwRegistryPermissionDenied(): never {
+  throw Object.assign(new Error("registry permission denied"), { code: "EACCES" });
+}
+
+function readFileWithUnreadableRegistry(
+  originalReadFileSync: typeof fs.readFileSync,
+  file: fs.PathOrFileDescriptor,
+  options?: unknown,
+): unknown {
+  const readers = new Map<boolean, () => unknown>([
+    [true, throwRegistryPermissionDenied],
+    [false, () => originalReadFileSync(file, options as never)],
+  ]);
+  return readers.get(String(file).endsWith(`${path.sep}sandboxes.json`))!();
+}
+
+function throwProcessNotRunning(): never {
+  throw Object.assign(new Error("not running"), { code: "ESRCH" });
+}
+
+function reportProcessRunning(): true {
+  return true;
+}
+
+function routeProcessKill(pid: number, signal?: string | number): true {
+  const processActions = new Map<string, () => true>([["2147483647:0", throwProcessNotRunning]]);
+  return (processActions.get(`${pid}:${signal}`) ?? reportProcessRunning)();
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-test-"));
   vi.stubEnv("HOME", tmpDir);
@@ -515,20 +544,10 @@ describe("shields — unit logic", () => {
         processToken,
       });
       const originalReadFileSync = fs.readFileSync.bind(fs);
-      vi.spyOn(fs, "readFileSync").mockImplementation(
-        (file: fs.PathOrFileDescriptor, options?: unknown) => {
-          if (String(file).endsWith(`${path.sep}sandboxes.json`)) {
-            throw Object.assign(new Error("registry permission denied"), { code: "EACCES" });
-          }
-          return originalReadFileSync(file, options as never) as never;
-        },
-      );
-      vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
-        if (pid === 2_147_483_647 && signal === 0) {
-          throw Object.assign(new Error("not running"), { code: "ESRCH" });
-        }
-        return true;
+      vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
+        return readFileWithUnreadableRegistry(originalReadFileSync, file, options) as never;
       });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
 
       const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
