@@ -23,7 +23,6 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundleRegistry,
-  RuntimeProviderSelectionError,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "../../onboard/runtime-provider/access";
@@ -39,7 +38,7 @@ import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
-import { executeSandboxDestroy } from "./destroy-execution";
+import { executeSandboxDestroy, redactDestroyError } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
@@ -64,10 +63,14 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
 
-type RemoveSandboxRegistryEntryOutcome =
+export type RemoveSandboxRegistryEntryOutcome =
   | {
       readonly status: "complete";
-      readonly removed: boolean;
+      readonly removed: true;
+    }
+  | {
+      readonly status: "not-found";
+      readonly removed: false;
     }
   | {
       readonly status: "blocked";
@@ -266,12 +269,7 @@ export function removeSandboxImage(
     );
     result = authority.provider.cleanup.removeOwnedWorkload({ sandbox: sb, sandboxName });
   } catch (error) {
-    const detail =
-      error instanceof RuntimeProviderSelectionError
-        ? error.message
-        : error instanceof Error
-          ? error.message
-          : String(error);
+    const detail = redactDestroyError(error);
     warn(
       `  ${YW}⚠${R} Runtime provider '${providerId}' could not prove workload cleanup ` +
         `authority: ${detail} Local ownership state was preserved. Run '${CLI_NAME} ` +
@@ -298,7 +296,7 @@ export function removeSandboxImage(
   return result;
 }
 
-function removeSandboxRegistryEntryOutcome(
+export function removeSandboxRegistryEntryOutcome(
   sandboxName: string,
   deps: RemoveSandboxRegistryEntryDeps = {},
 ): RemoveSandboxRegistryEntryOutcome {
@@ -308,7 +306,9 @@ function removeSandboxRegistryEntryOutcome(
   if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
     return { status: "blocked", reason: "authority-unproven", removed: false };
   }
-  return { status: "complete", removed: removeSandbox(sandboxName) };
+  return removeSandbox(sandboxName)
+    ? { status: "complete", removed: true }
+    : { status: "not-found", removed: false };
 }
 
 export function removeSandboxRegistryEntry(
@@ -524,7 +524,9 @@ async function destroySandboxUnlocked(
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
   if (removalOutcome.status === "blocked") {
-    const providerId = normalizeRuntimeProviderIdentity(sandbox?.openshellDriver);
+    const providerId = normalizeRuntimeProviderIdentity(
+      (registry.getSandbox(sandboxName) ?? sandbox)?.openshellDriver,
+    );
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' cleanup is incomplete for runtime provider ` +
         `'${providerId}' because workload ownership authority could not be proven.`,

@@ -33,16 +33,22 @@ describe("runtime provider central source boundary", () => {
       registry: read("src/lib/onboard/runtime-provider/registry.ts"),
     };
 
-    for (const source of Object.values(driverNeutralActions)) {
-      expect(source).not.toMatch(/\b(?:docker|podman)\b/iu);
-      expect(source).not.toMatch(/(?:adapters\/docker|docker-driver-sandbox-recovery)/u);
+    for (const [name, source] of Object.entries(driverNeutralActions)) {
+      expect(source, `${name} must stay driver-neutral`).not.toMatch(/\b(?:docker|podman)\b/iu);
+      expect(source, `${name} must not import driver adapters`).not.toMatch(
+        /(?:adapters\/docker|docker-driver-sandbox-recovery)/u,
+      );
     }
-    for (const source of [
-      ...Object.values(driverNeutralActions),
-      ...Object.values(onboardConsumers),
+    for (const [name, source] of [
+      ...Object.entries(driverNeutralActions),
+      ...Object.entries(onboardConsumers),
     ]) {
-      expect(source).not.toMatch(/\b(?:openshellDriver|driverName)\s*={2,3}\s*["'][^"']+["']/u);
-      expect(source).not.toMatch(/switch\s*\([^)]*\b(?:openshellDriver|driverName)\b[^)]*\)/u);
+      expect(source, `${name} must not branch on a driver name`).not.toMatch(
+        /\b(?:openshellDriver|driverName)\s*={2,3}\s*["'][^"']+["']/u,
+      );
+      expect(source, `${name} must not switch on a driver name`).not.toMatch(
+        /switch\s*\([^)]*\b(?:openshellDriver|driverName)\b[^)]*\)/u,
+      );
     }
     expect(driverNeutralActions["actions/sandbox/start.ts"]).toMatch(
       /resolved\.lifecycle\.verifyStarted\(/u,

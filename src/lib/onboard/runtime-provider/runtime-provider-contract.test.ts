@@ -108,22 +108,22 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     for (const [providerId, bundle] of Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
       expect(bundle.identity.id).toBe(providerId);
-      expect(
-        [
-          bundle.plan,
-          bundle.capabilities,
-          bundle.preflightDoctor,
-          bundle.gateway,
-          bundle.workload,
-          bundle.lifecycle,
-          bundle.mutationAuthority,
-          bundle.bootstrap,
-          bundle.snapshot,
-          bundle.recovery,
-          bundle.cleanup,
-          bundle.containerEngine,
-        ].every((surface) => surface.providerId === providerId),
-      ).toBe(true);
+      for (const surface of [
+        "plan",
+        "capabilities",
+        "preflightDoctor",
+        "gateway",
+        "workload",
+        "lifecycle",
+        "mutationAuthority",
+        "bootstrap",
+        "snapshot",
+        "recovery",
+        "cleanup",
+        "containerEngine",
+      ] as const) {
+        expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
+      }
       expect(bundle.bootstrap).toMatchObject({ supported: false });
       expect(bundle.snapshot).toMatchObject({ supported: false });
       expect(bundle.recovery).toMatchObject({ supported: false });
@@ -138,7 +138,9 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.isFrozen(registry)).toBe(true);
     expect(Object.isFrozen(registered)).toBe(true);
     expect(Object.isFrozen(registered.workload.profile)).toBe(true);
-    expect(Object.isFrozen(registered.workload.profile.support?.platforms)).toBe(true);
+    const support = registered.workload.profile.support;
+    expect(support).not.toBeNull();
+    expect(Object.isFrozen(support!.platforms)).toBe(true);
     expectSupportedSurface(registered.lifecycle);
     expect(Object.isFrozen(registered.lifecycle.start)).toBe(true);
     expect(Object.isFrozen(registered.lifecycle.verifyStarted)).toBe(true);
@@ -674,7 +676,9 @@ describe("socket-free MXC action contract", () => {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    expect(recordEvent.mock.invocationCallOrder[3]).toBeLessThan(
+    const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
+    expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
+    expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(
       runOpenshell.mock.invocationCallOrder.at(-1)!,
     );
     expect(cleanupShieldsArtifacts).toHaveBeenCalledWith(sandboxName);
@@ -695,5 +699,28 @@ describe("socket-free MXC action contract", () => {
     ]);
     expect(state.running).not.toContain(sandboxName);
     expect(state.workloads).not.toContain(imageTag);
+  });
+
+  it("blocks cleanup when an in-memory legacy receipt names a different image", () => {
+    const bundle = createInMemoryRuntimeProviderBundle({
+      providerId: "mxc",
+      workloadProfile: PORTABLE_PROFILE,
+    });
+
+    expect(
+      bundle.cleanup.planOwnedWorkloadCleanup({
+        sandboxName: "alpha",
+        sandbox: {
+          name: "alpha",
+          imageTag: "local/alpha:current",
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile",
+            reference: "local/alpha:recorded",
+            shared: false,
+          },
+        },
+      }),
+    ).toEqual({ action: "block", reason: "authority-unproven" });
   });
 });

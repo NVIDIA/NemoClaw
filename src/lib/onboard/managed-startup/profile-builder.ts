@@ -46,11 +46,15 @@ const MAX_PROFILE_TUNING_INTEGER = 1_000_000_000;
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL = {
+  http: { upper: "HTTP_PROXY", lower: "http_proxy" },
+  https: { upper: "HTTPS_PROXY", lower: "https_proxy" },
+} as const;
 export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "http_proxy",
-  "https_proxy",
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.upper,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.upper,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.lower,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.lower,
 ] as const;
 
 /**
@@ -424,13 +428,13 @@ function resolveHostProxy(
 ): Pick<ManagedStartupProfile["proxy"], "hostHttpUrl" | "hostHttpsUrl" | "hostNoProxy"> {
   const hostHttpUrl = resolveAliasedEnvironmentValue(
     environment,
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[0],
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[2],
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.upper,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.lower,
   );
   const hostHttpsUrl = resolveAliasedEnvironmentValue(
     environment,
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[1],
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[3],
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.upper,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.lower,
   );
   const noProxy = resolveAliasedEnvironmentValue(environment, "NO_PROXY", "no_proxy");
   if (hostHttpUrl === null && hostHttpsUrl === null) {

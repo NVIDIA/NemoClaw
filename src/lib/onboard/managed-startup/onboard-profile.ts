@@ -213,7 +213,7 @@ export function buildManagedStartupOnboardProfile(
   const agent = exactManagedAgent(input.agentName);
   const capabilities = MANAGED_STARTUP_PROFILE_CAPABILITIES[agent];
   if (
-    agent !== "openclaw" &&
+    capabilities.inputModalities.length === 0 &&
     typeof input.environment.NEMOCLAW_INFERENCE_INPUTS === "string" &&
     input.environment.NEMOCLAW_INFERENCE_INPUTS.trim() !== ""
   ) {

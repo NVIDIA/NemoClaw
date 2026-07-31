@@ -9,6 +9,7 @@ import {
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
 } from "../onboard/runtime-provider/access";
@@ -21,6 +22,7 @@ import {
 import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
 
 export type { RuntimeProviderBundleRegistry };
+export { RuntimeProviderSelectionError };
 
 export function requireInferenceSetRuntimeAuthority(
   entry: SandboxEntry,

@@ -163,10 +163,8 @@ describe("cross-runtime foundation types", () => {
 });
 
 e2eFixtureTest(
-  "keeps cross-runtime injection inert beside the existing Docker phase fixtures",
-  async ({ environment, executionProfile, lifecycle, runtimeProvider, stateValidation }) => {
-    expect(executionProfile).toBeUndefined();
-    expect(runtimeProvider).toBeUndefined();
+  "keeps the existing Docker phase fixtures unchanged",
+  async ({ environment, lifecycle, stateValidation }) => {
     expect(environment).toBeInstanceOf(EnvironmentPhaseFixture);
     expect(lifecycle).toBeInstanceOf(LifecyclePhaseFixture);
     expect(stateValidation).toBeInstanceOf(StateValidationPhaseFixture);

@@ -1685,9 +1685,6 @@ function validateTools(value: unknown, agent: ManagedStartupAgent): ManagedStart
     "tools.enabledGateways",
     { allowEmpty: true },
   );
-  if (agent !== "hermes" && enabledGateways.length > 0) {
-    invalid("tools.enabledGateways is supported only by hermes");
-  }
   return {
     disclosure: requireStringEnum<ManagedStartupToolDisclosure>(
       tools.disclosure,

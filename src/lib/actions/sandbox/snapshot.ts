@@ -62,7 +62,7 @@ import {
 } from "./dcode-activity-probe";
 import {
   cleanupShieldsDestroyArtifacts,
-  removeSandboxRegistryEntry,
+  removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
 import {
@@ -130,9 +130,9 @@ function formatSnapshotVersion(b: unknown) {
 
 export function requireSnapshotDestinationRegistryRemoval(
   name: string,
-  registryRemoved: boolean,
+  removalOutcome: ReturnType<typeof removeSandboxRegistryEntryOutcome>,
 ): void {
-  if (registryRemoved !== false) return;
+  if (removalOutcome.status !== "blocked") return;
   // SOURCE_OF_TRUTH
   // Invalid state: a bypassing registry writer changed cleanup authority after
   // the locked pre-delete proof, leaving the destination absent while its
@@ -537,7 +537,7 @@ function deleteSandboxForRestore(name: string): void {
       });
     }
     cleanupShieldsDestroyArtifacts(name);
-    requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntry(name));
+    requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }

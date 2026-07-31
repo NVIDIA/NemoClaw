@@ -312,6 +312,7 @@ vi.mock("./destroy", async () => {
   return {
     cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
     removeSandboxRegistryEntry: vi.fn(() => true),
+    removeSandboxRegistryEntryOutcome: vi.fn(() => ({ status: "complete", removed: true })),
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
       runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
         sandboxName,

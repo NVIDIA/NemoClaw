@@ -13,7 +13,7 @@ import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
-import { redact } from "../../security/redact";
+import { redact, redactFull } from "../../security/redact";
 import { withTimerBoundShieldsMutationLockAsync } from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
 import type { SandboxEntry } from "../../state/registry";
@@ -26,6 +26,10 @@ import {
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
 import { wipeSandboxState } from "./wipe-state";
+
+export function redactDestroyError(error: unknown): string {
+  return redactFull(error instanceof Error ? error.message : String(error));
+}
 
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
@@ -206,10 +210,7 @@ export async function executeSandboxDestroy({
       } catch (error) {
         return {
           ok: false as const,
-          deleteOutput:
-            error instanceof Error
-              ? error.message
-              : `Runtime provider authority could not be proven: ${String(error)}`,
+          deleteOutput: redactDestroyError(error),
           exitCode: 1,
           gatewayUnreachable: false,
           mcpOwnershipRequiresGateway: false,
