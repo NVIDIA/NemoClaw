@@ -107,6 +107,27 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     expect(removeImage).not.toHaveBeenCalled();
   });
 
+  it("fails closed when a managed workload receipt was dropped as malformed", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+
+    const result = removeSandboxImage("alpha", {
+      getSandbox: () =>
+        ({
+          name: "alpha",
+          openshellDriver: "docker",
+          imageTag: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+          workload: undefined,
+        }) as any,
+      runtimeProviders,
+    });
+
+    expect(result).toEqual({ status: "skipped", reason: "authority-unproven" });
+    expect(removeImage).not.toHaveBeenCalled();
+  });
+
   it("treats missing sandbox delete results as already gone", () => {
     expect(
       getSandboxDeleteOutcome({ status: 1, stderr: "Error: sandbox alpha not found" }),

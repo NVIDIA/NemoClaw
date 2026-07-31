@@ -14,6 +14,7 @@ import {
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
+  MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
 import {
@@ -214,6 +215,16 @@ function removeOwnedDockerWorkload(
   const { imageTag, workload } = input.sandbox;
   if (workload?.shared === true) return { status: "skipped", reason: "shared-image" };
   if (!imageTag) return { status: "skipped", reason: "no-owned-image" };
+  if (
+    Object.values(MANAGED_IMAGE_REPOSITORIES).some(
+      (repository) =>
+        imageTag === repository ||
+        imageTag.startsWith(`${repository}@`) ||
+        imageTag.startsWith(`${repository}:`),
+    )
+  ) {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
   if (
     workload?.kind === "legacy-dockerfile" &&
     workload.reference !== null &&
