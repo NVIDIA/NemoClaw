@@ -4,12 +4,17 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import * as startupCommandPatch from "../../../src/lib/onboard/docker-startup-command-patch.ts";
+import * as startupCommandPatchNamespace from "../../../src/lib/onboard/docker-startup-command-patch.ts";
 import { redactString } from "../fixtures/redaction.ts";
 
 const LEGACY_KEEPALIVE_COMMAND = ["sleep", "infinity"] as const;
 const DEFAULT_RECREATE_TIMEOUT_SECS = 180;
 const DOCKER_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/i;
+const startupCommandPatch = (
+  "default" in startupCommandPatchNamespace
+    ? startupCommandPatchNamespace.default
+    : startupCommandPatchNamespace
+) as typeof import("../../../src/lib/onboard/docker-startup-command-patch.ts");
 const { recreateOpenShellDockerSandboxWithStartupCommand } = startupCommandPatch;
 
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
