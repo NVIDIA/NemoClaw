@@ -124,6 +124,7 @@
         "hermes [--profile=PROFILE] (--resume=SESSION|--continue[=SESSION]) --oneshot=PROMPT [CHAT_OPTION ...]"
       ],
       "reason": "Hermes 0.19 stores a top-level resumed or continued one-shot turn in a new session instead of the selected or most recent session.",
+      "source_fix_constraint": "NemoClaw consumes pinned Hermes and cannot change its upstream session persistence implementation.",
       "removal_condition": "Hermes appends top-level resumed and continued one-shot turns to the selected or most recent session."
     },
     "provider_model": {
@@ -138,6 +139,7 @@
       ],
       "ambiguity_rule": "A top-level session name must be one argv value. The adapter rejects separate provider and model flags after an unquoted multi-word session name because a later positional can be an upstream command.",
       "reason": "Hermes 0.19 does not resolve the OpenShell credential placeholder when provider and model are separate.",
+      "source_fix_constraint": "NemoClaw consumes pinned Hermes and cannot change its upstream credential-resolution implementation.",
       "removal_condition": "Hermes resolves OpenShell credential placeholders for separate provider and model flags."
     }
   }

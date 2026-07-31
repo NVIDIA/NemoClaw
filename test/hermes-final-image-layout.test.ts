@@ -382,6 +382,13 @@ describe("Hermes final image layout", () => {
       expect(dockerfile).toContain(`COPY ${entry.source} ${entry.target}`);
       expect(declaredDigest, `${entry.arg} must match ${entry.source}`).toBe(digest);
     }
+
+    const adapterIntegrityGate = dockerfile.indexOf("ERROR: Hermes CLI adapter integrity mismatch");
+    const adapterValidation = dockerfile.indexOf(
+      "RUN /opt/hermes/.venv/bin/python -I \\\n        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \\",
+    );
+    expect(adapterIntegrityGate).toBeGreaterThan(-1);
+    expect(adapterValidation).toBeGreaterThan(adapterIntegrityGate);
   });
 
   it("rejects retired OpenClaw state represented as a directory", () => {

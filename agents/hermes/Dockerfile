@@ -386,8 +386,8 @@ RUN node --experimental-strip-types \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=e7bafd03585d494a5036b2f59e3b3a7a7bee2a6f1ad1f3acd42347132e1d5ce4
-ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=b78434e833d3b01933398a043241c4790baed468d88d62461050d00bf922864f
-ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=cb7eab8953ba0fb5063cce6fbd8b6809604d70e6f86a0f7aad09afceb63aad1e
+ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=d7d8b0815072554ee4e5f34f55f813e263d74f949ea3f1053e49ba815d1c2496
+ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=e6d6906daf990c03c44a842e1184d75d79a4cac657ef65b2518f889738d0c75b
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
@@ -429,14 +429,6 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
         echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.19.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
         exit 1; \
     fi
-# Validate the versioned adapter against Hermes' machine-readable top-level and
-# chat parser metadata before the real binary moves behind the wrapper. Help
-# probes remain runtime evidence for those two public surfaces.
-RUN /opt/hermes/.venv/bin/python -I \
-        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
-        --contract /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json \
-        --hermes /usr/local/bin/hermes
-
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
@@ -444,6 +436,13 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes CLI adapter integrity mismatch" >&2; exit 1; }
+# Validate the versioned adapter against Hermes' machine-readable top-level and
+# chat parser metadata before the real binary moves behind the wrapper. Help
+# probes remain runtime evidence for those two public surfaces.
+RUN /opt/hermes/.venv/bin/python -I \
+        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
+        --contract /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json \
+        --hermes /usr/local/bin/hermes
 RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
     && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.py /usr/local/bin/hermes \
     && chmod 755 /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \

@@ -102,6 +102,17 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(cliAdapter.adapter_version).toBe(1);
     expect(cliAdapter.upstream_cli_version).toBe("0.19.0");
     expect(cliAdapter.managed_commands).toEqual(["chat"]);
+    expect(
+      (
+        Object.values(cliAdapter.translations) as Array<{
+          source_fix_constraint?: unknown;
+        }>
+      ).every(
+        (translation) =>
+          typeof translation.source_fix_constraint === "string" &&
+          translation.source_fix_constraint.length > 0,
+      ),
+    ).toBe(true);
   });
 
   it("accepts uv build metadata and rejects a different semantic version", () => {

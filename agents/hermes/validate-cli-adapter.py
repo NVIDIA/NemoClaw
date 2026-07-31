@@ -148,7 +148,13 @@ def validate(contract_path: Path, hermes_binary: str) -> None:
     for name, translation in translations.items():
         if not isinstance(translation, dict):
             _fail(f"adapter translation {name} must be an object")
-        for field in ("forms", "issue", "reason", "removal_condition"):
+        for field in (
+            "forms",
+            "issue",
+            "reason",
+            "removal_condition",
+            "source_fix_constraint",
+        ):
             if not translation.get(field):
                 _fail(f"adapter translation {name} must declare {field}")
 
