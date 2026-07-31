@@ -285,6 +285,10 @@ class _CliAdapterError(Exception):
     """Signal an invalid adapter contract or incompatible upstream CLI."""
 
 
+class _CliBinaryExecutionError(_CliAdapterError):
+    """Signal that the fixed Hermes binary could not be executed."""
+
+
 def _load_cli_adapter(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as adapter_file:
@@ -404,6 +408,8 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
             elif arity in {"session", "optional_session"}:
                 parts: list[str] = []
                 cursor = i + 1
+                if cursor < len(argv) and not argv[cursor]:
+                    return None
                 if cursor < len(argv) and not argv[cursor].startswith("-"):
                     parts.append(argv[cursor])
                     cursor += 1
@@ -575,7 +581,11 @@ def _require_upstream_cli_version(real_hermes: str, expected: str) -> None:
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
+        raise _CliBinaryExecutionError(
+            f"failed to exec Hermes binary at {real_hermes}: {exc}"
+        ) from None
+    except subprocess.TimeoutExpired as exc:
         raise _CliAdapterError(
             f"could not verify the Hermes CLI version ({exc.__class__.__name__})"
         ) from None
@@ -587,6 +597,14 @@ def _require_upstream_cli_version(real_hermes: str, expected: str) -> None:
             f"adapter targets Hermes {expected}, installed CLI reports "
             f"{actual or 'an unknown version'}"
         )
+
+
+def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
+    if isinstance(exc, _CliBinaryExecutionError):
+        print(f"[SECURITY] Refusing to run hermes: {exc}", file=sys.stderr)
+        return 126
+    print(f"[COMPATIBILITY] Refusing to run hermes: {exc}", file=sys.stderr)
+    return 2
 
 
 def main(argv: list[str]) -> int:
@@ -607,8 +625,7 @@ def main(argv: list[str]) -> int:
         try:
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
         except _CliAdapterError as exc:
-            print(f"[COMPATIBILITY] Refusing to run hermes: {exc}", file=sys.stderr)
-            return 2
+            return _report_cli_adapter_error(exc)
         print(
             "[COMPATIBILITY] Refusing resumed one-shot with --usage-file: "
             "Hermes 0.19 writes usage reports only on its native one-shot path, "
@@ -622,8 +639,7 @@ def main(argv: list[str]) -> int:
         try:
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
         except _CliAdapterError as exc:
-            print(f"[COMPATIBILITY] Refusing to run hermes: {exc}", file=sys.stderr)
-            return 2
+            return _report_cli_adapter_error(exc)
         print(
             "[COMPATIBILITY] Refusing provider/model translation after an "
             "ambiguous session name. Pass a multi-word --resume or --continue "
@@ -632,8 +648,7 @@ def main(argv: list[str]) -> int:
         )
         return 2
     except _CliAdapterError as exc:
-        print(f"[COMPATIBILITY] Refusing to run hermes: {exc}", file=sys.stderr)
-        return 2
+        return _report_cli_adapter_error(exc)
     try:
         os.execv(real_hermes, [real_hermes, *exec_argv])
     except OSError as exc:
