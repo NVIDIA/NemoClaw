@@ -295,7 +295,7 @@ describe("buildManagedStartupOnboardProfile", () => {
         contextWindow: null,
         maxTokens: null,
         reasoning: null,
-        reasoningEffort: null,
+        reasoningEffort: "default",
       },
     });
   });
