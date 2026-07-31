@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 
 import { runMessagingHook } from "../../../hooks/hook-runner";
@@ -15,10 +16,7 @@ import {
 const serviceAccountHook = googlechatManifest.hooks.find(
   (hook) => hook.handler === GOOGLECHAT_TOKEN_PASTE_HOOK_HANDLER_ID,
 );
-
-if (!serviceAccountHook) {
-  throw new Error("missing Google Chat service-account hook");
-}
+assert(serviceAccountHook, "missing Google Chat service-account hook");
 
 const validServiceAccount = JSON.stringify({
   client_email: "bot@example.iam.gserviceaccount.com",
