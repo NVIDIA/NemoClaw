@@ -93,6 +93,7 @@ export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
   | "list-failed"
+  | "list-pending-unavailable"
   | "list-timeout"
   | "list-exec-failed"
   | "list-scope-upgrade-pending"
@@ -110,7 +111,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-pending-unavailable|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -221,7 +222,8 @@ def exit_with_receipt(receipt):
         approve_env['OPENCLAW_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'
         approve_env['OPENCLAW_NO_RESPAWN'] = '1'
-        approve_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
+        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'
         approve_env['NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID'] = local_device_id
         approve_env['NEMOCLAW_OPENCLAW_PENDING_FD'] = str(clone_pending_snapshot_fd)
@@ -234,13 +236,17 @@ def exit_with_receipt(receipt):
             clone_identity_snapshot_fd,
         )
     else:
-        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)`
-    : "approve_env = gateway_approval_env(os.environ)";
+        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`
+    : `approve_env = gateway_approval_env(os.environ)
+    approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+    approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`;
   const pairedTokenSuccess = options.localDeviceOnly
     ? `            if local_approval_auth_mode == 'paired-token':
                 previous_approval_token = local_paired_operator_token
                 approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
                 approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+                approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
                 local_paired_operator_token = ''
                 if not sync_approved_clone_device_auth(device, previous_approval_token):
                     ${exitWithReceipt("approve-failed")}
@@ -255,6 +261,7 @@ def exit_with_receipt(receipt):
             previous_approval_token = local_paired_operator_token
             approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
             approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+            approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
             local_paired_operator_token = ''
             if not sync_approved_clone_device_auth(device, previous_approval_token):
                 ${exitWithReceipt("approve-failed")}
@@ -272,6 +279,7 @@ def exit_with_receipt(receipt):
         previous_approval_token = local_paired_operator_token
         approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
         local_paired_operator_token = ''
         observe_deadline = time.monotonic() + ${AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
         while not sync_approved_clone_device_auth(device, previous_approval_token):
@@ -293,13 +301,14 @@ def exit_with_receipt(receipt):
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
 # Invalid state: after snapshot restore restarts the clone gateway, the bounded
-# warm-up asks for operator.write while the clone's paired baseline still has
-# only operator.pairing. OpenClaw creates the pending transition, and that same
-# transition gates the devices list this one-shot approval pass would need.
-# Creation point: establishRestoredSandboxGatewayPairing runs
-# runSandboxScopeWarmupRun immediately before this approval. Restore preserves
-# the clone-owned identity and pairing-only server record, while its client-auth
-# store cannot converge on the rotated token until canonical approval finishes.
+# warm-up asks for operator.write. When the clone's paired baseline lacks that
+# scope, OpenClaw creates the pending transition, and that same transition gates
+# the devices list this one-shot approval pass would need.
+# Creation point: establishRestoredSandboxGatewayPairing runs the direct
+# restored-clone gateway warm-up immediately before this approval. Restore
+# preserves the clone-owned identity and server pairing record, while its client
+# auth store cannot converge on a rotated token until canonical approval
+# finishes.
 # Source boundary: read only the clone-local pending map, validate one exact
 # request below, and delegate the write to OpenClaw's canonical devices approve
 # command. OpenClaw 2026.7.1 has no authenticated bootstrap/list API that can
@@ -421,11 +430,16 @@ def read_clone_json(directory_fd, directory_name, entry_name):
 
 try:
     clone_devices_dir_fd = open_clone_directory('devices')
+except OSError:
+    ${exitWithReceipt("list-failed")}
+try:
     local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
         clone_devices_dir_fd,
         'devices',
         'pending.json',
     )
+except FileNotFoundError:
+    ${exitWithReceipt("list-pending-unavailable")}
 except (OSError, ValueError):
     ${exitWithReceipt("list-failed")}
 if not isinstance(local_pending_by_id, dict):
