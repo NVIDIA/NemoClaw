@@ -16,13 +16,19 @@ import {
 } from "../registry/runtime-matrix.ts";
 import type { FsmTransition, JsonValue, TerminalOutcome } from "../registry/scenario.ts";
 
-export interface RuntimeReadinessEvidence {
-  profileId: string;
-  ready: true;
-  engineName: string;
-  engineVersion: string;
-  capabilities: readonly ExecutionCapability[];
-}
+export type RuntimeReadinessEvidence =
+  | {
+      profileId: string;
+      ready: true;
+      engineName: string;
+      engineVersion: string;
+      capabilities: readonly ExecutionCapability[];
+    }
+  | {
+      profileId: string;
+      ready: false;
+      detail?: string;
+    };
 
 export interface ExactWorkloadIdentity {
   logicalId: string;

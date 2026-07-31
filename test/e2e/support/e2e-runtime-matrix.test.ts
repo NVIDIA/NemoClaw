@@ -9,7 +9,6 @@ import {
   type ExactWorkloadIdentity,
   executeRuntimeCaseThroughProvider,
   type RuntimeProviderFixture,
-  type RuntimeReadinessEvidence,
 } from "../fixtures/runtime-provider.ts";
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
 import { target } from "../registry/builder.ts";
@@ -328,14 +327,10 @@ describe("cross-runtime E2E matrix compiler", () => {
     const adapterCalls: string[] = [];
     const provider = fakeRuntimeProvider(runtimeCase.profile, adapterCalls);
     let inspected = false;
-    provider.environment.prepare = async () =>
-      ({
-        profileId: runtimeCase.profile.id,
-        ready: false,
-        engineName: "docker-fixture",
-        engineVersion: "0.0.0-fixture",
-        capabilities: runtimeCase.profile.capabilities,
-      }) as unknown as RuntimeReadinessEvidence;
+    provider.environment.prepare = async () => ({
+      profileId: runtimeCase.profile.id,
+      ready: false,
+    });
     provider.state.inspectWorkload = async () => {
       inspected = true;
       throw new Error("workload inspection must not run");
