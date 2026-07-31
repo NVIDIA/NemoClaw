@@ -18,7 +18,11 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
 }
 
 function container(name: string, running: boolean) {
-  return { name, status: running ? "Up 5 minutes" : "Exited (0) 2 hours ago", running };
+  return {
+    name,
+    status: running ? "Up 5 minutes" : "Exited (0) 2 hours ago",
+    running,
+  };
 }
 
 type StopHarnessOverrides = Partial<SandboxStopDeps> & {
@@ -270,7 +274,11 @@ describe("stopSandbox", () => {
   it("stops a crash-looping container instead of calling it stopped (#6026)", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      { name: "openshell-my-sandbox", status: "Restarting (137) 2 seconds ago", running: false },
+      {
+        name: "openshell-my-sandbox",
+        status: "Restarting (137) 2 seconds ago",
+        running: false,
+      },
     ]);
 
     const result = stopSandbox("my-sandbox", h.deps);
@@ -285,7 +293,11 @@ describe("stopSandbox", () => {
   it("stops a paused container (#6026)", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      { name: "openshell-my-sandbox", status: "Up 5 minutes (Paused)", running: true },
+      {
+        name: "openshell-my-sandbox",
+        status: "Up 5 minutes (Paused)",
+        running: true,
+      },
     ]);
 
     const result = stopSandbox("my-sandbox", h.deps);
@@ -368,6 +380,24 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("kubernetes");
     expect(h.dockerStop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "unknown-runtime",
+    "mxc-not-installed",
+  ])("fails closed for unregistered provider %s without lifecycle side effects", (providerId) => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toContain(providerId);
+    expect(result.message).toContain("has no registered lifecycle provider");
+    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.dockerStop).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
   });
 
   it.each([

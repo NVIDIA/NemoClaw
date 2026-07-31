@@ -498,6 +498,23 @@ async function destroySandboxUnlocked(
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
+  /**
+   * SOURCE_OF_TRUTH
+   * Invalid state: the live sandbox is confirmed deleted or already absent,
+   * but its durable provider identity or workload receipt cannot prove image
+   * cleanup authority, so the registry row and onboarding session are retained.
+   * Source boundary: the persisted `openshellDriver` and `workload` receipt are
+   * validated only by the selected provider's `cleanup.removeOwnedWorkload`.
+   * Source-fix constraint: destroy cannot synthesize provider ownership after
+   * remote deletion; guessing could remove a shared image or another provider's
+   * workload, so the operator must repair the durable authority and retry.
+   * Regression proof: destroy-flow.test.ts proves both blocked retention and
+   * that a repaired matching receipt permits registry and session retirement;
+   * test/image-cleanup.test.ts proves the lower-level fail-closed contract.
+   * Removal condition: remove this recovery boundary only when the provider or
+   * registry owns authenticated reconciliation that can safely complete cleanup
+   * without retaining the local ownership row.
+   */
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
   if (removalOutcome.status === "blocked") {

@@ -25,7 +25,13 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     vi.fn<DockerRuntimeProviderDependencies["printRuntimeDownGuidance"]>();
   const findLabeledSandboxContainers = vi.fn<
     DockerRuntimeProviderDependencies["findLabeledSandboxContainers"]
-  >(() => [{ name: "openshell-my-sandbox", status: "Exited (0) 2 hours ago", running: false }]);
+  >(() => [
+    {
+      name: "openshell-my-sandbox",
+      status: "Exited (0) 2 hours ago",
+      running: false,
+    },
+  ]);
   const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
     () => ({
       recovered: true,
@@ -118,7 +124,11 @@ describe("startSandbox", () => {
   it("unpauses a paused container instead of calling it already running (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      { name: "openshell-my-sandbox", status: "Up 3 minutes (Paused)", running: true },
+      {
+        name: "openshell-my-sandbox",
+        status: "Up 3 minutes (Paused)",
+        running: true,
+      },
     ]);
 
     const result = await startSandbox("my-sandbox", h.deps);
@@ -137,7 +147,11 @@ describe("startSandbox", () => {
   it("surfaces a docker unpause failure with the container name (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
-      { name: "openshell-my-sandbox", status: "Up 3 minutes (Paused)", running: true },
+      {
+        name: "openshell-my-sandbox",
+        status: "Up 3 minutes (Paused)",
+        running: true,
+      },
     ]);
     h.dockerUnpause.mockReturnValue({ status: 125 });
 
@@ -215,6 +229,24 @@ describe("startSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("kubernetes");
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "unknown-runtime",
+    "mxc-not-installed",
+  ])("fails closed for unregistered provider %s without lifecycle side effects", async (providerId) => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toContain(providerId);
+    expect(result.message).toContain("has no registered lifecycle provider");
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.dockerUnpause).not.toHaveBeenCalled();
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
   it.each([
