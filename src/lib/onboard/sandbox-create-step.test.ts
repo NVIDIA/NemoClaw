@@ -134,7 +134,12 @@ describe("runSandboxCreateStep", () => {
     });
   });
 
-  it("persists the Hermes startup command for Docker-driver container restarts", async () => {
+  it.each([
+    { label: "OpenClaw", agent: null },
+    { label: "Hermes", agent: { name: "hermes" } as SandboxCreateStepContext["agent"] },
+  ])("persists the $label startup command for Docker-driver container restarts", async ({
+    agent,
+  }) => {
     const launch = makeLaunch({
       sandboxStartupCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
     });
@@ -143,7 +148,7 @@ describe("runSandboxCreateStep", () => {
 
     await runSandboxCreateStep(
       makeContext({
-        agent: { name: "hermes" } as SandboxCreateStepContext["agent"],
+        agent,
         prebuild: {
           buildCtx: "/tmp/ctx",
           buildId: "b1",

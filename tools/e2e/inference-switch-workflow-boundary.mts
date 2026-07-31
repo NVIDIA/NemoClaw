@@ -36,7 +36,6 @@ export type InferenceSwitchWorkflow = {
 type JobSpec = {
   agent: "hermes" | "openclaw";
   job: string;
-  runStep: string;
   scenario: string;
   uploadStep: string;
 };
@@ -45,14 +44,12 @@ const JOBS: JobSpec[] = [
   {
     agent: "hermes",
     job: "hermes-inference-switch",
-    runStep: "Run Hermes inference switch live Vitest test",
     scenario: "hermes-inference-switch",
     uploadStep: "Upload Hermes inference switch artifacts",
   },
   {
     agent: "openclaw",
     job: "openclaw-inference-switch",
-    runStep: "Run OpenClaw inference switch live test",
     scenario: "openclaw-inference-switch",
     uploadStep: "Upload OpenClaw inference switch artifacts",
   },
@@ -60,14 +57,6 @@ const JOBS: JobSpec[] = [
 
 function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> {
   return [
-    {
-      mode: "hosted",
-      sandbox_name: `e2e-${agent}-inference-switch`,
-      switch_provider: "nvidia-prod",
-      switch_model: "nvidia/nemotron-3-super-120b-a12b",
-      switch_inference_api: "openai-completions",
-      switch_mock_anthropic: "0",
-    },
     {
       mode: "anthropic",
       sandbox_name: `e2e-${agent}-anthropic-inference-switch`,
@@ -87,7 +76,7 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
     errors.push(`${spec.job} mode matrix must not fail fast`);
   }
   if (!isDeepStrictEqual(job.strategy?.matrix?.include, expectedModes(spec.agent))) {
-    errors.push(`${spec.job} must run the exact hosted and Anthropic-compatible modes`);
+    errors.push(`${spec.job} must run the canonical Anthropic-compatible mode`);
   }
 
   const requiredEnv: Record<string, unknown> = {
@@ -110,21 +99,22 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   if (job.env?.NVIDIA_API_KEY !== undefined) {
     errors.push(`${spec.job} must not expose NVIDIA_API_KEY at job scope`);
   }
-  const runStep = job.steps?.find((step) => step.name === spec.runStep);
-  const hostedSecret = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}";
-  if (runStep?.env?.NVIDIA_INFERENCE_API_KEY !== hostedSecret) {
-    errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step`);
-  }
-  const hostedPublicSecret = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}";
-  if (runStep?.env?.NVIDIA_API_KEY !== hostedPublicSecret) {
-    errors.push(`${spec.job} must expose NVIDIA_API_KEY only to its hosted run step`);
+  if (job.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== undefined) {
+    errors.push(`${spec.job} must not enable hosted inference for its Anthropic-compatible mode`);
   }
   for (const step of job.steps ?? []) {
-    if (step !== runStep && step.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
-      errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its run step`);
+    if (step.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== undefined) {
+      errors.push(
+        `${spec.job} must not define NEMOCLAW_E2E_USE_HOSTED_INFERENCE at step scope for its Anthropic-compatible mode`,
+      );
     }
-    if (step !== runStep && step.env?.NVIDIA_API_KEY !== undefined) {
-      errors.push(`${spec.job} must expose NVIDIA_API_KEY only to its run step`);
+    if (step.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
+      errors.push(
+        `${spec.job} must not expose NVIDIA_INFERENCE_API_KEY in its Anthropic-compatible mode`,
+      );
+    }
+    if (step.env?.NVIDIA_API_KEY !== undefined) {
+      errors.push(`${spec.job} must not expose NVIDIA_API_KEY in its Anthropic-compatible mode`);
     }
   }
 

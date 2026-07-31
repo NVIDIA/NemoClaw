@@ -238,6 +238,7 @@ vi.mock("../../state/sandbox", () => ({
 
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: vi.fn(),
+  waitForRestoredSandboxGatewaySupervisor: vi.fn(() => true),
 }));
 
 vi.mock("./destroy", () => ({
@@ -1413,7 +1414,6 @@ describe("runSandboxSnapshot", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
-
     await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
       exitCode: 1,
     });
