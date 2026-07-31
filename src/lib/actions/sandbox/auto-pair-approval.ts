@@ -221,7 +221,8 @@ def exit_with_receipt(receipt):
         approve_env['OPENCLAW_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'
         approve_env['OPENCLAW_NO_RESPAWN'] = '1'
-        approve_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
+        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'
         approve_env['NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID'] = local_device_id
         approve_env['NEMOCLAW_OPENCLAW_PENDING_FD'] = str(clone_pending_snapshot_fd)
@@ -234,13 +235,15 @@ def exit_with_receipt(receipt):
             clone_identity_snapshot_fd,
         )
     else:
-        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)`
+        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`
     : "approve_env = gateway_approval_env(os.environ)";
   const pairedTokenSuccess = options.localDeviceOnly
     ? `            if local_approval_auth_mode == 'paired-token':
                 previous_approval_token = local_paired_operator_token
                 approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
                 approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+                approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
                 local_paired_operator_token = ''
                 if not sync_approved_clone_device_auth(device, previous_approval_token):
                     ${exitWithReceipt("approve-failed")}
@@ -255,6 +258,7 @@ def exit_with_receipt(receipt):
             previous_approval_token = local_paired_operator_token
             approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
             approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+            approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
             local_paired_operator_token = ''
             if not sync_approved_clone_device_auth(device, previous_approval_token):
                 ${exitWithReceipt("approve-failed")}
@@ -272,6 +276,7 @@ def exit_with_receipt(receipt):
         previous_approval_token = local_paired_operator_token
         approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
         local_paired_operator_token = ''
         observe_deadline = time.monotonic() + ${AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
         while not sync_approved_clone_device_auth(device, previous_approval_token):

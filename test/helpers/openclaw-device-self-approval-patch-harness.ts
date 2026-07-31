@@ -76,7 +76,7 @@ function setForceDevicePairing(value) {
 }
 function setForcedDeviceIdentity(identity, expectedDeviceId) {
   forcedDeviceIdentity = identity;
-  process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
+  process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING = "1";
   if (expectedDeviceId === undefined) delete process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID;
   else process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID = expectedDeviceId;
 }
@@ -136,7 +136,7 @@ function setPairingLists(localList, liveList = localList) {
   pairingList = liveList;
 }
 function setPairedTokenEnvironment(overrides = {}) {
-  process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
+  process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING = "1";
   descriptorFiles.clear();
   descriptorReads.length = 0;
   const pendingFd = Object.hasOwn(overrides, "pendingFd") ? overrides.pendingFd : "41";
@@ -178,7 +178,7 @@ async function callGateway(options) {
   gatewayCalls.push({
     ...options,
     credentialSource: options.token ? "option" : process.env.OPENCLAW_GATEWAY_TOKEN ? "environment" : "none",
-    signedIdentityForced: process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1",
+    signedIdentityForced: process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1" || process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1",
     cliArgUrl: options.cliArgUrl,
     cliArgToken: options.cliArgToken,
     cliArgPassword: options.cliArgPassword
@@ -393,7 +393,7 @@ function loadOrCreateDeviceIdentity(filePath = resolveDefaultIdentityPath()) {
   }
 }
 function setForcedIdentityDescriptor(fd, value) {
-  process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
+  process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING = "1";
   if (fd === undefined) delete process.env.NEMOCLAW_OPENCLAW_IDENTITY_FD;
   else process.env.NEMOCLAW_OPENCLAW_IDENTITY_FD = fd;
   descriptorFiles.clear();
@@ -403,7 +403,7 @@ function setForcedIdentityDescriptor(fd, value) {
   }
 }
 function clearForcedIdentityDescriptor() {
-  delete process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+  delete process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
   delete process.env.NEMOCLAW_OPENCLAW_IDENTITY_FD;
 }
 function identityStats() {
