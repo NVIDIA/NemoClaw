@@ -110,7 +110,7 @@ dcode -n "Summarize this repository" --json
 dcode status
 ```
 
-For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#use-the-harness).
+For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
 
 </AgentOnly>
 
@@ -1067,7 +1067,7 @@ Bare invocations run `dcode`, and `--help` runs `dcode --help`.
 Use `dcode -n` for explicit headless automation when you are already connected to the sandbox, or use `$$nemoclaw <name> agent -n "<task>"` from the host.
 Add `--json` to either form for one managed, versioned JSON envelope on stdout.
 The host wrapper forwards the flag to `dcode`.
-For the schema, status and exit behavior, and 1 MiB output limit, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#use-the-harness).
+For the schema, status and exit behavior, and 1 MiB output limit, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
 The host wrapper keeps `HOME=/sandbox`, the managed proxy environment, and the manifest-declared Deep Agents config path aligned with `connect`.
 Interactive `$$nemoclaw <name> agent` launches the same terminal TUI as `dcode`.
 Headless `$$nemoclaw <name> agent -n "<task>"` uses the managed headless boundary, where non-shell tools can auto-run without the interactive approval UI.
@@ -1393,7 +1393,8 @@ A successful recovery clears the stale stopped-container failure.
 If OpenShell already reports the registered Docker-driver sandbox as present and `Ready`, status verifies the OpenClaw gateway and host forward.
 It recovers either component when the verification reports it absent.
 </AgentOnly>
-If Docker readiness or the agent delivery chain cannot be proven, status exits non-zero and reports the failed recovery layer.
+When status finds the sandbox but cannot prove its agent delivery chain, it exits non-zero and reports the `sandbox_recovery_failed` state.
+Address the reported recovery layer, then run the displayed `$$nemoclaw <sandbox-name> recover` command.
 <AgentOnly variant="openclaw,hermes">
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to the `sandbox_dashboard_port_conflict` failure layer with the message `sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 </AgentOnly>
