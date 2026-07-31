@@ -6,7 +6,7 @@ import {
   buildExecutionEvidence,
   type ExecutionEvidence,
   type ManagedImageEvidence,
-  type ProviderReceipt,
+  type NonEmptyProviderReceipts,
 } from "../registry/parity-evidence.ts";
 import {
   executionPreparationKey,
@@ -40,7 +40,7 @@ export interface RuntimeLifecycleEvidence {
   fsmTrace: readonly FsmTransition[];
   terminalOutcome: TerminalOutcome;
   userVisibleState: JsonValue;
-  providerReceipts: readonly ProviderReceipt[];
+  providerReceipts: NonEmptyProviderReceipts;
 }
 
 /**
@@ -53,7 +53,7 @@ export interface RuntimeProviderEnvironment {
 
 export interface RuntimeProviderLifecycle {
   executeAdapter(adapterId: string, request: RuntimeAdapterRequest): Promise<void>;
-  cleanup(identity: ExactWorkloadIdentity): Promise<readonly ProviderReceipt[]>;
+  cleanup(identity: ExactWorkloadIdentity): Promise<NonEmptyProviderReceipts>;
 }
 
 export interface RuntimeProviderState {
@@ -75,6 +75,23 @@ export interface RuntimeExecutionRequest {
     headSha: string;
     baseSha: string;
   };
+}
+
+async function cleanupAfterExecutionFailure(
+  provider: RuntimeProviderFixture,
+  workload: ExactWorkloadIdentity,
+  executionError: unknown,
+): Promise<never> {
+  try {
+    await provider.lifecycle.cleanup(workload);
+  } catch (cleanupError) {
+    throw new AggregateError(
+      [executionError, cleanupError],
+      "Runtime case execution failed and provider cleanup also failed",
+      { cause: executionError },
+    );
+  }
+  throw executionError;
 }
 
 /**
@@ -114,8 +131,12 @@ export async function executeRuntimeCaseThroughProvider(
     logicalId: runtimeCase.identities.sandbox,
   });
   let lifecycle: RuntimeLifecycleEvidence;
-  let cleanupReceipts: readonly ProviderReceipt[] = [];
   try {
+    if (workload.logicalId !== runtimeCase.identities.sandbox) {
+      throw new Error(
+        `workload.logicalId '${workload.logicalId}' does not match case sandbox identity '${runtimeCase.identities.sandbox}'`,
+      );
+    }
     for (const binding of runtimeCase.obligationBindings) {
       await binding.adapter.execute(provider, {
         caseId: runtimeCase.id,
@@ -127,9 +148,10 @@ export async function executeRuntimeCaseThroughProvider(
       caseId: runtimeCase.id,
       workload,
     });
-  } finally {
-    cleanupReceipts = await provider.lifecycle.cleanup(workload);
+  } catch (executionError) {
+    return cleanupAfterExecutionFailure(provider, workload, executionError);
   }
+  const cleanupReceipts = await provider.lifecycle.cleanup(workload);
 
   return buildExecutionEvidence({
     resolved: request.resolved,

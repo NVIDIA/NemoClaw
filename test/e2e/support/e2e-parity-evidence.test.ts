@@ -15,6 +15,8 @@ import {
   compareParityEvidence,
   type ExecutionEvidenceInput,
   fingerprintDesiredState,
+  type NonEmptyProviderReceipts,
+  type ProviderReceipt,
 } from "../registry/parity-evidence.ts";
 import {
   compileRuntimeMatrix,
@@ -129,7 +131,7 @@ describe("cross-runtime parity evidence", () => {
     expect(() => buildExecutionEvidence(badImage)).toThrow(/exact sha256 digest/);
 
     const missingReceipt = evidenceInput("docker");
-    missingReceipt.providerReceipts = [];
+    missingReceipt.providerReceipts = [] as unknown as NonEmptyProviderReceipts;
     expect(() => buildExecutionEvidence(missingReceipt)).toThrow(/provider receipt/);
 
     const wrongWorkload = evidenceInput("docker");
@@ -164,6 +166,51 @@ describe("cross-runtime parity evidence", () => {
     expect(() => buildExecutionEvidence(forgedResolution)).toThrow(
       /resolution was not issued by resolveRuntimeCase/,
     );
+  });
+
+  it("rejects non-string receipt identities and omits unknown receipt fields", () => {
+    const missingKind = evidenceInput("docker");
+    missingKind.providerReceipts = [
+      {
+        kind: undefined,
+        operationId: "docker.prepare",
+        value: {},
+      } as unknown as ProviderReceipt,
+    ];
+    expect(() => buildExecutionEvidence(missingKind)).toThrow(
+      /provider receipt kind must be a string/,
+    );
+
+    const missingOperationId = evidenceInput("docker");
+    missingOperationId.providerReceipts = [
+      {
+        kind: "prepare",
+        operationId: undefined,
+        value: {},
+      } as unknown as ProviderReceipt,
+    ];
+    expect(() => buildExecutionEvidence(missingOperationId)).toThrow(
+      /provider receipt operationId must be a string/,
+    );
+
+    const extraField = evidenceInput("docker");
+    extraField.providerReceipts = [
+      {
+        kind: "prepare",
+        operationId: "docker.prepare",
+        value: { fixture: true },
+        providerPrivateField: "must-not-persist",
+      } as ProviderReceipt,
+    ];
+    const evidence = buildExecutionEvidence(extraField);
+    expect(evidence.providerReceipts).toEqual([
+      {
+        kind: "prepare",
+        operationId: "docker.prepare",
+        value: { fixture: true },
+      },
+    ]);
+    expect(evidence.providerReceipts[0]).not.toHaveProperty("providerPrivateField");
   });
 
   it("publishes provider receipts through the redacting artifact boundary", async () => {

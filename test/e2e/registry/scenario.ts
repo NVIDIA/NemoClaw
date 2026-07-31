@@ -234,13 +234,13 @@ export function defineRuntimeScenario(input: RuntimeNeutralScenario): RuntimeNeu
   assertUniqueIds(input.journey, input.id, "journey step");
   const journey = input.journey.map((step) => {
     assertExecutionFoundationId(step.action, "Journey action");
-    return Object.freeze({ ...step });
+    return Object.freeze({ id: step.id, action: step.action });
   });
 
   assertUniqueIds(input.supportObligations, input.id, "obligation");
   const supportObligations = input.supportObligations.map((obligation) =>
     Object.freeze({
-      ...obligation,
+      id: obligation.id,
       description: normalizeDescription(
         obligation.description,
         `Runtime scenario '${input.id}' obligation '${obligation.id}'`,
@@ -256,7 +256,8 @@ export function defineRuntimeScenario(input: RuntimeNeutralScenario): RuntimeNeu
   assertTerminalMatchesTrace(fsmTrace, terminalOutcome, "assertions.terminalOutcome");
 
   return Object.freeze({
-    ...input,
+    id: input.id,
+    agent: input.agent,
     description,
     journey: Object.freeze(journey),
     requiredCapabilities: normalizeCapabilities(

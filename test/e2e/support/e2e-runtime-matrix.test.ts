@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, expect, it } from "vitest";
 
 import {
+  type ExactWorkloadIdentity,
   executeRuntimeCaseThroughProvider,
   type RuntimeProviderFixture,
 } from "../fixtures/runtime-provider.ts";
@@ -337,6 +338,85 @@ describe("cross-runtime E2E matrix compiler", () => {
         ),
       );
     }
+  });
+
+  it("rejects an inspected workload mismatch before executing obligations and still cleans it", async () => {
+    const matrix = compileRuntimeMatrix(foundationDefinition());
+    const runtimeCase = matrix.cases.find(
+      (entry) => entry.scenario.agent === "openclaw" && entry.profile.provider === "docker",
+    );
+    assert.ok(runtimeCase, "Missing Docker OpenClaw fixture case");
+    const resolved = resolveRuntimeCase(matrix, {
+      scenarioId: runtimeCase.scenario.id,
+      profileId: runtimeCase.profile.id,
+    });
+    const adapterCalls: string[] = [];
+    const cleanedWorkloads: ExactWorkloadIdentity[] = [];
+    const provider = fakeRuntimeProvider(runtimeCase.profile, adapterCalls);
+    const inspectedWorkload = {
+      logicalId: "provider-returned-wrong-sandbox",
+      providerResourceId: "docker://fixture/provider-returned-wrong-sandbox",
+      managedImages: [{ role: "agent", digest: `sha256:${"b".repeat(64)}` }],
+    };
+    provider.state.inspectWorkload = async () => inspectedWorkload;
+    provider.lifecycle.cleanup = async (workload) => {
+      cleanedWorkloads.push(workload);
+      return [
+        {
+          kind: "cleanup",
+          operationId: "docker.cleanup-mismatched-workload",
+          value: { fixture: true },
+        },
+      ];
+    };
+
+    await expect(
+      executeRuntimeCaseThroughProvider({
+        resolved,
+        provider,
+        source: {
+          headSha: "0123456789abcdef0123456789abcdef01234567",
+          baseSha: "89abcdef0123456789abcdef0123456789abcdef",
+        },
+      }),
+    ).rejects.toThrow(/does not match case sandbox identity/);
+    expect(adapterCalls).toEqual([]);
+    expect(cleanedWorkloads).toEqual([inspectedWorkload]);
+  });
+
+  it("keeps the execution failure as the cause when cleanup also fails", async () => {
+    const matrix = compileRuntimeMatrix(foundationDefinition());
+    const runtimeCase = matrix.cases.find(
+      (entry) => entry.scenario.agent === "openclaw" && entry.profile.provider === "docker",
+    );
+    assert.ok(runtimeCase, "Missing Docker OpenClaw fixture case");
+    const resolved = resolveRuntimeCase(matrix, {
+      scenarioId: runtimeCase.scenario.id,
+      profileId: runtimeCase.profile.id,
+    });
+    const executionError = new Error("adapter execution failed");
+    const cleanupError = new Error("provider cleanup failed");
+    const provider = fakeRuntimeProvider(runtimeCase.profile);
+    provider.lifecycle.executeAdapter = async () => {
+      throw executionError;
+    };
+    provider.lifecycle.cleanup = async () => {
+      throw cleanupError;
+    };
+
+    await expect(
+      executeRuntimeCaseThroughProvider({
+        resolved,
+        provider,
+        source: {
+          headSha: "0123456789abcdef0123456789abcdef01234567",
+          baseSha: "89abcdef0123456789abcdef0123456789abcdef",
+        },
+      }),
+    ).rejects.toMatchObject({
+      cause: executionError,
+      errors: [executionError, cleanupError],
+    });
   });
 
   it("compiles optional runtime metadata through the existing target run-plan path", () => {
