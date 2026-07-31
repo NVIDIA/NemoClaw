@@ -30,9 +30,11 @@
  * same live gateway through local loopback. For a restored pairing-only clone,
  * the approval child drops config/shared-auth overrides, pins the clone's
  * loopback URL, and accepts only its descriptor-backed identity and pairing
- * snapshots. The reviewed dist patch then forces OpenClaw's existing local-only
- * stored-device-auth path for that exact bounded self-repair shape so a shared
- * token reloaded from config cannot take precedence. Remove this compatibility
+ * snapshots. The reviewed dist patch uses only the descriptor-backed
+ * pairing token for the pinned loopback gateway and disables pathname-backed
+ * stored authentication for that exact self-repair shape. It requires a
+ * matching live preflight before one canonical approval, then synchronizes the
+ * rotated token into the clone's client-auth store. Remove this compatibility
  * path when OpenClaw can complete scope upgrades natively through device-token
  * auth using operator.pairing.
  */
