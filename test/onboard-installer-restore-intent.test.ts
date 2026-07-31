@@ -37,6 +37,7 @@ describe("createSandbox installer restore intent", () => {
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
@@ -247,6 +248,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});

@@ -30,6 +30,7 @@ describe("onboard helpers", () => {
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -110,6 +111,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -223,6 +225,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -373,6 +376,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -497,6 +501,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -645,6 +650,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -766,6 +772,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -898,6 +905,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -1043,6 +1051,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -1182,6 +1191,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});

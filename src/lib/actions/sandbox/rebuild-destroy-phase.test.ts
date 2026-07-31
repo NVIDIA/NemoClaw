@@ -210,6 +210,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         log: vi.fn(),
         bail,

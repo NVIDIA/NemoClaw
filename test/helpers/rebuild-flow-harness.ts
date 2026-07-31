@@ -53,6 +53,7 @@ const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
+const gatewayTeardownAuthority = requireDist("../../onboard/gateway-teardown-authority.js");
 const shields = requireDist("../../shields/index.js");
 
 type RebuildFlowStep = {
@@ -332,6 +333,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });

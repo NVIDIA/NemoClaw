@@ -33,6 +33,7 @@ const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 const sandboxList = requireDist("../../openshell-sandbox-list.js");
 const resolve = requireDist("../../adapters/openshell/resolve.js");
+const gatewayTeardownAuthority = requireDist("../../onboard/gateway-teardown-authority.js");
 const agentDefs = requireDist("../../agent/defs.js");
 const agentRuntime = requireDist("../../agent/runtime.js");
 const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
@@ -93,6 +94,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
       status: 0,

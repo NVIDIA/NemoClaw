@@ -50,6 +50,7 @@ describe("onboard sandbox recreate reservation safety", () => {
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const onboardSession = require(${onboardSessionPath});
