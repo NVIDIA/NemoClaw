@@ -289,7 +289,7 @@ def verify_cron_backup() -> None:
         target.close()
         source.close()
     # The gateway belongs to the sandbox group and must reopen this replacement ledger for writing.
-    # codeql[py/overly-permissive-file]
+    # lgtm[py/overly-permissive-file]
     os.chmod(staged, 0o660)
     os.replace(staged, path)
     for suffix in ("-wal", "-shm"):
@@ -349,7 +349,7 @@ def verify_discord_backup() -> None:
         target.close()
         source.close()
     # The gateway belongs to the sandbox group and must reopen this replacement ledger for writing.
-    # codeql[py/overly-permissive-file]
+    # lgtm[py/overly-permissive-file]
     os.chmod(staged, 0o660)
     os.replace(staged, path)
 
