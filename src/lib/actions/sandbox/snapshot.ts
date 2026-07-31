@@ -61,7 +61,10 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
-import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
+import {
+  establishRestoredSandboxGatewayPairing,
+  waitForRestoredSandboxGatewaySupervisor,
+} from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -407,6 +410,15 @@ async function autoCreateSandboxFromSource(
         ? dstDashboardPort
         : (srcEntry as SandboxEntry).hermesDashboardPort,
   });
+
+  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
+  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
+    console.error(
+      `  Sandbox '${dstName}' reached OpenShell Ready, but its managed OpenClaw supervisor did not become ready.`,
+    );
+    console.error("  Snapshot state was not restored into the incomplete clone.");
+    snapshotExit(1);
+  }
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }

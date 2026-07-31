@@ -2725,6 +2725,11 @@ Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
 The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values.
+When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration.
+The target update and peer metadata migration use one registry update.
+Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild.
+Incomplete routes and invalid gateway bindings also stop the rebuild.
+NemoClaw checks the shared route again immediately before deleting the original sandbox.
 Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
 It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
@@ -2932,6 +2937,11 @@ When `dst` does not exist, it is auto-created from the source image.
 For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 No re-onboarding is needed when those prerequisites are present.
+<AgentOnly variant="openclaw">
+After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
+If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
+Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
+</AgentOnly>
 A cross-sandbox restore refuses to clone a source or replace an existing destination whose baseline exclusion transaction needs repair, before it creates or deletes anything.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.

@@ -130,8 +130,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.requiredTests.map((item) => item.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(JSON.stringify(normalized)).not.toMatch(
       /forged|evil\.yaml|gh workflow run|--ref attacker/u,
@@ -296,8 +296,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(normalized.required.every((item) => item.required)).toBe(true);
     expect(normalized.noTargetE2eReason).toBeNull();
@@ -330,7 +330,7 @@ describe("E2E recommendation normalizer", () => {
         required: [],
         optional: [
           {
-            id: "upgrade-stale-sandbox",
+            id: "rebuild-openclaw",
             workflow: E2E_WORKFLOW,
             selectorType: "job",
             reason: "model called the regression optional",
@@ -341,8 +341,8 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toContain("upgrade-stale-sandbox");
-    expect(normalized.optional.map((item) => item.id)).not.toContain("upgrade-stale-sandbox");
+    expect(normalized.required.map((item) => item.id)).toContain("rebuild-openclaw");
+    expect(normalized.optional.map((item) => item.id)).not.toContain("rebuild-openclaw");
   });
 
   it("preserves indirectly selected Hermes jobs in the deterministic risk floor", () => {

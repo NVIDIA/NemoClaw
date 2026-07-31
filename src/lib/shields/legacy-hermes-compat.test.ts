@@ -365,7 +365,7 @@ describe("legacy Hermes shields compatibility", () => {
           return cmd.at(-1) === "/sandbox"
             ? "1775 root:sandbox"
             : cmd.at(-1) === "/sandbox/.hermes"
-              ? "755 root:root"
+              ? "3770 root:sandbox"
               : "444 root:root";
         case cmd[0] === "lsattr":
           return `----i----------- ${cmd.at(-1)}`;
@@ -405,7 +405,7 @@ describe("legacy Hermes shields compatibility", () => {
           return cmd.at(-1) === "/sandbox"
             ? "755 sandbox:sandbox"
             : cmd.at(-1) === "/sandbox/.hermes"
-              ? "755 root:root"
+              ? "3770 root:sandbox"
               : "444 root:root";
         case cmd[0] === "lsattr":
           return `----i----------- ${cmd.at(-1)}`;

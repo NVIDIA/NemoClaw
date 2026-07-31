@@ -1471,8 +1471,11 @@ try:
             os.close(fd)
 
     if action == "lock":
-        os.fchown(config_fd, 0, 0)
-        os.fchmod(config_fd, 0o755)
+        # Root-owned in the sandbox group with set-id/sticky: Hermes keeps
+        # writing its top-level runtime state while the sticky bit stops the
+        # sandbox identity from unlinking the sealed root-owned files (#7865).
+        os.fchown(config_fd, 0, sandbox_gid)
+        os.fchmod(config_fd, 0o3770)
         os.fchown(parent_fd, 0, sandbox_gid)
         os.fchmod(parent_fd, 0o1775)
     else:

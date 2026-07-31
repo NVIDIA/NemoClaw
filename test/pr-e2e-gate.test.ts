@@ -71,8 +71,8 @@ const BROAD_JOBS = [
   "network-policy",
   "onboard-repair",
   "onboard-resume",
+  "rebuild-openclaw",
   "state-backup-restore",
-  "upgrade-stale-sandbox",
 ] as const;
 
 afterEach(() => {
@@ -287,12 +287,7 @@ describe("PR E2E controller", () => {
     expect(validateRiskPlan(focusedPlan, new Set(riskPlanRequiredJobIds(focusedPlan)))).toEqual(
       focusedPlan,
     );
-    expect(riskPlanRequiredJobIds(focusedPlan)).toEqual([
-      "cloud-inference",
-      "cloud-onboard",
-      "security-posture",
-      "token-rotation",
-    ]);
+    expect(riskPlanRequiredJobIds(focusedPlan)).toEqual(["token-rotation"]);
     const targetPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [DCODE_CHECK] });
     expect(validateRiskPlan(targetPlan, new Set(riskPlanRequiredJobIds(targetPlan)))).toEqual(
       targetPlan,
@@ -1397,7 +1392,7 @@ describe("PR E2E controller", () => {
         status: "in_progress",
         output: {
           title: "Running 13 E2E checks",
-          summary: expect.stringContaining("upgrade-stale-sandbox"),
+          summary: expect.stringContaining("rebuild-openclaw"),
         },
       });
       expect(checkUpdates[2]?.body).toMatchObject({

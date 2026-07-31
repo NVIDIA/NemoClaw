@@ -355,6 +355,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test ! -L /usr/local/lib/nemoclaw/dcode-managed-exec",
       `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-managed-exec)" = "0:0:755"`,
       "cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec",
+      "unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
       "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
       "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
@@ -363,6 +364,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(dockerfile).toContain(s);
     }
+    expect(dockerfile.indexOf("unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")).toBeLessThan(
+      dockerfile.indexOf('/usr/local/bin/dcode -n ""'),
+    );
     expect(
       dockerfile
         .split("\n")
