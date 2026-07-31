@@ -200,10 +200,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
-    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "gateway-control.sh"),
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );

@@ -85,11 +85,7 @@ describe("runtime provider central source boundary", () => {
     expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
 
     for (const dockerfile of managedDockerfiles) {
-      expect(dockerfile).toContain(
-        "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
-      );
-      expect(dockerfile).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
-      expect(dockerfile).not.toMatch(/(?:ENTRYPOINT|CMD)\s+\[[^\n]*nemoclaw-managed-bootstrap/iu);
+      expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
       expect(dockerfile).not.toContain("managed-startup-image-runtime.cjs");
       expect(dockerfile).not.toContain("nemoclaw-managed-startup-hold");
     }

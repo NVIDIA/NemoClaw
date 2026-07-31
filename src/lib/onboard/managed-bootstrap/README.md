@@ -20,15 +20,16 @@ original runtime. Provider results are copied into deeply frozen coordinator
 authority, and finalization receipts must either prove exact snapshot restore
 or exact workload absence.
 
-`scripts/managed-bootstrap-trampoline.sh` is copied into each managed image as
+`scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
+that the later all-agent packaging slice will install as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. It authenticates a fixed,
 root-owned request, verifies an identity-bound completion, clears its private
 bootstrap variables and file descriptors, and then uses `exec "$@"` to preserve
 the captured supervisor argument boundaries.
 
-The trampoline is intentionally not an entrypoint and no production TypeScript
-module imports this protocol. The current image definitions also do not package
-`nemoclaw-managed-startup-hold` or
+The trampoline is intentionally not packaged or selected yet, and no production
+TypeScript module imports this protocol. The current image definitions also do
+not package `nemoclaw-managed-startup-hold` or
 `managed-startup-image-runtime.cjs`. A later provider integration must add those
 prerequisites together with their image-runtime bootstrap modes, implement
 driver-specific prepare, durable-record, activate, exact cleanup, and rollback,

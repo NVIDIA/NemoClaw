@@ -163,12 +163,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chown -R root:root /sandbox/.nemoclaw/blueprints");
     expect(dockerfile).toContain("chmod -R 755 /sandbox/.nemoclaw/blueprints");
-    expect(dockerfile).toContain(
-      "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
-    );
-    expect(dockerfile).toContain(
-      "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-bootstrap",
-    );
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
     );
