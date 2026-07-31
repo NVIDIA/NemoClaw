@@ -6,6 +6,13 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  applyDescriptorSnapshotActions,
+  decodeDescriptorSnapshotContent,
+  inspectDescriptorSnapshotRoot,
+  type SnapshotFileIdentity,
+  scanDescriptorSnapshot,
+} from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
 const roots: string[] = [];
@@ -35,6 +42,16 @@ afterEach(() => {
 });
 
 describe("migration snapshot sanitizer fallbacks", () => {
+  const identity: SnapshotFileIdentity = {
+    dev: "1",
+    ino: "2",
+    mode: "16832",
+    nlink: "1",
+    size: "0",
+    mtimeNs: "3",
+    ctimeNs: "4",
+  };
+
   it("fails closed when the descriptor helper is unavailable", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
@@ -53,6 +70,54 @@ describe("migration snapshot sanitizer fallbacks", () => {
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
+  });
+
+  it("rejects every malformed descriptor scan boundary", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    const malformedOutputs = [
+      "not-json",
+      JSON.stringify({ root: identity, directories: [], files: [] }),
+      JSON.stringify({ root: identity, directories: { "nested\\escape": identity }, files: [] }),
+      JSON.stringify({ root: identity, directories: {}, files: [null] }),
+      JSON.stringify({
+        root: identity,
+        directories: {},
+        files: [{ path: "/escape", metadata: identity }],
+      }),
+      JSON.stringify({
+        root: identity,
+        directories: {},
+        files: [{ path: "config.json", metadata: null }],
+      }),
+      JSON.stringify({
+        root: identity,
+        directories: {},
+        files: [{ path: "config.json", metadata: identity, content: 42 }],
+      }),
+    ];
+
+    for (const output of malformedOutputs) {
+      writePythonWrapper([`printf '%s\\n' ${shellQuote(output)}`]);
+      expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+    }
+  });
+
+  it("rejects unsafe roots and non-canonical helper payloads", () => {
+    const root = makeRoot();
+    const filePath = path.join(root, "not-a-directory");
+    writeFileSync(filePath, "content");
+
+    expect(() => inspectDescriptorSnapshotRoot(filePath)).toThrow(/not a safe directory/u);
+    expect(decodeDescriptorSnapshotContent(undefined)).toBeNull();
+    expect(decodeDescriptorSnapshotContent("not-base64!")).toBeNull();
+    expect(decodeDescriptorSnapshotContent("AB==")).toBeNull();
+    expect(
+      applyDescriptorSnapshotActions(
+        { canonicalPath: root, identity },
+        { root: identity, directories: {}, files: [] },
+        [],
+      ),
+    ).toBe(true);
   });
 
   it("fails closed when sanitized output cannot be installed", () => {

@@ -90,7 +90,10 @@ describe("plugin credential-filter", () => {
 
   it("preserves safe placeholders and detects secret-shaped values", () => {
     expect(isSafeCredentialPlaceholder("unused")).toBe(true);
+    expect(isSafeCredentialPlaceholder("Bearer unused")).toBe(true);
     expect(isSafeCredentialPlaceholder("openshell:resolve:env:TOKEN")).toBe(true);
+    expect(isSafeCredentialPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_TOKEN")).toBe(true);
+    expect(isSafeCredentialPlaceholder(null)).toBe(false);
     expect(valueLooksLikeSecret("sk-abcdefghijklmnopqrstuvwxyz")).toBe(true);
     expect(valueLooksLikeSecret("glpat-abcdefghijklmnopqrst")).toBe(true);
     expect(valueLooksLikeSecret("nvcf-abcdefghij")).toBe(true);
@@ -105,6 +108,29 @@ describe("plugin credential-filter", () => {
     expect(result.apiKey).toBeNull();
     expect(result.token).toBeUndefined();
     expect(result.model).toBe("keep");
+  });
+
+  it("strips inline CLI credentials while preserving explicit safe placeholders", () => {
+    expect(
+      stripCredentials([
+        "--api-key=opaque-value",
+        "--token=openshell:resolve:env:SAFE_TOKEN",
+        { password: "opaque-password" },
+        42,
+        "--verbose",
+        "keep-me",
+      ]),
+    ).toEqual([
+      `--api-key=${CREDENTIAL_PLACEHOLDER}`,
+      "--token=openshell:resolve:env:SAFE_TOKEN",
+      { password: CREDENTIAL_PLACEHOLDER },
+      42,
+      "--verbose",
+      "keep-me",
+    ]);
+    expect(stripCredentials(null)).toBeNull();
+    expect(stripCredentials(undefined)).toBeUndefined();
+    expect(stripCredentials("keep-me")).toBe("keep-me");
   });
 
   it("strips secret-shaped env values stored under benign keys", () => {
@@ -122,6 +148,19 @@ describe("plugin credential-filter", () => {
     expect(result).toContain("CUSTOM=[STRIPPED_BY_MIGRATION]");
     expect(result).toContain("ENDPOINT=[STRIPPED_BY_MIGRATION]");
     expect(result).toContain("SAFE=openshell:resolve:env:SAFE");
+  });
+
+  it("preserves comments, malformed assignments, and values without credential signals", () => {
+    const content = [
+      "# comment",
+      "NO_EQUALS",
+      "=missing-key",
+      "export MODEL=keep-me",
+      "TOKEN=unused",
+      "",
+    ].join("\n");
+
+    expect(sanitizeEnvFileContent(content)).toBe(content);
   });
 
   it("excludes auth state basenames from migration copies", () => {

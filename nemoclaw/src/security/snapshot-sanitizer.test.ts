@@ -138,11 +138,30 @@ describe("migration snapshot sanitizer", () => {
     const root = makeRoot();
     writeFileSync(path.join(root, "empty.yaml"), "");
     writeFileSync(path.join(root, "comments.yaml"), "# retained context\n");
+    writeFileSync(path.join(root, "notes.txt"), "retained context\n");
 
     sanitizeMigrationDirectory(root);
 
     expect(readFileSync(path.join(root, "empty.yaml"), "utf-8")).toBe("");
     expect(readFileSync(path.join(root, "comments.yaml"), "utf-8")).toBe("# retained context\n");
+    expect(readFileSync(path.join(root, "notes.txt"), "utf-8")).toBe("retained context\n");
+  });
+
+  it("handles required-config path, presence, format, and stable-content boundaries", () => {
+    const root = makeRoot();
+    expect(sanitizeOpenClawConfigFile(".")).toBe(false);
+    expect(sanitizeOpenClawConfigFile(path.join(root, "missing", "openclaw.json"))).toBe(false);
+    expect(sanitizeOpenClawConfigFile(path.join(root, "openclaw.json"))).toBe(false);
+
+    const textPath = path.join(root, "openclaw.txt");
+    writeFileSync(textPath, "not a supported config format\n");
+    expect(sanitizeOpenClawConfigFile(textPath)).toBe(false);
+
+    const safePath = path.join(root, "openclaw.json");
+    const safeContent = JSON.stringify({ model: "keep-me" }, null, 2);
+    writeFileSync(safePath, safeContent);
+    expect(sanitizeOpenClawConfigFile(safePath)).toBe(true);
+    expect(readFileSync(safePath, "utf-8")).toBe(safeContent);
   });
 
   it.runIf(process.platform !== "win32")(
