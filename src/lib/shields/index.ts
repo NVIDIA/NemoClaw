@@ -2650,9 +2650,13 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   fs.writeFileSync(snapshotPath, policyYaml, { mode: 0o600 });
   console.log(`  Saved: ${snapshotPath}`);
 
-  // 2. Determine and apply relaxed policy
-  let policyFile: string;
-  let policyFileIsTemp = false;
+  // 2. Resolve the relaxed policy source. An unknown policy has to fail here,
+  //    before any mutation, but a permissive policy is only materialized at
+  //    apply time below: the merge writes the permissive runtime temp
+  //    directory, and the apply's try/finally is the only thing that can
+  //    remove it. Building it here would leak that directory down every early
+  //    exit in between.
+  let resolvePolicyFile: () => { path: string; isTemp: boolean };
   if (policyName === "permissive") {
     const basePath = resolvePermissivePolicyPath(sandboxName);
     // Union the live sandbox's filesystem_policy.read_only/read_write into
@@ -2662,13 +2666,16 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     // etc.) are not present in the static YAML. See #3942, #3957, #3168.
     // policyYaml is the pre-parsed body we already captured for the
     // snapshot above — reuse it instead of re-fetching.
-    policyFile = buildRuntimePermissivePolicy(basePath, {
-      livePolicyYaml: policyYaml,
-      readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
-    });
-    policyFileIsTemp = policyFile !== basePath;
+    resolvePolicyFile = () => {
+      const merged = buildRuntimePermissivePolicy(basePath, {
+        livePolicyYaml: policyYaml,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      return { path: merged, isTemp: merged !== basePath };
+    };
   } else if (fs.existsSync(policyName)) {
-    policyFile = path.resolve(policyName);
+    const resolved = path.resolve(policyName);
+    resolvePolicyFile = () => ({ path: resolved, isTemp: false });
   } else {
     console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
     return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
@@ -2786,11 +2793,13 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   }
 
   console.log(`  Applying ${policyName} policy...`);
+  let policyFile: { path: string; isTemp: boolean } | null = null;
   try {
-    run(buildPolicySetCommand(policyFile, sandboxName));
+    policyFile = resolvePolicyFile();
+    run(buildPolicySetCommand(policyFile.path, sandboxName));
   } finally {
-    if (policyFileIsTemp) {
-      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+    if (policyFile?.isTemp) {
+      cleanupTempDir(policyFile.path, "nemoclaw-permissive-runtime");
     }
   }
 

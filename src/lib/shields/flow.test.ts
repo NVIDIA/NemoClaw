@@ -18,6 +18,20 @@ const childReadyPath = process.argv[3];
 spawn(process.execPath, [childScriptPath, childReadyPath], { stdio: "ignore" });
 setInterval(() => {}, 60000);
 `;
+// A real `openshell policy get --base` always advertises filesystem paths, so
+// shields-down merges them into the permissive baseline and applies the result
+// from the permissive runtime temp directory instead of the static YAML.
+const LIVE_POLICY_WITH_FILESYSTEM_PATHS = [
+  "version: 1",
+  "filesystem_policy:",
+  "  read_only:",
+  "    - /etc",
+  "  read_write:",
+  "    - /opt/hermes",
+  "network_policies:",
+  "  test: {}",
+  "",
+].join("\n");
 const WEAKENING_CHILD_SOURCE = `
 const fs = require("node:fs");
 const childReadyPath = process.argv[2];
@@ -61,6 +75,7 @@ type HarnessOptions = {
     send: () => boolean;
     kill: () => boolean;
   };
+  livePolicyYaml?: string;
   run?: (cmd: unknown) => { status: number };
 };
 
@@ -90,7 +105,9 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   let openClawPosture: "locked" | "mutable" = "mutable";
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
-  vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
+  vi.spyOn(runner, "runCapture").mockReturnValue(
+    options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
+  );
   const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
     return options.run ? options.run(cmd) : { status: 0 };
   });
@@ -872,6 +889,49 @@ describe("shields command flow", () => {
       snapshotPath: expect.stringContaining("policy-snapshot-"),
     });
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+  });
+
+  it("applies the merged permissive policy and removes the permissive runtime temp directory once applied (#7964)", () => {
+    const harness = createHarness({ livePolicyYaml: LIVE_POLICY_WITH_FILESYSTEM_PATHS });
+    const policy = requireDist("../policy/index.js");
+    const systemTemp = fs.mkdtempSync(path.join(tmpDir, "system-temp-"));
+    vi.stubEnv("TMPDIR", systemTemp);
+    let appliedPolicyPath = "";
+    let appliedPolicyBody = "";
+    vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((policyPath: unknown) => {
+      appliedPolicyPath = String(policyPath);
+      appliedPolicyBody = fs.readFileSync(appliedPolicyPath, "utf-8");
+      return ["openshell", "policy", "set"];
+    });
+
+    harness.shieldsDown("openclaw", { skipTimer: true, throwOnError: true });
+
+    const appliedPolicyDir = path.dirname(appliedPolicyPath);
+    expect(path.dirname(appliedPolicyDir)).toBe(systemTemp);
+    expect(path.basename(appliedPolicyDir)).toMatch(/^nemoclaw-permissive-runtime-/);
+    expect(appliedPolicyBody).toContain("/opt/hermes");
+    expect(fs.readdirSync(systemTemp)).toEqual([]);
+  });
+
+  it("removes the permissive runtime temp directory when the auto-restore timer cannot start (#7964)", () => {
+    const harness = createHarness({
+      livePolicyYaml: LIVE_POLICY_WITH_FILESYSTEM_PATHS,
+      fork: () => ({
+        pid: 0,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
+      }),
+    });
+    const systemTemp = fs.mkdtempSync(path.join(tmpDir, "system-temp-"));
+    vi.stubEnv("TMPDIR", systemTemp);
+
+    expect(() => harness.shieldsDown("openclaw", { timeout: "5m", throwOnError: true })).toThrow(
+      /Cannot start auto-restore timer/,
+    );
+
+    expect(fs.readdirSync(systemTemp)).toEqual([]);
   });
 
   it("shieldsUp refuses to mark lockdown active when the saved restrictive policy snapshot is missing", () => {
