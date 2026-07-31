@@ -82,19 +82,21 @@ export function resolveSandboxWorkloadRuntimeCapabilities(
   nodeArchitecture: string = process.arch,
 ): SandboxWorkloadRuntimeCapabilities {
   const profile = Object.hasOwn(profiles, plan.driverName) ? profiles[plan.driverName] : undefined;
+  const support = profile?.support;
   const hostPlatform = managedImagePlatformForNodeArchitecture(nodeArchitecture);
   const supportedHost =
     hostPlatform !== null &&
-    profile?.support !== null &&
+    support !== undefined &&
+    support !== null &&
     profile?.hostArchitectures.includes(hostOciArchitecture(nodeArchitecture)) === true &&
-    profile?.support.platforms.includes(hostPlatform) === true;
+    support.platforms.includes(hostPlatform);
   return {
     driverName: plan.driverName,
     managedImageSelectionPolicy: profile?.managedImageSelectionPolicy ?? "require-managed",
     legacyDockerfileBuilds: profile?.legacyDockerfileBuilds ?? false,
     managedImages:
-      profile === undefined || profile.support === null || !supportedHost
+      support === undefined || support === null || !supportedHost
         ? null
-        : cloneRuntimeSupport(profile.support, hostPlatform),
+        : cloneRuntimeSupport(support, hostPlatform),
   };
 }
