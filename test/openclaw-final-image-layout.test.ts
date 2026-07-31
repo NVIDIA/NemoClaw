@@ -91,6 +91,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
           "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/",
@@ -171,6 +172,7 @@ describe("OpenClaw final image layout", () => {
       "RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0",
     );
     const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
+    expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
 
     expect(dependency).toBeLessThan(tarPatch);
