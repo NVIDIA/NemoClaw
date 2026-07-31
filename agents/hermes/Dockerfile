@@ -194,7 +194,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ef38c4b7817d7ec5865f3f7c7cf6c7a2bdb7d9fdba4969479aaa7d4fa76fd5b3
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b21db6d098920a6bb410cccca4778e2817a57b66307212ef3422e6cafdfd67b4
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \

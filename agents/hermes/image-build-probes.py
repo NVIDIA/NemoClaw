@@ -273,6 +273,8 @@ def verify_cron_create() -> None:
 def verify_cron_backup() -> None:
     import os
     import sqlite3
+    import stat
+    import subprocess
 
     path = Path("/sandbox/.hermes/runtime/cron-executions.db")
     staged = path.with_name(".nemoclaw-cron-executions-staged")
@@ -289,7 +291,8 @@ def verify_cron_backup() -> None:
         target.close()
         source.close()
     # The gateway belongs to the sandbox group and must reopen this replacement ledger for writing.
-    os.chmod(staged, 0o660)  # lgtm[py/overly-permissive-file]
+    subprocess.run(["chmod", "0660", "--", str(staged)], check=True)
+    assert stat.S_IMODE(staged.stat().st_mode) == 0o660
     os.replace(staged, path)
     for suffix in ("-wal", "-shm"):
         path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
@@ -332,6 +335,8 @@ def verify_discord_create() -> None:
 def verify_discord_backup() -> None:
     import os
     import sqlite3
+    import stat
+    import subprocess
 
     path = Path("/sandbox/.hermes/gateway/discord_message_recovery.db")
     staged = path.with_name(".nemoclaw-discord-recovery-staged")
@@ -348,7 +353,8 @@ def verify_discord_backup() -> None:
         target.close()
         source.close()
     # The gateway belongs to the sandbox group and must reopen this replacement ledger for writing.
-    os.chmod(staged, 0o660)  # lgtm[py/overly-permissive-file]
+    subprocess.run(["chmod", "0660", "--", str(staged)], check=True)
+    assert stat.S_IMODE(staged.stat().st_mode) == 0o660
     os.replace(staged, path)
 
 
