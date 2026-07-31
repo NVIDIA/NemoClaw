@@ -41,12 +41,12 @@
 #     change) or a redesigned dashboard/runtime contract that no longer
 #     needs an `sk-`-prefixed placeholder in the rendered config.
 #   - Regression test: `test/hermes-gateway-wrapper.test.ts` —
-#     `masks every api_key emitted by buildHermesConfig ...` derives a
-#     fixture from `buildHermesConfig()` and asserts no raw placeholder
+#     `masks every api_key emitted by the managed policy ...` derives a
+#     fixture from `buildHermesManagedPolicy()` and asserts no raw placeholder
 #     survives in stdout for `config show`.
 #   - Removal condition: delete the `config show` branch when Hermes CLI
-#     redacts credential-shaped fields natively or `buildHermesConfig` stops
-#     emitting an inline `api_key` value.
+#     redacts credential-shaped fields natively or `buildHermesManagedPolicy`
+#     stops emitting an inline `api_key` value.
 #
 # Source-of-truth note for the `_translate_resumed_oneshot` parser
 # differential risk (NVIDIA/NemoClaw#5254):

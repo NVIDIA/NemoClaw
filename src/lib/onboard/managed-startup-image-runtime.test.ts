@@ -843,7 +843,7 @@ describe("managed startup image runtime", () => {
     expect(() => readStableRegularFile(target, 1024)).toThrow(/changed while it was read/u);
   });
 
-  it("promotes generated Hermes policy to one immutable runtime artifact", () => {
+  it("promotes generated Hermes policy to one root-owned, read-only runtime artifact", () => {
     const directory = temporaryDirectory();
     const shareDirectory = path.join(directory, "share");
     const source = path.join(directory, "managed-policy.json");
