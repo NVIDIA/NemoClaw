@@ -32,6 +32,18 @@ const SQLITE_RESTORE_PY = [
   "    src_conn.close()",
 ].join("\n");
 
+const SQLITE_WRITE_CHECK_PY = [
+  "import sqlite3, sys",
+  "dst = sys.argv[1]",
+  "conn = sqlite3.connect(dst, timeout=30)",
+  "try:",
+  "    conn.execute('PRAGMA busy_timeout=30000')",
+  "    conn.execute('BEGIN IMMEDIATE')",
+  "    conn.execute('ROLLBACK')",
+  "finally:",
+  "    conn.close()",
+].join("\n");
+
 function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
@@ -44,13 +56,18 @@ export function buildStateFileRestoreCommand(
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
-    // The agent gateway process can own the live database under a distinct
-    // uid. Even when its parent and file are intentionally group-writable,
-    // restoring in place would expose a partially replaced SQLite file to the
-    // gateway. Validate the backup into a staged database the restoring user
-    // owns, then replace the target atomically through the group-writable
-    // parent. The stale WAL/SHM sidecars belong to the replaced database, so
-    // drop them after the swap (#7312).
+    // The agent gateway can own the live database under a distinct uid, so
+    // restoring in place can fail for the sandbox user and expose a partially
+    // replaced SQLite file to the gateway (#7312). Validate the backup into a
+    // staged database this user owns, then replace the target atomically;
+    // replacement only needs write permission on the parent directory. The
+    // stale WAL/SHM sidecars belong to the replaced database, so drop them.
+    //
+    // A successful swap does not prove the agent can persist to the result, so
+    // open a write transaction against the replaced database before reporting
+    // success. The check runs under the same umask as the restore so its own
+    // sidecars stay group-writable, and both sidecar pairs are dropped: the
+    // stale ones before the check reads them, the check's own after it ends.
     return [
       `dst=${quotedRemotePath}`,
       'parent="$(dirname "$dst")"',
@@ -59,12 +76,14 @@ export function buildStateFileRestoreCommand(
       'mkdir -p "$parent"',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-restore.XXXXXX)"',
       'staged="$(mktemp "${parent}/.nemoclaw-sqlite-staged.XXXXXX")"',
-      'trap \'rm -f "$tmp" "$staged"\' EXIT',
+      'trap \'rm -f "$tmp" "$staged" "${staged}-wal" "${staged}-shm"\' EXIT',
       'cat > "$tmp"',
       'chmod 600 "$tmp"',
       `(umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$staged")`,
       'chmod 660 "$staged"',
       'mv -f "$staged" "$dst"',
+      'rm -f -- "${dst}-wal" "${dst}-shm"',
+      `(umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_WRITE_CHECK_PY)} "$dst") || { echo "restored database is not writable: $dst" >&2; exit 12; }`,
       'rm -f -- "${dst}-wal" "${dst}-shm"',
     ].join(" && ");
   }

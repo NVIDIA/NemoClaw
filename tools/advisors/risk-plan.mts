@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 8 as const;
+export const RISK_PLAN_VERSION = 9 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -93,11 +93,6 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
-  ".github/workflows/pr-e2e-gate.yaml",
-  "tools/e2e/pr-e2e-gate.mts",
-  "tools/e2e/pr-e2e-required.mts",
-]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
@@ -112,6 +107,7 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/live/cloud-onboard.test.ts",
   "test/e2e/risk-signal-reporter.ts",
 ]);
+const E2E_SUPPORT_FILE = /^test\/e2e\/support\//;
 const FOCUSED_E2E_SUMMARY =
   "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
 const FOCUSED_E2E_INVARIANTS = [
@@ -179,7 +175,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Upgrade, rebuild, snapshot, and restore operations must preserve user state while replacing stale runtime state.",
     tier: 2,
-    requiredJobs: ["upgrade-stale-sandbox", "state-backup-restore"],
+    requiredJobs: ["rebuild-openclaw", "state-backup-restore"],
     invariants: [
       "host and in-sandbox runtime versions agree after mutation",
       "credentials, policy, messaging, and workspace state survive intended preservation paths",
@@ -368,6 +364,7 @@ function normalizeFocusedE2eJobs(
 
 function isRuntimeRelevant(file: string): boolean {
   if (RISK_RELEVANT_TEST_FILES.has(file)) return true;
+  if (E2E_SUPPORT_FILE.test(file)) return false;
   if (file.startsWith("tools/e2e/") || file.startsWith("test/e2e/")) {
     return !/\.(?:md|mdx)$/u.test(file);
   }
@@ -391,8 +388,13 @@ export function buildRiskPlan(options: {
 }): RiskPlan {
   const changedFiles = stableUnique(options.changedFiles);
   const runtimeFiles = changedFiles.filter(isRuntimeRelevant);
+  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
+  const focusedLiveFiles = new Set(focusedE2eJobs.flatMap((selection) => selection.matchedFiles));
   const staticFamilies: RiskPlanFamily[] = RISK_RULES.flatMap((rule) => {
-    const matchedFiles = runtimeFiles.filter(rule.matches);
+    const matchedFiles = runtimeFiles.filter(
+      (file) =>
+        rule.matches(file) && !(rule.id === "e2e-control-plane" && focusedLiveFiles.has(file)),
+    );
     if (matchedFiles.length === 0) return [];
     return [
       {
@@ -406,7 +408,6 @@ export function buildRiskPlan(options: {
       },
     ];
   });
-  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
   const focusedE2eTargets = normalizeFocusedE2eJobs(
     focusedPrE2eTargetsForChangedFiles(changedFiles),
     changedFiles,
@@ -503,11 +504,4 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
 
 export function riskPlanRequiredTargetIds(plan: RiskPlan): string[] {
   return plan.requiredTargets.map((target) => target.id);
-}
-
-export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
-  const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return (
-    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
-  );
 }

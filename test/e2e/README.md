@@ -103,6 +103,32 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
+## Retired selector compatibility
+
+PR gate requests using the retired `sandbox-rebuild` and
+`upgrade-stale-sandbox` job or target selectors run focused replacement tests
+through the compatibility controller. `rebuild-openclaw` is the canonical live
+rebuild and upgrade target.
+
+## Current OpenClaw plugin EXDEV lifecycle
+
+The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+
+1. Onboard the custom weather plugin as v1.
+2. Restart the gateway and verify v1.
+3. Recreate the sandbox with the plugin changed to v2.
+4. Run the cross-device runtime-dependency replacement probe.
+
+The recreation remains the replacement boundary. It verifies the v2 plugin
+with runtime inspection, `tools.catalog`, and `tools.invoke`, and it preserves
+the workspace marker. The job also keeps the test-only tmpfs mount, unchanged
+stock policy-source bytes, and the distinct-device and source-side `EXDEV`
+checks. The duplicate v3 rebuild is removed from this job. The
+`rebuild-openclaw` job remains the canonical live rebuild coverage.
+
+The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
+Scheduled-run timing for the reduced lifecycle has not yet been measured.
+
 ## Larger-runner routing
 
 The larger-runner experiment is inactive while the configuration variable
@@ -114,11 +140,11 @@ no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
 standard runners even though they use the trusted workflow definition from
 `main`.
 
-Exact-head PR-gate dispatches and direct scheduled or manual `main` runs use a
+PR-gate dispatches and direct scheduled or manual `main` runs use a
 bounded swap fallback for eligible hosted Hermes image-building lanes. The
 fallback does not change runner routing. The trusted workflow provisions the
 fallback as the first job step, before checking out or executing the selected
-revision. Exact-head mode requires a controller-supplied lowercase 40-hex
+revision. PR E2E requires a controller-supplied lowercase 40-hex
 checkout SHA plus matching trusted workflow and dispatch revisions. Direct-main
 mode rejects alternate checkout and workflow revisions and requires the
 workflow source to match the run revision. Both modes require an ephemeral
@@ -142,7 +168,7 @@ Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
-the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
+the Hermes stable MCP shard, the Hermes common-egress and channel
 stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
 dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
@@ -151,7 +177,7 @@ Candidate-authored workflow definitions and fork-owned runs cannot reach it.
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
 label; changing the PR checkout cannot safely grant itself that capacity.
-Remove the fallback only after trusted main and exact-head PR runs use
+Remove the fallback only after trusted main and PR E2E runs use
 ephemeral GitHub-hosted runners with at least 32 GB RAM without weakening the
 source guards, and five consecutive runs of every protected lane complete
 without runner loss while runner-pressure telemetry reports less than 1 GiB of
@@ -162,17 +188,21 @@ lanes:
 
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
-- both `hermes-inference-switch` modes;
+- the Anthropic-compatible `hermes-inference-switch` mode;
 - `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - `rebuild-hermes`;
 - `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
-The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard, and
-`mcp-bridge-dev` remain on `ubuntu-latest`; unrelated jobs retain their
-existing runner assignments. Before setting the variable, an organization
-owner must:
+The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
+`mcp-bridge-dev`, and `openshell-credential-generation-window` remain on
+`ubuntu-latest`; unrelated jobs retain their existing runner assignments.
+The credential-generation window runs as an independent fresh-runner job in
+parallel with the stable MCP agent matrix. Default full-suite dispatches and
+explicit `mcp-bridge` selections run both jobs, while the credential-window job
+keeps its own exact-release provenance, secret scan, and artifact.
+Before setting the variable, an organization owner must:
 
 1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and
    300 GB SSD in a dedicated runner group.
@@ -294,11 +324,10 @@ window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 13 routed workflow lane identities / 16
+telemetry for 12 routed workflow lane identities / 14
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
-- `bedrock-runtime-compatible-anthropic` with the `hermes` shard
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
 - `rebuild-hermes`
@@ -308,19 +337,18 @@ concrete job executions.
 - `channels-stop-start` with the `hermes` shard
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
-- `hermes-inference-switch` with the `hosted` and `anthropic` modes
+- `hermes-inference-switch` with the `anthropic` mode
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The three extra executions come from `common-egress-agent`, which runs three
-scenario shards, and `hermes-inference-switch`, which runs both listed modes.
+The two extra executions come from `common-egress-agent`, which runs three
+scenario shards.
 The OpenClaw matrix entries for `mcp-bridge`,
-`channels-stop-start`, `security-posture`, and
-`bedrock-runtime-compatible-anthropic` are not instrumented.
+`channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and
 equivalent workload while varying the runner class. The newly instrumented
-`agent-turn-latency` and Bedrock Hermes lanes extend diagnostic coverage; this
-change does not route them to a larger runner.
+`agent-turn-latency` extends diagnostic coverage; this does not route it to a
+larger runner.
 
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
@@ -561,13 +589,21 @@ and advisor concurrency groups include that eligibility, so an ignored
 metadata-edit run cannot cancel an eligible run for the same PR. The trusted
 controller reads all changed files after eligible PR CI completes and builds
 the deterministic risk plan.
-Runtime families and changes to workflow-wired live tests select
-canonical selectors from the trusted `e2e.yaml` inventory independently of
-advisor output. Ordinary internal changes execute those focused selections.
-Gate initialization, CI coordination, and maintainer approval share one
-non-cancelling FIFO concurrency group for the exact
+Runtime families and changes to workflow-wired live tests or their owning
+helpers select canonical jobs from the trusted `e2e.yaml` inventory
+independently of advisor output. A workflow-wired live test or owning helper
+selects one to three focused E2E journeys. A gateway-migration live test or
+owning helper selects `openshell-gateway-upgrade`.
+
+Changes only under `test/e2e/support/` select no credentialed live E2E job.
+The `e2e-support` Vitest project runs those support tests in PR CI. A new or
+renamed live test that does not match the trusted workflow inventory keeps the
+conservative control-plane floor until its canonical job mapping is added.
+Gate initialization, CI coordination, automatic internal dispatch, and fork
+maintainer approval share one non-cancelling FIFO concurrency group for the
 repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
-that exact identity instead of replacing them, up to GitHub's 100-job bound.
+that PR/base SHA identity instead of replacing them, up to GitHub's 100-job
+bound.
 Before the controller creates or updates coordination for the current revision,
 it reads the live PR and requires the event's PR SHA and base SHA, including
 when PR CI failed. The native observer performs the same live PR/base SHA check
@@ -583,9 +619,10 @@ GitHub consequently returns no head-repository object.
 Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
 `cloud-inference`, and `security-posture`. The `e2e-control-plane`
-family is a conservative path boundary that includes non-documentation files
-under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
-policy, dependency and test configuration, and preparation and upload actions.
+family remains the conservative boundary for shared E2E tools, workflow and
+security files, unknown live test paths, risk policy, dependency and test
+configuration, and preparation and upload actions. These cross-cutting changes
+keep the broad three-job floor.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.
@@ -605,15 +642,17 @@ Changes to `src/lib/actions/sandbox/status-snapshot.ts` select the exact
 `ubuntu-repo-docker-post-reboot-recovery` typed target. This keeps status
 delivery-recovery changes bound to the reboot simulation that independently
 probes the restored gateway and host forwarding.
-An internal revision whose matched control-plane files are drawn only from the
-trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
-`tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
-dispatches those selected jobs.
-Any other or mixed internal control-plane revision requires a repository
-maintainer or administrator to approve the PR SHA and base SHA through
-`approve-e2e` before credentialed execution begins. If no job or target is
-selected, coordination passes without an E2E run and the native required job
-mirrors that success.
+Every internal revision with selected jobs or targets automatically dispatches
+its deterministic plan after eligible PR CI passes. This behavior includes all
+internal E2E control-plane changes. Internal dispatch does not use
+`approve-e2e` or a maintainer role check. If no job or target is selected,
+coordination passes without an E2E run and the native required job mirrors that
+success.
+When selected E2E fails, a later internal PR commit starts a new dispatch after
+eligible PR CI passes for that commit. The dispatch runs the complete
+deterministic plan for the later commit, not only the selection that failed.
+Evidence from the failed commit cannot satisfy the later commit's coordination
+check.
 
 Before dispatch, the controller verifies that the live PR still matches the CI
 run's PR SHA and base SHA. It uses its own workflow commit when that commit is
@@ -640,7 +679,7 @@ Immediately before the dispatch request, the controller also requires the
 coordination check to remain in the exact phase expected by that path.
 Regardless of the list result, a bounded direct check read must confirm the
 same identity and exact phase; pending, reserved, stale, or mismatched
-authorization state fails closed.
+coordination state fails closed.
 The normal dispatch path uses GitHub's returned run ID for waiting, evidence
 download, and completion. A transport failure, HTTP 5xx response, invalid JSON,
 or malformed success response instead starts a 45-second read-only
@@ -675,24 +714,13 @@ with the PR SHA, base SHA, and coordination identity before recording a final
 result. The native observer revalidates the live revision before mirroring that
 terminal result.
 
-An internal revision whose control-plane matches include a file outside the
-trusted controller and observer boundaries leaves coordination in progress
-with `Maintainer approval required to run E2E`. The native required job keeps
-waiting for the approval flow. No selected job or target runs and no repository
-secret is exposed. The coordination summary links the controller run and
-publishes the exact PR number, head SHA, base SHA, deterministic plan, and
-selected jobs and targets.
-
-A repository maintainer or administrator chooses **Run workflow** on `main`,
-selects `approve-e2e`, and supplies the PR number, current 40-character head
-SHA as `expected_head_sha`, current 40-character base SHA as
-`expected_base_sha`, and a specific 10–500-character `review_reason`. The
-controller verifies the triggering actor's current `maintain` or `admin`
-permission. It then revalidates the open PR, PR SHA and base SHA, deterministic
-plan, matching pending coordination state, compatible trusted controller
-commit, and final live revision. It updates coordination to
-`Running <count> E2E check(s)` and dispatches the selected jobs and targets in
-one workflow run.
+After eligible PR CI passes, an internal revision with selected jobs or targets
+continues from `Evaluating PR commit` to automatic dispatch. Before dispatch,
+the controller revalidates the open PR, PR SHA, base SHA, deterministic plan,
+coordination state, compatible trusted controller commit, and final live
+revision. A validation failure completes coordination as `Run could not start`
+and fails the required gate closed. It does not create a pending maintainer
+approval state.
 
 The child workflow receives the controller-owned coordination check ID. Before
 checking out the PR revision, it requires a GitHub Actions dispatch and verifies
@@ -705,10 +733,6 @@ URL for this binding because GitHub may canonicalize that field to the check's
 own `/runs/<check-id>` URL. A direct manual dispatch that supplies
 otherwise-valid PR inputs cannot forge that one-run authorization and fails
 before checkout.
-
-An ordinary validation failure before dispatch restores the maintainer approval
-title and leaves coordination in progress. A maintainer can then launch a fresh
-first-attempt `approve-e2e` operation for the same reviewed revision.
 
 An uncertain dispatch that completes the bounded window with zero correlated
 runs instead completes coordination as `Workflow dispatch was not observed`
@@ -754,22 +778,24 @@ PR/base SHA pair. A validated `dispatch-not-observed` receipt on a trusted
 GitHub Actions check is the only retryable reconciliation result. Update the PR
 and run fresh CI for terminal outcomes. The
 normal wait, evidence download, and finish path is the only path that can record
-success; the authorization itself cannot make the gate green. A changed head or
-base requires a new authorization.
+success. Neither automatic dispatch nor fork approval can make the required
+gate pass. A changed head or base requires a new deterministic plan. A changed
+fork head or base also requires a new approval.
 
 A fork revision that selects jobs or typed targets leaves coordination in
 progress with `Maintainer approval required to run fork E2E`. Non-secret PR CI
 remains required. Before approval, the controller does not dispatch the
 credential-bearing work or expose repository secrets. The coordination summary
-links to the same `E2E / PR Gate Controller` run and publishes the exact PR
-number, head repository, head SHA, base SHA, plan, jobs, and targets under
+links to the same `E2E / PR Gate Controller` run and publishes the PR number,
+head repository, head SHA, base SHA, plan, jobs, and targets under
 review.
 
-A repository maintainer or administrator reviews the exact fork repository,
-head SHA, base SHA, selected jobs and targets, and
+A repository maintainer or administrator reviews the fork repository, PR
+commit SHA, base SHA, selected jobs and targets, and
 `pr-e2e-risk-plan-<head-sha>` artifact from the linked controller run. The
 maintainer then chooses **Run workflow** on `main`, selects `approve-e2e`, and
-supplies the exact PR number, head SHA, base SHA, and a specific review reason.
+supplies the PR number, recorded head SHA, recorded base SHA, and a specific
+review reason.
 GitHub supplies the triggering actor; the controller requires that account to
 have current `maintain` or `admin` permission.
 
@@ -779,7 +805,12 @@ controller commit is either still `main` or has only a compatible safe descendan
 described above. Immediately before dispatch, it reads the live PR again and
 requires the same head repository, PR SHA, and base SHA. The trusted workflow
 definition stays on `main`, while each PR-code checkout is pinned to the
-reviewed fork repository and exact PR SHA.
+reviewed fork repository and PR commit SHA.
+
+An ordinary validation failure before fork dispatch restores the maintainer
+approval title and leaves coordination in progress. A maintainer can then
+launch a fresh first-attempt `approve-e2e` operation for the same reviewed
+revision.
 
 The trusted workflow runs the selected jobs and targets, downloads their
 evidence, and verifies its identity and outcome. Approval cannot make the gate
@@ -971,6 +1002,29 @@ context without a gateway-builder fallback, enforces the calibrated root and
 phase limits in the budget file, and limits the longest onboard output gap to
 60 seconds. A violation fails
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
+The artifact records the first-turn command wall clock and OpenClaw's internal
+agent duration separately. Older or malformed OpenClaw output records an
+explicit unavailable reason instead of fabricating a duration.
+The artifact also identifies the model, provider, inference mode, and prompt contract.
+When every deterministic cold-onboard budget passes and the real first turn exits
+successfully with the expected sentinel, a sole root-end-to-first-turn overage
+is recorded as a structured, non-blocking hosted-latency anomaly rather than a
+PR regression.
+The same overage remains blocking when accompanied by a root-start or
+phase-budget failure.
+
+The trusted scheduled scorecard stores the current eligible sample in the
+`e2e-runtime-summary` artifact.
+The scorecard compares only samples with the same agent, provider, model,
+inference mode, and prompt contract.
+The recurrence window contains the 12 most recent eligible samples from
+scheduled `main` runs.
+The current anomaly fails the scorecard when the window is full and contains at
+least one earlier anomaly.
+A current sample without an anomaly does not fail because of an earlier anomaly.
+Missing, malformed, or functionally unsuccessful samples do not enter the window.
+The scorecard waits for 12 eligible samples when retained history is incomplete.
+The canonical E2E uploader retains each nightly summary for 14 days.
 
 When changed base-image inputs require the authoritative local OpenClaw base
 build, the target applies the separately calibrated 90-second allowance only to
