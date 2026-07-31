@@ -8,6 +8,12 @@ const phaseMocks = vi.hoisted(() => ({
   runDestroy: vi.fn(),
   runPreflight: vi.fn(),
   runShields: vi.fn(),
+  openRecreateJournal: vi.fn(),
+}));
+
+vi.mock("./rebuild-recreate-journal", () => ({
+  fingerprintRebuildRecreateTargetIntent: () => "intent-1",
+  openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
 }));
 
 vi.mock("./rebuild-backup-phase", () => ({
@@ -44,7 +50,11 @@ describe("rebuild shields relock guard", () => {
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha", customPolicies: [] },
       targetConfig: { durableConfig: { webSearchConfig: null } },
-      recreateOptions: { observabilityEnabled: false },
+      recreateOptions: {
+        observabilityEnabled: false,
+        targetGatewayName: "nemoclaw",
+        targetGatewayPort: 8080,
+      },
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
       dcodePreflight: {
@@ -63,6 +73,13 @@ describe("rebuild shields relock guard", () => {
     });
     phaseMocks.runBackup.mockImplementation(() => {
       throw new Error("unexpected backup exception");
+    });
+    phaseMocks.openRecreateJournal.mockReturnValue({
+      id: "journal-1",
+      targetGeneration: "generation-1",
+      targetIntentFingerprint: "intent-1",
+      markDeleting: vi.fn(),
+      confirmDeleted: vi.fn(),
     });
   });
 
@@ -114,7 +131,11 @@ describe("rebuild shields relock guard", () => {
         },
       },
       targetConfig: { durableConfig: { webSearchConfig: null } },
-      recreateOptions: { observabilityEnabled: false },
+      recreateOptions: {
+        observabilityEnabled: false,
+        targetGatewayName: "nemoclaw",
+        targetGatewayPort: 8080,
+      },
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
       dcodePreflight: { cleanup: cleanupDcodePreflight },
