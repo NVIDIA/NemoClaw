@@ -100,6 +100,19 @@ else
   fail "expected NoNewPrivs=1 inside container, got '${NNP:-<empty>}'"
 fi
 
+# ── Test 3: Direct runtimes can opt into the root entrypoint path ──
+
+info "3. Explicit root override preserves the privileged entrypoint path"
+ROOT_OUT=$(docker run --rm --user root "$IMAGE" \
+  sh -c 'test "$(id -u)" = "$(id -u sandbox)" && echo ROOT_OVERRIDE_OK' 2>&1 || true)
+if echo "$ROOT_OUT" | grep -qF "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" \
+  && echo "$ROOT_OUT" | grep -qF "ROOT_OVERRIDE_OK"; then
+  pass "root override entered the privileged path and stepped the command down to sandbox"
+else
+  fail "root override did not preserve the privileged entrypoint path"
+  echo "$ROOT_OUT" | tail -20 | sed 's/^/  /'
+fi
+
 # ── Summary ─────────────────────────────────────────────────────
 
 echo ""
