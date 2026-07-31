@@ -195,7 +195,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b21db6d098920a6bb410cccca4778e2817a57b66307212ef3422e6cafdfd67b4
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=50f5cf638e2c11868fe5128dccc0f6289082ba11ea116efcd030b07286591c00
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -321,38 +321,8 @@ RUN printf '%s  %s\n' \
 RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
         /opt/hermes/gateway/status.py \
-    && /opt/hermes/.venv/bin/python - <<'IDENTITYPY'
-from gateway.status import (
-    _gateway_command_subcommand,
-    looks_like_gateway_command_line,
-    looks_like_gateway_runtime_command_line,
-)
-
-renamed = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway run"
-upstream = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes gateway run"
-
-# The renamed entrypoint is now recognised on both detection paths.
-assert looks_like_gateway_command_line(renamed)
-assert looks_like_gateway_runtime_command_line(renamed)
-assert _gateway_command_subcommand(renamed) == "run"
-assert _gateway_command_subcommand(
-    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart"
-) == "restart"
-
-# The upstream name keeps working, and the subcommand grammar still gates the
-# match: sibling gateway subcommands and unrelated processes stay invisible.
-assert looks_like_gateway_command_line(upstream)
-assert not looks_like_gateway_command_line(
-    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway status"
-)
-assert not looks_like_gateway_command_line(
-    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real dashboard"
-)
-assert not looks_like_gateway_command_line("python -m tui_gateway run")
-assert not looks_like_gateway_command_line(
-    "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.realish gateway run"
-)
-IDENTITYPY
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py gateway-process-identity
 
 # Hermes v0.19.0 creates its writable cron execution-history database below
 # the high-risk directory that contains cron job definitions. When Shields up
