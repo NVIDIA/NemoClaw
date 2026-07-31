@@ -43,7 +43,9 @@ Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/das
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
 NemoClaw captures cron job definitions from `.hermes/cron` as directory state, together with the scripts they run from `.hermes/scripts`.
 A restore moves each state directory into place as a unit and applies `.hermes/cron` after `.hermes/scripts`.
-This ordering does not pause or drain work that the running gateway already dispatched.
+Before replacing either directory, NemoClaw asks the running Hermes gateway to drain and waits until messaging, API, and cron work reaches zero.
+It validates every enabled job's referenced script before releasing a drain that NemoClaw created; a drain already owned by an operator remains in place.
+If the gateway cannot drain, a referenced script is missing or unreadable, or rollback cannot recover the prior state, the restore fails closed without resuming scheduled work.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
 After it replaces a database, NemoClaw opens a write transaction against the result and fails the restore when the database cannot be written.
 Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use raw directory capture and can be inconsistent if a write overlaps the snapshot.

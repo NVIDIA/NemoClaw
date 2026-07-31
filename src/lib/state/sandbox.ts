@@ -1351,6 +1351,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
 const RESTORE_STAGING_DIR = ".nemoclaw-restore-staging";
 const RESTORE_ROLLBACK_DIR = ".nemoclaw-restore-rollback";
+const HERMES_RESTORE_CRON_GUARD = "/usr/local/lib/nemoclaw/hermes-restore-cron-guard.py";
+const HERMES_RESTORE_DRAIN_TIMEOUT_SECONDS = 60;
+const HERMES_SCHEDULED_WORK_STATE_DIRS = new Set(["cron", "scripts"]);
 
 // Job definitions in these directories are picked up by a gateway that keeps
 // running throughout a restore, so they must land after every directory whose
@@ -1362,6 +1365,26 @@ function orderStateDirsForRestore(stateDirs: readonly string[]): string[] {
     ...stateDirs.filter((stateDir) => !SCHEDULED_WORK_STATE_DIRS.has(stateDir)),
     ...stateDirs.filter((stateDir) => SCHEDULED_WORK_STATE_DIRS.has(stateDir)),
   ];
+}
+
+function buildHermesRestoreGuardCommand(
+  action: "begin" | "assert-safe" | "validate" | "release",
+  dir: string,
+): string {
+  const command = [shellQuote(HERMES_RESTORE_CRON_GUARD), action, "--home", shellQuote(dir)];
+  if (action === "begin") {
+    command.push("--timeout", String(HERMES_RESTORE_DRAIN_TIMEOUT_SECONDS));
+  } else if (action === "release") {
+    command.push("--token", '"$drain_token"');
+  }
+  return command.join(" ");
+}
+
+function buildHermesDrainReleaseCommand(dir: string): string {
+  return (
+    'case "$drain_token" in nemoclaw-state-restore:*) ' +
+    `${buildHermesRestoreGuardCommand("release", dir)} && drain_token= ;; *) : ;; esac`
+  );
 }
 
 /**
@@ -1377,6 +1400,7 @@ function buildStagedRestoreCommand(
   dir: string,
   stateDirs: readonly string[],
   staleContentDirs: readonly string[] = [],
+  options: { quiesceHermesScheduledWork?: boolean } = {},
 ): string {
   const staging = `${dir}/${RESTORE_STAGING_DIR}`;
   const rollback = `${dir}/${RESTORE_ROLLBACK_DIR}`;
@@ -1392,6 +1416,10 @@ function buildStagedRestoreCommand(
   const transitionDirs = orderStateDirsForRestore([
     ...new Set([...stateDirs, ...staleContentDirs]),
   ]);
+  const quiesceHermesScheduledWork =
+    options.quiesceHermesScheduledWork === true &&
+    transitionDirs.some((stateDir) => HERMES_SCHEDULED_WORK_STATE_DIRS.has(stateDir));
+  const releaseHermesDrain = buildHermesDrainReleaseCommand(dir);
   const rollbackCommands = transitionDirs
     .map((stateDir, index) => ({ stateDir, index }))
     .reverse()
@@ -1415,6 +1443,15 @@ function buildStagedRestoreCommand(
     "rollback_status=0",
     `if [ "$status" -ne 0 ] && [ "$transaction_committed" -ne 1 ]; then ` +
       `${rollbackCommands.join("; ")}; fi`,
+    quiesceHermesScheduledWork
+      ? `if [ "$rollback_status" -eq 0 ]; then ${releaseHermesDrain}; ` +
+        'if [ "$?" -ne 0 ]; then status=1; fi; ' +
+        'elif [ -n "$drain_token" ] && [ "$drain_token" != inactive ] && ' +
+        '[ "$drain_token" != preserved ]; then ' +
+        `echo ${shellQuote(
+          "Hermes restore rollback failed; preserving the scheduler drain",
+        )} >&2; fi`
+      : ":",
     removeStaging,
     `if [ "$status" -ne 0 ] && [ "$transaction_committed" -eq 1 ]; then ` +
       `echo ${shellQuote(
@@ -1432,6 +1469,14 @@ function buildStagedRestoreCommand(
     `mkdir -p -- ${quotedRollback}`,
     `tar --no-same-owner -xf - -C ${quotedStaging}`,
   ];
+  if (quiesceHermesScheduledWork) {
+    commands.push(
+      `drain_token="$(${buildHermesRestoreGuardCommand("begin", dir)})"`,
+      'case "$drain_token" in inactive|preserved|nemoclaw-state-restore:*) : ;; ' +
+        `*) echo ${shellQuote("Hermes restore guard returned an invalid drain token")} >&2; false ;; esac`,
+      buildHermesRestoreGuardCommand("assert-safe", dir),
+    );
+  }
   for (const [index, stateDir] of transitionDirs.entries()) {
     const target = shellQuote(`${dir}/${stateDir}`);
     const rollbackTarget = shellQuote(`${rollback}/${stateDir}`);
@@ -1449,13 +1494,19 @@ function buildStagedRestoreCommand(
       commands.push(`mv -- ${shellQuote(`${staging}/${stateDir}`)} ${target}`);
     }
   }
+  if (quiesceHermesScheduledWork) {
+    commands.push(buildHermesRestoreGuardCommand("validate", dir));
+  }
   commands.push("transaction_committed=1");
+  if (quiesceHermesScheduledWork) {
+    commands.push(releaseHermesDrain);
+  }
   commands.push(removeRollback);
   // A failed extraction or move ends the chain. The EXIT trap restores every
   // live directory already transitioned. If rollback itself fails, keep the
   // recovery tree and refuse future restores instead of deleting its only copy.
   return (
-    `${refuseUnrecoveredRollback}; transaction_committed=0; ` +
+    `${refuseUnrecoveredRollback}; transaction_committed=0; drain_token=; ` +
     `trap ${shellQuote(cleanup)} EXIT; ${commands.join(" && ")}`
   );
 }
@@ -1803,11 +1854,13 @@ function restoreSandboxStateInternal(
       const extractCmd =
         pluginRestorePlan.preservedExtensionDirs.length > 0
           ? `tar --no-same-owner -xf - -C ${shellQuote(dir)}`
-          : buildStagedRestoreCommand(dir, localDirs, staleContentDirs);
+          : buildStagedRestoreCommand(dir, localDirs, staleContentDirs, {
+              quiesceHermesScheduledWork: manifest.agentType === "hermes",
+            });
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
         input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120000,
+        timeout: manifest.agentType === "hermes" ? 180000 : 120000,
       });
 
       if (sshResult.status === 0) {

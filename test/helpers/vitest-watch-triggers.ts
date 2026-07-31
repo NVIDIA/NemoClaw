@@ -76,6 +76,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/restore-cron-guard\.py$/,
+    testsToRun: runTests("test/hermes-restore-cron-guard.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)test\/e2e\/lib\/ci-compatible-inference\.sh$/,
     testsToRun: runTests("test/e2e/support/hosted-inference.test.ts"),
   },

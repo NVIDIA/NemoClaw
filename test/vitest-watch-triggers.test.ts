@@ -57,6 +57,7 @@ const OPAQUE_INPUTS = [
   "nemoclaw-blueprint/policies/presets/claude-code.yaml",
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/mcp-config-transaction.py",
+  "agents/hermes/restore-cron-guard.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
   "scripts/e2e/sanitize-trace-timing.py",
@@ -111,6 +112,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/restore-cron-guard.py")).toEqual([
+      "test/hermes-restore-cron-guard.test.ts",
     ]);
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",

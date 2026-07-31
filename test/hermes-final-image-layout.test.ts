@@ -27,6 +27,11 @@ const HERMES_INTEGRITY_FILES = [
     target: "/usr/local/lib/nemoclaw/finalize-tirith-marker.py",
   },
   {
+    arg: "NEMOCLAW_HERMES_RESTORE_CRON_GUARD_SHA256",
+    source: "agents/hermes/restore-cron-guard.py",
+    target: "/usr/local/lib/nemoclaw/hermes-restore-cron-guard.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
     source: "agents/hermes/patch-langfuse-credentials.mts",
     target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
@@ -236,6 +241,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py",
           "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
           "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
+          "COPY agents/hermes/restore-cron-guard.py /usr/local/lib/nemoclaw/hermes-restore-cron-guard.py",
           "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
@@ -328,6 +334,7 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/hermes-restore-cron-guard.py 'root:root 555'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
