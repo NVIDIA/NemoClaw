@@ -11,6 +11,10 @@ import { describe, expect, it } from "vitest";
 const root = path.join(import.meta.dirname, "..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
+const imageBuildProbes = fs.readFileSync(
+  path.join(root, "agents", "hermes", "image-build-probes.py"),
+  "utf8",
+);
 
 const configFixture = `\
 DEFAULT_CONFIG = {
@@ -250,12 +254,14 @@ describe("Hermes profile policy defaults", () => {
     }
     expect(dockerfile).toContain("hermes profile create nemoclaw-policy-probe");
     expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
-    expect(dockerfile).toContain('assert config["approvals"]["mode"] == "manual"');
-    expect(dockerfile).toContain("assert _restrict_browser_evaluate() is True");
-    expect(dockerfile).toContain('assert SessionResetPolicy.from_dict({}).mode == "both"');
-    expect(dockerfile).toContain('assert CLI_CONFIG["display"]["show_reasoning"] is False');
-    expect(dockerfile).toContain("assert _load_show_reasoning() is False");
-    expect(dockerfile).toContain('assert agent_source.count("agent.show_commentary = True") == 0');
-    expect(dockerfile).toContain('assert _resolve_pre_update_backup_mode(args) == "off"');
+    expect(imageBuildProbes).toContain('assert config["approvals"]["mode"] == "manual"');
+    expect(imageBuildProbes).toContain("assert _restrict_browser_evaluate() is True");
+    expect(imageBuildProbes).toContain('assert SessionResetPolicy.from_dict({}).mode == "both"');
+    expect(imageBuildProbes).toContain('assert CLI_CONFIG["display"]["show_reasoning"] is False');
+    expect(imageBuildProbes).toContain("assert _load_show_reasoning() is False");
+    expect(imageBuildProbes).toContain(
+      'assert agent_source.count("agent.show_commentary = True") == 0',
+    );
+    expect(imageBuildProbes).toContain('assert _resolve_pre_update_backup_mode(args) == "off"');
   });
 });
