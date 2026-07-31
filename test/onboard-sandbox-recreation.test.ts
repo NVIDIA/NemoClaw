@@ -1192,6 +1192,16 @@ registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
+const groupKillCalls = [];
+const realProcessKill = process.kill.bind(process);
+process.kill = (pid, signal) => {
+  if (pid < 0) {
+    groupKillCalls.push({ pid, signal });
+    return true;
+  }
+  return realProcessKill(pid, signal);
+};
+
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -1233,6 +1243,7 @@ const { createSandbox } = require(${onboardPath});
     sandboxName,
     sandboxListCalls,
     killCalls: createCommand.child.killCalls,
+    groupKillCalls,
     unrefCalls: createCommand.child.unrefCalls,
     stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
     stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
@@ -1263,7 +1274,8 @@ const { createSandbox } = require(${onboardPath});
     const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(payload.sandboxListCalls >= 2);
-    assert.deepEqual(payload.killCalls, ["SIGTERM"]);
+    assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
+    assert.deepEqual(payload.killCalls, []);
     assert.equal(payload.unrefCalls, 1);
     assert.equal(payload.stdoutDestroyCalls, 1);
     assert.equal(payload.stderrDestroyCalls, 1);

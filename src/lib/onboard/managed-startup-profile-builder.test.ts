@@ -397,6 +397,7 @@ describe("buildManagedStartupProfile", () => {
           NEMOCLAW_PROXY_HOST: "10.200.0.1",
           NEMOCLAW_PROXY_PORT: "3128",
           NEMOCLAW_OBSERVABILITY: "1",
+          NEMOCLAW_REASONING_EFFORT: "high",
         },
       }),
     );
@@ -433,7 +434,7 @@ describe("buildManagedStartupProfile", () => {
         contextWindow: null,
         maxTokens: null,
         reasoning: null,
-        reasoningEffort: null,
+        reasoningEffort: "high",
       },
     });
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);

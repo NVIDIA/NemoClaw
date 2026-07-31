@@ -41,6 +41,15 @@ _AUTO_APPROVAL_CONTENTS = {
     b"disabled\n": _AUTO_APPROVAL_DISABLED,
     b"thread-opt-in\n": _AUTO_APPROVAL_THREAD_OPT_IN,
 }
+_REASONING_EFFORT_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-reasoning-effort"
+)
+_REASONING_EFFORT_CONTENTS: dict[bytes, str | None] = {
+    b"\n": None,
+    b"low\n": "low",
+    b"medium\n": "medium",
+    b"high\n": "high",
+}
 _MANAGED_FILE_OWNER_UID = 0
 _CREDENTIAL_NAME = re.compile(
     r"(?:^|[_-])(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIAL)$",
@@ -1307,6 +1316,64 @@ def managed_auto_approval_mode() -> str:
 def managed_auto_approval_enabled() -> bool:
     """Return whether thread-scoped auto-approval may be explicitly enabled."""
     return managed_auto_approval_mode() == _AUTO_APPROVAL_THREAD_OPT_IN
+
+
+def _unset_reasoning_effort(reason: str) -> None:
+    if os.environ.get("NEMOCLAW_DEBUG") == "1":
+        print(
+            f"NemoClaw managed reasoning effort unset: {reason}",
+            file=sys.stderr,
+        )
+    return None
+
+
+def managed_reasoning_effort() -> str | None:
+    """Return the reasoning effort baked into the image, or None for the endpoint default."""
+    path = _REASONING_EFFORT_FILE
+    try:
+        if path.is_symlink():
+            return _unset_reasoning_effort("capability path is a symlink")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+    except OSError:
+        return _unset_reasoning_effort("capability file is missing or unreadable")
+
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _MANAGED_FILE_OWNER_UID
+            or stat.S_IMODE(metadata.st_mode) != 0o444
+            or metadata.st_size not in {
+                len(content) for content in _REASONING_EFFORT_CONTENTS
+            }
+        ):
+            return _unset_reasoning_effort("capability metadata is unsafe")
+
+        chunks: list[bytes] = []
+        remaining = metadata.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                return _unset_reasoning_effort("capability file was truncated")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            return _unset_reasoning_effort("capability file changed while reading")
+    except OSError:
+        return _unset_reasoning_effort("capability file read failed")
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            # Cleanup cannot weaken the endpoint-default capability result.
+            pass
+
+    raw = b"".join(chunks)
+    if raw not in _REASONING_EFFORT_CONTENTS:
+        return _unset_reasoning_effort("capability contents are invalid")
+    return _REASONING_EFFORT_CONTENTS[raw]
 
 
 def managed_display_provider(adapter_provider: object) -> str:

@@ -15,6 +15,35 @@ export type GatewayRestartCommandResult = {
   stderr: string;
 };
 
+export type ManagedGatewayControlCompletion = {
+  disposition: "ok" | "already-running";
+  oldPid: number;
+  newPid: number;
+};
+
+export function parseManagedGatewayControlCompletion(
+  result: GatewayRestartCommandResult | null,
+): ManagedGatewayControlCompletion | null {
+  if (!result || result.status !== 0 || result.stderr.trim()) return null;
+  const lines = result.stdout.trim().split(/\r?\n/);
+  if (lines.length !== 2) return null;
+  const completion = lines[0]?.match(
+    /^v1 ([0-9a-f]{64}) complete (ok|already-running) ([0-9]+) ([1-9][0-9]*)$/,
+  );
+  if (completion === null || lines[1] !== `GATEWAY_PID=${completion[4]}`) return null;
+  const disposition = completion[2] as ManagedGatewayControlCompletion["disposition"];
+  const oldPid = Number.parseInt(completion[3], 10);
+  const newPid = Number.parseInt(completion[4], 10);
+  if (!Number.isSafeInteger(oldPid) || !Number.isSafeInteger(newPid)) {
+    return null;
+  }
+  return {
+    disposition,
+    oldPid,
+    newPid,
+  };
+}
+
 export type GatewayRestartFailureLayer =
   | "unsupported agent"
   | "privileged control unavailable"

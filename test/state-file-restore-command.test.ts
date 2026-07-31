@@ -38,6 +38,7 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
 
     // The .config-hash is still refreshed after the swap.
     expect(cmd).toContain("sha256sum");
+    expect(cmd).toContain('chmod 660 "$tmp"');
   });
 
   it("does not touch the .last-good anchor for non-OpenClaw state restores", () => {
@@ -45,6 +46,7 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
     expect(cmd).not.toContain("last-good");
     expect(cmd).not.toContain("sha256sum");
     expect(cmd).toContain('mv -f "$tmp" "$dst"');
+    expect(cmd).toContain('chmod 640 "$tmp"');
   });
 
   it("isolates SQLite restore from an agent-managed Python environment (#7144)", () => {
