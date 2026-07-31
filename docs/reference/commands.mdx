@@ -1167,7 +1167,12 @@ It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaun
 When the root-owned managed controller attests two unchanged zero-supervisor process scans with a stable PID 1 and reports `SUPERVISOR_NOT_RUNNING`, a local Docker-driver sandbox with the legacy keepalive startup can enter a transactional container recreation.
 The recreation uses a credential-free managed startup command, pins the registered container identity, and retains the previous container for rollback.
 Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
-It commits only after managed gateway health, the settle check, exact replacement identity, and state restoration pass.
+NemoClaw waits for the exact replacement to pass managed gateway health and OpenShell re-registration before it restores state.
+After state restoration, it restarts the gateway in the exact replacement container and requires an authenticated `ok` result.
+It then runs the managed settle check.
+It commits only after the replacement identity, state restoration, gateway restart, and settle check pass.
+If OpenShell re-registration, state restoration, or a later gateway check fails, NemoClaw attempts to roll back the replacement.
+The primary dashboard or API host forward stays stopped.
 NemoClaw removes the temporary state backup after a successful restore or rollback.
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
@@ -3967,8 +3972,8 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 
 <AgentOnly variant="openclaw,hermes">
 
-For managed recovery, the same timeout covers OpenShell re-registration after transactional recreation.
-When the deadline expires, the primary dashboard or API host forward stays stopped.
+For managed recovery, the same timeout covers OpenShell re-registration before state restoration and replacement commit.
+When the deadline expires, NemoClaw attempts to roll back the replacement and leaves the primary dashboard or API host forward stopped.
 
 </AgentOnly>
 

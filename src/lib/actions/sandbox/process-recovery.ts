@@ -809,8 +809,8 @@ const GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS = 120;
 /**
  * Wait until OpenShell has re-registered a directly recreated sandbox as
  * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
- * proving control-plane readiness, not authorizing the already completed
- * replacement-container recovery.
+ * proving the control-plane readiness that gates state restoration and the
+ * replacement-container commit.
  */
 function waitForRecreatedSandboxOpenShellReadyResult(
   sandboxName: string,
