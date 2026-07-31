@@ -354,9 +354,13 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
     expect(() => prepare(entry, provider("docker"), undefined, "1destination")).toThrow(
       /destination sandbox name is invalid/u,
     );
-    expect(() => prepare(entry, provider("docker"), () => "1provider")).toThrow(
-      /destination Hermes inference provider name is invalid/u,
-    );
+    expect(() =>
+      prepare(
+        entry,
+        provider("docker"),
+        vi.fn(() => "1provider"),
+      ),
+    ).toThrow(/destination Hermes inference provider name is invalid/u);
   });
 
   it("rejects malformed snapshot content authority before exposing a handoff", () => {
