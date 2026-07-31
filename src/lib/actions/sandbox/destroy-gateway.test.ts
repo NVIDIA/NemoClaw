@@ -28,6 +28,46 @@ vi.mock("../../onboard/stale-gateway-cleanup", () => ({
 
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 
+function packagedServiceOwner({
+  gatewayName,
+  gatewayPort,
+}: {
+  gatewayName: string;
+  gatewayPort: number;
+}) {
+  return {
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    source: "packaged-service" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  };
+}
+
+function serviceStopResult(stopped: boolean, reason?: string) {
+  return {
+    attempted: true,
+    manager: "systemd" as const,
+    serviceName: "nemoclaw-openshell-gateway",
+    statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
+    stopped,
+    ...(reason === undefined ? {} : { reason }),
+  };
+}
+
+function idleHostReaperResult() {
+  return {
+    failed: [],
+    skippedDeadPids: [],
+    skippedNonMatchingPids: [],
+    stopped: [],
+    sudoRemediationPids: [],
+  };
+}
+
 describe("cleanupGatewayAfterLastSandbox", () => {
   beforeEach(() => {
     mocks.resolveGatewayTeardownAuthority.mockImplementation(
@@ -251,6 +291,71 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       expect.anything(),
     );
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("stops the packaged gateway service before the host reaper on final destroy (#7904)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    const events: string[] = [];
+    mocks.stopHostGatewayProcesses.mockImplementationOnce(() => {
+      events.push("host-reaper");
+      return idleHostReaperResult();
+    });
+    const stopService = vi.fn(() => {
+      events.push("service-stop");
+      return serviceStopResult(true);
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      stopOpenShellGatewayUserService: stopService,
+    });
+
+    expect(events).toEqual(["service-stop", "host-reaper"]);
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
+      ignoreError: true,
+    });
+  });
+
+  it("fails destroy when the packaged gateway service survives the stop (#7904)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    const stopService = vi.fn(() =>
+      serviceStopResult(false, "systemctl --user stop nemoclaw-openshell-gateway failed: timeout"),
+    );
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    expect(() =>
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+        stopOpenShellGatewayUserService: stopService,
+      }),
+    ).toThrow("systemctl --user status nemoclaw-openshell-gateway");
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("leaves the service manager alone for a standalone NemoClaw gateway (#7904)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    const stopService = vi.fn(() => serviceStopResult(true));
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      stopOpenShellGatewayUserService: stopService,
+    });
+
+    expect(stopService).not.toHaveBeenCalled();
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledOnce();
   });
 
   it.each([
