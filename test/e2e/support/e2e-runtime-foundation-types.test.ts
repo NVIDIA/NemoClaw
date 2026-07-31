@@ -18,6 +18,7 @@ import type {
   ExecutionEvidenceInput,
   NonEmptyProviderReceipts,
 } from "../registry/parity-evidence.ts";
+import { hasRegisteredRuntimeProfile } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { defineRuntimeScenario, type RuntimeNeutralScenario } from "../registry/scenario.ts";
 import { foundationProfiles, foundationScenarios } from "./cross-runtime-foundation-fixtures.ts";
@@ -45,7 +46,7 @@ describe("cross-runtime foundation types", () => {
     expect(mxc?.capabilities).not.toContain("transport.docker-socket");
     expect(buildLiveTargetMatrix()).toEqual(liveMatrixBefore);
     for (const profile of profiles) {
-      expect(() => buildLiveTargetMatrix([profile.id])).toThrow(`Unknown target '${profile.id}'`);
+      expect(hasRegisteredRuntimeProfile(profile.id)).toBe(false);
     }
   });
 
