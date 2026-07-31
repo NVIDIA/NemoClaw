@@ -811,6 +811,9 @@ jobs:
               DOCKER_CONFIG="$anonymous_config" docker pull \
                 --platform "$platform" \
                 "$cohort_reference"
+              # The classic Docker image store cannot retain two platform
+              # variants under one multi-platform digest reference.
+              docker image rm "$cohort_reference"
             done
           done < <(jq -c '.[]' "$cohort_manifests")
 

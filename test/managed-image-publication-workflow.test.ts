@@ -572,6 +572,38 @@ describe("complete managed-image publication workflow", () => {
     expect(runPublicationBarrier(barrier.run ?? "").status).toBe(0);
   });
 
+  it("removes each anonymously pulled digest reference before the next platform pull", () => {
+    const promotion = required(
+      step(
+        managedPromoter(readWorkflow("managed-images.yaml")),
+        "Promote validated multi-platform managed image cohort",
+      ).run,
+      "managed image promotion script is missing",
+    );
+    const result = runManagedImagePromotion(promotion);
+    const collision = runManagedImagePromotion(
+      promotion.replace('docker image rm "$cohort_reference"', ":"),
+    );
+    const digest = `sha256:${"f".repeat(64)}`;
+    const anonymousPullCalls = result.calls.filter(
+      (call) => call.startsWith("pull --platform") || call.startsWith("image rm"),
+    );
+    const expectedCalls = [...publicationAgents].sort().flatMap((agent) => {
+      const reference = `ghcr.io/nvidia/nemoclaw/${agent}-sandbox@${digest}`;
+      return [
+        `pull --platform linux/amd64 ${reference}`,
+        `image rm ${reference}`,
+        `pull --platform linux/arm64 ${reference}`,
+        `image rm ${reference}`,
+      ];
+    });
+
+    expect(collision.status).toBe(92);
+    expect(collision.stderr).toContain(`cannot overwrite digest ${digest}`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(anonymousPullCalls).toEqual(expectedCalls);
+  });
+
   it("stages all multi-platform cohort aliases before moving the sole root pointer (#7744)", () => {
     const promotion = required(
       step(

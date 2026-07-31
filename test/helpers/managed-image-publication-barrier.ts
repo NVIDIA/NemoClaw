@@ -141,6 +141,7 @@ export function runManagedImagePromotion(script: string, failCohortAgent = ""): 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-promotion-"));
   const bin = path.join(root, "bin");
   const calls = path.join(root, "docker-calls");
+  const pulledReferences = path.join(root, "docker-pulled-references");
   const candidateSet = path.join(root, "candidate-set.json");
   const contracts = path.join(root, "managed-image-contracts");
   const digest = `sha256:${"f".repeat(64)}`;
@@ -163,6 +164,19 @@ export function runManagedImagePromotion(script: string, failCohortAgent = ""): 
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+if [ "$1" = "pull" ]; then
+  reference="\${@: -1}"
+  if grep -Fxq "$reference" "$DOCKER_PULLED_REFERENCES" 2>/dev/null; then
+    printf 'cannot overwrite digest %s\\n' "\${reference##*@}" >&2
+    exit 92
+  fi
+  printf '%s\\n' "$reference" >> "$DOCKER_PULLED_REFERENCES"
+elif [ "$1" = "image" ] && [ "$2" = "rm" ]; then
+  reference="$3"
+  remaining="\${DOCKER_PULLED_REFERENCES}.remaining"
+  grep -Fvx "$reference" "$DOCKER_PULLED_REFERENCES" > "$remaining" || true
+  mv "$remaining" "$DOCKER_PULLED_REFERENCES"
+fi
 if [ -n "\${FAIL_COHORT_AGENT:-}" ] &&
    [[ "$*" == *"imagetools create"* ]] &&
    [[ "$*" == *"/\${FAIL_COHORT_AGENT}-sandbox:cohort-"* ]]; then
@@ -189,6 +203,7 @@ fi
         ...process.env,
         CANDIDATE_SET: candidateSet,
         DOCKER_CALLS: calls,
+        DOCKER_PULLED_REFERENCES: pulledReferences,
         FAIL_COHORT_AGENT: failCohortAgent,
         GITHUB_REPOSITORY: repository,
         GITHUB_RUN_ATTEMPT: runAttempt,
