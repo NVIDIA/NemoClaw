@@ -61,6 +61,7 @@ describe("managed gateway recovery controller", () => {
     recovered: false,
     forwardRecovered: false,
   };
+  const controllerNonce = "a".repeat(64);
   const successfulControl = { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" };
   const successfulProbe = { status: 0, stdout: "ALREADY_RUNNING\n", stderr: "" };
 
@@ -69,6 +70,71 @@ describe("managed gateway recovery controller", () => {
       label: "PID 1 supervisor",
       recoverResults: [successfulControl],
       expectedResult: recoveredGateway,
+      expectedActions: ["recover"],
+      settleSeconds: "0",
+    },
+    {
+      label: "exact controller restart",
+      recoverResults: [
+        {
+          status: 0,
+          stdout: `v1 ${controllerNonce} complete ok 0 123\nGATEWAY_PID=123`,
+          stderr: "",
+        },
+      ],
+      expectedResult: {
+        ...recoveredGateway,
+        managedControlCompletion: { disposition: "ok", oldPid: 0, newPid: 123 },
+      },
+      expectedActions: ["recover"],
+      settleSeconds: "0",
+    },
+    {
+      label: "PID 1 auto-respawn before controller recovery",
+      recoverResults: [
+        {
+          status: 0,
+          stdout: `v1 ${controllerNonce} complete already-running 123 456\nGATEWAY_PID=456`,
+          stderr: "",
+        },
+      ],
+      expectedResult: {
+        ...recoveredGateway,
+        managedControlCompletion: {
+          disposition: "already-running",
+          oldPid: 123,
+          newPid: 456,
+        },
+      },
+      expectedActions: ["recover"],
+      settleSeconds: "0",
+    },
+    {
+      label: "malformed structured controller completion",
+      recoverResults: [
+        {
+          status: 0,
+          stdout: `v1 ${controllerNonce} complete already-running 123 123\nGATEWAY_PID=456`,
+          stderr: "",
+        },
+      ],
+      expectedResult: unrecoveredGateway,
+      expectedActions: ["recover"],
+      settleSeconds: "0",
+    },
+    {
+      label: "structured recovery after numeric PID reuse",
+      recoverResults: [
+        {
+          status: 0,
+          stdout: `v1 ${controllerNonce} complete ok 123 123\nGATEWAY_PID=123`,
+          stderr: "",
+        },
+      ],
+      expectedResult: {
+        ...recoveredGateway,
+        managedControlCompletion: { disposition: "ok", oldPid: 123, newPid: 123 },
+      },
       expectedActions: ["recover"],
       settleSeconds: "0",
     },

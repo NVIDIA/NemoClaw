@@ -17,13 +17,23 @@ import {
 
 type GatewayControlDockerStubOptions = {
   callsFile: string;
+  newPid?: number;
+  oldPid?: number;
+  recoveryDisposition?: "ok" | "already-running";
   stateFile: string;
   recoveryStatus?: number;
 };
 
 function writeGatewayControlDockerStub(
   localBin: string,
-  { callsFile, stateFile, recoveryStatus = 0 }: GatewayControlDockerStubOptions,
+  {
+    callsFile,
+    newPid = 123,
+    oldPid = 0,
+    recoveryDisposition = "ok",
+    stateFile,
+    recoveryStatus = 0,
+  }: GatewayControlDockerStubOptions,
 ): void {
   fs.writeFileSync(
     path.join(localBin, "docker"),
@@ -32,6 +42,9 @@ function writeGatewayControlDockerStub(
       `calls=${JSON.stringify(callsFile)}`,
       `state_file=${JSON.stringify(stateFile)}`,
       `recovery_status=${recoveryStatus}`,
+      `recovery_disposition=${JSON.stringify(recoveryDisposition)}`,
+      `old_pid=${oldPid}`,
+      `new_pid=${newPid}`,
       'printf \'%s\\n\' "$*" >> "$calls"',
       'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
       'if [ "$1" = "ps" ]; then',
@@ -49,7 +62,9 @@ function writeGatewayControlDockerStub(
       '      exit "$recovery_status"',
       "    fi",
       '    echo recovered > "$state_file"',
-      "    echo 'GATEWAY_PID=123'",
+      '    nonce="${!#}"',
+      '    printf \'v1 %s complete %s %s %s\\n\' "$nonce" "$recovery_disposition" "$old_pid" "$new_pid"',
+      "    printf 'GATEWAY_PID=%s\\n' \"$new_pid\"",
       "    exit 0",
       "  fi",
       '  if [[ "$*" == *"curl -so"* ]]; then',
@@ -155,10 +170,27 @@ async function startForwardListeners(ports: number[]): Promise<() => Promise<voi
 }
 
 describe("CLI connect recovery process contracts", () => {
-  it(
-    "connect --probe-only recovers the gateway without opening SSH",
+  it.each([
+    {
+      caseName: "connect --probe-only reports controller recovery without opening SSH",
+      expectedOutput: "Probe complete: recovered OpenClaw gateway",
+      newPid: 123,
+      oldPid: 0,
+      recoveryDisposition: "ok" as const,
+      unexpectedOutput: "Probe complete: OpenClaw gateway is running",
+    },
+    {
+      caseName: "connect --probe-only does not attribute PID 1 auto-respawn to controller recovery",
+      expectedOutput: "Probe complete: OpenClaw gateway is running",
+      newPid: 456,
+      oldPid: 123,
+      recoveryDisposition: "already-running" as const,
+      unexpectedOutput: "Probe complete: recovered OpenClaw gateway",
+    },
+  ])(
+    "$caseName (#7919)",
     testTimeoutOptions(15_000),
-    async () => {
+    async ({ expectedOutput, newPid, oldPid, recoveryDisposition, unexpectedOutput }) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-"));
       const localBin = path.join(home, "bin");
       const markerFile = path.join(home, "openshell-calls");
@@ -201,7 +233,13 @@ describe("CLI connect recovery process contracts", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      writeGatewayControlDockerStub(localBin, { callsFile: dockerCalls, stateFile });
+      writeGatewayControlDockerStub(localBin, {
+        callsFile: dockerCalls,
+        newPid,
+        oldPid,
+        recoveryDisposition,
+        stateFile,
+      });
       writeRecordingCommand(localBin, "ssh", sshMarkerFile, 98);
       const stopForwardListeners = await startForwardListeners([18789]);
 
@@ -213,7 +251,8 @@ describe("CLI connect recovery process contracts", () => {
         });
 
         expect(result.code).toBe(0);
-        expect(result.out).toContain("Probe complete: recovered OpenClaw gateway");
+        expect(result.out).toContain(expectedOutput);
+        expect(result.out).not.toContain(unexpectedOutput);
         const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
         expect(calls).toContain("sandbox get -g nemoclaw alpha");
         expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(

@@ -393,7 +393,7 @@ const PROFILE_CAPABILITIES = {
     inputModalities: [],
     webSearchProviders: [],
     toolGateways: [],
-    tuningFields: [],
+    tuningFields: ["reasoningEffort"],
     supportsMessaging: false,
     supportsInferenceCompatibility: false,
     supportsUpstreamEndpoint: true,
@@ -534,6 +534,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_UPSTREAM_ENDPOINT_URL", "inference.upstreamEndpointUrl"),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
+    affordance("NEMOCLAW_REASONING_EFFORT", "tuning.reasoningEffort"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
     affordance("NEMOCLAW_DCODE_AUTO_APPROVAL", "agentConfig.autoApprovalMode"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
@@ -597,14 +598,12 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
     deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
       "application-environment",
-      "the image consumes this documented scheduler control but managed launch must admit it in the application environment transaction",
-      "image-consumed-not-forwarded",
+      "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
       "application-environment",
-      "the image consumes this documented scheduler control but managed launch must admit it in the application environment transaction",
-      "image-consumed-not-forwarded",
+      "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
@@ -746,6 +745,7 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256", reason: "integrity-pin" },
@@ -1731,10 +1731,11 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
   } else if (
     result.contextWindow !== null ||
     result.maxTokens !== null ||
-    result.reasoning !== null ||
-    result.reasoningEffort !== null
+    result.reasoning !== null
   ) {
-    invalid("langchain-deepagents-code does not support startup tuning fields");
+    invalid(
+      "langchain-deepagents-code does not support startup tuning fields beyond reasoningEffort",
+    );
   }
   return result;
 }

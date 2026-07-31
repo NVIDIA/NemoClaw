@@ -91,7 +91,22 @@ vi.mock("../src/lib/inference/nim", () => ({
 import * as bridge from "../src/lib/actions/sandbox/mcp-bridge";
 import { isAgentMcpAdapter } from "../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { runRebuildDestroyPhase } from "../src/lib/actions/sandbox/rebuild-destroy-phase";
+import type { RebuildRecreateJournal } from "../src/lib/actions/sandbox/rebuild-recreate-journal";
 import * as registry from "../src/lib/state/registry";
+
+function stubRecreateJournal(): RebuildRecreateJournal {
+  return {
+    id: "journal-1",
+    acceptedTarget: false,
+    sourceConfirmedAbsent: false,
+    targetGeneration: "generation-1",
+    targetIntentFingerprint: "intent-1",
+    markDeleting: vi.fn(),
+    observeSourceForDelete: vi.fn(() => "source" as const),
+    confirmDeleted: vi.fn(),
+    completeAcceptedTarget: vi.fn(),
+  };
+}
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
 
@@ -872,6 +887,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       sandboxName: "alpha",
       sandboxEntry: before ?? { name: "alpha", agent: "openclaw" },
       staleRecovery: false,
+      recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
       log: vi.fn(),
@@ -948,6 +964,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
         sandboxName: "alpha",
         sandboxEntry: beforeRegistry ?? { name: "alpha", agent: "openclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),

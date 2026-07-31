@@ -5,7 +5,7 @@ import childProcess from "node:child_process";
 import { createRequire } from "node:module";
 
 import { type MockInstance, vi } from "vitest";
-
+import type { ManagedGatewayControlCompletion } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/hermes-secret-boundary-recovery";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
@@ -59,6 +59,7 @@ export type ConnectHarnessOptions = {
     checked: boolean;
     wasRunning?: boolean;
     recovered?: boolean;
+    managedControlCompletion?: ManagedGatewayControlCompletion;
     forwardRecovered?: boolean;
     forwardRecoveryFailed?: boolean;
     forwardRecoveryFailureDetail?: string;

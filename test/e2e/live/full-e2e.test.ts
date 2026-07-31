@@ -336,6 +336,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       USE_PREINSTALLED_LAUNCHABLE
         ? "the baked Launchable completes onboarding without installing from source"
         : "install.sh --non-interactive completes onboarding",
+      "cold onboarding stays within the checked-in full-E2E performance budgets",
       "nemoclaw and openshell are installed and usable",
       "sandbox appears in list/status and has policy/inference configuration",
       "direct hosted inference and sandbox inference.local both respond",

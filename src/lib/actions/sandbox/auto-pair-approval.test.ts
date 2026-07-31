@@ -281,7 +281,7 @@ if (args[0] === "devices" && args[1] === "approve") {
     process.stderr.write("raw approval output must stay private\\n");
     process.exit(1);
   }
-  const forced = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";
+  const forced = process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1";
   const stateDir = process.env.OPENCLAW_STATE_DIR;
   const expectedCloneStateDir = process.env.NEMOCLAW_TEST_CLONE_STATE_DIR;
   const cloneStateBackup = process.env.NEMOCLAW_TEST_CLONE_STATE_BACKUP;
@@ -342,7 +342,8 @@ if (args[0] === "devices" && args[1] === "approve") {
     !process.env.OPENCLAW_GATEWAY_URL &&
     !process.env.OPENCLAW_GATEWAY_PORT &&
     process.env.OPENCLAW_GATEWAY_TOKEN === "secret-token" &&
-    !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+    !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING &&
+    !process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
   const pairedTokenOnly =
     process.env.OPENCLAW_GATEWAY_URL === "ws://127.0.0.1:18789" &&
     process.env.NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL ===
@@ -350,6 +351,7 @@ if (args[0] === "devices" && args[1] === "approve") {
     !process.env.OPENCLAW_GATEWAY_PORT &&
     !process.env.OPENCLAW_GATEWAY_PASSWORD &&
     !process.env.OPENCLAW_GATEWAY_TOKEN &&
+    !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING &&
     Boolean(pairedOperator?.token) &&
     forced &&
     process.env.NODE_DISABLE_COMPILE_CACHE === "1" &&
@@ -364,7 +366,8 @@ if (args[0] === "devices" && args[1] === "approve") {
     !process.env.OPENCLAW_GATEWAY_URL &&
     !process.env.OPENCLAW_GATEWAY_PORT &&
     !process.env.OPENCLAW_GATEWAY_TOKEN &&
-    !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+    !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING &&
+    !process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
   const expectedAuthMode = hasPairedBaseline
     ? exactPairingBaseline && boundedWriteUpgrade
       ? pairedTokenOnly
@@ -407,7 +410,7 @@ if (args[0] === "devices" && args[1] === "approve") {
         : pairedTokenOnly
           ? "clone-paired-token"
           : "stored-device-auth",
-      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1" ? "forced" : "ordinary",
+      forced ? "forced" : "ordinary",
       forced
         ? forcedStatePinned
           ? "clone-state-fd"
@@ -585,6 +588,9 @@ ${persistentRaceNeedle}`,
         timeoutAfterCommit = false,
         devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
       ) => {
+        const approvalEnv = { ...process.env };
+        delete approvalEnv.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+        delete approvalEnv.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
         const approvalScript = timeoutAfterCommit
           ? timeoutScript
           : devicesRace === "child-entry"
@@ -598,7 +604,7 @@ ${persistentRaceNeedle}`,
           encoding: "utf-8",
           input: approvalScript,
           env: {
-            ...process.env,
+            ...approvalEnv,
             PATH: `${tmpDir}:/usr/bin:/bin`,
             NEMOCLAW_APPROVE_FAIL: failApproval ? "1" : "0",
             NEMOCLAW_APPROVE_WATCHER_RACE: watcherRace ? "1" : "0",
@@ -610,6 +616,7 @@ ${persistentRaceNeedle}`,
             NEMOCLAW_TEST_CLONE_STATE_DIR: stateDir,
             NEMOCLAW_TEST_CLONE_STATE_BACKUP: stateRaceBackup,
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
+            NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: gatewayPort,
             OPENCLAW_GATEWAY_TOKEN: gatewayToken,
@@ -1144,8 +1151,19 @@ ${persistentRaceNeedle}`,
       }
 
       const clonePendingPath = path.join(devicesDir, "pending.json");
+      resetLogs();
+      fs.rmSync(clonePendingPath, { force: true });
+      const unavailable = execute();
+      expect(unavailable.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(unavailable.stdout)).toBe("list-pending-unavailable");
+      expect(readApprovals()).toEqual([]);
+      expect(`${unavailable.stdout}${unavailable.stderr}`.includes("raw list output")).toBe(false);
+      expect(fs.existsSync(listEnvFile)).toBe(false);
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryPending,
+      );
+
       for (const preparePendingState of [
-        () => fs.rmSync(clonePendingPath, { force: true }),
         () => fs.writeFileSync(clonePendingPath, "{"),
         () => fs.writeFileSync(clonePendingPath, "[]"),
       ]) {
