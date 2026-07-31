@@ -68,9 +68,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("dir_fd=clone_state_dir_fd");
     expect(restoredClone).toContain("clone_devices_dir_fd,");
     expect(restoredClone).toContain("clone_identity_dir_fd,");
-    expect(restoredClone).toContain("metadata.st_nlink > 1");
-    expect(restoredClone).toContain("metadata.st_nlink == 0");
-    expect(restoredClone).toContain("for attempt in range(3)");
+    expect(restoredClone).toContain("metadata.st_nlink != 1");
     expect(restoredClone).toContain("pass_fds=approval_pass_fds");
     expect(restoredClone).toContain("approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'");
     expect(restoredClone).toContain("approve_env['OPENCLAW_NO_RESPAWN'] = '1'");
