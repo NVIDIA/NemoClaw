@@ -104,8 +104,13 @@ describe("shields timer authorization", () => {
       await waitForRetryBoundary(deadlinePath, auditPath);
       expect(exitSpy).not.toHaveBeenCalled();
       expect(fs.existsSync(deadlinePath)).toBe(true);
+      const policyApplicationsBeforeRevocation =
+        shieldsIndexMock.applyShieldsPolicySnapshot.mock.calls.length;
       fs.rmSync(markerPath, { force: true });
       await pending;
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(
+        policyApplicationsBeforeRevocation,
+      );
     } finally {
       fs.writeFileSync(markerPath, markerContents);
       exitSpy.mockRestore();
