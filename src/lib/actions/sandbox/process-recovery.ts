@@ -1295,10 +1295,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         initialManagedHealthPassed: recovery.kind === "managed",
         requireManagedProbe: recovery.kind === "relaunched",
         timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
-        managedProbeImpl: (name) =>
-          confirmRecoveredSandboxGatewayManaged(name, {
-            requestGatewaySupervisorActionImpl: requestManagedProbe,
-          }),
+        managedProbeImpl: relaunch
+          ? () => confirmRelaunchedManagedHealth?.(210000) ?? null
+          : (name) =>
+              confirmRecoveredSandboxGatewayManaged(name, {
+                requestGatewaySupervisorActionImpl: requestManagedProbe,
+              }),
       });
     } catch (error) {
       try {
@@ -1334,6 +1336,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         );
       }
       onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+      if (relaunchedManagedHealthFailureDetail) {
+        return {
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+          forwardRecovered: false,
+          forwardRecoveryFailed: true,
+          forwardRecoveryFailureDetail: `the recreated sandbox failed the managed health guard while waiting for its gateway. Managed health result: ${relaunchedManagedHealthFailureDetail}`,
+        };
+      }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
     if (relaunch) {
