@@ -53,6 +53,14 @@ export function parseSandboxMessagingPlan(
   const normalizedChannelIds = new Set<string>();
   for (const channel of value.channels) {
     if (!isObjectRecord(channel) || typeof channel.channelId !== "string") return null;
+    const normalizedChannelId = normalizeMessagingChannelId(channel.channelId);
+    if (
+      !normalizedChannelId ||
+      normalizedChannelId !== channel.channelId ||
+      normalizedChannelIds.has(normalizedChannelId)
+    ) {
+      return null;
+    }
     if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {
       return null;
     }
@@ -63,19 +71,47 @@ export function parseSandboxMessagingPlan(
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
     if (
       Array.isArray(channel.inputs) &&
-      channel.inputs.some((input) => !isObjectRecord(input) || typeof input.inputId !== "string")
+      channel.inputs.some(
+        (input) =>
+          !isObjectRecord(input) ||
+          typeof input.inputId !== "string" ||
+          (Object.hasOwn(input, "channelId") && input.channelId !== normalizedChannelId),
+      )
     ) {
       return null;
     }
-    if (Array.isArray(channel.hooks) && channel.hooks.some((hook) => !isObjectRecord(hook))) {
+    if (
+      Array.isArray(channel.hooks) &&
+      channel.hooks.some(
+        (hook) =>
+          !isObjectRecord(hook) ||
+          (Object.hasOwn(hook, "channelId") && hook.channelId !== normalizedChannelId),
+      )
+    ) {
+      return null;
+    }
+    if (
+      Object.hasOwn(channel, "hostForward") &&
+      isObjectRecord(channel.hostForward) &&
+      channel.hostForward.channelId !== normalizedChannelId
+    ) {
       return null;
     }
     if (supported && !supported.has(channel.channelId)) return null;
-    const normalizedChannelId = normalizeMessagingChannelId(channel.channelId);
-    if (!normalizedChannelId || normalizedChannelIds.has(normalizedChannelId)) return null;
     normalizedChannelIds.add(normalizedChannelId);
   }
-  if (!value.disabledChannels.every((channelId) => typeof channelId === "string")) return null;
+  if (!value.disabledChannels.every(isCanonicalMessagingChannelId)) return null;
+  if (
+    !hasCanonicalChannelReferences(value.credentialBindings) ||
+    !hasCanonicalChannelReferences(value.agentRender) ||
+    !hasCanonicalChannelReferences(value.buildSteps) ||
+    !hasCanonicalChannelReferences(value.stateUpdates) ||
+    !hasCanonicalChannelReferences(value.healthChecks) ||
+    !hasCanonicalNetworkPolicyReferences(value.networkPolicy) ||
+    !hasCanonicalRuntimeSetupReferences(value.runtimeSetup)
+  ) {
+    return null;
+  }
 
   return cloneSandboxMessagingPlan(
     normalizePersistedSandboxMessagingPlanShape(value as MaybeCompactMessagingPlan),
@@ -188,5 +224,34 @@ function isRuntimeSetup(value: unknown): boolean {
     value.nodePreloads.every(isObjectRecord) &&
     value.envAliases.every(isObjectRecord) &&
     value.secretScans.every(isObjectRecord)
+  );
+}
+
+function isCanonicalMessagingChannelId(value: unknown): value is string {
+  return (
+    typeof value === "string" && value.length > 0 && normalizeMessagingChannelId(value) === value
+  );
+}
+
+function hasCanonicalChannelReferences(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.every(
+        (entry) => isObjectRecord(entry) && isCanonicalMessagingChannelId(entry.channelId),
+      ))
+  );
+}
+
+function hasCanonicalNetworkPolicyReferences(value: unknown): boolean {
+  if (!isObjectRecord(value) || !Object.hasOwn(value, "entries")) return true;
+  return hasCanonicalChannelReferences(value.entries);
+}
+
+function hasCanonicalRuntimeSetupReferences(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isObjectRecord(value)) return false;
+  return ["nodePreloads", "envAliases", "secretScans"].every((field) =>
+    hasCanonicalChannelReferences(value[field]),
   );
 }
