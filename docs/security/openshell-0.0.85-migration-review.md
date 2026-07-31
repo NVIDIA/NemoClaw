@@ -360,10 +360,8 @@ Commits: `ed0026aa`, `0a25fdf5`, `5477e2f2`, `914da339`, `450685c7`, `45614a3f`.
   absence alone.
 - `450685c7` rejects leading/trailing whitespace in mount fields.
   NemoClaw does not configure production driver mounts for OpenClaw or Hermes.
-  LangChain Deep Agents Code supplies one bounded tmpfs mount for its managed MCP
-  snapshot fallback.
-  The test-only EXDEV tmpfs mount remains a separate structured-tmpfs parsing
-  regression.
+  LangChain Deep Agents Code supplies one bounded tmpfs mount for its managed MCP snapshot fallback.
+  The test-only EXDEV tmpfs mount remains a separate structured-tmpfs parsing regression.
 - The Helm SAN, MCP documentation, Kubernetes combined-topology, and removed raw
   `SandboxTemplate.volume_claim_templates` changes are not consumed by NemoClaw's
   Docker gateway or CLI integration. NemoClaw has no raw OpenShell protobuf client
@@ -382,11 +380,9 @@ dependency migration.
 
 Commits: `43bb0302`, `5f9bf9ce`, `6461677c`.
 
-- `43bb0302` changes Docker and Podman bind mounts to support SELinux relabeling,
-  explicit source checks, and Docker's legacy bind representation.
+- `43bb0302` changes Docker and Podman bind mounts to support SELinux relabeling, explicit source checks, and Docker's legacy bind representation.
   Production Deep Agents Code supplies a structured tmpfs mount, not a bind mount.
-  The EXDEV fixture remains a separate structured-tmpfs regression and does not
-  exercise bind-mount relabeling.
+  The EXDEV fixture remains a separate structured-tmpfs regression and does not exercise bind-mount relabeling.
 - `6461677c` adds numeric UID/GID policy identities and configurable Kubernetes
   and VM identities. NemoClaw's supported gateway configuration selects only the
   Docker driver; that driver does not inject the new UID/GID environment or
@@ -710,29 +706,19 @@ NemoClaw work.
 
 ## Stable release selected-driver and mount proof boundary
 
-The same stable MCP job prepares a second bounded proof only when
-`NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF=1`.
-A PATH wrapper delegates every operation to the hash-pinned release CLI without
-adding driver configuration.
-The production Deep Agents Code onboard plan supplies one reviewed
-`--driver-config-json` value.
-Its Docker and Podman tables each define a tmpfs at
-`/run/nemoclaw-dcode-mcp` with a 1,048,576-byte limit, mode `01777`, and
-`noexec`, `nosuid`, and `nodev` options.
+The same stable MCP job prepares a second bounded proof only when `NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF=1`.
+A PATH wrapper delegates every operation to the hash-pinned release CLI without adding driver configuration.
+The production Deep Agents Code onboard plan supplies one reviewed `--driver-config-json` value.
+Its Docker and Podman tables each define a tmpfs at `/run/nemoclaw-dcode-mcp` with a 1,048,576-byte limit, mode `01777`, and `noexec`, `nosuid`, and `nodev` options.
 OpenClaw and Hermes do not receive this mount.
-The Deep Agents Code policy grants Landlock read-write access to the exact mount
-path.
+The Deep Agents Code policy grants Landlock read-write access to the exact mount path.
 
-The production Deep Agents Code runtime uses this tmpfs only as its final anonymous-snapshot
-location.
+The production Deep Agents Code runtime uses this tmpfs only as its final anonymous-snapshot location.
 The #8018 regression path first receives `EPERM` from sealed memfd creation.
 It then receives `EOPNOTSUPP` when `/tmp` rejects `O_TMPFILE`.
-Before the runtime opens an anonymous file in the private path, it requires the
-exact mount point, tmpfs filesystem, mode, size bound, and `rw`, `noexec`,
-`nosuid`, and `nodev` mount options.
+Before the runtime opens an anonymous file in the private path, it requires exactly one matching mount entry for the exact mount point, the tmpfs filesystem, mode, size bound, and `rw`, `noexec`, `nosuid`, and `nodev` mount options.
 The runtime keeps only an unlinked read-only descriptor.
-It binds child reads to the file descriptor, device, inode, size, and SHA-256
-digest.
+It binds child reads to the file descriptor, device, inode, size, and SHA-256 digest.
 
 The proof does not treat successful onboarding as evidence by itself. It:
 
@@ -753,14 +739,10 @@ The proof does not treat successful onboarding as evidence by itself. It:
    sandbox exec through the supervisor relay. The container must mount its
    sandbox JWT and all three client-mTLS files read-only.
 4. Inspects the running Docker container.
-   The production Deep Agents Code mount must use one
-   structured `Type=tmpfs` mount.
-   It must not appear in `HostConfig.Binds`, which
-   is the representation changed for SELinux-labelled bind mounts.
-   Inside the sandbox,
-   `/proc/mounts` must report `tmpfs` with `rw`, `noexec`, `nosuid`, and `nodev`.
-   The mount must have mode `01777`, expose no more than 1,048,576 bytes, and
-   accept a writable marker.
+   The production Deep Agents Code mount must use one structured `Type=tmpfs` mount.
+   It must not appear in `HostConfig.Binds`, which is the representation changed for SELinux-labelled bind mounts.
+   Inside the sandbox, `/proc/mounts` must report `tmpfs` with `rw`, `noexec`, `nosuid`, and `nodev`.
+   The mount must have mode `01777`, expose no more than 1,048,576 bytes, and accept a writable marker.
 5. Stops and recovers the actual host OpenShell gateway through NemoClaw. A
    graceful gateway shutdown stops the managed Docker sandbox, and startup
    resumes that same container. The gateway PID must change, the rendered-config
@@ -772,18 +754,13 @@ The proof does not treat successful onboarding as evidence by itself. It:
    representation/options and no volatile marker, and the backed-up Deep Agents
    state marker must be restored. The new container identity plus the fresh tmpfs
    mount prove that the driver config was reapplied during rebuild.
-7. Executes the shipped Deep Agents Code runtime inside the real sandbox after
-   onboarding and rebuild.
-   The proof requires sealed-memfd creation to fail with `EPERM` and `/tmp`
-   `O_TMPFILE` to fail with `EOPNOTSUPP`.
-   It then requires the shipped runtime to validate and use the production tmpfs
-   fallback.
-   The fallback must create an unlinked read-only descriptor whose binding reads
-   the exact payload.
+7. Executes the shipped Deep Agents Code runtime inside the real sandbox after onboarding and rebuild.
+   The proof requires sealed-memfd creation to fail with `EPERM` and `/tmp` `O_TMPFILE` to fail with `EOPNOTSUPP`.
+   It then requires the shipped runtime to validate and use the production tmpfs fallback.
+   The fallback must create an unlinked read-only descriptor whose binding reads the exact payload.
    A same-size descriptor mutation must fail the SHA-256 integrity check.
    Each platform-contract execution must leave the production mount empty.
-   The production mount must remain empty after each real Deep Agents Code tool call:
-   initial, after bridge restart, after credential rotation, and after rebuild.
+   The production mount must remain empty after each real Deep Agents Code tool call: initial, after bridge restart, after credential rotation, and after rebuild.
 
 The proof is intentionally Linux amd64 Docker-bridge evidence. It does not
 isolate Docker Desktop/Colima, WSL, DGX Spark's Docker 27 host-gateway route,
@@ -793,12 +770,9 @@ nor requests `selinux_label`, so it proves that the consumed tmpfs path remains
 on the unaffected structured-mount branch, not that SELinux relabelling works.
 Those platform claims need their own real hosts.
 
-The live proof binds production mount delivery, fallback selection, descriptor
-integrity, and lifecycle evidence to the stable sandbox artifacts.
-Focused source tests separately reject an invalid private tmpfs and unrelated
-memfd failures.
-These tests keep fail-closed error classification covered without replacing the
-live platform result.
+The live proof binds production mount delivery, fallback selection, descriptor integrity, and lifecycle evidence to the stable sandbox artifacts.
+Focused source tests separately reject stacked mount entries, other invalid private tmpfs states, and unrelated memfd failures.
+These tests keep fail-closed error classification covered without replacing the live platform result.
 
 Legacy upgrade is also separate. This stable release lane starts with a fresh
 gateway/config/database so every observed process can be tied to the release

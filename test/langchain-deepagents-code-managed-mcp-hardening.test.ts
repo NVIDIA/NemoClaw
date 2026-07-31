@@ -120,6 +120,56 @@ print("strict-tombstone-ok")
     },
   );
 
+  it("rejects stacked private tmpfs mounts even when the lower mount is compliant (#8018)", () => {
+    const result = runManagedHelper(String.raw`
+import importlib.util
+import fcntl
+import stat
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+for name, value in {
+    "F_SEAL_WRITE": 1,
+    "F_SEAL_GROW": 2,
+    "F_SEAL_SHRINK": 4,
+    "F_SEAL_SEAL": 8,
+}.items():
+    setattr(fcntl, name, getattr(fcntl, name, value))
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
+managed = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(managed)
+
+directory = Path("/run/nemoclaw-dcode-mcp")
+managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY = directory
+valid_mountinfo = (
+    f"31 20 0:25 / {directory} rw,nosuid,nodev,noexec - "
+    "tmpfs tmpfs rw,size=1024k,mode=1777\n"
+)
+mountinfo = valid_mountinfo
+managed.os.lstat = lambda _path: SimpleNamespace(st_mode=stat.S_IFDIR | 0o1777)
+managed.os.statvfs = lambda _path: SimpleNamespace(f_blocks=256, f_frsize=4096)
+managed.os.path.ismount = lambda _path: True
+managed.Path.read_text = lambda *_args, **_kwargs: mountinfo
+managed._validate_private_managed_mcp_tmpfs()
+
+mountinfo += (
+    f"32 31 0:26 / {directory} rw,nosuid,nodev - "
+    "tmpfs tmpfs rw,size=1024k,mode=1777\n"
+)
+try:
+    managed._validate_private_managed_mcp_tmpfs()
+except RuntimeError as exc:
+    assert "private bounded tmpfs" in str(exc)
+else:
+    raise AssertionError("accepted an ambiguous stacked private tmpfs")
+print("stacked-private-tmpfs-rejected")
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("stacked-private-tmpfs-rejected");
+  });
+
   it.runIf(process.platform === "linux")(
     "rejects a same-sized fully sealed descriptor not created by this process state",
     () => {

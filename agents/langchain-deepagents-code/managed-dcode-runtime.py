@@ -916,19 +916,26 @@ def _validate_private_managed_mcp_tmpfs() -> None:
             "managed MCP config requires a private bounded tmpfs"
         ) from exc
 
-    mount_options: set[str] | None = None
+    matching_mount_options: list[set[str] | None] = []
     for line in mount_lines:
         fields = line.split()
+        if len(fields) <= 4 or fields[4] != str(directory):
+            continue
         try:
             separator = fields.index("-")
         except ValueError:
+            matching_mount_options.append(None)
             continue
-        if len(fields) <= separator + 3 or fields[4] != str(directory):
+        if len(fields) <= separator + 3 or fields[separator + 1] != "tmpfs":
+            matching_mount_options.append(None)
             continue
-        if fields[separator + 1] != "tmpfs":
-            break
-        mount_options = set(fields[5].split(","))
-        break
+        matching_mount_options.append(set(fields[5].split(",")))
+
+    mount_options = (
+        matching_mount_options[0]
+        if len(matching_mount_options) == 1
+        else None
+    )
 
     total_bytes = filesystem.f_blocks * filesystem.f_frsize
     if (
