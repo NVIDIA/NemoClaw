@@ -45,7 +45,7 @@ describe("HTTPS Pin Runtime revocation source policy", () => {
     expect(deleteRoute).toHaveBeenCalledWith("persisted-control-token", "a".repeat(64));
   });
 
-  it("preserves route state when policy and PID metadata are missing but a control token remains (#7878)", async () => {
+  it("preserves route state when a persisted token means an adapter may still hold the credential (#7878)", async () => {
     const deleteRoute = vi.fn(async () => {});
     const removeRouteState = vi.fn();
     const probeHealth = vi.fn(async () => true);
@@ -61,8 +61,8 @@ describe("HTTPS Pin Runtime revocation source policy", () => {
         removeRouteState,
       }),
     ).rejects.toThrow("route-source policy was not recorded");
-    // Never probe with a made-up policy, and never drop the route record: the
-    // adapter still holds the credential, so the caller must keep warning.
+    // The token means the adapter may still hold the credential. Do not probe
+    // with a made-up policy or drop its route record; the caller must warn.
     expect(probeHealth).not.toHaveBeenCalled();
     expect(deleteRoute).not.toHaveBeenCalled();
     expect(removeRouteState).not.toHaveBeenCalled();
