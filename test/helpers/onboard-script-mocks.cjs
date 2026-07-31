@@ -75,6 +75,30 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
   `printf '%s\\n' "nemoclaw-security-inventory-ok"`,
 ].join("; ");
 
+const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
+const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
+const ONBOARD_SANDBOX_INSPECT = {
+  Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
+  Image: `sha256:${"c".repeat(64)}`,
+  Name: "/openshell-my-assistant",
+  Config: {
+    Image: "openshell/sandbox:test",
+    Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
+    Labels: {
+      "openshell.ai/managed-by": "openshell",
+      "openshell.ai/sandbox-name": "my-assistant",
+    },
+    Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+    Cmd: [],
+    User: "0",
+    WorkingDir: "/sandbox",
+  },
+  HostConfig: {
+    NetworkMode: "openshell-docker",
+    RestartPolicy: { Name: "unless-stopped" },
+  },
+};
+
 function isOpenClawSecurityInventoryProbe(command) {
   const commandArgs = Array.isArray(command) ? command.map(String) : [];
   const dockerArgs = commandArgs[0] === "docker" ? commandArgs.slice(1) : commandArgs;
@@ -113,6 +137,19 @@ function mockSandboxExecCurl(command, options = {}) {
 
 function mockOnboardRunCapture(command, options = {}) {
   const normalized = normalizeCommand(command);
+  if (
+    normalized.startsWith("docker ps -a --no-trunc ") &&
+    normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+    normalized.endsWith("--format {{.ID}}")
+  ) {
+    return `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\n${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
+  }
+  if (
+    normalized ===
+    `docker inspect --type container ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`
+  ) {
+    return JSON.stringify([ONBOARD_SANDBOX_INSPECT]);
+  }
   if (isOpenClawSecurityInventoryProbe(command)) {
     return "nemoclaw-security-inventory-ok";
   }
