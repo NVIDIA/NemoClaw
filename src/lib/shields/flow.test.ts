@@ -910,6 +910,7 @@ describe("shields command flow", () => {
     expect(path.dirname(appliedPolicyDir)).toBe(systemTemp);
     expect(path.basename(appliedPolicyDir)).toMatch(/^nemoclaw-permissive-runtime-/);
     expect(appliedPolicyBody).toContain("/opt/hermes");
+    expect(appliedPolicyBody).toContain("/etc");
     expect(fs.readdirSync(systemTemp)).toEqual([]);
   });
 
