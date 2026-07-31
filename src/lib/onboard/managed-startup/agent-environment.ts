@@ -32,12 +32,14 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "NEMOCLAW_DCODE_AUTO_APPROVAL"
     | "NEMOCLAW_INFERENCE_BASE_URL"
     | "NEMOCLAW_PROXY_HOST"
-    | "NEMOCLAW_PROXY_PORT";
+    | "NEMOCLAW_PROXY_PORT"
+    | "NEMOCLAW_REASONING_EFFORT";
   readonly path:
     | "/usr/local/share/nemoclaw/dcode-auto-approval"
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
     | "/usr/local/share/nemoclaw/dcode-proxy-host"
-    | "/usr/local/share/nemoclaw/dcode-proxy-port";
+    | "/usr/local/share/nemoclaw/dcode-proxy-port"
+    | "/usr/local/share/nemoclaw/dcode-reasoning-effort";
   readonly contents: string;
   readonly owner: "root";
   readonly group: "root";
@@ -473,8 +475,13 @@ function mapDcodeProfile(
     );
   }
 
+  const reasoningEffort =
+    profile.tuning.reasoningEffort === null || profile.tuning.reasoningEffort === "default"
+      ? ""
+      : profile.tuning.reasoningEffort;
   const configurationEnvironment: MutableEnvironment = {
     ...commonConfigurationEnvironment(profile),
+    NEMOCLAW_REASONING_EFFORT: reasoningEffort,
     NEMOCLAW_UPSTREAM_ENDPOINT_URL: profile.inference.upstreamEndpointUrl ?? "",
   };
   appendHostProxyEnvironment(configurationEnvironment, profile);
@@ -482,10 +489,11 @@ function mapDcodeProfile(
     ...configurationEnvironment,
     NEMOCLAW_OBSERVABILITY: booleanFlag(profile.agentConfig.observabilityEnabled),
   };
-  // The config generator needs the routed base URL, but the long-running
-  // DCode process trusts only the root-owned file consumed by
-  // managed-dcode-runtime.py.
+  // The config generator needs the routed base URL and the reasoning effort,
+  // but the long-running DCode process trusts only the root-owned files
+  // consumed by managed-dcode-runtime.py.
   delete runtimeEnvironment.NEMOCLAW_INFERENCE_BASE_URL;
+  delete runtimeEnvironment.NEMOCLAW_REASONING_EFFORT;
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -517,6 +525,11 @@ function mapDcodeProfile(
       "NEMOCLAW_PROXY_PORT",
       "/usr/local/share/nemoclaw/dcode-proxy-port",
       String(profile.proxy.managedPort),
+    ),
+    rootOwnedFile(
+      "NEMOCLAW_REASONING_EFFORT",
+      "/usr/local/share/nemoclaw/dcode-reasoning-effort",
+      reasoningEffort,
     ),
   ]);
 

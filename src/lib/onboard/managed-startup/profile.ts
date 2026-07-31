@@ -393,7 +393,7 @@ const PROFILE_CAPABILITIES = {
     inputModalities: [],
     webSearchProviders: [],
     toolGateways: [],
-    tuningFields: [],
+    tuningFields: ["reasoningEffort"],
     supportsMessaging: false,
     supportsInferenceCompatibility: false,
     supportsUpstreamEndpoint: true,
@@ -534,6 +534,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_UPSTREAM_ENDPOINT_URL", "inference.upstreamEndpointUrl"),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
+    affordance("NEMOCLAW_REASONING_EFFORT", "tuning.reasoningEffort"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
     affordance("NEMOCLAW_DCODE_AUTO_APPROVAL", "agentConfig.autoApprovalMode"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
@@ -1729,10 +1730,11 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
   } else if (
     result.contextWindow !== null ||
     result.maxTokens !== null ||
-    result.reasoning !== null ||
-    result.reasoningEffort !== null
+    result.reasoning !== null
   ) {
-    invalid("langchain-deepagents-code does not support startup tuning fields");
+    invalid(
+      "langchain-deepagents-code does not support startup tuning fields beyond reasoningEffort",
+    );
   }
   return result;
 }
