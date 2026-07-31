@@ -4,11 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamSandboxCreate } from "./create-stream";
-import { dockerEnv, FakeChild, makePollingOptions, vmEnv } from "./create-stream-test-fixtures";
 import {
   getReadyCheckOutputPatterns,
   getReadyCheckOutputPatternsForAgent,
 } from "./create-stream-ready-gate";
+import { dockerEnv, FakeChild, makePollingOptions, vmEnv } from "./create-stream-test-fixtures";
 
 describe("sandbox-create-stream ready gate", () => {
   afterEach(() => {
@@ -110,25 +110,58 @@ describe("sandbox-create-stream ready gate", () => {
     );
   });
 
-  it("runs poll side effects only after a not-ready poll", async () => {
+  it("runs poll side effects and their failure check before accepting Ready", async () => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
-    const onPoll = vi.fn();
-    let ready = false;
+    const calls: string[] = [];
     const promise = streamSandboxCreate(
       "echo create",
       dockerEnv,
-      makePollingOptions(child, { readyCheck: () => ready, onPoll, failureCheck: () => null }),
+      makePollingOptions(child, {
+        onPoll: () => calls.push("poll"),
+        failureCheck: () => {
+          calls.push("failure");
+          return null;
+        },
+        readyCheck: () => {
+          calls.push("ready");
+          return true;
+        },
+      }),
     );
 
     await vi.advanceTimersByTimeAsync(6);
-    expect(onPoll).toHaveBeenCalledTimes(1);
-
-    ready = true;
-    await vi.advanceTimersByTimeAsync(6);
     await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
-    expect(onPoll).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(["poll", "failure", "ready"]);
+  });
+
+  it("does not accept a Ready row when the same poll reports a patch failure", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const readyCheck = vi.fn(() => true);
+    let patchFailed = false;
+    const promise = streamSandboxCreate(
+      "echo create",
+      dockerEnv,
+      makePollingOptions(child, {
+        onPoll: () => {
+          patchFailed = true;
+        },
+        failureCheck: () => (patchFailed ? "Docker startup-command patch failed" : null),
+        readyCheck,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 1,
+      output: expect.stringContaining("Docker startup-command patch failed"),
+    });
+    expect(readyCheck).not.toHaveBeenCalled();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("aborts poll side-effect errors with a generic redacted failure", async () => {

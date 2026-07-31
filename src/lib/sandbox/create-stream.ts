@@ -364,6 +364,32 @@ export function streamSandboxCreate(
         if (settled || polling) return;
         polling = true;
         try {
+          let pollFailure: string | null | undefined;
+          try {
+            options.onPoll?.();
+          } catch (error) {
+            emitTraceEvent("sandbox_create_poll_error", {
+              message: redact(error instanceof Error ? error.message : String(error)),
+            });
+            pollFailure = options.failureCheck?.() ?? "Sandbox create poll side effect failed.";
+          }
+
+          const failure = pollFailure ?? options.failureCheck?.();
+          if (failure) {
+            const detail = String(failure);
+            lines.push(detail);
+            printProgressLine(`  ${detail}`);
+            try {
+              child.kill?.("SIGTERM");
+            } catch {
+              // Best effort only — the child may have already exited.
+            }
+            detachChild();
+            sawProgress = true;
+            finish(1);
+            return;
+          }
+
           let ready = false;
           try {
             ready = !!options.readyCheck?.();
@@ -396,32 +422,7 @@ export function streamSandboxCreate(
             detachChild();
             sawProgress = true;
             finish(0, { forcedReady: true });
-            return;
           }
-
-          let pollFailure: string | null | undefined;
-          try {
-            options.onPoll?.();
-          } catch (error) {
-            emitTraceEvent("sandbox_create_poll_error", {
-              message: redact(error instanceof Error ? error.message : String(error)),
-            });
-            pollFailure = options.failureCheck?.() ?? "Sandbox create poll side effect failed.";
-          }
-
-          const failure = pollFailure ?? options.failureCheck?.();
-          if (!failure) return;
-          const detail = String(failure);
-          lines.push(detail);
-          printProgressLine(`  ${detail}`);
-          try {
-            child.kill?.("SIGTERM");
-          } catch {
-            // Best effort only — the child may have already exited.
-          }
-          detachChild();
-          sawProgress = true;
-          finish(1);
         } finally {
           polling = false;
         }
