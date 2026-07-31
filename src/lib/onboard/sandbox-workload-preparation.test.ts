@@ -19,12 +19,14 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
+import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
   prepareSandboxWorkloadSource,
   SandboxWorkloadPreparationError,
 } from "./workload/preparation";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
+import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 
 const RELEASE = "v0.0.97";
 const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
@@ -192,26 +194,30 @@ describe("sandbox workload preparation", () => {
     expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "podman",
-    "mxc",
-  ])("rejects custom Dockerfile preparation for buildless %s before catalog access (#7744)", async (driverName) => {
+  it("rejects custom Dockerfile preparation for a buildless provider before catalog access (#7744)", async () => {
+    const driverName = "buildless-test";
     const resolveCatalog = vi.fn(async () => CATALOG);
-    const profiles = {
-      [driverName]: {
-        support: runtime(driverName).managedImages!,
-        hostArchitectures: ["amd64"],
-        managedImageSelectionPolicy: "require-managed" as const,
-        legacyDockerfileBuilds: false,
-      },
-    };
+    const providers = createRuntimeProviderBundleRegistry([
+      [
+        driverName,
+        createInMemoryRuntimeProviderBundle({
+          providerId: driverName,
+          workloadProfile: {
+            support: runtime(driverName).managedImages!,
+            hostArchitectures: ["amd64"],
+            managedImageSelectionPolicy: "require-managed",
+            legacyDockerfileBuilds: false,
+          },
+        }),
+      ],
+    ]);
 
     await expect(
       prepareSandboxWorkloadSource(
         {
           ...input("openclaw"),
           customDockerfilePath: "/workspace/CustomDockerfile",
-          runtime: resolveSandboxWorkloadRuntimeCapabilities({ driverName }, profiles, "x64"),
+          runtime: resolveSandboxWorkloadRuntimeCapabilities({ driverName }, providers, "x64"),
         },
         { resolveCatalog },
       ),
@@ -227,7 +233,7 @@ describe("sandbox workload preparation", () => {
         {
           ...input("langchain-deepagents-code"),
           runtime: {
-            driverName: "podman",
+            driverName: "buildless-test",
             managedImageSelectionPolicy: "require-managed",
             legacyDockerfileBuilds: false,
             managedImages: null,
@@ -367,7 +373,7 @@ describe("sandbox workload preparation", () => {
 
   it("prepares a managed image for an independently registered MXC-shaped runtime without branching (#7744)", async () => {
     const prepared = await prepareSandboxWorkloadSource(
-      { ...input("hermes"), runtime: runtime("mxc") },
+      { ...input("hermes"), runtime: runtime("portable-test") },
       { resolveCatalog: async () => CATALOG },
     );
 
