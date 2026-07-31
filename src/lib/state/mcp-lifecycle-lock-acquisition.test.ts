@@ -79,7 +79,7 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
-  it("keeps synchronous deadline recovery reentrant until cleanup completes", () => {
+  it("allows a nested synchronous lock during deadline recovery and releases the main lock and deadline gate afterward", () => {
     const processToken = "a".repeat(32);
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     writeTimerMarker(processToken);
