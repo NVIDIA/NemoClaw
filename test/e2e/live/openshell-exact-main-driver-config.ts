@@ -35,7 +35,9 @@ export const EXACT_MAIN_TMPFS_TARGET = "/run/nemoclaw-dcode-mcp";
 export const EXACT_MAIN_TMPFS_MOUNT = {
   type: "tmpfs",
   target: EXACT_MAIN_TMPFS_TARGET,
-  options: ["noexec", "nosuid", "nodev"],
+  // Docker applies nosuid and nodev by default; only noexec is accepted as an
+  // additional structured tmpfs option by the pinned Docker driver.
+  options: ["noexec"],
   size_bytes: 1_048_576,
   mode: 0o1777,
 } as const;

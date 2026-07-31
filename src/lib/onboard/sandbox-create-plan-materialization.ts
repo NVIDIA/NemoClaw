@@ -16,7 +16,9 @@ type PrepareInitialSandboxCreatePolicy =
 const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   type: "tmpfs",
   target: "/run/nemoclaw-dcode-mcp",
-  options: ["noexec", "nosuid", "nodev"],
+  // Docker applies nosuid and nodev to tmpfs mounts by default and rejects
+  // both when they are repeated in structured MountTmpfsOptions.
+  options: ["noexec"],
   size_bytes: 1_048_576,
   mode: 0o1777,
 } as const;

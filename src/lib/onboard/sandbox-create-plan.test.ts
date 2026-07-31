@@ -498,7 +498,7 @@ describe("prepareSandboxCreatePlan", () => {
             {
               type: "tmpfs",
               target: "/run/nemoclaw-dcode-mcp",
-              options: ["noexec", "nosuid", "nodev"],
+              options: ["noexec"],
               size_bytes: 1_048_576,
               mode: 0o1777,
             },
@@ -509,7 +509,7 @@ describe("prepareSandboxCreatePlan", () => {
             {
               type: "tmpfs",
               target: "/run/nemoclaw-dcode-mcp",
-              options: ["noexec", "nosuid", "nodev"],
+              options: ["noexec"],
               size_bytes: 1_048_576,
               mode: 0o1777,
             },
