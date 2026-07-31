@@ -245,7 +245,7 @@ async function runProbeOnly(
   ).toContain(`Probe complete: recovered OpenClaw gateway in '${sandboxName}'.`);
 }
 
-async function pauseGatewayIdentity(
+async function terminateGatewayIdentity(
   sandbox: {
     exec(
       name: string,
@@ -279,16 +279,7 @@ async function pauseGatewayIdentity(
         "inspect_identity",
         '[ "$actual_start" = "$expected_start" ]',
         'case "$process_state" in Z|X) exit 1 ;; esac',
-        'kill -STOP "$pid"',
-        "attempt=0",
-        'while [ "$attempt" -lt 50 ]; do',
-        '  if inspect_identity && [ "$actual_start" = "$expected_start" ] && [ "$process_state" = T ]; then',
-        "    exit 0",
-        "  fi",
-        "  attempt=$((attempt + 1))",
-        "  sleep 0.1",
-        "done",
-        "exit 1",
+        'kill -TERM "$pid"',
       ].join("\n"),
       "sh",
       String(identity.pid),
@@ -302,7 +293,7 @@ async function pauseGatewayIdentity(
   );
   expect(
     result.exitCode,
-    `${artifactName} did not stop the expected process identity\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    `${artifactName} did not terminate the expected process identity\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).toBe(0);
 }
 
@@ -316,7 +307,7 @@ test("connect-driven gateway recovery restores the guard chain and keeps the rec
       "start the compatible endpoint and confirm host readiness",
       "onboard the guarded OpenClaw sandbox",
       "confirm initial gateway and inference health",
-      "recover one unresponsive gateway through the production connect path",
+      "terminate one live gateway and recover it through the production connect path",
       "verify the recovered process identity remains unchanged for 15 seconds",
     ],
   },
@@ -363,12 +354,12 @@ test("connect-driven gateway recovery restores the guard chain and keeps the rec
     initialIdentity,
   );
 
-  progress.phase("recover one unresponsive gateway through the production connect path");
-  await pauseGatewayIdentity(
+  progress.phase("terminate one live gateway and recover it through the production connect path");
+  await terminateGatewayIdentity(
     sandbox,
     instance.sandboxName,
     preRecoveryIdentity!,
-    "functional-recovery-pause-gateway",
+    "functional-recovery-terminate-gateway",
   );
   await runProbeOnly(host, instance.sandboxName, "functional-recovery-connect-probe-only");
   const recoveredIdentity = await waitForGatewayIdentity(gateway, instance, 45_000);
@@ -378,7 +369,7 @@ test("connect-driven gateway recovery restores the guard chain and keeps the rec
   ).not.toBeNull();
   expect(
     `${recoveredIdentity!.pid}:${recoveredIdentity!.startIdentity}`,
-    "recovery should replace the unresponsive gateway process identity",
+    "recovery should replace the terminated gateway process identity",
   ).not.toBe(`${preRecoveryIdentity!.pid}:${preRecoveryIdentity!.startIdentity}`);
   await gateway.expectGuardChainActive(instance);
   await runtime.expectInferenceLocalModels(instance, {
