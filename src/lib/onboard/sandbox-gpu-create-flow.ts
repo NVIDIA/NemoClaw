@@ -13,7 +13,10 @@ import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import type { DockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import {
+  createSandboxGpuCreateAttemptRunner,
+  renderDeferredSandboxCreateArgv,
+} from "./sandbox-gpu-create-run-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
@@ -123,13 +126,10 @@ export async function runSandboxGpuCreateFlow(
           allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
           compatibilityPolicyPath: input.compatibilityPolicyPath,
         });
-        attemptRunner.state.compatibilityArgv = deps.openshellArgv([
-          "sandbox",
-          "create",
-          ...compatibilityArgs,
-          "--",
-          ...input.sandboxStartupCommand,
-        ]);
+        attemptRunner.state.compatibilityArgv = renderDeferredSandboxCreateArgv(
+          compatibilityArgs,
+          deps.openshellArgv,
+        );
         if (attemptRunner.state.compatibilityArgv.length === 0) {
           throw new Error("Compatibility sandbox create executable is missing.");
         }

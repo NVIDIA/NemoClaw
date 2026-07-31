@@ -40,6 +40,24 @@ export type SandboxGpuCreateAttemptState = {
 // A compatibility recreate can briefly observe the original container's stale
 // Ready row. Require one confirmation poll before advancing to the GPU proof.
 const COMPATIBILITY_STABLE_READY_POLLS = 2;
+const DEFERRED_SANDBOX_STARTUP_COMMAND = ["/bin/true"] as const;
+
+export function renderDeferredSandboxCreateArgv(
+  createArgs: readonly string[],
+  openshellArgv: SandboxGpuCreateFlowDeps["openshellArgv"],
+): string[] {
+  // `/bin/true` exits immediately. The pinned OpenShell release keeps command
+  // sessions by default; pass its compatibility flag explicitly so the
+  // disposable handoff also remains durable with older lifecycle behavior.
+  return openshellArgv([
+    "sandbox",
+    "create",
+    ...createArgs,
+    "--keep",
+    "--",
+    ...DEFERRED_SANDBOX_STARTUP_COMMAND,
+  ]);
+}
 
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
@@ -70,13 +88,15 @@ export function createSandboxGpuCreateAttemptRunner(
       );
     }
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
+    const persistStartupCommandForAttempt =
+      input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits);
+    const recreatesContainer = route === "compatibility" || persistStartupCommandForAttempt;
     const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({
       route,
       // The startup clone preserves native CDI devices, so DCode can apply its
       // exact required limits without replacing the native GPU envelope.
       // Other native routes are not swapped solely to persist a command.
-      persistStartupCommand:
-        input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
+      persistStartupCommand: persistStartupCommandForAttempt,
       sandboxName: input.sandboxName,
       gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
       openshellSandboxCommand: input.sandboxStartupCommand,
@@ -85,7 +105,17 @@ export function createSandboxGpuCreateAttemptRunner(
       backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
       deps,
     });
-    const attemptArgv = state.compatibilityArgv ?? input.createArgv;
+    // OpenShell's Docker driver currently hardcodes the original container's
+    // durable command to `sleep infinity`, so NemoClaw must replace that
+    // container when startup persistence or compatibility mode is required.
+    // Do not start the real agent in the disposable container: its replacement
+    // starts the exact command passed to the patch above. This keeps cold
+    // onboarding to one agent boot while preserving the transactional clone.
+    const attemptArgv =
+      state.compatibilityArgv ??
+      (recreatesContainer
+        ? renderDeferredSandboxCreateArgv(input.prebuild.createArgs, deps.openshellArgv)
+        : input.createArgv);
     const [createExecutable, ...createExecutableArgs] = attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
     const createResult = await streamSandboxCreate(

@@ -143,6 +143,14 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
   return input;
 }
 
+function streamedCreateArgv(index = 0): string[] {
+  const [command, args] = mocks.streamSandboxCreate.mock.calls[index] as [
+    string,
+    readonly string[],
+  ];
+  return [command, ...args];
+}
+
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
@@ -274,7 +282,15 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
+    input.prebuild.createArgs = ["--from", "openshell/sandbox-from:test", "--name", "alpha"];
+    input.createArgv = [
+      "openshell",
+      "sandbox",
+      "create",
+      ...input.prebuild.createArgs,
+      "--",
+      ...input.sandboxStartupCommand,
+    ];
     input.persistStartupCommand = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
@@ -292,6 +308,18 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
         requiredUlimits: input.requiredUlimits,
       }),
     );
+    expect(streamedCreateArgv()).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      ...input.prebuild.createArgs,
+      "--keep",
+      "--",
+      "/bin/true",
+    ]);
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ openshellSandboxCommand: ["nemoclaw-start"] }),
+    );
   });
 
   it("does not replace a native GPU container solely to persist its startup command", async () => {
@@ -305,6 +333,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
     );
+    expect(streamedCreateArgv()).toEqual(input.createArgv);
   });
 
   it("applies exact required limits while preserving the native GPU route", async () => {
@@ -326,6 +355,92 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
         requiredUlimits: input.requiredUlimits,
       }),
     );
+    expect(streamedCreateArgv()).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      ...input.prebuild.createArgs,
+      "--keep",
+      "--",
+      "/bin/true",
+    ]);
+  });
+
+  it("defers startup for a compatibility-only create while preserving route arguments", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "compatibility-only";
+    input.initialGpuRoute = "compatibility";
+    input.prebuild.createArgs = [
+      "--from",
+      "openshell/sandbox-from:test",
+      "--name",
+      "alpha",
+      "--policy",
+      "/tmp/compatibility-policy.yaml",
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(streamedCreateArgv()).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      ...input.prebuild.createArgs,
+      "--keep",
+      "--",
+      "/bin/true",
+    ]);
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ openshellSandboxCommand: ["nemoclaw-start"] }),
+    );
+  });
+
+  it("defers startup only on the compatibility retry and preserves its route policy", async () => {
+    const input = createInput();
+    input.prebuild.createArgs = [
+      "--from",
+      "openshell/sandbox-from:test",
+      "--name",
+      "alpha",
+      "--gpu",
+      "--policy",
+      "/tmp/native-policy.yaml",
+    ];
+    input.createArgv = [
+      "openshell",
+      "sandbox",
+      "create",
+      ...input.prebuild.createArgs,
+      "--",
+      ...input.sandboxStartupCommand,
+    ];
+    const deps = createDeps();
+    vi.mocked(deps.verifyDirectSandboxGpu)
+      .mockReturnValueOnce(NVIDIA_SMI_FAILED_PROOF)
+      .mockReturnValueOnce(VERIFIED_PROOF);
+    mockRuntimeSnapshot();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(streamedCreateArgv(0)).toEqual(input.createArgv);
+    expect(streamedCreateArgv(1)).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      "--from",
+      IMAGE_ID,
+      "--name",
+      "alpha",
+      "--policy",
+      "/tmp/compatibility-policy.yaml",
+      "--keep",
+      "--",
+      "/bin/true",
+    ]);
   });
 
   it.each([
@@ -469,7 +584,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
       1,
       "openshell",
-      ["sandbox", "create", "--gpu"],
+      input.createArgv.slice(1),
       input.sandboxEnv,
       expect.objectContaining({
         onPoll: expect.any(Function),

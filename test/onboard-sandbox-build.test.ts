@@ -202,7 +202,8 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /nemoclaw-start/);
+    assert.match(createCommand.command, /--keep -- \/bin\/true(?:\s|$)/);
+    assert.doesNotMatch(createCommand.command, /nemoclaw-start/);
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
@@ -216,14 +217,16 @@ const { createSandbox } = require(${onboardPath});
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("docker run -d") &&
-          entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
-          entry.command.includes("nemoclaw-start"),
-      ),
-      "expected the default OpenClaw startup command to be persisted in the recreated container",
+    const startupCloneCommands = payload.commands.filter(
+      (entry: CommandEntry) =>
+        entry.command.includes("docker run -d") &&
+        entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
+        entry.command.includes("nemoclaw-start"),
+    );
+    assert.equal(
+      startupCloneCommands.length,
+      1,
+      "expected the real OpenClaw startup command only in the recreated container",
     );
   });
 
@@ -816,27 +819,35 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must be in envArgs so
-    // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
-    // overriding whatever value the Docker image had baked in.
-    assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
-    assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
-    assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(createCommand.command, /--keep -- \/bin\/true(?:\s|$)/);
+    const startupClone = payload.commands.find(
+      (entry: CommandEntry) =>
+        entry.command.includes("docker run -d") &&
+        entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
+        entry.command.includes("nemoclaw-start"),
+    );
+    assert.ok(startupClone, "expected persisted OpenClaw startup command");
+    // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must remain in the
+    // persisted startup command so nemoclaw-start.sh can override CHAT_UI_URL
+    // at runtime, overriding whatever value the Docker image had baked in.
+    assert.match(startupClone.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
+    assert.match(startupClone.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(startupClone.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
     // OpenClaw home/state/workspace dirs must be pinned in the sandbox env so
     // `openclaw skills install` and `openclaw skills list` resolve the same
     // paths. Without this, the upstream skill loader can fall back to a
     // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from the install path
     // and hides workspace-installed skills from `skills list`.
-    assert.match(createCommand.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
-    assert.match(createCommand.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
+    assert.match(startupClone.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
+    assert.match(startupClone.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
     assert.match(
-      createCommand.command,
+      startupClone.command,
       /OPENCLAW_WORKSPACE_DIR=\/sandbox\/\.openclaw\/workspace(?:\s|$)/,
     );
-    const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
+    const noProxyMatch = startupClone.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
     assert.ok(
       noProxyMatch,
-      `expected NO_PROXY in sandbox create command:\n${createCommand.command}`,
+      `expected NO_PROXY in persisted sandbox startup command:\n${startupClone.command}`,
     );
     const noProxyEntries = noProxyMatch[1].split(",");
     assert.ok(noProxyEntries.includes("corp.internal"));
