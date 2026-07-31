@@ -30,6 +30,8 @@ GATEWAY_APPROVAL_ENV_KEYS = (
     "OPENCLAW_GATEWAY_TOKEN",
 )
 
+PAIRING_BOOTSTRAP_ENV_KEY = "NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING"
+
 
 def requested_scopes(device):
     if "scopes" in device:
@@ -86,4 +88,10 @@ def gateway_approval_env(source_env=None):
     env = dict(os.environ if source_env is None else source_env)
     for key in GATEWAY_APPROVAL_ENV_KEYS:
         env.pop(key, None)
+    return env
+
+
+def pairing_bootstrap_env(source_env=None):
+    env = dict(os.environ if source_env is None else source_env)
+    env[PAIRING_BOOTSTRAP_ENV_KEY] = "1"
     return env

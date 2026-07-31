@@ -41,7 +41,15 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     });
 
     expect(ordinary).not.toContain("local_identity_public_key");
+    expect(ordinary).not.toContain("pairing_bootstrap_env");
     expect(restoredClone).toContain("local_identity_public_key");
+    expect(restoredClone).toContain(
+      "pairing_bootstrap_env = policy_globals['pairing_bootstrap_env']",
+    );
+    expect(restoredClone).toContain("env=pairing_bootstrap_env(os.environ)");
+    expect(restoredClone).toContain("approve_env = gateway_approval_env(os.environ)");
+    expect(restoredClone).toContain("except subprocess.TimeoutExpired:");
+    expect(restoredClone).toContain("exit_with_receipt('approve-timeout')");
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");
     expect(restoredClone).toContain("pending = related_pending");
@@ -66,6 +74,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).toBeTruthy();
     expect(module).toContain("def approval_request_decision");
     expect(module).toContain("def gateway_approval_env");
+    expect(module).toContain("def pairing_bootstrap_env");
     expect(module).not.toContain("recover_failed_scope_approval");
   });
 
@@ -219,6 +228,7 @@ process.exit(2);
       const identityDir = path.join(stateDir, "identity");
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
+      const listEnvFile = path.join(tmpDir, "list-env.log");
       fs.mkdirSync(identityDir, { recursive: true });
       const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
       const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
@@ -236,10 +246,23 @@ process.exit(2);
 const fs = require("fs");
 const args = process.argv.slice(2);
 if (args[0] === "devices" && args[1] === "list") {
+  fs.appendFileSync(
+    ${JSON.stringify(listEnvFile)},
+    [
+      process.env.OPENCLAW_GATEWAY_URL || "unset",
+      process.env.OPENCLAW_GATEWAY_PORT || "unset",
+      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+    ].join(":") + "\\n",
+  );
   process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
   process.exit(0);
 }
 if (args[0] === "devices" && args[1] === "approve") {
+  if (process.env.NEMOCLAW_APPROVE_STALL === "1") {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000);
+    process.exit(0);
+  }
   if (process.env.NEMOCLAW_APPROVE_FAIL === "1") {
     process.stderr.write("raw approval output must stay private\\n");
     process.exit(1);
@@ -262,7 +285,7 @@ process.exit(2);
       );
       const run = (
         pending: unknown[],
-        options: { rawListResponse?: string; failApproval?: boolean } = {},
+        options: { rawListResponse?: string; failApproval?: boolean; stallApproval?: boolean } = {},
       ) =>
         spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
@@ -272,6 +295,7 @@ process.exit(2);
             NEMOCLAW_LIST_RESPONSE:
               options.rawListResponse ?? JSON.stringify({ pending, paired: [] }),
             NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
+            NEMOCLAW_APPROVE_STALL: options.stallApproval ? "1" : "0",
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "secret-token",
@@ -286,6 +310,7 @@ process.exit(2);
       const resetLogs = () => {
         fs.rmSync(approvalsFile, { force: true });
         fs.rmSync(approveEnvFile, { force: true });
+        fs.rmSync(listEnvFile, { force: true });
       };
       const localRequest = {
         requestId: "clone-pairing",
@@ -310,6 +335,9 @@ process.exit(2);
       expect(initial.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
       expect(readApprovals()).toEqual(["clone-pairing"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+      expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(
+        "ws://127.0.0.1:18789:18789:secret-token:1",
+      );
 
       resetLogs();
       const repairRequest = {
@@ -369,6 +397,12 @@ process.exit(2);
       const approveFailed = run([repairRequest], { failApproval: true });
       expect(approveFailed.stdout).toContain(`${RECEIPT_MARKER}=approve-failed`);
       expect(`${approveFailed.stdout}${approveFailed.stderr}`).not.toContain("raw approval output");
+
+      resetLogs();
+      const approveStalled = run([repairRequest], { stallApproval: true });
+      expect(approveStalled.stdout).toContain(`${RECEIPT_MARKER}=approve-timeout`);
+      expect(approveStalled.stdout).not.toContain(`${RECEIPT_MARKER}=approve-failed`);
+      expect(readApprovals()).toEqual([]);
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [

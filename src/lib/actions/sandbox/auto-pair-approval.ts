@@ -92,10 +92,11 @@ export type AutoPairApprovalReceipt =
   | "clone-ambiguous"
   | "request-rejected"
   | "approve-failed"
+  | "approve-timeout"
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approve-timeout|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -159,12 +160,21 @@ def exit_with_receipt(receipt):
   const failedApproveBranch = options.emitReceipt
     ? "        else:\n            exit_with_receipt('approve-failed')\n"
     : "";
-  const failedApproveAction = options.emitReceipt
-    ? "exit_with_receipt('approve-failed')"
-    : "continue";
+  const approveFailureHandlers = options.emitReceipt
+    ? [
+        "    except subprocess.TimeoutExpired:",
+        "        exit_with_receipt('approve-timeout')",
+        "    except (FileNotFoundError, OSError):",
+        "        exit_with_receipt('approve-failed')",
+      ].join("\n")
+    : "    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):\n        continue";
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  const bootstrapPolicyBinding = options.localDeviceOnly
+    ? "\n    pairing_bootstrap_env = policy_globals['pairing_bootstrap_env']"
+    : "";
+  const listEnvArgument = options.localDeviceOnly ? ", env=pairing_bootstrap_env(os.environ)" : "";
   const localDeviceFilter = options.localDeviceOnly
     ? `
 # Snapshot restore shares one gateway across the source sandbox and its clone.
@@ -322,7 +332,7 @@ try:
     policy_globals = {}
     exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
     approval_request_decision = policy_globals['approval_request_decision']
-    gateway_approval_env = policy_globals['gateway_approval_env']
+    gateway_approval_env = policy_globals['gateway_approval_env']${bootstrapPolicyBinding}
 except Exception:
     ${exitWithReceipt("policy-missing")}
 
@@ -332,7 +342,7 @@ MAX_APPROVALS = ${maxApprovals}
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
+        capture_output=True, text=True, timeout=${listTimeoutS}${listEnvArgument},
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     ${exitWithReceipt("list-failed")}
@@ -371,8 +381,7 @@ for device in pending:
         )
         if approve_proc.returncode == 0:
             approved_count += 1
-${failedApproveBranch}    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        ${failedApproveAction}
+${failedApproveBranch}${approveFailureHandlers}
 ${summaryLine}${receiptSuccessLine}PYAPPROVE
 exit 0
 `;

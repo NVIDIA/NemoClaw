@@ -90,6 +90,27 @@ print(json.dumps(result, sort_keys=True))
   });
 }
 
+function callPairingBootstrapEnv(sourceEnv: Record<string, string>) {
+  const script = `
+import importlib.util
+import json
+import sys
+
+policy_path = sys.argv[1]
+source_env = json.loads(sys.argv[2])
+spec = importlib.util.spec_from_file_location("openclaw_device_approval_policy", policy_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+result = module.pairing_bootstrap_env(source_env)
+print(json.dumps(result, sort_keys=True))
+`;
+  return spawnSync("python3", ["-", POLICY_PATH, JSON.stringify(sourceEnv)], {
+    encoding: "utf-8",
+    input: script,
+    timeout: 10_000,
+  });
+}
+
 function decisionOf(device: unknown) {
   const proc = callDecision(device);
   expect(proc.status).toBe(0);
@@ -251,5 +272,36 @@ describe("gateway_approval_env sanitization (#4462)", () => {
     const proc = callGatewayEnv({ PATH: "/usr/bin", HOME: "/home/agent" });
     expect(proc.status).toBe(0);
     expect(JSON.parse(proc.stdout)).toEqual({ PATH: "/usr/bin", HOME: "/home/agent" });
+  });
+});
+
+describe("pairing_bootstrap_env device-identity retention (#4462)", () => {
+  it.skipIf(!HAS_PYTHON3)("keeps the gateway keys and adds the pairing marker", () => {
+    const proc = callPairingBootstrapEnv({
+      OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+      OPENCLAW_GATEWAY_PORT: "18789",
+      OPENCLAW_GATEWAY_TOKEN: "secret-token",
+      PATH: "/usr/bin",
+    });
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout)).toEqual({
+      OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+      OPENCLAW_GATEWAY_PORT: "18789",
+      OPENCLAW_GATEWAY_TOKEN: "secret-token",
+      PATH: "/usr/bin",
+      NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
+    });
+  });
+
+  it.skipIf(!HAS_PYTHON3)("overrides an inherited marker value", () => {
+    const proc = callPairingBootstrapEnv({
+      PATH: "/usr/bin",
+      NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "0",
+    });
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout)).toEqual({
+      PATH: "/usr/bin",
+      NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
+    });
   });
 });
