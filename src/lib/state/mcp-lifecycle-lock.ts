@@ -8,6 +8,7 @@ export {
   type McpLifecycleDeadlineFenceOptions,
   type McpLifecycleDeadlineFenceSyncOptions,
   type McpLifecycleLockOptions,
+  permanentMcpLifecycleContainmentFailure,
   withMcpLifecycleDeadlineFence,
   withMcpLifecycleDeadlineFenceSync,
   withMcpLifecycleLock,

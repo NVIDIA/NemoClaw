@@ -36,6 +36,7 @@ const currentProcessStartIdentity = (
 ).readProcessStartIdentity(process.pid);
 
 type HarnessOptions = {
+  beginContainment?: typeof import("../state/mcp-lifecycle-lock.js").beginCommittedMcpLifecycleContainmentSync;
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
@@ -121,6 +122,14 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   delete require.cache[requireDist.resolve("../actions/sandbox/mcp-bridge-policy.js")];
   delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   delete require.cache[requireDist.resolve("../cli/branding.js")];
+  const lifecycleLock = requireDist(
+    "../state/mcp-lifecycle-lock.js",
+  ) as typeof import("../state/mcp-lifecycle-lock.js");
+  if (options.beginContainment) {
+    vi.spyOn(lifecycleLock, "beginCommittedMcpLifecycleContainmentSync").mockImplementation(
+      options.beginContainment,
+    );
+  }
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -316,6 +325,55 @@ function expectStagedDriverNeutralRecovery(
   return output;
 }
 
+function writeExpiredShieldsFixture(
+  processToken: string,
+  reason: string,
+  ownerState: "dead" | "live",
+) {
+  const liveOwner = ownerState === "live";
+  const sandboxName = "openclaw";
+  const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+  const snapshotPath = path.join(stateDir, `snapshot-${processToken.slice(0, 8)}.yaml`);
+  const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+  const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+  fs.writeFileSync(
+    path.join(stateDir, `shields-${sandboxName}.json`),
+    JSON.stringify({
+      shieldsDown: true,
+      shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+      shieldsDownTimeout: 60,
+      shieldsDownReason: reason,
+      shieldsDownPolicy: "permissive",
+      shieldsPolicySnapshotPath: snapshotPath,
+    }),
+  );
+  fs.writeFileSync(
+    timerMarkerPath,
+    JSON.stringify({
+      pid: liveOwner ? 2_147_483_647 : 4242,
+      sandboxName,
+      snapshotPath,
+      restoreAt: new Date(Date.now() - 60_000).toISOString(),
+      processToken,
+    }),
+  );
+  fs.writeFileSync(
+    transitionLockPath,
+    JSON.stringify({
+      version: 1,
+      sandboxName,
+      pid: liveOwner ? process.pid : 4242,
+      processStartIdentity: liveOwner ? currentProcessStartIdentity : "dead-timer",
+      command: liveOwner ? "shields down" : "shields auto-restore",
+      acquiredAtMs: Date.now() - 60_000,
+      takeoverToken: processToken,
+    }),
+  );
+  return { stateDir, timerMarkerPath, transitionLockPath };
+}
+
 describe("shields command flow", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-flow-"));
@@ -417,6 +475,7 @@ describe("shields command flow", () => {
       expect.stringContaining("nemoclaw-permissive-runtime"),
       "nemoclaw-permissive-runtime",
     );
+    expect(harness.cleanupTempDirSpy).toHaveBeenCalledTimes(1);
     const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
     expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
   });
@@ -445,6 +504,7 @@ describe("shields command flow", () => {
       expect.stringContaining("nemoclaw-permissive-runtime"),
       "nemoclaw-permissive-runtime",
     );
+    expect(harness.cleanupTempDirSpy).toHaveBeenCalledTimes(1);
     const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
     expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
   });
@@ -1263,45 +1323,11 @@ describe("shields command flow", () => {
     const sandboxMutationLockPath = lifecycleLock.getMcpLifecycleLockPath("openclaw");
     const containmentPath = `${sandboxMutationLockPath}.containment`;
     const harness = createHarness();
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const lockPath = path.join(stateDir, "shields-transition-lock-openclaw.json");
-    const timerMarkerPath = path.join(stateDir, "shields-timer-openclaw.json");
-    fs.mkdirSync(stateDir, { recursive: true });
-    const snapshotPath = path.join(stateDir, "policy-snapshot-expired.yaml");
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-        shieldsDownTimeout: 60,
-        shieldsDownReason: "coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-    );
-    fs.writeFileSync(
+    const {
+      stateDir,
       timerMarkerPath,
-      JSON.stringify({
-        pid: 4242,
-        sandboxName: "openclaw",
-        snapshotPath,
-        restoreAt: new Date(Date.now() - 30_000).toISOString(),
-        processToken,
-      }),
-    );
-    fs.writeFileSync(
-      lockPath,
-      JSON.stringify({
-        version: 1,
-        sandboxName: "openclaw",
-        pid: 4242,
-        processStartIdentity: "dead-timer",
-        command: "shields auto-restore",
-        acquiredAtMs: Date.now() - 60_000,
-        takeoverToken: processToken,
-      }),
-    );
+      transitionLockPath: lockPath,
+    } = writeExpiredShieldsFixture(processToken, "coverage", "dead");
     vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
       const failDeadTimerProbe = () => {
         const error = new Error("timer is gone") as NodeJS.ErrnoException;
@@ -1331,52 +1357,66 @@ describe("shields command flow", () => {
     );
   });
 
+  it("retains the timer-bound lifecycle generation when a caller handles a failed containment write", async () => {
+    const processToken = "a".repeat(32);
+    const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
+    const mainLockPath = lifecycleLock.getMcpLifecycleLockPath("openclaw");
+    const containmentPath = `${mainLockPath}.containment`;
+    const { timerMarkerPath, transitionLockPath } = writeExpiredShieldsFixture(
+      processToken,
+      "containment write failure coverage",
+      "dead",
+    );
+    vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
+      if (`${pid}:${signal}` === "4242:0") {
+        const error = new Error("timer is gone") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      return true;
+    });
+    const harness = createHarness({
+      beginContainment: () => {
+        throw new Error("state directory is read-only");
+      },
+    });
+    let containmentFailure: unknown;
+
+    const result = await lifecycleLock.withSandboxMutationLock("openclaw", () => {
+      try {
+        return harness.shieldsStatus("openclaw");
+      } catch (error) {
+        containmentFailure = error;
+        return "handled";
+      }
+    });
+
+    expect(result).toBe("handled");
+    expect(containmentFailure).toMatchObject({
+      code: "NEMOCLAW_PERMANENT_CONTAINMENT",
+    });
+    expect(String(containmentFailure)).toContain("state directory is read-only");
+    expect(fs.existsSync(containmentPath)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(mainLockPath, "utf8"))).toMatchObject({
+      sandboxName: "openclaw",
+      shieldsTakeoverToken: processToken,
+    });
+    expect(fs.existsSync(timerMarkerPath)).toBe(true);
+    expect(fs.existsSync(transitionLockPath)).toBe(true);
+    expect(harness.runSpy).not.toHaveBeenCalledWith(
+      ["openshell", "policy", "set"],
+      expect.anything(),
+    );
+  });
+
   it.skipIf(currentProcessStartIdentity === null)(
     "bounds live transition takeover before committing durable containment",
     () => {
       const sandboxName = "openclaw";
       const processToken = "8".repeat(32);
-      const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-      const snapshotPath = path.join(stateDir, "policy-snapshot-takeover-exhausted.yaml");
-      const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-      const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
       const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
       const containmentPath = `${lifecycleLock.getMcpLifecycleLockPath(sandboxName)}.containment`;
-      fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
-      fs.writeFileSync(
-        path.join(stateDir, `shields-${sandboxName}.json`),
-        JSON.stringify({
-          shieldsDown: true,
-          shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-          shieldsDownTimeout: 60,
-          shieldsDownReason: "takeover exhaustion coverage",
-          shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath,
-        }),
-      );
-      fs.writeFileSync(
-        timerMarkerPath,
-        JSON.stringify({
-          pid: 2_147_483_647,
-          sandboxName,
-          snapshotPath,
-          restoreAt: new Date(Date.now() - 60_000).toISOString(),
-          processToken,
-        }),
-      );
-      fs.writeFileSync(
-        transitionLockPath,
-        JSON.stringify({
-          version: 1,
-          sandboxName,
-          pid: process.pid,
-          processStartIdentity: currentProcessStartIdentity,
-          command: "shields down",
-          acquiredAtMs: Date.now(),
-          takeoverToken: processToken,
-        }),
-      );
+      writeExpiredShieldsFixture(processToken, "takeover exhaustion coverage", "live");
       const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
       const harness = createHarness();
 
@@ -1395,6 +1435,45 @@ describe("shields command flow", () => {
           sandbox: sandboxName,
           error:
             "Shields transition owner is still active; automatic recovery is waiting behind the deadline gate",
+        }),
+      );
+    },
+  );
+
+  it.skipIf(currentProcessStartIdentity === null)(
+    "returns after bounded containment commit failures without reopening the deadline gate",
+    () => {
+      const sandboxName = "openclaw";
+      const processToken = "9".repeat(32);
+      const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
+      const mainLockPath = lifecycleLock.getMcpLifecycleLockPath(sandboxName);
+      const containmentPath = `${mainLockPath}.containment`;
+      writeExpiredShieldsFixture(processToken, "containment write failure coverage", "live");
+      const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+      let containmentAttempts = 0;
+      const harness = createHarness({
+        beginContainment: () => {
+          containmentAttempts += 1;
+          throw new Error("state directory is read-only");
+        },
+      });
+
+      expect(() => harness.shieldsStatus(sandboxName)).toThrow(
+        /Permanent containment could not be committed after 11 attempts: state directory is read-only.*Correct the state-directory write failure/,
+      );
+
+      expect(containmentAttempts).toBe(11);
+      expect(waitSpy.mock.calls.filter((call) => call[3] === 5_000)).toHaveLength(6);
+      expect(waitSpy.mock.calls.filter((call) => call[3] === 50)).toHaveLength(10);
+      expect(fs.existsSync(containmentPath)).toBe(false);
+      expect(fs.existsSync(mainLockPath)).toBe(true);
+      expect(fs.existsSync(`${mainLockPath}.deadline`)).toBe(true);
+      expect(harness.auditSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          error:
+            "Permanent containment commit failed; retrying behind the deadline gate: state directory is read-only",
         }),
       );
     },

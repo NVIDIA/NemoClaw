@@ -12,6 +12,7 @@ export {
   beginCommittedMcpLifecycleContainmentSync,
   getMcpLifecycleLockPath,
   isMcpLifecycleLockHeld,
+  permanentMcpLifecycleContainmentFailure,
   readMcpLockProcessIdentity,
   withMcpLifecycleDeadlineFenceSync,
   withMcpLifecycleLockSync,

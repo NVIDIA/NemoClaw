@@ -76,6 +76,7 @@ const {
   beginCommittedMcpLifecycleContainmentSync,
   getMcpLifecycleLockPath,
   isMcpLifecycleLockHeld,
+  permanentMcpLifecycleContainmentFailure,
   readMcpLockProcessIdentity,
   withMcpLifecycleDeadlineFenceSync,
   withMcpLifecycleLockSync,
@@ -113,6 +114,8 @@ const STATE_DIR = resolveNemoclawStateDir();
 const SHIELDS_TRANSITION_POLL_MS = 50;
 const SHIELDS_TRANSITION_HANDOFF_GRACE_MS = 500;
 const SHIELDS_TRANSITION_TERMINATE_GRACE_MS = 1000;
+const INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS =
+  Math.floor(SHIELDS_TRANSITION_HANDOFF_GRACE_MS / SHIELDS_TRANSITION_POLL_MS) + 1;
 const AUTO_RESTORE_COMPLETION_GRACE_MS = 30_000;
 // Retry on the detached timer's cadence for one additional completion-grace
 // window before converting the live deadline fence into durable containment.
@@ -354,13 +357,20 @@ function waitForShieldsDownForwardCommit(
     );
     if (ownerStatus === "gone") {
       assertTakeoverAuthority?.();
-      persistUnresolvedShieldsContainment(
-        sandboxName,
-        processToken,
-        `Shields recovery owner PID ${String(
-          observed.ownerPid,
-        )} exited without descendant-containment proof`,
-      );
+      try {
+        persistUnresolvedShieldsContainment(
+          sandboxName,
+          processToken,
+          `Shields recovery owner PID ${String(
+            observed.ownerPid,
+          )} exited without descendant-containment proof`,
+        );
+      } catch (error) {
+        throw permanentMcpLifecycleContainmentFailure(
+          error,
+          getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+        );
+      }
       throw new Error(
         "Shields-down forward owner exited before committing its final mutation; permanent containment requires operator resolution",
       );
@@ -883,10 +893,11 @@ function failInteractiveAutoRestoreClosed(
 ): never {
   const containmentPath = `${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`;
   let notifiedError: string | null = null;
-  // The deadline fence unwinds when this function throws. Keep retrying the
-  // durable containment commit first so a bounded interactive recovery can
-  // return without reopening the sandbox mutation gate.
-  for (;;) {
+  let lastContainmentError: string | null = null;
+  // Retry a durable containment commit for one normal transition-handoff
+  // window. A persistent state-directory failure returns to the operator only
+  // through the coded failure that keeps the owned lifecycle gates.
+  for (let attempt = 0; attempt < INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS; attempt += 1) {
     assertTimerMarkerGeneration(sandboxName, marker);
     try {
       persistUnresolvedShieldsContainment(
@@ -899,6 +910,7 @@ function failInteractiveAutoRestoreClosed(
       if (fs.existsSync(containmentPath)) break;
       assertTimerMarkerGeneration(sandboxName, marker);
       const containmentError = error instanceof Error ? error.message : String(error);
+      lastContainmentError = containmentError;
       if (containmentError !== notifiedError) {
         appendAuditEntryBestEffort({
           action: "shields_up_failed",
@@ -910,8 +922,20 @@ function failInteractiveAutoRestoreClosed(
         });
         notifiedError = containmentError;
       }
-      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+      if (attempt + 1 < INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS) {
+        Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+      }
     }
+  }
+  if (!fs.existsSync(containmentPath)) {
+    throw permanentMcpLifecycleContainmentFailure(
+      new Error(
+        `${message}. Permanent containment could not be committed after ${String(
+          INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS,
+        )} attempts: ${lastContainmentError ?? "unknown state-directory failure"}. Correct the state-directory write failure and retry the command before running another sandbox mutation`,
+      ),
+      getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+    );
   }
   throw new Error(
     `${message}. Permanent sandbox mutation containment requires operator resolution`,
@@ -1048,6 +1072,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
     },
     {
       stateDir: STATE_DIR,
+      throwOnCommittedContainment: true,
       onContainment: ({ ownerPid, reason }) => {
         appendAuditEntryBestEffort({
           action: "shields_up_failed",
@@ -2494,11 +2519,18 @@ function prepareAutoRestoreTransitionTakeover(
   );
   if (ownerStatus === "gone") {
     assertTakeoverAuthority?.();
-    persistUnresolvedShieldsContainment(
-      sandboxName,
-      processToken,
-      `Shields recovery owner PID ${String(owner.pid)} exited without descendant-containment proof`,
-    );
+    try {
+      persistUnresolvedShieldsContainment(
+        sandboxName,
+        processToken,
+        `Shields recovery owner PID ${String(owner.pid)} exited without descendant-containment proof`,
+      );
+    } catch (error) {
+      throw permanentMcpLifecycleContainmentFailure(
+        error,
+        getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+      );
+    }
     throw new Error(
       "Shields transition owner exited without descendant-containment proof; permanent containment requires operator resolution",
     );

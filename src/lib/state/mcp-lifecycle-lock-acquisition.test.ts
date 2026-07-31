@@ -10,11 +10,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   beginCommittedMcpLifecycleContainmentSync,
   isMcpLifecycleLockHeld,
+  permanentMcpLifecycleContainmentFailure,
   withMcpLifecycleDeadlineFence,
   withMcpLifecycleDeadlineFenceSync,
+  withMcpLifecycleLock,
   withMcpLifecycleLockSync,
 } from "./mcp-lifecycle-lock-acquisition";
-import { createMcpLifecycleLockOwner } from "./mcp-lifecycle-lock-identity";
+import {
+  createMcpLifecycleLockOwner,
+  readMcpLockHostIdentity,
+  readMcpLockPidNamespaceIdentity,
+} from "./mcp-lifecycle-lock-identity";
 import { getMcpLifecycleLockPath } from "./mcp-lifecycle-lock-storage";
 
 const SANDBOX_NAME = "alpha";
@@ -40,6 +46,26 @@ function writeTimerMarker(processToken: string): void {
       processToken,
     }),
   );
+}
+
+function writeStaleMainOwner(shieldsTakeoverToken?: string): string {
+  const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify({
+      version: 1,
+      sandboxName: SANDBOX_NAME,
+      pid: 2_147_483_647,
+      processIdentity: "dead-process",
+      hostIdentity: readMcpLockHostIdentity(),
+      pidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
+      ...(shieldsTakeoverToken ? { shieldsTakeoverToken } : {}),
+      token: "stale-main-token",
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    })}\n`,
+  );
+  return lockPath;
 }
 
 beforeEach(() => {
@@ -97,6 +123,462 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(result).toBe("restored");
     expect(fs.existsSync(lockPath)).toBe(false);
     expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+  });
+
+  it("releases the synchronous deadline and main generations after an ordinary error", () => {
+    const processToken = "e".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          throw new Error("ordinary recovery failure");
+        },
+        options(),
+      ),
+    ).toThrow("ordinary recovery failure");
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+  });
+
+  it("retains exact synchronous deadline and main generations after an uncommitted permanent-containment failure", () => {
+    const processToken = "f".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("containment state is read-only"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).toThrow("containment state is read-only");
+
+    const mainOwner = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    const deadlineOwner = JSON.parse(fs.readFileSync(deadlinePath, "utf8"));
+    expect(mainOwner).toMatchObject({
+      sandboxName: SANDBOX_NAME,
+      pid: process.pid,
+      shieldsTakeoverToken: processToken,
+    });
+    expect(deadlineOwner).toMatchObject({
+      sandboxName: SANDBOX_NAME,
+      pid: process.pid,
+      shieldsTakeoverToken: processToken,
+    });
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("releases owned generations when committed containment is proven present", () => {
+    const processToken = "1".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          beginCommittedMcpLifecycleContainmentSync(
+            SANDBOX_NAME,
+            processToken,
+            "test containment",
+            stateDir,
+          );
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("containment reporting stopped"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).toThrow("containment reporting stopped");
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
+  it("retains owned generations when committed containment cannot be inspected", () => {
+    const processToken = "2".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const containmentPath = `${lockPath}.containment`;
+    const realLstatSync = fs.lstatSync.bind(fs);
+    let denyContainmentInspection = false;
+    vi.spyOn(fs, "lstatSync").mockImplementation((target, options) => {
+      if (denyContainmentInspection && String(target) === containmentPath) {
+        const error = new Error("containment inspection denied") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return realLstatSync(target, options as never);
+    });
+    writeTimerMarker(processToken);
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          denyContainmentInspection = true;
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("containment commit could not be verified"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).toThrow("containment commit could not be verified");
+
+    denyContainmentInspection = false;
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(true);
+  });
+
+  it("retains an async lifecycle generation only for an uncommitted coded failure", async () => {
+    const retainedLockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("8".repeat(32));
+
+    await expect(
+      withMcpLifecycleLock(
+        SANDBOX_NAME,
+        () => {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("nested containment commit failed"),
+            retainedLockPath,
+          );
+        },
+        options(),
+      ),
+    ).rejects.toThrow("nested containment commit failed");
+    expect(fs.existsSync(retainedLockPath)).toBe(true);
+
+    fs.rmSync(retainedLockPath, { force: true });
+    await expect(
+      withMcpLifecycleLock(
+        SANDBOX_NAME,
+        () => {
+          throw new Error("ordinary nested failure");
+        },
+        options(),
+      ),
+    ).rejects.toThrow("ordinary nested failure");
+    expect(fs.existsSync(retainedLockPath)).toBe(false);
+  });
+
+  it("retains a synchronous lifecycle generation only for an uncommitted coded failure", () => {
+    const retainedLockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("9".repeat(32));
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX_NAME,
+        () => {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("synchronous nested containment commit failed"),
+            retainedLockPath,
+          );
+        },
+        options(),
+      ),
+    ).toThrow("synchronous nested containment commit failed");
+    expect(fs.existsSync(retainedLockPath)).toBe(true);
+
+    fs.rmSync(retainedLockPath, { force: true });
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX_NAME,
+        () => {
+          throw new Error("ordinary synchronous nested failure");
+        },
+        options(),
+      ),
+    ).toThrow("ordinary synchronous nested failure");
+    expect(fs.existsSync(retainedLockPath)).toBe(false);
+  });
+
+  it("retains a timer-bound lifecycle generation when nested code handles the containment failure", () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const processToken = "4".repeat(32);
+    writeTimerMarker(processToken);
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX_NAME,
+      () => {
+        try {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("nested containment commit failed"),
+            lockPath,
+          );
+        } catch {
+          return "handled";
+        }
+      },
+      options(),
+    );
+
+    expect(result).toBe("handled");
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+      sandboxName: SANDBOX_NAME,
+      shieldsTakeoverToken: processToken,
+    });
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("retains an async timer-bound lifecycle generation when nested code handles the containment failure", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const processToken = "5".repeat(32);
+    writeTimerMarker(processToken);
+
+    const result = await withMcpLifecycleLock(
+      SANDBOX_NAME,
+      async () => {
+        try {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("nested async containment commit failed"),
+            lockPath,
+          );
+        } catch {
+          await Promise.resolve();
+          return "handled";
+        }
+      },
+      options(),
+    );
+
+    expect(result).toBe("handled");
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+      sandboxName: SANDBOX_NAME,
+      shieldsTakeoverToken: processToken,
+    });
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("releases a non-timer-bound lifecycle generation after a coded containment failure", () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX_NAME,
+        () => {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("non-timer containment failure"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).toThrow("non-timer containment failure");
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("contains a retained timer-bound main generation after its owner exits", () => {
+    const processToken = "a".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX_NAME,
+        () => {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("retain this timer-bound generation"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).toThrow("retain this timer-bound generation");
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+      pid: process.pid,
+      shieldsTakeoverToken: processToken,
+    });
+
+    const realProcessKill = process.kill.bind(process);
+    vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
+      if (pid === process.pid && signal === 0) {
+        const error = new Error("retained owner exited") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      return realProcessKill(pid, signal as never);
+    });
+    const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+
+    expect(() => withMcpLifecycleLockSync(SANDBOX_NAME, () => "must not enter", options())).toThrow(
+      "Sandbox mutation containment is active",
+    );
+    expect(waitSpy).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
+  it("returns operator guidance after recording durable containment for a stale deadline generation", () => {
+    const processToken = "6".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    const operation = vi.fn();
+    const containmentReasons: string[] = [];
+    writeTimerMarker(processToken);
+    fs.mkdirSync(path.dirname(deadlinePath), { recursive: true });
+    fs.writeFileSync(
+      deadlinePath,
+      JSON.stringify({
+        ...createMcpLifecycleLockOwner(SANDBOX_NAME, "stale-deadline-token", processToken),
+        pid: 2_147_483_647,
+        processIdentity: "dead-process",
+      }),
+    );
+
+    let failure: unknown;
+    try {
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        throwOnCommittedContainment: true,
+        onContainment: ({ reason }) => containmentReasons.push(reason),
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ code: "NEMOCLAW_PERMANENT_CONTAINMENT" });
+    expect(String(failure)).toContain(
+      "A committed process-tree containment requires operator resolution",
+    );
+    expect(containmentReasons).toEqual([
+      expect.stringContaining("remove only the exact stale owner generations"),
+    ]);
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(deadlinePath)).toBe(true);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
+  it("returns operator guidance after recording durable containment for a stale timer-bound main generation", () => {
+    const processToken = "b".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const operation = vi.fn();
+    const containmentReasons: string[] = [];
+    writeTimerMarker(processToken);
+    writeStaleMainOwner(processToken);
+
+    let failure: unknown;
+    try {
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        throwOnCommittedContainment: true,
+        onContainment: ({ reason }) => containmentReasons.push(reason),
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ code: "NEMOCLAW_PERMANENT_CONTAINMENT" });
+    expect(String(failure)).toContain("remove only the exact stale owner generations");
+    expect(containmentReasons).toEqual([
+      expect.stringContaining("remove only the exact stale owner generations"),
+    ]);
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
+  it("retains async deadline generations only for an uncommitted coded failure", async () => {
+    const processToken = "7".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+
+    await expect(
+      withMcpLifecycleDeadlineFence(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          throw permanentMcpLifecycleContainmentFailure(
+            new Error("async deadline containment commit failed"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).rejects.toThrow("async deadline containment commit failed");
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.existsSync(deadlinePath)).toBe(true);
+
+    fs.rmSync(lockPath, { force: true });
+    fs.rmSync(deadlinePath, { force: true });
+    await expect(
+      withMcpLifecycleDeadlineFence(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          throw new Error("ordinary async deadline failure");
+        },
+        options(),
+      ),
+    ).rejects.toThrow("ordinary async deadline failure");
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+  });
+
+  it("contains a stale async main generation that records a rotated Shields timer token", async () => {
+    const ownerToken = "3".repeat(32);
+    const currentToken = "4".repeat(32);
+    const lockPath = writeStaleMainOwner(ownerToken);
+    writeTimerMarker(currentToken);
+    let entered = false;
+
+    await expect(
+      withMcpLifecycleLock(
+        SANDBOX_NAME,
+        () => {
+          entered = true;
+        },
+        options(),
+      ),
+    ).rejects.toThrow("Sandbox mutation containment is active");
+
+    expect(entered).toBe(false);
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
+  it("contains a stale synchronous main generation that records the current Shields timer token", () => {
+    const processToken = "5".repeat(32);
+    const lockPath = writeStaleMainOwner(processToken);
+    writeTimerMarker(processToken);
+
+    expect(() => withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", options())).toThrow(
+      "Sandbox mutation containment is active",
+    );
+
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
+  it("reclaims a stale main generation whose owner has no Shields timer token", () => {
+    const lockPath = writeStaleMainOwner();
+    writeTimerMarker("6".repeat(32));
+
+    expect(
+      withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        timeoutMs: 2_000,
+      }),
+    ).toBe("entered");
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
   });
 
   it("blocks synchronous mutation while committed containment is active", () => {

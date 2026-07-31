@@ -460,16 +460,14 @@ const releasePath = process.argv[3];
         acquiredAt: "2026-01-01T00:00:00.000Z",
       })}\n`,
     );
-    setTimeout(() => writeTimerMarker("alpha", "8".repeat(32)), 40);
-
+    const onContainment = vi.fn(() => writeTimerMarker("alpha", "8".repeat(32)));
     await expect(
-      lifecycleLock.withMcpLifecycleDeadlineFence(
-        "alpha",
-        processToken,
-        () => undefined,
-        options({ timeoutMs: 40 }),
-      ),
+      lifecycleLock.withMcpLifecycleDeadlineFence("alpha", processToken, () => undefined, {
+        ...options({ timeoutMs: 40 }),
+        onContainment,
+      }),
     ).rejects.toThrow("Auto-restore authority changed");
+    expect(onContainment).toHaveBeenCalledOnce();
     expect(fs.existsSync(deadlinePath)).toBe(true);
     expect(fs.existsSync(containmentPath)).toBe(true);
   });
@@ -1066,9 +1064,8 @@ const releasePath = process.argv[3];
     const deadlineObservations: boolean[] = [];
     const onContainment = vi.fn(() => {
       deadlineObservations.push(fs.existsSync(deadlinePath));
+      writeTimerMarker("alpha", "3".repeat(32));
     });
-    setTimeout(() => writeTimerMarker("alpha", "3".repeat(32)), 40);
-
     await expect(
       lifecycleLock.withMcpLifecycleDeadlineFence("alpha", processToken, () => undefined, {
         ...options({ timeoutMs: 10 }),
@@ -1100,16 +1097,14 @@ const releasePath = process.argv[3];
         acquiredAt: new Date().toISOString(),
       })}\n`,
     );
-    const onContainment = vi.fn();
-    setTimeout(() => writeTimerMarker("alpha", "a".repeat(32)), 40);
-
+    const onContainment = vi.fn(() => writeTimerMarker("alpha", "a".repeat(32)));
     await expect(
       lifecycleLock.withMcpLifecycleDeadlineFence("alpha", processToken, () => undefined, {
         ...options(),
         onContainment,
       }),
     ).rejects.toThrow("Auto-restore authority changed");
-    expect(onContainment).toHaveBeenCalled();
+    expect(onContainment).toHaveBeenCalledOnce();
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.existsSync(containmentPath)).toBe(true);
   });

@@ -1154,8 +1154,13 @@ The gate blocks new mutations and waits for the recorded live owner to release i
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants are contained.
 When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window while the deadline gate stays closed.
 If the command cannot complete and commit restoration within that window, NemoClaw converts the deadline gate into durable containment.
-NemoClaw commits the containment record before it returns the failure, so new mutations remain blocked until operator resolution.
+When the containment write succeeds, NemoClaw commits the record before it returns the failure, so new mutations remain blocked until operator resolution.
+If NemoClaw cannot commit that record after its bounded write retry budget, the command returns an operator-resolution error with the last state-directory write failure and keeps every exact deadline or main lifecycle lock generation that it owns.
+Correct the reported state-directory write failure, then retry the command once.
+After the retained owner exits, the retry records durable containment for the stale timer-bound generation and returns exact-generation operator-resolution instructions.
+Complete those instructions before running another sandbox mutation.
 For an ordinary lifecycle lock, NemoClaw reclaims only an exact, structurally valid stale generation for the same sandbox.
+NemoClaw records durable containment for a stale main owner bound to a Shields timer instead of reclaiming it as an ordinary stale generation.
 It rechecks the generation under an exclusive stale-lock reaper gate before removal.
 An expired deadline owner or interrupted reaper still records durable containment because surviving descendants cannot be ruled out.
 NemoClaw fails closed for corrupt, non-regular, wrong-sandbox, ambiguous, foreign, and live identities instead of deleting those generations.
