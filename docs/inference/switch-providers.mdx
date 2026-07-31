@@ -13,9 +13,9 @@ Move a sandbox to another provider family while keeping the OpenShell route, age
 Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
-## Find a Registered Provider
-
 <AgentOnly variant="openclaw,hermes">
+
+## Find a Registered Provider
 
 List the configured provider credentials when you need the exact provider ID.
 
@@ -32,9 +32,9 @@ For a compatible custom endpoint, pass the complete route metadata described bel
 
 </AgentOnly>
 
-## Switch the Provider at Runtime
-
 <AgentOnly variant="openclaw,hermes">
+
+## Switch the Provider at Runtime
 
 Pass the target provider and model together.
 Target a non-default sandbox by name.
@@ -46,15 +46,27 @@ $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 $$nemoclaw <name> shields up
 ```
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
 For OpenClaw, NemoClaw updates the provider namespace and selected model in the running configuration.
 Changes within the current API family hot-reload without replacing the gateway process.
 When the API family changes, NemoClaw commits the route and configuration, then restarts only the OpenClaw gateway and verifies its health.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
 
 For Hermes, NemoClaw updates `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
 When the dashboard profile exists, NemoClaw also mirrors the route into `/sandbox/.hermes/dashboard-home/config.yaml`; a normal runtime route change does not rebuild or restart Hermes.
 If that dashboard mirror cannot be confirmed, the route and main config remain committed but the command exits nonzero.
 Follow [Hermes dashboard config did not converge](../../reference/troubleshooting#hermes-dashboard-config-did-not-converge) before using Dashboard Chat.
 A missing dashboard profile is treated as disabled and does not fail the switch.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
 Run the rebuild before relying on the running agent.
@@ -77,9 +89,9 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 </AgentOnly>
 
-## Handle Compatible Endpoints
-
 <AgentOnly variant="openclaw,hermes">
+
+## Handle Compatible Endpoints
 
 When moving from another provider family to `compatible-endpoint` or `compatible-anthropic-endpoint`, provide the trusted endpoint URL and enough API metadata to record the complete route identity.
 Export the canonical credential environment variable for the target provider.

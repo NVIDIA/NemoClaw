@@ -43,7 +43,7 @@ const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
   name: "Upload E2E runtime summary",
-  if: "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}",
+  if: "${{ always() && github.event_name == 'schedule' }}",
   uses: UPLOAD_E2E_ARTIFACTS_ACTION,
   with: {
     name: "e2e-runtime-summary",
