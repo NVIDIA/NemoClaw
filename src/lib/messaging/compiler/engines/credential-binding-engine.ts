@@ -14,6 +14,7 @@ export function planCredentialBindings(
   manifest: ChannelManifest,
   context: ManifestCompilerContext,
   inputs: readonly SandboxMessagingInputReference[],
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): SandboxMessagingCredentialBindingPlan[] {
   return manifest.credentials.map((credential) => {
     const sourceInput = inputs.find((input) => input.inputId === credential.sourceInput);
@@ -24,7 +25,7 @@ export function planCredentialBindings(
 
     const envKey = sourceInput?.sourceEnv ?? credential.providerEnvKey;
     const credentialHash = credentialAvailable
-      ? (hashCredential(process.env[envKey]) ?? undefined)
+      ? (hashCredential(environment[envKey]) ?? undefined)
       : undefined;
 
     return {

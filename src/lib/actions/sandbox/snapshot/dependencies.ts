@@ -7,6 +7,15 @@ import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {
+  ManagedWorkloadCloneError,
+  prepareManagedWorkloadCloneHandoff,
+} from "../../../onboard/workload/clone";
+export type {
+  ManagedWorkloadCloneSnapshot,
+  PreparedManagedWorkloadCloneHandoff,
+  PrepareManagedWorkloadCloneHandoffInput,
+} from "../../../onboard/workload/clone";
+export {
   ManagedSnapshotProfileRestoreError,
   prepareManagedSnapshotProfileRestore,
   readManagedSnapshotProfileAuthority,
