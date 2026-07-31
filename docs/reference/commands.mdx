@@ -1167,7 +1167,12 @@ It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaun
 When the root-owned managed controller attests two unchanged zero-supervisor process scans with a stable PID 1 and reports `SUPERVISOR_NOT_RUNNING`, a local Docker-driver sandbox with the legacy keepalive startup can enter a transactional container recreation.
 The recreation uses a credential-free managed startup command, pins the registered container identity, and retains the previous container for rollback.
 Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
-It commits only after managed gateway health, the settle check, exact replacement identity, and state restoration pass.
+NemoClaw waits for the exact replacement to pass managed gateway health and OpenShell re-registration before it restores state.
+After state restoration, it restarts the gateway in the exact replacement container and requires an authenticated `ok` result.
+It then runs the managed settle check.
+It commits only after the replacement identity, state restoration, gateway restart, and settle check pass.
+If OpenShell re-registration, state restoration, or a later gateway check fails, NemoClaw attempts to roll back the replacement.
+The primary dashboard or API host forward stays stopped.
 NemoClaw removes the temporary state backup after a successful restore or rollback.
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
@@ -1761,6 +1766,9 @@ Cleaning up the gateway after the last sandbox also purges the shared cluster vo
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
 NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
 Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
+When the default-port gateway runs under the packaged OpenShell gateway service, gateway cleanup stops that service before it reaps host processes, so the gateway port is released instead of being rebound by the service manager.
+The service is stopped, not disabled or removed, and the next onboarding run starts it again.
+If the service cannot be stopped, `destroy` exits non-zero after sandbox and registry deletion, prints the status command for the service, and skips gateway and volume removal.
 If the OpenShell gateway is unreachable and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
@@ -3967,8 +3975,8 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 
 <AgentOnly variant="openclaw,hermes">
 
-For managed recovery, the same timeout covers OpenShell re-registration after transactional recreation.
-When the deadline expires, the primary dashboard or API host forward stays stopped.
+For managed recovery, the same timeout covers OpenShell re-registration before state restoration and replacement commit.
+When the deadline expires, NemoClaw attempts to roll back the replacement and leaves the primary dashboard or API host forward stopped.
 
 </AgentOnly>
 

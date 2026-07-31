@@ -55,6 +55,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
     })),
     confirmMissingSupervisor: vi.fn(() => true),
+    restartRestoredManagedGateway: vi.fn(() => true),
     backupState: vi.fn(() => ({
       success: true,
       manifest: {
@@ -219,6 +220,82 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ backupContainerName: expect.any(String) }),
+      supervisorReady: false,
+    });
+  });
+
+  it("re-proves managed health after state restore and before commit", () => {
+    const order: string[] = [];
+    const deps = baseDeps({
+      restoreState: vi.fn(() => {
+        order.push("restore-state");
+        return {
+          success: true,
+          restoredDirs: ["workspace"],
+          failedDirs: [],
+          restoredFiles: [],
+          failedFiles: [],
+        };
+      }),
+      restartRestoredManagedGateway: vi.fn(() => {
+        order.push("restart-restored-gateway");
+        return true;
+      }),
+      finalize: vi.fn(() => {
+        order.push("commit-container");
+        return { backupRemoved: true, rolledBack: false };
+      }),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toMatchObject({
+      backupRemoved: true,
+      rolledBack: false,
+      stateRestored: true,
+    });
+    expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
+    expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ newContainerId: "new-container-id" }),
+      supervisorReady: true,
+    });
+  });
+
+  it("rolls back when managed health fails after state restore", () => {
+    const order: string[] = [];
+    const deps = baseDeps({
+      restoreState: vi.fn(() => {
+        order.push("restore-state");
+        return {
+          success: true,
+          restoredDirs: ["workspace"],
+          failedDirs: [],
+          restoredFiles: [],
+          failedFiles: [],
+        };
+      }),
+      restartRestoredManagedGateway: vi.fn(() => {
+        order.push("restart-restored-gateway");
+        return false;
+      }),
+      finalize: vi.fn(({ supervisorReady }) => {
+        order.push(supervisorReady ? "commit-container" : "rollback-container");
+        return supervisorReady
+          ? { backupRemoved: true, rolledBack: false }
+          : { backupRemoved: false, rolledBack: true };
+      }),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+      stateBackupRemoved: true,
+    });
+    expect(order).toEqual(["restore-state", "restart-restored-gateway", "rollback-container"]);
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ newContainerId: "new-container-id" }),
       supervisorReady: false,
     });
   });
