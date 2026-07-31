@@ -39,6 +39,11 @@ nemo-deepagents <sandbox-name> connect
 dcode
 ```
 
+<Warning>
+Headless `dcode -n` has no approval UI and automatically approves non-shell tool requests, including file writes and edits.
+Use the interactive TUI when you need to inspect each destructive tool request before it runs.
+</Warning>
+
 For a single headless task, run:
 
 ```bash
@@ -97,7 +102,7 @@ The managed launchers disable the following mutable or unsupported behavior:
 - CLI and TUI update or install commands
 - Nested remote sandbox providers and remote asynchronous subagents
 - Deep Agents Model Context Protocol (MCP) commands, project MCP auto-loading, startup commands, and executable hooks
-- ACP mode, interpreter tool calling, and shell allow-list overrides
+- ACP mode, interpreter tool calling, and shell allowlist overrides
 - Native LangSmith tracing and ambient OpenTelemetry exporter configuration
 
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
@@ -116,18 +121,16 @@ It then gives Deep Agents Code a process-local, integrity-bound snapshot for ser
 It prefers a sealed in-memory file when available.
 The OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
 Stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
-For authenticated MCP setup and credential rotation, see [Add an MCP Server](../mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../mcp-servers/manage-mcp-servers).
+For authenticated MCP setup and credential rotation, refer to [Add an MCP Server](../mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../mcp-servers/manage-mcp-servers).
 This isolated-mode guarantee applies to the managed launchers, not arbitrary Python commands in the sandbox.
 
 ## Choose an Approval Boundary
 
 Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.
-Thread-wide auto-approval is unavailable unless you enable the managed thread opt-in capability, and shell allow-list auto-approval remains disabled.
+Thread-wide auto-approval is unavailable unless you enable the managed thread opt-in capability, and shell allowlist auto-approval remains disabled.
 
 Headless `dcode -n` is an explicit automation boundary.
-It has no approval UI and automatically approves non-shell tool requests, including file writes and edits.
 The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote asynchronous subagents, and alternate model routes.
-Use the interactive TUI when you need to inspect each destructive tool request before it runs.
 
 ## Configure Thread Auto-Approval
 
