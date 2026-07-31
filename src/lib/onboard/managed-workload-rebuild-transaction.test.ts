@@ -22,7 +22,10 @@ import {
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import type { BuiltManagedStartupOnboardProfile } from "./managed-startup/onboard-profile";
-import { encodeManagedStartupProfile } from "./managed-startup/profile";
+import {
+  decodeManagedStartupProfile,
+  encodeManagedStartupProfile,
+} from "./managed-startup/profile";
 import type {
   ManagedWorkloadRebuildProviderOperations,
   PreparedManagedWorkloadReplacement,
@@ -133,7 +136,9 @@ function handoff(
 ): ManagedWorkloadRebuildHandoff {
   const previousContract = contract(agent, "old", platform);
   const replacementContract = contract(agent, "new", platform);
-  const previousProfile = managedStartupE2eProfile(agent);
+  const previousProfile = decodeManagedStartupProfile(
+    encodeManagedStartupProfile(managedStartupE2eProfile(agent)),
+  );
   return {
     schemaVersion: 1,
     providerId,
@@ -655,6 +660,35 @@ describe("managed workload rebuild transaction", () => {
         { getSandbox: () => structuredClone(oldEntry) },
       ),
     ).rejects.toThrow();
+    expect(operations.prepare).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale previous contract authority before provider mutation", async () => {
+    const oldEntry = previousEntry("openclaw", "mxc");
+    const staleHandoff = handoff("openclaw", "mxc");
+    const operations = operationsHarness("mxc", []);
+
+    await expect(
+      runManagedWorkloadRebuildTransaction(
+        {
+          previousEntry: oldEntry,
+          provider: bundle("mxc"),
+          handoff: {
+            ...staleHandoff,
+            previousContract: {
+              ...staleHandoff.previousContract,
+              source: {
+                ...staleHandoff.previousContract.source,
+                release: "v0.0.98",
+              },
+            },
+          },
+          operations,
+          transactionId: "transaction-1",
+        },
+        { getSandbox: () => structuredClone(oldEntry) },
+      ),
+    ).rejects.toMatchObject({ phase: "prepare" });
     expect(operations.prepare).not.toHaveBeenCalled();
   });
 

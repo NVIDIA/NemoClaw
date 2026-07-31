@@ -11,6 +11,7 @@ import {
   normalizeRuntimeProviderIdentity,
   requireRuntimeProviderMutationAuthority,
 } from "../../runtime-provider/registry";
+import { readManagedWorkloadAuthority } from "../../workload/authority";
 import {
   buildManagedWorkloadRebuildReceipt,
   type ManagedWorkloadRebuildHandoff,
@@ -69,10 +70,30 @@ export function createManagedWorkloadRebuildPlan(input: {
       "the managed profile handoff does not match durable provider and agent authority",
     );
   }
-  if (!isDeepStrictEqual(handoff.previousReceipt, input.previousEntry.workload)) {
+  let durableAuthority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>>;
+  try {
+    const candidate = readManagedWorkloadAuthority(input.previousEntry);
+    if (!candidate) {
+      throw new Error("the durable row is not a managed workload");
+    }
+    durableAuthority = candidate;
+  } catch (error) {
     throw new ManagedWorkloadRebuildTransactionError(
       "prepare",
-      "the managed profile handoff is stale against the durable workload receipt",
+      "the durable managed workload authority could not be validated",
+      { cause: error },
+    );
+  }
+  if (
+    durableAuthority.agent !== handoff.agent ||
+    !isDeepStrictEqual(durableAuthority.receipt, handoff.previousReceipt) ||
+    !isDeepStrictEqual(durableAuthority.contract, handoff.previousContract) ||
+    !isDeepStrictEqual(durableAuthority.profile, handoff.previousProfile) ||
+    !isDeepStrictEqual(durableAuthority.corporateCa, handoff.corporateCa)
+  ) {
+    throw new ManagedWorkloadRebuildTransactionError(
+      "prepare",
+      "the managed profile handoff is stale against exact durable workload authority",
     );
   }
   if (
