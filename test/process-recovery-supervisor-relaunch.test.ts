@@ -108,6 +108,31 @@ function composedRelaunchTransaction(order: string[]) {
   return { finalizeTransaction, relaunchManagedSupervisorSessionImpl };
 }
 
+function scriptedPinnedGatewayProbes(
+  order: string[],
+  postRestoreProbe: { status: number; stdout: string; stderr: string },
+) {
+  const unavailableProbe = {
+    status: 1,
+    stdout: "",
+    stderr: "SUPERVISOR_NOT_RUNNING",
+  };
+  const acceptedProbe = {
+    status: 0,
+    stdout: "GATEWAY_PID=4242\n",
+    stderr: "",
+  };
+  return vi
+    .fn()
+    .mockReturnValueOnce(unavailableProbe)
+    .mockReturnValueOnce(acceptedProbe)
+    .mockImplementationOnce(() => {
+      order.push("post-restore-health");
+      return postRestoreProbe;
+    })
+    .mockReturnValue(acceptedProbe);
+}
+
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   it("does not turn ambiguous supervisor unavailability into a container mutation", () => {
     mockOpenClawSandbox("ambiguous-box");
@@ -246,19 +271,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
     );
-    const acceptedProbe = {
+    const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayProbes(order, {
       status: 0,
       stdout: "GATEWAY_PID=4242\n",
       stderr: "",
-    };
-    let pinnedProbeCount = 0;
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => {
-      pinnedProbeCount += 1;
-      if (pinnedProbeCount === 1) {
-        return { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" };
-      }
-      if (pinnedProbeCount === 3) order.push("post-restore-health");
-      return acceptedProbe;
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
@@ -307,22 +323,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
     );
-    const acceptedProbe = {
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    };
-    let pinnedProbeCount = 0;
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => {
-      pinnedProbeCount += 1;
-      if (pinnedProbeCount === 1) {
-        return { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" };
-      }
-      if (pinnedProbeCount === 3) {
-        order.push("post-restore-health");
-        return { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" };
-      }
-      return acceptedProbe;
+    const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayProbes(order, {
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_UNAVAILABLE",
     });
 
     const result = checkAndRecoverSandboxProcesses("post-restore-failed-box", {
