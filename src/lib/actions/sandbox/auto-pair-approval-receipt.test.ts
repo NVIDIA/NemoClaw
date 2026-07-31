@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildAutoPairApprovalScript,
   classifyAutoPairApprovalExecReceipt,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
+  runSandboxAutoPairApprovalPass,
 } from "./auto-pair-approval";
 
 describe("auto-pair approval receipts (#4616)", () => {
@@ -127,5 +128,40 @@ process.exit(Number(process.env.NEMOCLAW_LIST_EXIT_CODE || "0"));
         "__NEMOCLAW_AUTO_PAIR_RECEIPT__=approved-one\n",
       ),
     ).toBe("approved-one");
+  });
+
+  it("streams the approval program through stdin instead of OpenShell command argv", () => {
+    const run = vi.fn(
+      (
+        _command: string,
+        _args: readonly string[],
+        _options: SpawnSyncOptionsWithStringEncoding,
+      ) => ({
+        status: 0,
+        signal: null,
+        stdout: "__NEMOCLAW_AUTO_PAIR_RECEIPT__=approved-one\n",
+        stderr: "",
+      }),
+    );
+
+    const result = runSandboxAutoPairApprovalPass(
+      "beta",
+      { localDeviceOnly: true, receipt: true },
+      {
+        getOpenshellBinary: () => "/usr/local/bin/openshell",
+        spawnSync: run as unknown as typeof spawnSync,
+      },
+    );
+
+    expect(result.receipt).toBe("approved-one");
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[1]).toEqual(["sandbox", "exec", "--name", "beta", "--", "sh", "-s"]);
+    expect(run.mock.calls[0]?.[1].join(" ")).not.toContain("PYAPPROVE");
+    expect(run.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({
+        input: expect.stringContaining("PYAPPROVE"),
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
   });
 });

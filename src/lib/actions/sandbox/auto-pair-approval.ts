@@ -93,6 +93,11 @@ export type AutoPairApprovalResult = {
   receipt: AutoPairApprovalReceipt | null;
 };
 
+type AutoPairApprovalExecDeps = {
+  getOpenshellBinary: () => string;
+  spawnSync: typeof spawnSync;
+};
+
 export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
@@ -1035,6 +1040,7 @@ export function runSandboxAutoPairApprovalPass(
     budget?: AutoPairApprovalBudget;
     localDeviceOnly?: boolean;
   } = {},
+  execDeps?: AutoPairApprovalExecDeps,
 ): AutoPairApprovalResult {
   const emitReceipt = options.receipt === true && options.localDeviceOnly === true;
   const capture = options.capture === true || emitReceipt;
@@ -1058,16 +1064,25 @@ export function runSandboxAutoPairApprovalPass(
   // Lazy require: `adapters/openshell/runtime` pulls in `runner`, whose
   // load-time `require("./platform")` cannot be resolved by the Vitest TS
   // loader. Importing it here keeps this module unit-testable in-process.
-  const { getOpenshellBinary } =
-    require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+  const deps =
+    execDeps ??
+    (() => {
+      const { getOpenshellBinary } =
+        require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+      return { getOpenshellBinary, spawnSync };
+    })();
   try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+    // The restored-clone program is larger than OpenShell's command-argument
+    // transport boundary. Use the repository's supported stdin execution path
+    // so script growth cannot fail before Python emits its fixed receipt.
+    const result = deps.spawnSync(
+      deps.getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"],
       {
         cwd: ROOT,
         env: process.env,
-        stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "ignore", "ignore"],
+        input: script,
+        stdio: capture ? ["pipe", "pipe", "pipe"] : ["pipe", "ignore", "ignore"],
         encoding: "utf-8",
         timeout: outerTimeoutMs,
       },
