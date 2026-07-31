@@ -18,7 +18,7 @@ describe("auto-pair approval receipts (#4616)", () => {
   const pythonUnavailable =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0;
 
-  it.skipIf(pythonUnavailable)("reports one sanitized devices-list failure classification", () => {
+  it.skipIf(pythonUnavailable)("omits raw output from devices-list failure classifications", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(
