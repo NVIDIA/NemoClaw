@@ -14,10 +14,10 @@ import {
 } from "./auto-pair-approval";
 
 describe("auto-pair approval receipts (#4616)", () => {
-  it("reports one sanitized devices-list failure classification", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
+  const pythonUnavailable =
+    spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0;
+
+  it.skipIf(pythonUnavailable)("reports one sanitized devices-list failure classification", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(
