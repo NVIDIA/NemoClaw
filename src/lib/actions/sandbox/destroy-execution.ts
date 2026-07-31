@@ -7,6 +7,13 @@ import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderBundle,
+  RuntimeProviderBundleRegistry,
+  requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderMutationAuthority,
+} from "../../onboard/runtime-provider/access";
 import { redact } from "../../security/redact";
 import { withTimerBoundShieldsMutationLockAsync } from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
@@ -28,6 +35,7 @@ type SandboxDestroyExecutionInput = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
   sandboxName: string;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
 };
 
 export type SandboxDestroyExecutionResult =
@@ -179,8 +187,33 @@ export async function executeSandboxDestroy({
   sandbox,
   sandboxConfirmedAbsent,
   sandboxName,
+  runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
   return withTimerBoundShieldsMutationLockAsync(sandboxName, "destroy sandbox", async () => {
+    let runtimeProvider: RuntimeProviderBundle | null = null;
+    if (sandbox) {
+      try {
+        runtimeProvider = requireRuntimeProviderBundleForSandbox(sandbox, runtimeProviders);
+        requireRuntimeProviderMutationAuthority(runtimeProvider, "provider-cleanup");
+        requireRuntimeProviderMutationAuthority(runtimeProvider, "destroy");
+        if (runtimeProvider.cleanup.supported !== true) {
+          throw new Error(
+            `Runtime provider '${runtimeProvider.identity.id}' has no cleanup implementation.`,
+          );
+        }
+      } catch (error) {
+        return {
+          ok: false as const,
+          deleteOutput:
+            error instanceof Error
+              ? error.message
+              : `Runtime provider authority could not be proven: ${String(error)}`,
+          exitCode: 1,
+          gatewayUnreachable: false,
+          mcpOwnershipRequiresGateway: false,
+        };
+      }
+    }
     const mcpPreparation = await prepareMcpDestroy(
       sandboxName,
       sandbox,
@@ -192,9 +225,13 @@ export async function executeSandboxDestroy({
     // provider ownership manifest and must survive an unconfirmed delete.
     const hasMcpOwnership = mcpPreparation.entries.length > 0;
     const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent);
+    const detachProviders = (): DetachSandboxProvidersResult =>
+      runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
-      : runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
+      : runtimeProvider?.cleanup.supported === true && sandbox
+        ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
+        : detachProviders();
     const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
