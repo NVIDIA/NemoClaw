@@ -723,7 +723,11 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     env: commandEnv(),
     timeoutMs: PHASE_TIMEOUT_MS,
   });
-  expect(startB.exitCode, resultText(startB)).toBe(0);
+  const startBText = resultText(startB);
+  expect(startB.exitCode, startBText).toBe(0);
+  expect(startBText).not.toContain(
+    "did not become ready after recovery (runtime=running, health=starting)",
+  );
   const restoredForwardBAfterStart = await waitForForwardOwner(
     sandbox,
     portB ?? "",
