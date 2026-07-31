@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { resultText } from "../fixtures/clients/command.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -43,17 +43,28 @@ except PermissionError as exc:
 else:
     raise AssertionError("OpenShell did not block memfd_create")
 
-tmp_flags = os.O_TMPFILE | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC
-try:
-    tmp_descriptor = os.open("/tmp", tmp_flags, 0o600)
-except OSError as exc:
-    assert exc.errno == errno.EOPNOTSUPP
-else:
-    os.close(tmp_descriptor)
-    raise AssertionError("/tmp unexpectedly accepted O_TMPFILE")
-
 payload = b'{"mcpServers":{"proof":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer openshell:resolve:env:PROOF_TOKEN"}}}}' + bytes([10])
-descriptor, binding = managed._managed_mcp_snapshot(payload)
+real_open = managed.os.open
+opened_directories = []
+
+def reject_primary_tmpfile(path, flags, *args, **kwargs):
+    if flags & os.O_TMPFILE:
+        directory = Path(path)
+        opened_directories.append(directory)
+        if directory == managed._MCP_ANONYMOUS_DIRECTORY:
+            raise OSError(errno.EOPNOTSUPP, "O_TMPFILE unavailable for primary snapshot directory")
+    return real_open(path, flags, *args, **kwargs)
+
+managed.os.open = reject_primary_tmpfile
+try:
+    descriptor, binding = managed._managed_mcp_snapshot(payload)
+finally:
+    managed.os.open = real_open
+
+assert opened_directories == [
+    managed._MCP_ANONYMOUS_DIRECTORY,
+    managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY,
+]
 snapshot_path = f"/proc/self/fd/{descriptor}"
 try:
     metadata = os.fstat(descriptor)
