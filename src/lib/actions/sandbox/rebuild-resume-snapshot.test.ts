@@ -22,6 +22,7 @@ import * as destroy from "./destroy";
 import { rebuildSandbox } from "./rebuild";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 
@@ -130,6 +131,24 @@ describe("rebuild resume snapshot repair", () => {
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
+      vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockReturnValue({
+        ok: true,
+        receipt: {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          route: {
+            provider: "ollama-local",
+            model: "nvidia/nemotron",
+            endpointUrl: null,
+            preferredInferenceApi: null,
+            credentialEnv: null,
+          },
+          migratedSandboxNames: [],
+        },
+      }),
+      vi
+        .spyOn(rebuildRoutePreflight, "revalidateRebuildRouteBeforeDelete")
+        .mockImplementation((receipt) => ({ ok: true, receipt })),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
         sessions: [],

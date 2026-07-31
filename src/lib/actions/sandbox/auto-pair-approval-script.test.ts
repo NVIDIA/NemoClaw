@@ -50,7 +50,8 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).not.toContain("'devices', 'list', '--json'");
     expect(restoredClone).toContain("'pending.json'");
     expect(restoredClone).toContain("'paired.json'");
-    expect(restoredClone).toContain("local_approval_auth_mode == 'runtime'");
+    expect(restoredClone).not.toContain("local_approval_auth_mode == 'runtime'");
+    expect(restoredClone).not.toContain("os.environ.get('OPENCLAW_GATEWAY_TOKEN'");
     expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
     expect(restoredClone).toContain("sync_approved_clone_device_auth");
     expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
@@ -97,9 +98,24 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
   });
 
   it("accepts exactly one terminal fixed receipt", () => {
-    expect(
-      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=approved-one\n`),
-    ).toBe("approved-one");
+    for (const receipt of [
+      "approved-one",
+      "list-failed",
+      "list-timeout",
+      "list-exec-failed",
+      "list-scope-upgrade-pending",
+      "list-device-pairing-required",
+      "list-gateway-connect-failed",
+      "list-command-failed",
+      "list-empty-output",
+      "list-invalid-json",
+      "list-invalid-output",
+      "list-missing-pending",
+    ] as const) {
+      expect(
+        parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
+      ).toBe(receipt);
+    }
     for (const output of [
       `${RECEIPT_MARKER}=approved-one\nlater output\n`,
       `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,

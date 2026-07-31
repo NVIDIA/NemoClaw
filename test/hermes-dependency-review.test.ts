@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -32,6 +33,28 @@ function arg(name: string): string {
   return match?.[1] ?? "";
 }
 
+function uvVersionCheckStatus(output: string, expectedVersion: string): number | null {
+  const dockerfileLines = dockerfileBase.split("\n");
+  const installIndex = dockerfileLines.findIndex(
+    (line) => line.startsWith("RUN pip3 install ") && line.includes('"uv==${UV_VERSION}"'),
+  );
+  expect(installIndex, "Missing Dockerfile uv install command").toBeGreaterThanOrEqual(0);
+
+  const commandLines = dockerfileLines.slice(installIndex);
+  const commandEndIndex = commandLines.findIndex((line) => !line.endsWith("\\"));
+  const versionCheckLines = commandLines.slice(1, commandEndIndex + 1);
+  expect(versionCheckLines, "Missing Dockerfile uv version check").not.toHaveLength(0);
+
+  const script = [
+    'uv() { printf "%s\\n" "$UV_OUTPUT"; }',
+    "set -e",
+    ...versionCheckLines.map((line) => line.replace(/^\s*&&\s*/u, "").replace(/\s*\\$/u, "")),
+  ].join("\n");
+  return spawnSync("/bin/sh", ["-c", script], {
+    env: { ...process.env, UV_OUTPUT: output, UV_VERSION: expectedVersion },
+  }).status;
+}
+
 describe("Hermes 0.19.0 dependency review", () => {
   it("binds every active source identity to the reviewed release", () => {
     expect(arg("HERMES_VERSION")).toBe("v2026.7.20");
@@ -57,7 +80,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(config).toMatch(/display:\s*\{\s*[\s\S]*?show_commentary: false/u);
     expect(config).toMatch(/updates:\s*\{\s*[\s\S]*?pre_update_backup: false/u);
     expect(config).toMatch(/updates:\s*\{\s*[\s\S]*?refresh_cua_driver: false/u);
-    expect(manifest).toContain("path: cron/executions.db\n    strategy: sqlite_backup");
+    expect(manifest).toContain("path: runtime/cron-executions.db\n    strategy: sqlite_backup");
     expect(manifest).toContain(
       "path: gateway/discord_message_recovery.db\n    strategy: sqlite_backup",
     );
@@ -79,6 +102,22 @@ describe("Hermes 0.19.0 dependency review", () => {
     }
   });
 
+  it("accepts uv build metadata and rejects a different semantic version", () => {
+    const expectedVersion = arg("UV_VERSION");
+    const differentVersion = expectedVersion.replace(/\d+$/u, (patch) =>
+      String(Number.parseInt(patch, 10) + 1),
+    );
+    expect(
+      uvVersionCheckStatus(
+        `uv ${expectedVersion} (fece32fc5 2026-07-28 aarch64-unknown-linux-gnu)`,
+        expectedVersion,
+      ),
+    ).toBe(0);
+    expect(
+      uvVersionCheckStatus(`uv ${differentVersion} (different build metadata)`, expectedVersion),
+    ).toBe(1);
+  });
+
   it("ships the reviewed Python dependency remediations and records residual debt", () => {
     expect(dockerfileBase).toContain(
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
@@ -87,13 +126,23 @@ describe("Hermes 0.19.0 dependency review", () => {
       "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
     );
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
-    for (const selection of ['"cryptography==48.0.1"', '"Pillow==12.3.0"', '"starlette==1.3.1"']) {
+    expect(arg("NODE_VERSION")).toBe("24.18.1");
+    expect(arg("UV_VERSION")).toBe("0.11.33");
+    for (const selection of [
+      '"cryptography==48.0.1"',
+      '"mcp==1.28.1"',
+      '"Pillow==12.3.0"',
+      '"starlette==1.3.1"',
+      '"tornado==6.5.7"',
+    ]) {
       expect(securityDependenciesPatch).toContain(selection);
     }
     for (const installedVersion of [
       "'cryptography': '48.0.1'",
+      "'mcp': '1.28.1'",
       "'pillow': '12.3.0'",
       "'starlette': '1.3.1'",
+      "'tornado': '6.5.7'",
     ]) {
       expect(dockerfileBase).toContain(installedVersion);
     }
@@ -108,8 +157,11 @@ describe("Hermes 0.19.0 dependency review", () => {
       expect(review).toContain(advisory);
     }
     expect(review).toContain("`cryptography==48.0.1`");
+    expect(review).toContain("`mcp==1.28.1`");
     expect(review).toContain("`Pillow==12.3.0`");
     expect(review).toContain("`starlette==1.3.1`");
-    expect(review).toContain("11 newly published records in six unrelated packages");
+    expect(review).toContain("`tornado==6.5.7`");
+    expect(review).toContain("checksum-pinned Node.js `24.18.1`");
+    expect(review).toContain("exact uv `0.11.33`");
   });
 });

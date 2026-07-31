@@ -30,9 +30,11 @@
  * same live gateway through local loopback. For a restored pairing-only clone,
  * the approval child drops config/shared-auth overrides, pins the clone's
  * loopback URL, and accepts only its descriptor-backed identity and pairing
- * snapshots. The reviewed dist patch then forces OpenClaw's existing local-only
- * stored-device-auth path for that exact bounded self-repair shape so a shared
- * token reloaded from config cannot take precedence. Remove this compatibility
+ * snapshots. The reviewed dist patch uses only the descriptor-backed
+ * pairing token for the pinned loopback gateway and disables pathname-backed
+ * stored authentication for that exact self-repair shape. It requires a
+ * matching live preflight before one canonical approval, then synchronizes the
+ * rotated token into the clone's client-auth store. Remove this compatibility
  * path when OpenClaw can complete scope upgrades natively through device-token
  * auth using operator.pairing.
  */
@@ -53,6 +55,8 @@ export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
 // Default per-call budgets (seconds) for the in-sandbox openclaw subcommands.
 const AUTO_PAIR_LIST_TIMEOUT_S = 2;
 const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
+const AUTO_PAIR_POST_TIMEOUT_OBSERVE_S = 4;
+const AUTO_PAIR_POST_TIMEOUT_POLL_S = 0.1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
@@ -89,6 +93,16 @@ export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
   | "list-failed"
+  | "list-timeout"
+  | "list-exec-failed"
+  | "list-scope-upgrade-pending"
+  | "list-device-pairing-required"
+  | "list-gateway-connect-failed"
+  | "list-command-failed"
+  | "list-empty-output"
+  | "list-invalid-json"
+  | "list-invalid-output"
+  | "list-missing-pending"
   | "clone-no-match"
   | "clone-ambiguous"
   | "request-rejected"
@@ -96,7 +110,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -179,15 +193,10 @@ def exit_with_receipt(receipt):
   const approveEnv = options.localDeviceOnly
     ? `approve_env = gateway_approval_env(os.environ)
     approval_pass_fds = ()
-    # A cold clone has no stored device credential yet. Keep only its trusted
-    # runtime token. A restored pre-convergence clone instead uses only the
-    # pairing-scoped token from its own paired state for one canonical approval.
-    if local_approval_auth_mode == 'runtime':
-        runtime_gateway_token = str(os.environ.get('OPENCLAW_GATEWAY_TOKEN', '') or '').strip()
-        if not runtime_gateway_token:
-            ${exitWithReceipt("approve-failed")}
-        approve_env['OPENCLAW_GATEWAY_TOKEN'] = runtime_gateway_token
-    elif local_approval_auth_mode == 'paired-token':
+    # A restored pre-convergence clone uses only the pairing-scoped token from
+    # its own paired state for one canonical approval. A request without that
+    # paired baseline was rejected before this approval loop.
+    if local_approval_auth_mode == 'paired-token':
         raw_gateway_port = str(os.environ.get('OPENCLAW_GATEWAY_PORT', '') or '').strip()
         if (
             not raw_gateway_port.isascii()
@@ -256,16 +265,20 @@ def exit_with_receipt(receipt):
     ? `    except subprocess.TimeoutExpired:
         if local_approval_auth_mode != 'paired-token':
             ${failedApproveAction}
-        # The canonical gateway transition can finish while the paired-token
-        # CLI remains blocked behind the competing clone watcher. Do not retry
-        # or extend its timeout. Accept only the same exact published state used
-        # for a completed nonzero call, then synchronize the rotated credential.
+        # The agent gateway can publish the validated transition after the
+        # paired-token child process reaches its timeout. Do not issue a second
+        # approval. Observe only that transition for a bounded interval. Then
+        # synchronize the rotated clone credential.
         previous_approval_token = local_paired_operator_token
         approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
         local_paired_operator_token = ''
-        if not sync_approved_clone_device_auth(device, previous_approval_token):
-            ${failedApproveAction}
+        observe_deadline = time.monotonic() + ${AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
+        while not sync_approved_clone_device_auth(device, previous_approval_token):
+            remaining_observe_time = observe_deadline - time.monotonic()
+            if remaining_observe_time <= 0:
+                ${failedApproveAction}
+            time.sleep(min(${AUTO_PAIR_POST_TIMEOUT_POLL_S}, remaining_observe_time))
         approved_count += 1
     except (FileNotFoundError, OSError):
         ${failedApproveAction}
@@ -425,19 +438,34 @@ try:
         [OPENCLAW, 'devices', 'list', '--json'],
         capture_output=True, text=True, timeout=${listTimeoutS},
     )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    ${exitWithReceipt("list-failed")}
-if proc.returncode != 0 or not proc.stdout.strip():
-    ${exitWithReceipt("list-failed")}
+except subprocess.TimeoutExpired:
+    ${exitWithReceipt("list-timeout")}
+except (FileNotFoundError, OSError):
+    ${exitWithReceipt("list-exec-failed")}
+if proc.returncode != 0:
+    command_output = f'{proc.stdout}\\n{proc.stderr}'.lower()
+    if (
+        'scope upgrade pending approval' in command_output
+        or 'pairing required: device is asking for more scopes' in command_output
+    ):
+        ${exitWithReceipt("list-scope-upgrade-pending")}
+    elif 'device pairing required' in command_output or 'pairing required' in command_output:
+        ${exitWithReceipt("list-device-pairing-required")}
+    elif 'gateway connect failed' in command_output:
+        ${exitWithReceipt("list-gateway-connect-failed")}
+    else:
+        ${exitWithReceipt("list-command-failed")}
+if not proc.stdout.strip():
+    ${exitWithReceipt("list-empty-output")}
 try:
     data = json.loads(proc.stdout)
 except ValueError:
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-invalid-json")}
 if not isinstance(data, dict):
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-invalid-output")}
 pending = data.get('pending')
 if not isinstance(pending, list):
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-missing-pending")}
 `;
   const localDeviceFilter = options.localDeviceOnly
     ? `
@@ -486,28 +514,6 @@ def normalized_roles(device):
             roles.add(role.strip())
     return roles
 
-def consistent_scope_view(device):
-    if 'scopes' not in device or 'requestedScopes' in device:
-        return None
-    views = []
-    for key in ('scopes', 'requestedScopes'):
-        if key not in device:
-            continue
-        raw_scopes = device.get(key)
-        if not isinstance(raw_scopes, list) or not raw_scopes:
-            return None
-        scopes = []
-        for scope in raw_scopes:
-            if not isinstance(scope, str) or not scope.strip():
-                return None
-            scopes.append(scope.strip())
-        if len(scopes) != len(set(scopes)) or not set(scopes).issubset(ALLOWED_LOCAL_SCOPES):
-            return None
-        views.append(set(scopes))
-    if not views or any(view != views[0] for view in views[1:]):
-        return None
-    return views[0]
-
 def bounded_scope_set(raw_scopes):
     if not isinstance(raw_scopes, list) or not raw_scopes:
         return None
@@ -519,6 +525,21 @@ def bounded_scope_set(raw_scopes):
     if len(scopes) != len(set(scopes)) or not set(scopes).issubset(ALLOWED_LOCAL_SCOPES):
         return None
     return set(scopes)
+
+def consistent_scope_view(device):
+    if 'scopes' not in device or 'requestedScopes' in device:
+        return None
+    views = []
+    for key in ('scopes', 'requestedScopes'):
+        if key not in device:
+            continue
+        scopes = bounded_scope_set(device.get(key))
+        if scopes is None:
+            return None
+        views.append(scopes)
+    if not views or any(view != views[0] for view in views[1:]):
+        return None
+    return views[0]
 
 def paired_operator_credential(device):
     raw_tokens = device.get('tokens')
@@ -682,10 +703,6 @@ def local_pairing_transition_auth_mode(device):
         return None
     is_repair = device.get('isRepair')
     if not has_local_paired_baseline:
-        if scopes == {'operator.pairing'} and is_repair in (None, False):
-            return 'runtime'
-        if is_repair is False and 'operator.write' in scopes:
-            return 'runtime'
         return None
     if is_repair in (True, False) and 'operator.write' in scopes:
         if local_paired_exact_pairing_baseline:
@@ -846,9 +863,6 @@ if not related_pending:
     ${exitWithReceipt("clone-no-match")}
 if len(related_pending) > 1:
     ${exitWithReceipt("clone-ambiguous")}
-local_approval_auth_mode = local_pairing_transition_auth_mode(related_pending[0])
-if local_approval_auth_mode is None:
-    ${exitWithReceipt("request-rejected")}
 local_request_id = related_pending[0].get('requestId')
 if sum(
     1 for device in pending
@@ -858,6 +872,9 @@ if sum(
 if (
     local_pending_by_id.get(local_request_id) is not related_pending[0]
 ):
+    ${exitWithReceipt("request-rejected")}
+local_approval_auth_mode = local_pairing_transition_auth_mode(related_pending[0])
+if local_approval_auth_mode is None:
     ${exitWithReceipt("request-rejected")}
 pending = related_pending
 `

@@ -16,115 +16,80 @@ import {
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
 
 describe("auto-pair approval pass behaviour (#4616)", () => {
-  it("approves allowlisted upgrades, skips unknown clients, and reports the count", () => {
+  it("reports one sanitized devices-list failure classification", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      // No python3 — the in-sandbox script can't run; skip the behavioural check.
       return;
     }
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
-    const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
-    const script = buildAutoPairApprovalScript(policyB64, { emitSummary: true });
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
+    const script = buildAutoPairApprovalScript(
+      Buffer.from(policy as string, "utf-8").toString("base64"),
+      {
+        emitReceipt: true,
+        budget: { listTimeoutS: 0.5 },
+      },
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-list-receipt-"));
     try {
-      const approvalsFile = path.join(tmpDir, "approvals.log");
-      const approveEnvFile = path.join(tmpDir, "approve-env.log");
-      const pending = [
-        {
-          requestId: "ok-webchat",
-          clientId: "openclaw-control-ui",
-          clientMode: "webchat",
-          scopes: ["operator.read", "operator.write"],
-        },
-        {
-          requestId: "ok-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          requestedScopes: ["operator.pairing"],
-        },
-        {
-          requestId: "ok-agent-cli",
-          clientId: "cli",
-          clientMode: "cli",
-          requestedScopes: ["operator.pairing"],
-        },
-        {
-          requestId: "deny-unknown",
-          clientId: "evil",
-          clientMode: "unknown",
-          scopes: ["operator.read"],
-        },
-        {
-          requestId: "deny-spoofed-cli-mode",
-          clientId: "evil",
-          clientMode: "cli",
-          scopes: ["operator.write"],
-        },
-        {
-          requestId: "deny-spoofed-webchat-mode",
-          clientId: "evil",
-          clientMode: "webchat",
-          scopes: ["operator.read"],
-        },
-        {
-          requestId: "deny-admin",
-          clientId: "openclaw-control-ui",
-          clientMode: "webchat",
-          scopes: ["operator.admin"],
-        },
-      ];
-      const listResponse = JSON.stringify({ pending, paired: [] });
       fs.writeFileSync(
         path.join(tmpDir, "openclaw"),
         `#!${process.execPath}
-const fs = require("fs");
 const args = process.argv.slice(2);
-if (args[0] === "devices" && args[1] === "list") {
-  process.stdout.write(${JSON.stringify(`${listResponse}\n`)});
-  process.exit(0);
+if (args[0] !== "devices" || args[1] !== "list") process.exit(2);
+const sleepMs = Number(process.env.NEMOCLAW_LIST_SLEEP_MS || "0");
+if (sleepMs > 0) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
 }
-if (args[0] === "devices" && args[1] === "approve") {
-  fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
-  fs.appendFileSync(
-    ${JSON.stringify(approveEnvFile)},
-    [
-      process.env.OPENCLAW_GATEWAY_URL || "unset",
-      process.env.OPENCLAW_GATEWAY_PORT || "unset",
-      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
-    ].join(":") + "\\n",
-  );
-  process.stdout.write("{}\\n");
-  process.exit(0);
-}
-process.exit(2);
+process.stdout.write(process.env.NEMOCLAW_LIST_STDOUT || "");
+process.stderr.write(process.env.NEMOCLAW_LIST_STDERR || "");
+process.exit(Number(process.env.NEMOCLAW_LIST_EXIT_CODE || "0"));
 `,
         { mode: 0o755 },
       );
-
-      const result = spawnSync("sh", ["-c", script], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          PATH: `${tmpDir}:/usr/bin:/bin`,
-          OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
-          OPENCLAW_GATEWAY_PORT: "18789",
-          OPENCLAW_GATEWAY_TOKEN: "secret-token",
-        },
-        timeout: 10_000,
-      });
-
-      const approvals = fs.existsSync(approvalsFile)
-        ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
-        : [];
-      const approveEnv = fs.existsSync(approveEnvFile)
-        ? fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n").filter(Boolean)
-        : [];
-
-      expect(approvals).toEqual(["ok-webchat", "ok-cli", "ok-agent-cli"]);
-      // Gateway env stripped on the approve subprocess (#4462 workaround).
-      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset", "unset:unset:unset"]);
-      expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
+      for (const [environment, receipt] of [
+        [{ NEMOCLAW_LIST_SLEEP_MS: "800" }, "list-timeout"],
+        [
+          { NEMOCLAW_LIST_EXIT_CODE: "1", NEMOCLAW_LIST_STDERR: "raw failure" },
+          "list-command-failed",
+        ],
+        [
+          {
+            NEMOCLAW_LIST_EXIT_CODE: "1",
+            NEMOCLAW_LIST_STDERR: "scope upgrade pending approval raw detail",
+          },
+          "list-scope-upgrade-pending",
+        ],
+        [
+          {
+            NEMOCLAW_LIST_EXIT_CODE: "1",
+            NEMOCLAW_LIST_STDERR: "device pairing required raw detail",
+          },
+          "list-device-pairing-required",
+        ],
+        [
+          {
+            NEMOCLAW_LIST_EXIT_CODE: "1",
+            NEMOCLAW_LIST_STDERR: "gateway connect failed raw detail",
+          },
+          "list-gateway-connect-failed",
+        ],
+        [{ NEMOCLAW_LIST_STDOUT: "" }, "list-empty-output"],
+        [{ NEMOCLAW_LIST_STDOUT: "raw invalid json" }, "list-invalid-json"],
+        [{ NEMOCLAW_LIST_STDOUT: "[]\n" }, "list-invalid-output"],
+        [{ NEMOCLAW_LIST_STDOUT: "{}\n" }, "list-missing-pending"],
+      ] as const) {
+        const result = spawnSync("sh", ["-c", script], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            PATH: `${tmpDir}:/usr/bin:/bin`,
+            ...environment,
+          },
+          timeout: 10_000,
+        });
+        expect(parseAutoPairApprovalReceipt(result.stdout)).toBe(receipt);
+        expect(`${result.stdout}${result.stderr}`).not.toContain("raw ");
+      }
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -132,8 +97,9 @@ process.exit(2);
 
   const pyIt =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
+  const pyIt25s = (name: string, test: () => void) => pyIt(name, test, 25_000);
 
-  pyIt("approves only one exact local clone pairing transition on a shared gateway", () => {
+  pyIt25s("approves only one exact local clone pairing transition on a shared gateway", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(
@@ -197,7 +163,9 @@ const fs = require("fs");
 const args = process.argv.slice(2);
 const canonicalFd = (name) => {
   const raw = process.env[name] || "";
-  return /^[3-9][0-9]*$/.test(raw) ? Number(raw) : null;
+  if (!/^[1-9][0-9]*$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 3 ? value : null;
 };
 const readPinnedJson = (name) => {
   const fd = canonicalFd(name);
@@ -223,20 +191,32 @@ if (args[0] === "devices" && args[1] === "approve") {
   }
   const forced = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";
   const stateDir = process.env.OPENCLAW_STATE_DIR;
+  const expectedCloneStateDir = process.env.NEMOCLAW_TEST_CLONE_STATE_DIR;
+  const cloneStateBackup = process.env.NEMOCLAW_TEST_CLONE_STATE_BACKUP;
+  const cloneStatePath =
+    expectedCloneStateDir &&
+    fs.lstatSync(expectedCloneStateDir).isSymbolicLink() &&
+    cloneStateBackup &&
+    fs.existsSync(cloneStateBackup)
+      ? cloneStateBackup
+      : expectedCloneStateDir;
   const forcedStateMatch = forced ? /^\\/proc\\/self\\/fd\\/([1-9][0-9]*)$/.exec(stateDir || "") : null;
   const forcedStateFd = forcedStateMatch ? Number(forcedStateMatch[1]) : null;
+  const forcedStateStat = forcedStateFd === null ? null : fs.fstatSync(forcedStateFd);
+  const expectedStateStat = cloneStatePath ? fs.statSync(cloneStatePath) : null;
   const forcedStatePinned = Boolean(
     forcedStateFd !== null &&
       forcedStateFd >= 3 &&
-      fs.fstatSync(forcedStateFd).isDirectory() &&
-      fs.readFileSync(stateDir + "/.env", "utf8").trim() === "NEMOCLAW_TEST_STATE=clone"
+      forcedStateStat?.isDirectory() &&
+      forcedStateStat.dev === expectedStateStat?.dev &&
+      forcedStateStat.ino === expectedStateStat?.ino
   );
   const pending = forced
     ? readPinnedJson("NEMOCLAW_OPENCLAW_PENDING_FD")
-    : JSON.parse(fs.readFileSync(stateDir + "/devices/pending.json", "utf8"));
+    : JSON.parse(fs.readFileSync(cloneStatePath + "/devices/pending.json", "utf8"));
   const paired = forced
     ? readPinnedJson("NEMOCLAW_OPENCLAW_PAIRED_FD")
-    : JSON.parse(fs.readFileSync(stateDir + "/devices/paired.json", "utf8"));
+    : JSON.parse(fs.readFileSync(cloneStatePath + "/devices/paired.json", "utf8"));
   const pinnedIdentity = forced
     ? readPinnedJson("NEMOCLAW_OPENCLAW_IDENTITY_FD")
     : null;
@@ -246,7 +226,7 @@ if (args[0] === "devices" && args[1] === "approve") {
   const hasPairedBaseline = Boolean(pairedOperator);
   let clientAuth;
   try {
-    clientAuth = JSON.parse(fs.readFileSync(stateDir + "/identity/device-auth.json", "utf8"));
+    clientAuth = JSON.parse(fs.readFileSync(cloneStatePath + "/identity/device-auth.json", "utf8"));
   } catch {}
   const storedOperator = clientAuth && clientAuth.tokens && clientAuth.tokens.operator;
   const clientAuthMatches = Boolean(
@@ -345,7 +325,7 @@ if (args[0] === "devices" && args[1] === "approve") {
     ].join(":") + "\\n",
   );
   if (pairedTokenOnly) {
-    const pinnedDevicesDir = stateDir + "/devices";
+    const pinnedDevicesDir = cloneStatePath + "/devices";
     delete pending[args[2]];
     paired[request.deviceId] = {
       ...pairedDevice,
@@ -512,42 +492,40 @@ ${persistentRaceNeedle}`,
         invalidWatcherState = false,
         timeoutAfterCommit = false,
         devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
-      ) =>
-        spawnSync(
-          "sh",
-          [
-            "-c",
-            timeoutAfterCommit
-              ? timeoutScript
-              : devicesRace === "child-entry"
-                ? childEntryRaceScript
-                : devicesRace === "persistent"
-                  ? persistentDevicesRaceScript
-                  : devicesRace === "transient"
-                    ? transientDevicesRaceScript
-                    : script,
-          ],
-          {
-            encoding: "utf-8",
-            env: {
-              ...process.env,
-              PATH: `${tmpDir}:/usr/bin:/bin`,
-              NEMOCLAW_APPROVE_FAIL: failApproval ? "1" : "0",
-              NEMOCLAW_APPROVE_WATCHER_RACE: watcherRace ? "1" : "0",
-              NEMOCLAW_APPROVE_WATCHER_RACE_INVALID: invalidWatcherState ? "1" : "0",
-              NEMOCLAW_APPROVE_TIMEOUT_AFTER_COMMIT: timeoutAfterCommit ? "1" : "0",
-              NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE: devicesRace === "persistent" ? "1" : "0",
-              NEMOCLAW_TEST_TRANSIENT_DEVICES_RACE: devicesRace === "transient" ? "1" : "0",
-              NEMOCLAW_TEST_CHILD_ENTRY_RACE: devicesRace === "child-entry" ? "1" : "0",
-              NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
-              OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
-              OPENCLAW_GATEWAY_PORT: gatewayPort,
-              OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-              OPENCLAW_STATE_DIR: stateDir,
-            },
-            timeout: 10_000,
+      ) => {
+        const approvalScript = timeoutAfterCommit
+          ? timeoutScript
+          : devicesRace === "child-entry"
+            ? childEntryRaceScript
+            : devicesRace === "persistent"
+              ? persistentDevicesRaceScript
+              : devicesRace === "transient"
+                ? transientDevicesRaceScript
+                : script;
+        return spawnSync("sh", {
+          encoding: "utf-8",
+          input: approvalScript,
+          env: {
+            ...process.env,
+            PATH: `${tmpDir}:/usr/bin:/bin`,
+            NEMOCLAW_APPROVE_FAIL: failApproval ? "1" : "0",
+            NEMOCLAW_APPROVE_WATCHER_RACE: watcherRace ? "1" : "0",
+            NEMOCLAW_APPROVE_WATCHER_RACE_INVALID: invalidWatcherState ? "1" : "0",
+            NEMOCLAW_APPROVE_TIMEOUT_AFTER_COMMIT: timeoutAfterCommit ? "1" : "0",
+            NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE: devicesRace === "persistent" ? "1" : "0",
+            NEMOCLAW_TEST_TRANSIENT_DEVICES_RACE: devicesRace === "transient" ? "1" : "0",
+            NEMOCLAW_TEST_CHILD_ENTRY_RACE: devicesRace === "child-entry" ? "1" : "0",
+            NEMOCLAW_TEST_CLONE_STATE_DIR: stateDir,
+            NEMOCLAW_TEST_CLONE_STATE_BACKUP: stateRaceBackup,
+            NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
+            OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+            OPENCLAW_GATEWAY_PORT: gatewayPort,
+            OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+            OPENCLAW_STATE_DIR: stateDir,
           },
-        );
+          timeout: 10_000,
+        });
+      };
       const run = (
         pending: unknown[],
         options: {
@@ -703,20 +681,17 @@ ${persistentRaceNeedle}`,
         receipt: parseAutoPairApprovalReceipt(initial.stdout),
         wroteClassifiedEnv: fs.existsSync(approveEnvFile),
       }).toEqual({
-        approvalCalls: 1,
-        approvals: 1,
-        receipt: "approved-one",
-        wroteClassifiedEnv: true,
+        approvalCalls: 0,
+        approvals: 0,
+        receipt: "request-rejected",
+        wroteClassifiedEnv: false,
       });
-      expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
-      expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
-      );
+      expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(false);
+      expect(readApprovals()).toEqual([]);
 
       resetLogs();
       const missingCloneToken = run([localRequest], { gatewayToken: "" });
-      expect(parseAutoPairApprovalReceipt(missingCloneToken.stdout)).toBe("approve-failed");
+      expect(parseAutoPairApprovalReceipt(missingCloneToken.stdout)).toBe("request-rejected");
       expect(readApprovals()).toEqual([]);
       expect(fs.existsSync(approveEnvFile)).toBe(false);
 
@@ -756,8 +731,9 @@ ${persistentRaceNeedle}`,
       };
       const combinedInitial = run([foreignRequest, combinedInitialRequest]);
       expect(combinedInitial.status).toBe(0);
-      expect(combinedInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
-      expect(readApprovals()).toEqual(["clone-pairing-with-write"]);
+      expect(parseAutoPairApprovalReceipt(combinedInitial.stdout)).toBe("request-rejected");
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
       resetLogs();
       const writeOnlyInitialRequest = {
         ...localRequest,
@@ -767,8 +743,9 @@ ${persistentRaceNeedle}`,
       };
       const writeOnlyInitial = run([foreignRequest, writeOnlyInitialRequest]);
       expect(writeOnlyInitial.status).toBe(0);
-      expect(writeOnlyInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
-      expect(readApprovals()).toEqual(["clone-write-only"]);
+      expect(parseAutoPairApprovalReceipt(writeOnlyInitial.stdout)).toBe("request-rejected");
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
       for (const clientAuth of ["missing", "stale"] as const) {
         resetLogs();
         const pairedPreconvergence = run([foreignRequest, writeOnlyInitialRequest], {
@@ -833,8 +810,9 @@ ${persistentRaceNeedle}`,
       const clonePending = JSON.stringify(clonePendingById);
       const clonePairing = run([], { pendingById: clonePendingById });
       expect(clonePairing.status).toBe(0);
-      expect(parseAutoPairApprovalReceipt(clonePairing.stdout)).toBe("approved-one");
-      expect(readApprovals()).toEqual(["clone-write-only"]);
+      expect(parseAutoPairApprovalReceipt(clonePairing.stdout)).toBe("request-rejected");
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
       expect(`${clonePairing.stdout}${clonePairing.stderr}`.includes("raw list output")).toBe(
         false,
       );
@@ -849,9 +827,7 @@ ${persistentRaceNeedle}`,
         primaryPaired,
       );
       expect(fs.existsSync(listEnvFile)).toBe(false);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
-      );
+      expect(fs.existsSync(approveEnvFile)).toBe(false);
 
       const cloneScopePendingById = {
         [foreignRequest.requestId]: foreignRequest,
@@ -932,12 +908,11 @@ ${persistentRaceNeedle}`,
         timeoutAfterCommit: true,
       });
       expect(parseAutoPairApprovalReceipt(timedOutWithoutPairedBaseline.stdout)).toBe(
-        "approve-failed",
+        "request-rejected",
       );
-      expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toEqual([
-        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
-      ]);
+      expect(readApproveCalls()).toEqual([]);
+      expect(readApprovals()).toEqual([]);
+      expect(fs.existsSync(approveEnvFile)).toBe(false);
       expect(
         `${timedOutWithoutPairedBaseline.stdout}${timedOutWithoutPairedBaseline.stderr}`.includes(
           "raw timed-out approval output",
@@ -1001,6 +976,7 @@ ${persistentRaceNeedle}`,
         pairedById: { [deviceId]: pairedDevice },
         timeoutAfterCommit: true,
       });
+      expect(invalidTimedOutState.status).toBe(0);
       expect(parseAutoPairApprovalReceipt(invalidTimedOutState.stdout)).toBe("approve-failed");
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toHaveLength(1);
@@ -1036,6 +1012,7 @@ ${persistentRaceNeedle}`,
         pairedById: { [deviceId]: pairedDevice },
         watcherRace: true,
       });
+      expect(invalidWatcherState.status).toBe(0);
       expect(parseAutoPairApprovalReceipt(invalidWatcherState.stdout)).toBe("approve-failed");
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
       expect(
