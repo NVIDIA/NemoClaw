@@ -16,6 +16,7 @@ import {
   removeSandboxRegistryEntryWithReceipt,
   removeShieldsState,
 } from "../src/lib/actions/sandbox/destroy";
+import { requireSnapshotDestinationRegistryRemoval } from "../src/lib/actions/sandbox/snapshot";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
 import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
@@ -165,6 +166,16 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     expect(removeImage).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Runtime provider 'docker'"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("workload receipt"));
+
+    const removeSandbox = vi.fn(() => true);
+    const registryRemoved = removeSandboxRegistryEntry("alpha", {
+      removeImage: () => result,
+      removeSandbox,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => requireSnapshotDestinationRegistryRemoval("alpha", registryRemoved)).toThrow();
+    expect(removeSandbox).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join("\n")).toContain("Repair the provider/workload receipt");
   });
 
   it("preserves registry ownership when workload cleanup authority is unproven", () => {

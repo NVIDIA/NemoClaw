@@ -462,6 +462,25 @@ export async function runRebuildDestroyPhase(
   const hasBaselineExclusions = (input.sandboxEntry.baselineExclusions?.length ?? 0) > 0;
   if (rebuildMcpEntries.length === 0 && !hasBaselineExclusions) {
     removalReceipt = removeSandboxRegistryEntryWithReceipt(sandboxName);
+    if (!removalReceipt) {
+      console.error(
+        "  The old sandbox is deleted, but local runtime ownership cleanup is incomplete.",
+      );
+      console.error(
+        "  The registry entry was preserved because provider/workload cleanup authority could not be proven or registry ownership changed.",
+      );
+      console.error(
+        "  Repair the provider/workload receipt or reconcile the retained registry row, then retry rebuild.",
+      );
+      if (backupManifest) {
+        console.error("  State backup is preserved at: " + backupManifest.backupPath);
+      }
+      bail(
+        "Old sandbox deleted, but workload cleanup authority could not be proven; recovery state was preserved.",
+        1,
+      );
+      return null;
+    }
   }
   if (rebuildMcpEntries.length > 0) {
     // The registry entry is the durable MCP rebuild transaction. The inner

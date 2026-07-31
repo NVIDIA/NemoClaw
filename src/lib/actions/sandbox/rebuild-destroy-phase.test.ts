@@ -89,7 +89,12 @@ describe("rebuild destroy phase", () => {
       scrubbedAdapterEntries: [],
     });
     mocks.reattachMcpAfterDeleteFailure.mockResolvedValue(undefined);
-    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue(null);
+    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue({
+      entry: { name: "alpha", agent: "openclaw" },
+      wasDefault: true,
+      fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 1,
+    });
     mocks.captureOpenshell.mockReturnValue({
       status: 1,
       output: "",
@@ -872,7 +877,12 @@ describe("rebuild destroy phase", () => {
     });
     mocks.removeSandboxRegistryEntryWithReceipt.mockImplementation(() => {
       events.push("remove-registry");
-      return null;
+      return {
+        entry: { name: "alpha", agent: "openclaw" },
+        wasDefault: true,
+        fallbackDefault: null,
+        postRemovalDefaultSelectionRevision: 1,
+      };
     });
 
     const result = await runRebuildDestroyPhase({
@@ -897,6 +907,52 @@ describe("rebuild destroy phase", () => {
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
     expect(mocks.removeSandboxRegistryEntryWithReceipt).toHaveBeenCalledWith("alpha");
+  });
+
+  it("stops rebuild after deletion when workload cleanup authority is unproven", async () => {
+    mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
+    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue(null);
+    const onDeleted = vi.fn();
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: "openclaw",
+          imageTag: "local/alpha:current",
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile",
+            reference: "local/alpha:recorded",
+            shared: false,
+          },
+        },
+        staleRecovery: false,
+        backupManifest: { backupPath: "/tmp/rebuild-backups/alpha/backup" } as never,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted,
+      }),
+    ).rejects.toThrow("workload cleanup authority could not be proven");
+
+    expect(onDeleted).toHaveBeenCalledOnce();
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).toHaveBeenCalledWith("alpha");
+    expect(bail).toHaveBeenCalledWith(
+      "Old sandbox deleted, but workload cleanup authority could not be proven; recovery state was preserved.",
+      1,
+    );
+    const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(errors).toContain("local runtime ownership cleanup is incomplete");
+    expect(errors).toContain("Repair the provider/workload receipt");
+    expect(errors).toContain("/tmp/rebuild-backups/alpha/backup");
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+      "Old sandbox deleted",
+    );
   });
 
   it("marks accepted deletion as ambiguous when transport failures prevent confirmation", async () => {

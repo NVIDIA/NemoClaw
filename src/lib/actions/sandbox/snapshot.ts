@@ -124,6 +124,21 @@ function formatSnapshotVersion(b: unknown) {
   return `v${snapshotVersion}`;
 }
 
+export function requireSnapshotDestinationRegistryRemoval(
+  name: string,
+  registryRemoved: boolean,
+): void {
+  if (registryRemoved !== false) return;
+  console.error(
+    `  Destination '${name}' is deleted, but local runtime ownership cleanup is incomplete.`,
+  );
+  console.error(
+    "  The registry entry was preserved because provider/workload cleanup authority could not be proven.",
+  );
+  console.error("  Repair the provider/workload receipt, then retry the snapshot restore.");
+  snapshotExit(1);
+}
+
 function renderSnapshotTable(
   backups: Array<{
     snapshotVersion: number;
@@ -485,7 +500,7 @@ function deleteSandboxForRestore(name: string): void {
       });
     }
     cleanupShieldsDestroyArtifacts(name);
-    removeSandboxRegistryEntry(name);
+    requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntry(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
