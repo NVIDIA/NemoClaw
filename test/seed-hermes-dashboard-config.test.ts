@@ -65,28 +65,20 @@ const GATEWAY_POLICY = Object.fromEntries(
 function projectManagedPolicy(
   policy: HermesManagedPolicyV1,
 ): Record<string, Record<string, unknown>> {
-  const projected: Record<string, Record<string, unknown>> = {};
-  for (const dottedPath of policy.managed_paths) {
-    const segments = dottedPath.split(".");
-    let source: unknown = policy.config;
-    let target: Record<string, unknown> = projected;
-    for (const [index, segment] of segments.entries()) {
-      if (typeof source !== "object" || source === null || Array.isArray(source)) {
-        throw new Error(`Invalid managed policy path: ${dottedPath}`);
-      }
-      source = (source as Record<string, unknown>)[segment];
-      if (index === segments.length - 1) {
-        target[segment] = structuredClone(source);
-      } else {
-        const child = target[segment];
-        if (typeof child !== "object" || child === null || Array.isArray(child)) {
-          target[segment] = {};
-        }
-        target = target[segment] as Record<string, unknown>;
-      }
-    }
-  }
-  return projected;
+  const leaves = policy.managed_paths.map((dottedPath) => {
+    const [section, key] = dottedPath.split(".");
+    const source = policy.config[section] as Record<string, unknown>;
+    return { section, key, value: structuredClone(source[key]) };
+  });
+  const sections = new Set(leaves.map(({ section }) => section));
+  return Object.fromEntries(
+    Array.from(sections, (section) => [
+      section,
+      Object.fromEntries(
+        leaves.filter((leaf) => leaf.section === section).map(({ key, value }) => [key, value]),
+      ),
+    ]),
+  );
 }
 
 const GATEWAY_CONFIG = {
