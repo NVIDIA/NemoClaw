@@ -169,6 +169,33 @@ async function expectShieldsUp(host: HostCliClient, artifactName: string): Promi
   expect(result.stdout).toContain("Shields: UP");
 }
 
+async function onlySandboxContainerId(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactName: string,
+): Promise<string> {
+  const result = await host.command(
+    "docker",
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${sandboxName}`,
+    ],
+    {
+      artifactName,
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  const containerIds = result.stdout.split(/\r?\n/).filter(Boolean);
+  expect(containerIds).toHaveLength(1);
+  return containerIds[0] as string;
+}
+
 async function rootSandboxPathMetadata(
   host: HostCliClient,
   containerId: string,
@@ -670,28 +697,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   progress.phase("back up a stopped sandbox and restore its snapshot");
   const snapshotsBeforeStoppedBackup = snapshotManifestDirectories();
-  const containerLookup = await host.command(
-    "docker",
-    [
-      "ps",
-      "-aq",
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-    ],
-    {
-      artifactName: "phase-10-stopped-backup-container-lookup",
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    },
+  const stoppedContainerId = await onlySandboxContainerId(
+    host,
+    SANDBOX_NAME,
+    "phase-10-stopped-backup-container-lookup",
   );
-  expect(containerLookup.exitCode, resultText(containerLookup)).toBe(0);
-  const containerIds = containerLookup.stdout.split(/\r?\n/).filter(Boolean);
-  expect(containerIds).toHaveLength(1);
-  const containerId = containerIds[0] as string;
 
-  const stop = await host.command("docker", ["stop", containerId], {
+  const stop = await host.command("docker", ["stop", stoppedContainerId], {
     artifactName: "phase-10-stop-sandbox-container",
     env: commandEnv(),
     timeoutMs: 60_000,
@@ -710,7 +722,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   const finalContainerState = await host.command(
     "docker",
-    ["inspect", "--format", "{{.State.Status}}", containerId],
+    ["inspect", "--format", "{{.State.Status}}", stoppedContainerId],
     {
       artifactName: "phase-10-final-container-state",
       env: commandEnv(),
@@ -743,6 +755,11 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     },
   );
   expect(rebuildAfterStoppedBackup.exitCode, resultText(rebuildAfterStoppedBackup)).toBe(0);
+  const rebuiltContainerId = await onlySandboxContainerId(
+    host,
+    SANDBOX_NAME,
+    "phase-10-rebuilt-container-lookup",
+  );
   // Verify the full delivery chain before the test mutates and restores the stopped-sandbox backup.
   const recoveryStatus = await host.command("nemoclaw", [SANDBOX_NAME, "status", "--json"], {
     artifactName: "phase-10-recover-rebuilt-sandbox-delivery",
@@ -789,7 +806,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   );
   expect(scanSnapshotCredentialLeaks(BACKUP_DIR)).toEqual([]);
   await artifacts.writeJson("phase-10-stopped-backup-proof.json", {
-    containerId,
+    containerId: stoppedContainerId,
     finalContainerState: finalContainerState.stdout.trim(),
     stoppedBackupTimestamp,
   });
@@ -837,14 +854,14 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   const protectedDirBeforeBackup = await rootSandboxPathMetadata(
     host,
-    containerId,
+    rebuiltContainerId,
     PROTECTED_CREDENTIALS_DIR,
     "phase-11-protected-credentials-dir-before-backup",
   );
   expect(protectedDirBeforeBackup).toEqual({ mode: "700", owner: "root:root" });
   const protectedFileBeforeBackup = await rootSandboxPathMetadata(
     host,
-    containerId,
+    rebuiltContainerId,
     PROTECTED_CREDENTIAL_FILE,
     "phase-11-protected-credential-file-before-backup",
   );
@@ -918,7 +935,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(
     await rootSandboxPathMetadata(
       host,
-      containerId,
+      rebuiltContainerId,
       PROTECTED_CREDENTIALS_DIR,
       "phase-11-protected-credentials-dir-after-backup",
     ),
@@ -926,7 +943,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(
     await rootSandboxPathMetadata(
       host,
-      containerId,
+      rebuiltContainerId,
       PROTECTED_CREDENTIAL_FILE,
       "phase-11-protected-credential-file-after-backup",
     ),
