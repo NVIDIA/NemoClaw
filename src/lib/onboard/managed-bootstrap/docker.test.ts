@@ -622,7 +622,7 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.journal).toBeNull();
     expect(fake.replacement).toBeNull();
     expect(
-      vi.mocked(fake.deps.dockerRun).mock.calls.some(([args]) => {
+      vi.mocked(fake.deps.dockerRun!).mock.calls.some(([args]) => {
         const agentIndex = args.indexOf("--agent");
         return args.includes("--shared-state-transaction-status") && args[agentIndex + 1] === agent;
       }),
