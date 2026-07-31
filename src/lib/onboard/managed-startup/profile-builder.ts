@@ -56,7 +56,7 @@ const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
-  "langchain-deepagents-code": "780ec15dd97efaea5b75614d657a4baf93cba4c7933e50f78fb72814cb427c85",
+  "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -757,6 +757,14 @@ function assertEnvironmentConsistency(
         config.observabilityEnabled,
       );
     }
+    const dcodeReasoningEffort = presentEnvironmentValue(environment, "NEMOCLAW_REASONING_EFFORT");
+    if (dcodeReasoningEffort !== null) {
+      assertEquivalent(
+        "NEMOCLAW_REASONING_EFFORT",
+        dcodeReasoningEffort.toLowerCase(),
+        profile.tuning.reasoningEffort,
+      );
+    }
   }
 
   const messaging = parseEnvironmentJson(environment, "NEMOCLAW_MESSAGING_PLAN_B64");
@@ -870,7 +878,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       contextWindow: null,
       maxTokens: null,
       reasoning: null,
-      reasoningEffort: null,
+      reasoningEffort: parseReasoningEffort(input.environment),
     };
   }
 
