@@ -315,7 +315,6 @@ def exit_with_receipt(receipt):
 # Removal condition: delete this path when the pinned OpenClaw release exposes
 # that bootstrap/list API for an unpaired clone.
 import stat
-import time
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 if not os.path.isabs(state_dir):
@@ -405,36 +404,20 @@ def open_clone_json_descriptor(directory_fd, directory_name, entry_name):
         or os.sep in entry_name
     ):
         raise OSError('unsafe clone state entry')
-    # OpenClaw publishes these files with atomic replacement. Retry only a
-    # missing or already-unlinked entry while the pinned directory is current.
-    for attempt in range(3):
-        try:
-            fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
-        except FileNotFoundError:
-            if attempt == 2 or not clone_directory_is_current(directory_name, directory_fd):
-                raise
-            time.sleep(0.05)
-            continue
-        try:
-            metadata = os.fstat(fd)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1:
-                raise OSError('clone state entry is not a single regular file')
-            if metadata.st_nlink == 0:
-                raise FileNotFoundError('clone state entry was replaced')
-            with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
-                parsed = json.load(handle)
-            os.lseek(fd, 0, os.SEEK_SET)
-            if not clone_directory_is_current(directory_name, directory_fd):
-                raise OSError('clone state directory changed')
-            return parsed, fd
-        except FileNotFoundError:
-            os.close(fd)
-            if attempt == 2 or not clone_directory_is_current(directory_name, directory_fd):
-                raise
-            time.sleep(0.05)
-        except Exception:
-            os.close(fd)
-            raise
+    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise OSError('clone state entry is not a single regular file')
+        with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
+            parsed = json.load(handle)
+        os.lseek(fd, 0, os.SEEK_SET)
+        if not clone_directory_is_current(directory_name, directory_fd):
+            raise OSError('clone state directory changed')
+        return parsed, fd
+    except Exception:
+        os.close(fd)
+        raise
 
 def read_clone_json(directory_fd, directory_name, entry_name):
     parsed, fd = open_clone_json_descriptor(directory_fd, directory_name, entry_name)

@@ -365,7 +365,6 @@ process.exit(2);
       );
       const devicesRaceBackup = path.join(stateDir, "devices-before-race");
       const transientRaceMarker = path.join(tmpDir, "transient-devices-race.marker");
-      const entryReplaceMarker = path.join(tmpDir, "entry-replace-race.marker");
       const transientRacePolicy = `${policy}
 import os as _nemoclaw_test_os
 _nemoclaw_test_original_open = _nemoclaw_test_os.open
@@ -473,31 +472,21 @@ _nemoclaw_test_subprocess.run = _nemoclaw_test_race_child
           budget: { maxApprovals: 1 },
         },
       );
-      const descriptorOpenNeedle =
-        "            fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)";
-      const descriptorMetadataNeedle = "            metadata = os.fstat(fd)";
-      const entryReplaceRaceScript = script.replace(
-        descriptorMetadataNeedle,
-        `            if os.environ.get('NEMOCLAW_TEST_ENTRY_REPLACE_RACE') == '1' and entry_name == 'pending.json' and not os.path.exists(${JSON.stringify(entryReplaceMarker)}):
-                replacement_contents = os.read(fd, 1048577)
-                os.lseek(fd, 0, os.SEEK_SET)
-                os.unlink(entry_name, dir_fd=directory_fd)
-                replacement_fd = os.open(entry_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
-                os.write(replacement_fd, replacement_contents)
-                os.close(replacement_fd)
-                marker_fd = os.open(${JSON.stringify(entryReplaceMarker)}, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-                os.close(marker_fd)
-${descriptorMetadataNeedle}`,
-      );
-      expect(entryReplaceRaceScript.includes("NEMOCLAW_TEST_ENTRY_REPLACE_RACE")).toBe(true);
+      const persistentRaceNeedle =
+        "    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)";
       const persistentDevicesRaceScript = script.replace(
-        descriptorOpenNeedle,
-        `            if os.environ.get('NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE') == '1' and directory_name == 'devices':
-                os.rename(${JSON.stringify(devicesDir)}, ${JSON.stringify(devicesRaceBackup)})
-                os.symlink(${JSON.stringify(primaryDevicesDir)}, ${JSON.stringify(devicesDir)})
-${descriptorOpenNeedle}`,
+        persistentRaceNeedle,
+        `    if (
+        os.environ.get('NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE') == '1'
+        and directory_name == 'devices'
+    ):
+        os.rename(${JSON.stringify(devicesDir)}, ${JSON.stringify(devicesRaceBackup)})
+        os.symlink(${JSON.stringify(primaryDevicesDir)}, ${JSON.stringify(devicesDir)})
+${persistentRaceNeedle}`,
       );
-      expect(persistentDevicesRaceScript).toContain("NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE");
+      expect(persistentDevicesRaceScript.includes("NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE")).toBe(
+        true,
+      );
       const execute = (
         failApproval = false,
         gatewayToken = "secret-token",
@@ -505,19 +494,17 @@ ${descriptorOpenNeedle}`,
         watcherRace = false,
         invalidWatcherState = false,
         timeoutAfterCommit = false,
-        devicesRace: "child-entry" | "entry-replace" | "none" | "persistent" | "transient" = "none",
+        devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
       ) => {
         const approvalScript = timeoutAfterCommit
           ? timeoutScript
           : devicesRace === "child-entry"
             ? childEntryRaceScript
-            : devicesRace === "entry-replace"
-              ? entryReplaceRaceScript
-              : devicesRace === "persistent"
-                ? persistentDevicesRaceScript
-                : devicesRace === "transient"
-                  ? transientDevicesRaceScript
-                  : script;
+            : devicesRace === "persistent"
+              ? persistentDevicesRaceScript
+              : devicesRace === "transient"
+                ? transientDevicesRaceScript
+                : script;
         return spawnSync("sh", {
           encoding: "utf-8",
           input: approvalScript,
@@ -529,7 +516,6 @@ ${descriptorOpenNeedle}`,
             NEMOCLAW_APPROVE_WATCHER_RACE_INVALID: invalidWatcherState ? "1" : "0",
             NEMOCLAW_APPROVE_TIMEOUT_AFTER_COMMIT: timeoutAfterCommit ? "1" : "0",
             NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE: devicesRace === "persistent" ? "1" : "0",
-            NEMOCLAW_TEST_ENTRY_REPLACE_RACE: devicesRace === "entry-replace" ? "1" : "0",
             NEMOCLAW_TEST_TRANSIENT_DEVICES_RACE: devicesRace === "transient" ? "1" : "0",
             NEMOCLAW_TEST_CHILD_ENTRY_RACE: devicesRace === "child-entry" ? "1" : "0",
             NEMOCLAW_TEST_CLONE_STATE_DIR: stateDir,
@@ -556,7 +542,7 @@ ${descriptorOpenNeedle}`,
           pendingById?: Record<string, unknown>;
           pairedById?: Record<string, unknown>;
           clientAuth?: "matching" | "missing" | "primary-symlink" | "stale";
-          devicesRace?: "child-entry" | "entry-replace" | "persistent" | "transient";
+          devicesRace?: "child-entry" | "persistent" | "transient";
         } = {},
       ) => {
         const pendingById =
@@ -1118,19 +1104,6 @@ ${descriptorOpenNeedle}`,
         [privatePrimaryRaceRequest.requestId]: privatePrimaryRaceRequest,
       });
       fs.writeFileSync(path.join(primaryDevicesDir, "pending.json"), primaryRacePending);
-
-      resetLogs();
-      fs.rmSync(entryReplaceMarker, { force: true });
-      const entryReplaceRace = run([foreignRequest, repairRequest], {
-        clientAuth: "missing",
-        devicesRace: "entry-replace",
-        pairedById: { [deviceId]: pairedDevice },
-      });
-      expect(parseAutoPairApprovalReceipt(entryReplaceRace.stdout)).toBe("approved-one");
-      expect(fs.existsSync(entryReplaceMarker)).toBe(true);
-      expect(readApproveCalls()).toHaveLength(1);
-      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
-      expect(entryReplaceRace.stderr).toBe("");
 
       resetLogs();
       fs.rmSync(transientRaceMarker, { force: true });
