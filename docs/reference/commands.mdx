@@ -1152,7 +1152,7 @@ Host-side config and inference writes, snapshot mutation, sandbox destruction, a
 When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants are contained.
-When an interactive command takes over an expired timer, NemoClaw retries restoration for one additional completion-grace window while the deadline gate stays closed.
+When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window while the deadline gate stays closed.
 If the command cannot complete and commit restoration within that window, NemoClaw converts the deadline gate into durable containment.
 NemoClaw commits the containment record before it returns the failure, so new mutations remain blocked until operator resolution.
 NemoClaw also records durable containment if the recorded owner exits before releasing its exact lock generation, because surviving descendants cannot be ruled out.

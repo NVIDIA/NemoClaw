@@ -198,7 +198,8 @@ If a sandbox is not running and its container cannot be started this way, start 
 When Shields are UP for an eligible sandbox, `backup-all` opens a 30-minute shields-down window before it creates that sandbox's snapshot.
 A sandbox that starts with Shields down remains down.
 An unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
-Because the timer does not defer to the backup process, it can restore lockdown when the 30-minute deadline expires.
+`backup-all` does not hold the lifecycle mutation lock while it copies sandbox state.
+The timer can restore lockdown if the 30-minute deadline expires during that copy.
 NemoClaw always attempts to restore Shields lockdown before it processes the next sandbox, including when the backup fails.
 If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.
 Correct the reported issue, run the printed `$$nemoclaw <name> shields up` command, and rerun `$$nemoclaw backup-all`.

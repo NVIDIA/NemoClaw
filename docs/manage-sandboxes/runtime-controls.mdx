@@ -113,7 +113,7 @@ The gate blocks new mutations and lets the recorded live owner finish without se
 After that owner releases its exact lock generation, auto-restore restores the restrictive policy and config posture.
 The ownership check includes both the process ID and process start identity so PID reuse does not grant control over an unrelated process.
 
-Before a manual Shields transition replaces a policy, NemoClaw requires exact agreement among the sandbox registry, generated-policy record, and live gateway policy.
+Before a manual Shields transition replaces a policy, NemoClaw requires exact Model Context Protocol (MCP) agreement among the sandbox registry, generated-policy record, and live gateway policy.
 `shields down` carries the proven managed MCP policy entries into the relaxed policy.
 Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
 If exact agreement is absent, a manual Shields transition refuses the replacement policy.
@@ -121,7 +121,7 @@ At an expired deadline, auto-restore omits unproven managed MCP policy entries, 
 An MCP server removed during the shields-down window stays removed.
 A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
-When an interactive command takes over an expired timer, NemoClaw retries restoration for one additional completion-grace window while the deadline gate stays closed.
+When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window while the deadline gate stays closed.
 If the command cannot complete and commit restoration within that window, NemoClaw converts the deadline gate into durable containment.
 NemoClaw commits the containment record before it returns the failure, so new mutations remain blocked until operator resolution.
 NemoClaw also records durable containment if the recorded owner exits before releasing its exact lock generation, because surviving descendants cannot be ruled out.
