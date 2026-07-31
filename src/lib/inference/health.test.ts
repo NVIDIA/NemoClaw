@@ -112,7 +112,7 @@ describe("inference health", () => {
       expect(payload).toEqual({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
-        max_tokens: 8,
+        max_tokens: 16,
       });
     });
 
@@ -228,7 +228,7 @@ describe("inference health", () => {
       expect(payload).toEqual({
         model: "moonshotai/kimi-k2.6",
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
-        max_tokens: 8,
+        max_tokens: 16,
         chat_template_kwargs: { thinking: false },
       });
       expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("3");
@@ -250,7 +250,7 @@ describe("inference health", () => {
       expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("3");
       expect(curlArgValue(capturedArgv, "--max-time")).toBe("5");
       const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
-      expect(payload).toMatchObject({ max_tokens: 8, stream: true });
+      expect(payload).toMatchObject({ max_tokens: 16, stream: true });
     });
 
     it.each([
@@ -423,7 +423,7 @@ describe("inference health", () => {
       const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
       expect(payload).toEqual({
         model: "claude-sonnet-4-6",
-        max_tokens: 8,
+        max_tokens: 16,
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
       });
     });

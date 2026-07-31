@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../../inference/config";
-import { resolveMaxTokensField } from "../../inference/max-tokens-field";
+import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
 import { shellQuote } from "../../runner";
 import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
 
@@ -35,7 +35,7 @@ function buildProbeRequest(input: RebuildInferencePreflightInput): {
       headers: ["anthropic-version: 2023-06-01"],
       payload: {
         model: input.model,
-        max_tokens: 8,
+        max_tokens: MIN_PROBE_REPLY_TOKENS,
         messages: [{ role: "user", content: "Reply with OK" }],
       },
     };
@@ -44,7 +44,11 @@ function buildProbeRequest(input: RebuildInferencePreflightInput): {
     return {
       endpoint: "https://inference.local/v1/responses",
       headers: [],
-      payload: { model: input.model, input: "Reply with OK", max_output_tokens: 8 },
+      payload: {
+        model: input.model,
+        input: "Reply with OK",
+        max_output_tokens: MIN_PROBE_REPLY_TOKENS,
+      },
     };
   }
   return {
@@ -52,7 +56,7 @@ function buildProbeRequest(input: RebuildInferencePreflightInput): {
     headers: [],
     payload: {
       model: input.model,
-      [resolveMaxTokensField(input.model)]: 8,
+      [resolveMaxTokensField(input.model)]: MIN_PROBE_REPLY_TOKENS,
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },
