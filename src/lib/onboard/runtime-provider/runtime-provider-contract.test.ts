@@ -17,7 +17,11 @@ import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./co
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import {
   createRuntimeProviderBundleRegistry,
+  normalizeRuntimeProviderManagedProfileRestoreAuthority,
   normalizeRuntimeProviderRuntimeReceipt,
+  normalizeRuntimeProviderSnapshotPreflightReceipt,
+  normalizeRuntimeProviderSnapshotRestoreReceipt,
+  normalizeRuntimeProviderSnapshotRestoreSource,
   RuntimeProviderRegistrationError,
   resolveRuntimeProviderBundle,
 } from "./registry";
@@ -95,7 +99,18 @@ describe("RuntimeProviderBundle registry contract", () => {
         ].every((surface) => surface.providerId === providerId),
       ).toBe(true);
       expect(bundle.bootstrap).toMatchObject({ supported: false });
-      expect(bundle.snapshot).toMatchObject({ supported: false });
+      expect(bundle.snapshot).toMatchObject(
+        providerId === "docker"
+          ? {
+              supported: true,
+              capabilities: {
+                backup: true,
+                restore: true,
+                managedProfileRestore: true,
+              },
+            }
+          : { supported: false },
+      );
       expect(bundle.recovery).toMatchObject({ supported: false });
     }
   });
@@ -343,6 +358,71 @@ describe("RuntimeProviderBundle registry contract", () => {
       normalizeRuntimeProviderRuntimeReceipt({
         ...receipt,
         runtime: { ...receipt.runtime, handle: "x".repeat(4097) },
+      }),
+    ).toBeNull();
+    expect(
+      normalizeRuntimeProviderRuntimeReceipt({
+        ...receipt,
+        runtime: { ...receipt.runtime, handle: "opaque\ninjection" },
+      }),
+    ).toBeNull();
+  });
+
+  it("normalizes snapshot preflight and managed restore proof as one bounded contract", () => {
+    const managedProfile = {
+      agent: "openclaw",
+      profileFingerprint: "f".repeat(64),
+    };
+    const preflight = {
+      schemaVersion: 1,
+      providerId: "docker",
+      operation: "restore",
+      sandboxName: "alpha",
+      providerHandle: "opaque-preflight",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+    };
+    const runtime = {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "none" },
+    };
+    const source = {
+      schemaVersion: 1,
+      providerId: "docker",
+      providerHandle: "opaque-source",
+      lifecycleState: "running",
+      lifecycleGeneration: "source-generation-1",
+      runtime,
+    };
+    const restore = {
+      schemaVersion: 1,
+      providerId: "docker",
+      sandboxName: "alpha",
+      providerHandle: "opaque-restore-proof",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime,
+      managedProfile,
+    };
+
+    expect(normalizeRuntimeProviderManagedProfileRestoreAuthority(managedProfile)).toEqual(
+      managedProfile,
+    );
+    expect(normalizeRuntimeProviderSnapshotPreflightReceipt(preflight)).toEqual(preflight);
+    expect(normalizeRuntimeProviderSnapshotRestoreSource(source)).toEqual(source);
+    expect(normalizeRuntimeProviderSnapshotRestoreReceipt(restore)).toEqual(restore);
+    expect(
+      normalizeRuntimeProviderSnapshotPreflightReceipt({
+        ...preflight,
+        lifecycleGeneration: "generation\ninjection",
+      }),
+    ).toBeNull();
+    expect(
+      normalizeRuntimeProviderSnapshotRestoreReceipt({
+        ...restore,
+        runtime: { ...runtime, providerId: "other" },
       }),
     ).toBeNull();
   });

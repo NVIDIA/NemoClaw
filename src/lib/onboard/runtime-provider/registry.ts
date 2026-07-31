@@ -4,11 +4,17 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderManagedProfileRestoreAuthority,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderRuntimeReceipt,
+  type RuntimeProviderSnapshotLifecycleState,
+  type RuntimeProviderSnapshotPreflightReceipt,
+  type RuntimeProviderSnapshotRestoreReceipt,
+  type RuntimeProviderSnapshotRestoreSource,
 } from "./contract";
 
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
@@ -29,6 +35,15 @@ const BUNDLE_SURFACES = [
 ] as const;
 const MAX_RECEIPT_HANDLE_BYTES = 4096;
 const MAX_RECEIPT_DEVICES = 64;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const MANAGED_PROFILE_AGENT_PATTERN = /^[a-z][a-z0-9-]{0,127}$/u;
+const SNAPSHOT_OPERATIONS = new Set(["backup", "restore"]);
+const SNAPSHOT_LIFECYCLE_STATES = new Set<RuntimeProviderSnapshotLifecycleState>([
+  "running",
+  "paused",
+  "stopped",
+]);
 const GATEWAY_LAUNCHERS = new Set(["nemoclaw", "openshell"]);
 const CHANNEL_STOP_TRANSPORTS = new Set(["docker-kubectl-first", "openshell"]);
 const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-managed"]);
@@ -297,7 +312,13 @@ function validateSupportedSurfaceSchemas(
     requireFunction(surfaces.bootstrap, "prepare", "bootstrap");
   }
   if (surfaces.snapshot.supported === true) {
+    const capabilities = requireOwnRecord(surfaces.snapshot, "capabilities");
+    for (const capability of ["backup", "restore", "managedProfileRestore"] as const) {
+      requireBoolean(capabilities, capability, "snapshot capabilities");
+    }
+    requireFunction(surfaces.snapshot, "preflight", "snapshot");
     requireFunction(surfaces.snapshot, "capture", "snapshot");
+    requireFunction(surfaces.snapshot, "validateRestore", "snapshot");
     requireFunction(surfaces.snapshot, "restore", "snapshot");
   }
   if (surfaces.recovery.supported === true) {
@@ -462,7 +483,10 @@ export function runtimeProviderContainerEngineIdentity(
 
 function boundedString(value: unknown, maxBytes: number): value is string {
   return (
-    typeof value === "string" && value.trim() !== "" && Buffer.byteLength(value, "utf8") <= maxBytes
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    Buffer.byteLength(value, "utf8") <= maxBytes &&
+    !CONTROL_CHARACTERS.test(value)
   );
 }
 
@@ -509,5 +533,105 @@ export function normalizeRuntimeProviderRuntimeReceipt(
       vendor: value.acceleration.vendor,
       devices: [...value.acceleration.devices],
     },
+  };
+}
+
+export function normalizeRuntimeProviderManagedProfileRestoreAuthority(
+  value: unknown,
+): RuntimeProviderManagedProfileRestoreAuthority | null {
+  if (
+    !isPlainRecord(value) ||
+    typeof value.agent !== "string" ||
+    !MANAGED_PROFILE_AGENT_PATTERN.test(value.agent) ||
+    typeof value.profileFingerprint !== "string" ||
+    !SHA256_PATTERN.test(value.profileFingerprint)
+  ) {
+    return null;
+  }
+  return {
+    agent: value.agent,
+    profileFingerprint: value.profileFingerprint,
+  };
+}
+
+export function normalizeRuntimeProviderSnapshotPreflightReceipt(
+  value: unknown,
+): RuntimeProviderSnapshotPreflightReceipt | null {
+  if (
+    !isPlainRecord(value) ||
+    value.schemaVersion !== RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION ||
+    !validProviderId(value.providerId) ||
+    !SNAPSHOT_OPERATIONS.has(String(value.operation)) ||
+    !boundedString(value.sandboxName, 512) ||
+    !boundedString(value.providerHandle, MAX_RECEIPT_HANDLE_BYTES) ||
+    !SNAPSHOT_LIFECYCLE_STATES.has(value.lifecycleState as RuntimeProviderSnapshotLifecycleState) ||
+    !boundedString(value.lifecycleGeneration, MAX_RECEIPT_HANDLE_BYTES)
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+    providerId: value.providerId,
+    operation: value.operation as RuntimeProviderSnapshotPreflightReceipt["operation"],
+    sandboxName: value.sandboxName,
+    providerHandle: value.providerHandle,
+    lifecycleState: value.lifecycleState as RuntimeProviderSnapshotLifecycleState,
+    lifecycleGeneration: value.lifecycleGeneration,
+  };
+}
+
+export function normalizeRuntimeProviderSnapshotRestoreSource(
+  value: unknown,
+): RuntimeProviderSnapshotRestoreSource | null {
+  if (
+    !isPlainRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !validProviderId(value.providerId) ||
+    !boundedString(value.providerHandle, MAX_RECEIPT_HANDLE_BYTES) ||
+    !SNAPSHOT_LIFECYCLE_STATES.has(value.lifecycleState as RuntimeProviderSnapshotLifecycleState) ||
+    !boundedString(value.lifecycleGeneration, MAX_RECEIPT_HANDLE_BYTES)
+  ) {
+    return null;
+  }
+  const runtime = normalizeRuntimeProviderRuntimeReceipt(value.runtime);
+  if (!runtime || runtime.providerId !== value.providerId) return null;
+  return {
+    schemaVersion: 1,
+    providerId: value.providerId,
+    providerHandle: value.providerHandle,
+    lifecycleState: value.lifecycleState as RuntimeProviderSnapshotLifecycleState,
+    lifecycleGeneration: value.lifecycleGeneration,
+    runtime,
+  };
+}
+
+export function normalizeRuntimeProviderSnapshotRestoreReceipt(
+  value: unknown,
+): RuntimeProviderSnapshotRestoreReceipt | null {
+  if (
+    !isPlainRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !validProviderId(value.providerId) ||
+    !boundedString(value.sandboxName, 512) ||
+    !boundedString(value.providerHandle, MAX_RECEIPT_HANDLE_BYTES) ||
+    !SNAPSHOT_LIFECYCLE_STATES.has(value.lifecycleState as RuntimeProviderSnapshotLifecycleState) ||
+    !boundedString(value.lifecycleGeneration, MAX_RECEIPT_HANDLE_BYTES)
+  ) {
+    return null;
+  }
+  const runtime = normalizeRuntimeProviderRuntimeReceipt(value.runtime);
+  const managedProfile = normalizeRuntimeProviderManagedProfileRestoreAuthority(
+    value.managedProfile,
+  );
+  if (!runtime || runtime.providerId !== value.providerId || !managedProfile) return null;
+  return {
+    schemaVersion: 1,
+    providerId: value.providerId,
+    sandboxName: value.sandboxName,
+    providerHandle: value.providerHandle,
+    lifecycleState: value.lifecycleState as RuntimeProviderSnapshotLifecycleState,
+    lifecycleGeneration: value.lifecycleGeneration,
+    runtime,
+    managedProfile,
   };
 }

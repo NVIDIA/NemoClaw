@@ -50,6 +50,7 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  workload?: unknown;
 };
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
