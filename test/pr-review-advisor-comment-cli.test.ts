@@ -63,6 +63,48 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).toContain("- _1 more._");
   });
 
+  it("ignores malformed E2E collections and selectors outside the trusted inventory", () => {
+    const malformedCollectionsComment = buildComment({
+      summary: "unused",
+      result: {
+        e2e: {
+          coverage: { requiredTests: {}, optionalTests: "full-e2e" },
+          targets: { required: "full-e2e", optional: {} },
+        },
+      } as never,
+    });
+    expect(malformedCollectionsComment).toContain("**Recommended E2E:** _None_");
+    expect(malformedCollectionsComment).not.toContain("<code>full-e2e</code>");
+
+    const selectorTypeComment = buildComment({
+      summary: "unused",
+      result: {
+        e2e: {
+          coverage: { requiredTests: [], optionalTests: [] },
+          targets: {
+            required: [
+              {
+                id: "security-posture",
+                workflow: "e2e.yaml",
+                selectorType: "job",
+                required: true,
+              },
+              {
+                id: "full-e2e",
+                workflow: "e2e.yaml",
+                selectorType: "workflow",
+                required: true,
+              },
+            ],
+            optional: [],
+          },
+        },
+      },
+    });
+    expect(selectorTypeComment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(selectorTypeComment).not.toContain("<code>full-e2e</code>");
+  });
+
   it("validates configurable comment CLI fields and explicit artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-comment-"));
     const defaultSummary = path.join(
