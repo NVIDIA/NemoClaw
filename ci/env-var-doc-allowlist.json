@@ -60,6 +60,14 @@
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   },
   {
+    "name": "NEMOCLAW_TEST_BASE_HOME",
+    "reason": "Internal Vitest-only baseline used with NEMOCLAW_TEST_STATE_DIR so tests that explicitly replace HOME retain their fixture paths. Never user-set in production."
+  },
+  {
+    "name": "NEMOCLAW_TEST_STATE_DIR",
+    "reason": "Internal Vitest-only state root that keeps lifecycle locks and Shields artifacts out of the caller's real NemoClaw state. The production resolver honors it only while Vitest is active."
+  },
+  {
     "name": "NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS",
     "reason": "Internal Vitest-only override that shortens the Telegram diagnostics startup-grace timer. Production uses the built-in default."
   },

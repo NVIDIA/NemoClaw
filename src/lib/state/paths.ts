@@ -14,8 +14,15 @@ export function resolveNemoclawHomeDir(homeDir: string = process.env.HOME ?? os.
   return nemoclawStateRoot(homeDir, GATEWAY_PORT);
 }
 
-export function resolveNemoclawStateDir(
-  homeDir: string = process.env.HOME ?? os.homedir(),
-): string {
+export function resolveNemoclawStateDir(homeDir?: string): string {
+  if (
+    homeDir === undefined &&
+    process.env.VITEST === "true" &&
+    (process.env.HOME ?? "") === process.env.NEMOCLAW_TEST_BASE_HOME &&
+    process.env.NEMOCLAW_TEST_STATE_DIR &&
+    path.isAbsolute(process.env.NEMOCLAW_TEST_STATE_DIR)
+  ) {
+    return process.env.NEMOCLAW_TEST_STATE_DIR;
+  }
   return path.join(resolveNemoclawHomeDir(homeDir), "state");
 }
