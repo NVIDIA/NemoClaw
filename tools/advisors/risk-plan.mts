@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 9 as const;
+export const RISK_PLAN_VERSION = 10 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -20,6 +20,12 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
 ]);
+const COLD_ONBOARD_STARTUP_RUNTIME_FILES = new Set([
+  "src/lib/onboard/docker-gpu-sandbox-create.ts",
+  "src/lib/onboard/docker-startup-command-agent.ts",
+  "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
+  "src/lib/sandbox/create-stream.ts",
+]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -30,6 +36,7 @@ export type RiskFamilyId =
   | "messaging-lifecycle"
   | "platform-install"
   | "openclaw-image"
+  | "cold-onboard"
   | "credentials-security"
   | "e2e-control-plane"
   | "sandbox-boundary"
@@ -279,6 +286,18 @@ export const RISK_RULES: readonly RiskRule[] = [
       "the resulting OpenClaw sandbox becomes ready and completes a real first turn",
     ],
     matches: (file) => file === "Dockerfile",
+  },
+  {
+    id: "cold-onboard",
+    summary:
+      "Cold-onboard startup delivery changes must preserve a single agent boot and a usable first turn.",
+    tier: 3,
+    requiredJobs: ["full-e2e"],
+    invariants: [
+      "Docker startup persistence does not launch the agent in both the disposable and recreated containers",
+      "the sandbox reaches readiness and completes a real first turn within the calibrated cold-path budget",
+    ],
+    matches: (file) => COLD_ONBOARD_STARTUP_RUNTIME_FILES.has(file),
   },
   {
     id: "credentials-security",

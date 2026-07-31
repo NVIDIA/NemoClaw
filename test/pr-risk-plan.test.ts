@@ -27,7 +27,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(9);
+    expect(first.version).toBe(10);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -293,6 +293,41 @@ describe("deterministic PR risk plan", () => {
     ]);
     expect(riskPlanRequiredTargetIds(adjacentStatusFile)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
+  });
+
+  it.each([
+    "src/lib/onboard/docker-gpu-sandbox-create.ts",
+    "src/lib/onboard/docker-startup-command-agent.ts",
+    "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
+    "src/lib/sandbox/create-stream.ts",
+  ])("selects the cold full-E2E contract for startup delivery changes in %s (#6660)", (file) => {
+    const result = plan(file);
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "cold-onboard",
+        matchedFiles: [file],
+        requiredJobs: ["full-e2e"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toContain("full-e2e");
+  });
+
+  it("keeps startup-command delivery in both cold-onboard and post-reboot coverage (#6660)", () => {
+    const result = plan("src/lib/onboard/docker-startup-command-agent.ts");
+
+    expect(riskPlanRequiredJobIds(result)).toContain("full-e2e");
+    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[1]]);
+  });
+
+  it.each([
+    "src/lib/onboard/docker-gpu-sandbox-create-plan.ts",
+    "src/lib/sandbox/create-stream-progress.ts",
+  ])("does not expand cold-onboard coverage to adjacent files: %s", (file) => {
+    const result = plan(file);
+
+    expect(result.families.map((family) => family.id)).not.toContain("cold-onboard");
+    expect(riskPlanRequiredJobIds(result)).not.toContain("full-e2e");
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {

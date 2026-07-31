@@ -629,6 +629,15 @@ through cold onboarding and a real first turn.
 The repository-root `Dockerfile.base` remains in only the `platform-install`
 family. It selects `cloud-onboard` and does not trigger the cold `full-e2e`
 path.
+Changes to the exact Docker startup-delivery boundary
+(`docker-gpu-sandbox-create.ts`, `docker-startup-command-agent.ts`,
+`sandbox-gpu-create-run-attempt.ts`, and `create-stream.ts`) select
+`full-e2e` through the `cold-onboard` family. This keeps startup persistence,
+container recreation, and Ready polling bound to the calibrated cold-onboard
+and real-first-turn contract without expanding the selector to adjacent
+onboarding or stream-progress files. Existing focused targets remain additive;
+for example, `docker-startup-command-agent.ts` still selects post-reboot
+recovery as well.
 Non-documentation runtime changes under `agents/langchain-deepagents-code/`
 and changes to the Deep Agents Code headless-inference check select the exact
 `ubuntu-repo-cloud-langchain-deepagents-code` typed target. Documentation and
