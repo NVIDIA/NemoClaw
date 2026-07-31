@@ -319,6 +319,7 @@ def exit_with_receipt(receipt):
 # Removal condition: delete this path when the pinned OpenClaw release exposes
 # that bootstrap/list API for an unpaired clone.
 import stat
+import time
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 if not os.path.isabs(state_dir):
@@ -335,6 +336,11 @@ clone_file_flags = (
     | getattr(os, 'O_CLOEXEC', 0)
     | getattr(os, 'O_NONBLOCK', 0)
 )
+PENDING_READ_ATTEMPTS = 10
+PENDING_READ_POLL_S = 0.1
+
+class CloneStateEntryRotated(OSError):
+    pass
 
 def open_clone_state_root():
     root_fd = os.open(os.sep, clone_directory_flags)
@@ -411,8 +417,10 @@ def open_clone_json_descriptor(directory_fd, directory_name, entry_name):
     fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
     try:
         metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1:
             raise OSError('clone state entry is not a single regular file')
+        if metadata.st_nlink == 0:
+            raise CloneStateEntryRotated('clone state entry was replaced after open')
         with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
             parsed = json.load(handle)
         os.lseek(fd, 0, os.SEEK_SET)
@@ -432,17 +440,33 @@ try:
     clone_devices_dir_fd = open_clone_directory('devices')
 except OSError:
     ${exitWithReceipt("list-failed")}
-try:
-    local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
-        clone_devices_dir_fd,
-        'devices',
-        'pending.json',
-    )
-except FileNotFoundError:
-    ${exitWithReceipt("list-pending-unavailable")}
-except (OSError, ValueError):
-    ${exitWithReceipt("list-failed")}
-if not isinstance(local_pending_by_id, dict):
+# The gateway can publish pending.json immediately after the warm-up. Retry only
+# a missing entry before publication, invalid JSON during truncate/write, or an
+# opened inode that an atomic replace unlinked. Unsafe filesystem shapes and
+# persistently malformed documents fail closed before request selection.
+pending_read_failure = 'unavailable'
+for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
+    try:
+        local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
+            clone_devices_dir_fd,
+            'devices',
+            'pending.json',
+        )
+    except FileNotFoundError:
+        pending_read_failure = 'unavailable'
+    except (CloneStateEntryRotated, json.JSONDecodeError):
+        pending_read_failure = 'unstable'
+    except (OSError, ValueError):
+        ${exitWithReceipt("list-failed")}
+    else:
+        if not isinstance(local_pending_by_id, dict):
+            ${exitWithReceipt("list-failed")}
+        break
+    if pending_read_attempt + 1 < PENDING_READ_ATTEMPTS:
+        time.sleep(PENDING_READ_POLL_S)
+else:
+    if pending_read_failure == 'unavailable':
+        ${exitWithReceipt("list-pending-unavailable")}
     ${exitWithReceipt("list-failed")}
 pending = list(local_pending_by_id.values())
 `
