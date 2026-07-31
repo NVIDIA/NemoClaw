@@ -990,11 +990,16 @@ describe("shields command flow", () => {
       });
 
       expect(renameSpy).toHaveBeenCalledWith(expect.stringContaining(".tmp"), markerPath);
-      expect(fs.lstatSync(markerPath).isSymbolicLink()).toBe(false);
-      expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toMatchObject({
-        pid: 4242,
-        sandboxName: "openclaw",
-      });
+      const markerFd = fs.openSync(markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        expect(fs.fstatSync(markerFd).isFile()).toBe(true);
+        expect(JSON.parse(fs.readFileSync(markerFd, "utf-8"))).toMatchObject({
+          pid: 4242,
+          sandboxName: "openclaw",
+        });
+      } finally {
+        fs.closeSync(markerFd);
+      }
       expect(fs.readFileSync(markerTargetPath, "utf-8")).toBe(markerTarget);
     },
   );
