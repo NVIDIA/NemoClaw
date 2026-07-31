@@ -45,6 +45,11 @@ import path from "node:path";
 
 import { shellQuote } from "../../core/shell-quote";
 import { ROOT } from "../../state/paths";
+import {
+  CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS,
+  CONNECT_AUTO_PAIR_PENDING_READ_POLL_S,
+  CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S,
+} from "./connect-autopair-budget";
 
 // Bound the in-sandbox work: 2s list + 1s × MAX_APPROVALS attempts plus
 // shell/python startup slack fits inside the outer spawnSync cap, so a wedged
@@ -55,12 +60,11 @@ export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
 // Default per-call budgets (seconds) for the in-sandbox openclaw subcommands.
 const AUTO_PAIR_LIST_TIMEOUT_S = 2;
 const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
-const AUTO_PAIR_POST_TIMEOUT_OBSERVE_S = 4;
 const AUTO_PAIR_POST_TIMEOUT_POLL_S = 0.1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
-// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 15s
+// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 25s
 // outer cap — via ./connect-autopair-budget. The doctor surface (#4616) uses
 // the defaults above to drain a backlog. Callers that omit a field inherit the
 // default, so the historical doctor payload stays byte-stable.
@@ -281,7 +285,7 @@ def exit_with_receipt(receipt):
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
         local_paired_operator_token = ''
-        observe_deadline = time.monotonic() + ${AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
+        observe_deadline = time.monotonic() + ${CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
         while not sync_approved_clone_device_auth(device, previous_approval_token):
             remaining_observe_time = observe_deadline - time.monotonic()
             if remaining_observe_time <= 0:
@@ -336,8 +340,8 @@ clone_file_flags = (
     | getattr(os, 'O_CLOEXEC', 0)
     | getattr(os, 'O_NONBLOCK', 0)
 )
-PENDING_READ_ATTEMPTS = 10
-PENDING_READ_POLL_S = 0.1
+PENDING_READ_ATTEMPTS = ${CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS}
+PENDING_READ_POLL_S = ${CONNECT_AUTO_PAIR_PENDING_READ_POLL_S}
 
 class CloneStateEntryRotated(OSError):
     pass
