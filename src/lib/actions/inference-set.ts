@@ -70,7 +70,11 @@ import {
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
 } from "./inference-set-gateway-restart";
-import { prepareInferenceSetProviderBinding } from "./inference-set-provider";
+import {
+  prepareInferenceSetProviderBinding,
+  type RuntimeProviderBundleRegistry,
+  requireInferenceSetRuntimeAuthority,
+} from "./inference-set-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
   applyOpenClawAnthropicReplyBudget,
@@ -134,6 +138,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     target: AgentConfigTarget,
     config: ConfigObject,
   ) => void;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   seedHermesDashboardConfig: (
     sandboxName: string,
@@ -281,6 +286,17 @@ function assertSupportedProvider(provider: string, model: string): void {
     `Unsupported provider '${provider}'. Supported providers: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`,
     2,
   );
+}
+
+function assertInferenceSetRuntimeAuthority(
+  entry: SandboxEntry,
+  providers: RuntimeProviderBundleRegistry | undefined,
+): void {
+  try {
+    requireInferenceSetRuntimeAuthority(entry, providers);
+  } catch (error) {
+    throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
+  }
 }
 
 function normalizeSandboxAgent(agentName: string | null | undefined): string {
@@ -1336,9 +1352,11 @@ export async function runInferenceSet(
   // missing-binary path exits the process, which cannot be deferred safely by
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
+  assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
+    assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
       withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>

@@ -4,6 +4,12 @@
 import { R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundle,
+  type RuntimeProviderBundleRegistry,
+  requireRuntimeProviderDestructiveCleanupAuthority,
+} from "../../onboard/runtime-provider/access";
+import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
@@ -28,6 +34,11 @@ type SandboxDestroyExecutionInput = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
   sandboxName: string;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
+  deps?: {
+    readTimerMarker?: typeof readTimerMarker;
+    wipeSandboxState?: typeof wipeSandboxState;
+  };
 };
 
 export type SandboxDestroyExecutionResult =
@@ -86,13 +97,14 @@ async function prepareMcpDestroy(
 function wipeAndHardenLiveSandbox(
   sandboxName: string,
   sandboxConfirmedAbsent: boolean,
+  deps: NonNullable<SandboxDestroyExecutionInput["deps"]> = {},
 ): HardenedDeleteState {
   if (sandboxConfirmedAbsent) return { hardenedForDelete: false };
 
   // Wipe before delete while the retained volume is still mounted. The caller
   // holds the timer-bound lock across this phase and all following teardown.
-  wipeSandboxState(sandboxName);
-  const timerMarker = readTimerMarker(sandboxName);
+  (deps.wipeSandboxState ?? wipeSandboxState)(sandboxName);
+  const timerMarker = (deps.readTimerMarker ?? readTimerMarker)(sandboxName);
   if (!timerMarker) return { hardenedForDelete: false };
 
   const timerProcessToken = /^[0-9a-f]{32}$/.test(timerMarker.processToken ?? "")
@@ -179,8 +191,31 @@ export async function executeSandboxDestroy({
   sandbox,
   sandboxConfirmedAbsent,
   sandboxName,
+  runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  deps = {},
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
   return withTimerBoundShieldsMutationLockAsync(sandboxName, "destroy sandbox", async () => {
+    let runtimeProvider: RuntimeProviderBundle | null = null;
+    if (sandbox) {
+      try {
+        runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
+          sandboxName,
+          sandbox,
+          runtimeProviders,
+        ).provider;
+      } catch (error) {
+        return {
+          ok: false as const,
+          deleteOutput:
+            error instanceof Error
+              ? error.message
+              : `Runtime provider authority could not be proven: ${String(error)}`,
+          exitCode: 1,
+          gatewayUnreachable: false,
+          mcpOwnershipRequiresGateway: false,
+        };
+      }
+    }
     const mcpPreparation = await prepareMcpDestroy(
       sandboxName,
       sandbox,
@@ -191,10 +226,14 @@ export async function executeSandboxDestroy({
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
     const hasMcpOwnership = mcpPreparation.entries.length > 0;
-    const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent);
+    const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+    const detachProviders = (): DetachSandboxProvidersResult =>
+      runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
-      : runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
+      : runtimeProvider?.cleanup.supported === true && sandbox
+        ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
+        : detachProviders();
     const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
