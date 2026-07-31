@@ -281,6 +281,11 @@ Use `--resume` only for resumable interrupted or failed sessions, not to change 
 During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
 If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
 
+An active same-name replacement is separate from ordinary onboarding-step resume.
+If onboarding printed `Journaled replacement` before it stopped, rerun the original onboarding command with the same target settings.
+The replacement can continue without an explicit `--resume` flag.
+Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the identity checks and failure conditions.
+
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
 This clears stale or failed session state before NemoClaw creates a new session record.
 It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution.
@@ -639,6 +644,11 @@ The behaviour matches `$$nemoclaw <name> rebuild --force`.
 NemoClaw aborts the recreate when the backup cannot complete in full, including when individual state directories or files fail mid-backup, so failed entries are not silently dropped on delete.
 Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup.
 The destination sandbox starts with a fresh workspace.
+
+Before deletion, onboarding prints a `Journaled replacement` diagnostic with the replacement identifier, recorded OpenShell gateway, and current phase.
+If the process stops after this point, a later same-target onboarding run continues the active replacement without requiring `--resume`.
+It accepts a ready same-name replacement only when the live identity and sandbox registry generation match the journal.
+It fails closed if the gateway, source, target, durable source registry fields, or replacement settings changed.
 
 <AgentOnly variant="openclaw">
 
@@ -2792,6 +2802,10 @@ After OpenShell accepts the sandbox deletion, `rebuild` waits until OpenShell ex
 Only then can NemoClaw perform any required local registry removal and begin creating the replacement.
 If OpenShell does not confirm absence within the bounded wait, including when gateway transport errors block the probes, `rebuild` exits nonzero before registry removal or replacement creation and preserves both the local registry entry and the state backup.
 Restore OpenShell connectivity and confirm the sandbox's live state before you retry, and keep the printed backup path for recovery.
+Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
+Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+Use `--verbose` to print the replacement identifier, gateway, and journal phase.
+Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the recovery procedure and fail-closed conditions.
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
 A detached auto-lock timer remains active until NemoClaw commits a successful shields-up state, so it can attempt to restore lockdown if the host rebuild process exits unexpectedly.
 
