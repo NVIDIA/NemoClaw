@@ -431,8 +431,8 @@ export async function isSandboxGatewayRunningForStatus(
 /**
  * Recover a gateway through the registered agent's managed control boundary.
  * Legacy custom agents retain their SSH-owned compatibility path. Built-in
- * agents may return a pinned legacy supervisor relaunch that the caller must
- * confirm after the managed health gate.
+ * agents may return a transactional supervisor relaunch that the caller must
+ * commit or roll back after the managed health gate.
  */
 type SandboxProcessRecovery =
   | { kind: "managed" | "custom" }
@@ -690,11 +690,11 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
   const detail = (() => {
     switch (failure) {
       case "managed-health-definitive-failure":
-        return "the recovered sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
+        return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
       case "managed-health-inconclusive-timeout":
-        return "the recovered sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
+        return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
       case "openshell-readiness-failure":
-        return "the recovered sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
+        return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
     }
   })();
   return openshellError ? `${detail} Last OpenShell readiness error: ${openshellError}` : detail;
@@ -713,8 +713,8 @@ const GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS = 120;
 /**
  * Wait until OpenShell has re-registered a directly recreated sandbox as
  * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
- * proving control-plane readiness, not bypassing OpenShell after the managed
- * workload has restarted.
+ * proving control-plane readiness, not authorizing the already completed
+ * replacement-container recovery.
  */
 function waitForRecreatedSandboxOpenShellReadyResult(
   sandboxName: string,
@@ -844,7 +844,7 @@ function printHostManagedGatewayRecoveryHints(
 ): void {
   const quotedSandboxName = shellQuote(sandboxName);
   if (failureLayer === "supervisor not running") {
-    console.error("  The in-sandbox supervisor is not running, and trusted supervisor recovery");
+    console.error("  The in-sandbox supervisor is not running, and trusted container recovery");
     console.error("  could not restore a managed supervisor and healthy gateway.");
     console.error("  Recreate the sandbox runtime to restore it:");
     console.error(`    nemoclaw ${quotedSandboxName} rebuild --yes`);
@@ -1265,13 +1265,32 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           }),
       });
     } catch (error) {
+      try {
+        relaunch?.finalize(false);
+      } catch {
+        // Preserve the original recovery error; the failure path below will
+        // direct the operator to inspect/rebuild the sandbox.
+      }
       throw error;
     }
     if (!gatewayReady) {
+      let rolledBack = true;
+      if (relaunch) {
+        try {
+          rolledBack = relaunch.finalize(false).rolledBack;
+        } catch {
+          rolledBack = false;
+        }
+      }
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+        if (!rolledBack) {
+          console.error(
+            "  Automatic rollback of the previous sandbox container failed; inspect Docker state before retrying.",
+          );
+        }
         printHostManagedGatewayRecoveryHints(
           sandboxName,
           recoveryAgent,
@@ -1279,6 +1298,52 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         );
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+    }
+    if (relaunch) {
+      try {
+        const completion = relaunch.finalize(true);
+        if (completion.stateRestored === false || completion.rolledBack) {
+          if (!quiet) {
+            console.error(
+              completion.rolledBack
+                ? "  Sandbox recovery did not complete; the previous container was restored."
+                : "  Sandbox recovery failed and the previous container could not be restored automatically.",
+            );
+            if (completion.rolledBack && completion.stateBackupRemoved === false) {
+              console.error("  Warning: the temporary sandbox state backup could not be removed.");
+            }
+            if (!completion.rolledBack) {
+              printHostManagedGatewayRecoveryHints(
+                sandboxName,
+                recoveryAgent,
+                managedRecoveryFailureLayer,
+              );
+            }
+          }
+          return {
+            checked: true,
+            wasRunning: false,
+            recovered: false,
+            forwardRecovered: false,
+          };
+        }
+        if (!completion.backupRemoved && !quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
+          );
+        }
+        if (completion.stateBackupRemoved === false && !quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but its temporary state backup could not be removed.",
+          );
+        }
+      } catch {
+        if (!quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but container transaction cleanup could not be confirmed.",
+          );
+        }
+      }
     }
     const readinessFailureDetail = relaunch
       ? (() => {
@@ -1304,7 +1369,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       return {
         checked: true,
         wasRunning: false,
-        recovered: false,
+        recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: readinessFailureDetail,

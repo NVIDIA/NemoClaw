@@ -26,7 +26,8 @@ export function resolveDockerStartupCommandPatch(
   }
   const agentName = agent?.name;
   return {
-    persistStartupCommand: agentName === "hermes" || agentName === DCODE_AGENT_NAME,
+    persistStartupCommand:
+      agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
     requiredUlimits: agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null,
   };
 }

@@ -1,39 +1,45 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture, dockerSpawnSync } from "../../adapters/docker";
+import { dockerCapture } from "../../adapters/docker";
 import * as agentRuntime from "../../agent/runtime";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DockerContainerInspect,
   parseDockerInspectJson,
 } from "../../onboard/docker-gpu-patch";
-import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
+import { sameContainerId } from "../../onboard/docker-gpu-patch-clone";
 import {
-  privilegedSandboxExecArgv,
-  resolveDirectSandboxContainer,
-} from "../../sandbox/privileged-exec";
+  type DockerGpuPatchFinalizeOutcome,
+  finalizeDockerGpuPatchBackup,
+} from "../../onboard/docker-gpu-patch-finalize";
+import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
+import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
+import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 
 /**
  * Compatibility boundary for OpenShell 0.0.71's Docker driver: legacy
  * sandboxes persist `OPENSHELL_SANDBOX_COMMAND=sleep infinity` while
  * `scripts/nemoclaw-start.sh` owns the managed workload as a sibling process.
- * Restart that sibling in the registered container so OpenShell identity and
- * the complete writable layer survive gateway restarts. Remove this path after
- * supported upgrades rebuild every legacy keepalive container with
- * `nemoclaw-start` as its persisted startup command.
+ * Only that inspected value authorizes this migration. Regression coverage is
+ * named in `supervisor-relaunch.test.ts` and `gateway-guard-recovery.test.ts`.
+ * Remove this path after supported upgrades rebuild every legacy keepalive
+ * container with `nemoclaw-start` as its persisted startup command.
  */
 const LEGACY_OPENSHELL_KEEPALIVE = "sleep infinity";
 const DOCKER_INSPECT_TIMEOUT_MS = 15000;
 
 export type ManagedSupervisorRelaunch = {
   containerId: string;
+  finalize(supervisorReady: boolean): DockerGpuPatchFinalizeOutcome & {
+    stateRestored?: boolean;
+    stateBackupRemoved?: boolean;
+  };
 };
-
-type SupervisorStartResult = { started: true } | { detail: string; started: false };
 
 export type ManagedSupervisorRelaunchDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -42,7 +48,11 @@ export type ManagedSupervisorRelaunchDeps = {
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
-  startSupervisor?: (containerId: string, command: readonly string[]) => SupervisorStartResult;
+  backupState?: typeof sandboxState.backupSandboxState;
+  restoreState?: typeof sandboxState.restoreSandboxState;
+  removeBackup?: typeof sandboxState.removeSandboxStateBackup;
+  recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
+  finalize?: typeof finalizeDockerGpuPatchBackup;
 };
 
 function inspectContainer(containerId: string): DockerContainerInspect {
@@ -104,38 +114,6 @@ function reconstructSupervisorLaunchCommand(
   return ["env", ...envArgs, "nemoclaw-start"];
 }
 
-function startSupervisorInContainer(
-  sandboxName: string,
-  containerId: string,
-  command: readonly string[],
-): SupervisorStartResult {
-  try {
-    const [operation, ...args] = privilegedSandboxExecArgv(
-      sandboxName,
-      [...command],
-      false,
-      true,
-      containerId,
-    );
-    const result = dockerSpawnSync([operation, "--detach", ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: DOCKER_INSPECT_TIMEOUT_MS,
-    });
-    if (!result.error && result.status === 0) return { started: true };
-    const detail =
-      result.error?.message ||
-      String(result.stderr || "").trim() ||
-      `docker exec exited with status ${String(result.status ?? "unknown")}`;
-    return { detail, started: false };
-  } catch (error) {
-    return {
-      detail: error instanceof Error ? error.message : String(error),
-      started: false,
-    };
-  }
-}
-
 export function relaunchManagedSupervisorSession(
   sandboxName: string,
   {
@@ -157,30 +135,141 @@ export function relaunchManagedSupervisorSession(
 
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
-  const startSupervisor =
-    deps.startSupervisor ??
-    ((containerId, command) => startSupervisorInContainer(sandboxName, containerId, command));
+  const confirmMissingSupervisor = deps.confirmMissingSupervisor;
+  const backupState = deps.backupState ?? sandboxState.backupSandboxState;
+  const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
+  const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
+  const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
+  const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
+  let pendingStateBackupPath: string | null = null;
   try {
     const containerId = resolveContainer(sandboxName, driver);
     if (!hasLegacyKeepaliveStartup(inspect(containerId))) return null;
-    if (!deps.confirmMissingSupervisor?.(containerId)) return null;
-    if (!quiet) {
-      console.log("  Restarting the managed workload in the existing sandbox container...");
-    }
-    const start = startSupervisor(containerId, startupCommand);
-    if (!start.started) {
+    if (!confirmMissingSupervisor?.(containerId)) return null;
+    const backup = backupState(sandboxName);
+    if (
+      !backup.success ||
+      !backup.manifest ||
+      backup.failedDirs.length > 0 ||
+      backup.failedFiles.length > 0
+    ) {
+      if (backup.manifest) {
+        try {
+          removeBackup(sandboxName, backup.manifest.backupPath);
+        } catch {
+          // Preserve the backup failure that stopped container recreation.
+        }
+      }
       if (!quiet) {
         console.error(
-          `  Trusted supervisor recovery could not start: ${redactFull(redact(start.detail))}`,
+          "  Trusted container recovery stopped before recreation because sandbox state could not be fully backed up.",
         );
+        console.error("  The existing sandbox container was left unchanged.");
       }
       return null;
     }
-    return { containerId };
+    const backupManifest = backup.manifest;
+    pendingStateBackupPath = backupManifest.backupPath;
+    if (!quiet) {
+      console.log("  Recreating the sandbox container with its managed startup command...");
+    }
+    const result = recreate({
+      sandboxName,
+      openshellSandboxCommand: startupCommand,
+      expectedOldContainerId: containerId,
+      waitForSupervisor: false,
+    });
+    pendingStateBackupPath = null;
+    let completed: {
+      supervisorReady: boolean;
+      outcome: DockerGpuPatchFinalizeOutcome & {
+        stateRestored?: boolean;
+        stateBackupRemoved?: boolean;
+      };
+    } | null = null;
+    const removeSettledStateBackup = (): boolean => {
+      try {
+        return removeBackup(sandboxName, backupManifest.backupPath);
+      } catch {
+        return false;
+      }
+    };
+    return {
+      containerId: result.newContainerId,
+      finalize(supervisorReady) {
+        if (completed) {
+          if (completed.supervisorReady !== supervisorReady) {
+            throw new Error(
+              "Supervisor relaunch transaction was finalized with conflicting state.",
+            );
+          }
+          return completed.outcome;
+        }
+        if (!supervisorReady) {
+          const finalized = finalize({ result, supervisorReady: false });
+          const outcome = {
+            ...finalized,
+            stateRestored: false,
+            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
+          };
+          completed = { supervisorReady, outcome };
+          return outcome;
+        }
+        let replacementOwned = false;
+        try {
+          replacementOwned = sameContainerId(
+            resolveContainer(sandboxName, driver),
+            result.newContainerId,
+          );
+        } catch {
+          replacementOwned = false;
+        }
+        if (!replacementOwned) {
+          const finalized = finalize({ result, supervisorReady: false });
+          const outcome = {
+            ...finalized,
+            stateRestored: false,
+            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
+          };
+          completed = { supervisorReady, outcome };
+          return outcome;
+        }
+        let stateRestored = false;
+        try {
+          stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
+        } catch {
+          stateRestored = false;
+        }
+        if (!stateRestored) {
+          const finalized = finalize({ result, supervisorReady: false });
+          const outcome = {
+            ...finalized,
+            stateRestored: false,
+            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
+          };
+          completed = { supervisorReady, outcome };
+          return outcome;
+        }
+        const outcome = {
+          ...finalize({ result, supervisorReady: true }),
+          stateRestored: true,
+          stateBackupRemoved: removeSettledStateBackup(),
+        };
+        completed = { supervisorReady, outcome };
+        return outcome;
+      },
+    };
   } catch (error) {
+    if (pendingStateBackupPath) {
+      try {
+        removeBackup(sandboxName, pendingStateBackupPath);
+      } catch {
+        // Preserve the recreation failure that stopped container recovery.
+      }
+    }
     if (!quiet) {
       const detail = error instanceof Error ? error.message : String(error);
-      console.error(`  Trusted supervisor recovery could not start: ${redactFull(redact(detail))}`);
+      console.error(`  Trusted container recovery could not start: ${redactFull(redact(detail))}`);
     }
     return null;
   }

@@ -1019,10 +1019,10 @@ The same result is inconclusive during managed settle confirmation and can be pr
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
 It does not retry other status or output combinations.
 `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
-On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned workload restart that succeeds only after managed health, settle, and OpenShell readiness checks pass.
-To bypass that trusted restart while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
+On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned recreation that commits only after managed health and settle checks pass.
+To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
 If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
-If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recovery could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
+If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
 An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
 The current recovery action and any managed settle confirmation stop immediately.
 If `recover` reports this result, follow its host-side `gateway restart` guidance.
