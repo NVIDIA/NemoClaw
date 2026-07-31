@@ -4,6 +4,8 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
+import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
+import { decodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import type { SandboxWorkloadReceipt } from "./types";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -75,6 +77,7 @@ export function cloneSandboxWorkloadReceipt(
       shared: false,
     };
   }
+  const encodedProfileBytes = decodeCanonicalBase64Url(value.encodedProfile);
   if (
     value.kind !== "managed-image" ||
     value.shared !== true ||
@@ -89,11 +92,31 @@ export function cloneSandboxWorkloadReceipt(
     value.startupProfileContractVersion !== 1 ||
     !SHA256_PATTERN.test(value.startupProfileSha256) ||
     typeof value.credentialProxyReplayRequired !== "boolean" ||
-    decodeCanonicalBase64Url(value.encodedProfile) === null ||
+    encodedProfileBytes === null ||
     createHash("sha256").update(value.encodedProfile, "utf8").digest("hex") !==
-      value.startupProfileSha256 ||
-    (value.corporateCaB64 !== undefined &&
-      decodeCanonicalStandardBase64(value.corporateCaB64) === null)
+      value.startupProfileSha256
+  ) {
+    return undefined;
+  }
+  let profile: ReturnType<typeof decodeManagedStartupProfile>;
+  try {
+    profile = decodeManagedStartupProfile(value.encodedProfile);
+  } catch {
+    return undefined;
+  }
+  if (!value.reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[profile.agent]}@sha256:`)) {
+    return undefined;
+  }
+  const corporateCaBytes =
+    value.corporateCaB64 === undefined ? null : decodeCanonicalStandardBase64(value.corporateCaB64);
+  if (value.corporateCaB64 !== undefined && corporateCaBytes === null) {
+    return undefined;
+  }
+  const expectedCorporateCaSha256 = profile.corporateCa.bundleSha256;
+  if (
+    (expectedCorporateCaSha256 === null) !== (corporateCaBytes === null) ||
+    (corporateCaBytes !== null &&
+      createHash("sha256").update(corporateCaBytes).digest("hex") !== expectedCorporateCaSha256)
   ) {
     return undefined;
   }

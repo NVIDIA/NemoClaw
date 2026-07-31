@@ -74,6 +74,7 @@ export function stopSandbox(
       channelsStopped = true;
       try {
         (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
+          channelStopTransport: resolved.lifecycle.channelStopTransport,
           info: (message) => log(`  ${message}`),
           warn: (message) => warn(`  ${message}`),
         });

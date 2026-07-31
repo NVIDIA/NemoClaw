@@ -24,6 +24,7 @@ type ProcessRunner = (
 ) => SpawnSyncReturns<string>;
 
 export type SandboxGatewayStopDeps = {
+  channelStopTransport?: "docker-kubectl-first" | "openshell";
   getSandbox?: typeof registry.getSandbox;
   getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
   getAgentDisplayName?: typeof agentRuntime.getAgentDisplayName;
@@ -105,13 +106,15 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
   const gatewayLabel = `${agentDisplayName} gateway`;
   info(`Stopping in-sandbox ${gatewayLabel} (sandbox: ${validatedSandboxName})...`);
 
-  const privilegedResult = stopSandboxChannelsViaKubectl(
-    validatedSandboxName,
-    gatewayName,
-    GATEWAY_STOP_SCRIPT,
-    deps.runDocker ?? dockerSpawnSync,
-  );
-  if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
+  if (deps.channelStopTransport !== "openshell") {
+    const privilegedResult = stopSandboxChannelsViaKubectl(
+      validatedSandboxName,
+      gatewayName,
+      GATEWAY_STOP_SCRIPT,
+      deps.runDocker ?? dockerSpawnSync,
+    );
+    if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
+  }
 
   const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();
   if (!openshell) {

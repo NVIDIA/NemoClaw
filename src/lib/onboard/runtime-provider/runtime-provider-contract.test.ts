@@ -5,6 +5,10 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
+  MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  managedStartupE2eProfile,
+} from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import {
   createInMemoryRuntimeProviderBundle,
   type InMemoryRuntimeProviderBundle,
 } from "../../../../test/helpers/runtime-provider-bundle";
@@ -13,6 +17,11 @@ import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
+import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
+import {
+  encodeManagedStartupProfile,
+  type ManagedStartupProfile,
+} from "../managed-startup/profile";
 import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import {
@@ -34,7 +43,7 @@ const PORTABLE_PROFILE = {
   legacyDockerfileBuilds: true,
 } as const satisfies RuntimeProviderWorkloadProfile;
 
-const ENCODED_PROFILE = Buffer.from('{"schemaVersion":1}', "utf8").toString("base64url");
+const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
 const PROFILE_SHA256 = createHash("sha256").update(ENCODED_PROFILE, "utf8").digest("hex");
 const MANAGED_RECEIPT = {
   schemaVersion: 1,
@@ -51,6 +60,22 @@ const MANAGED_RECEIPT = {
   credentialProxyReplayRequired: false,
   shared: true,
 } as const satisfies SandboxWorkloadReceipt;
+
+type ManagedWorkloadReceipt = Extract<SandboxWorkloadReceipt, { readonly kind: "managed-image" }>;
+
+function receiptForProfile(
+  profile: ManagedStartupProfile,
+  corporateCaB64?: string,
+): ManagedWorkloadReceipt {
+  const encodedProfile = encodeManagedStartupProfile(profile);
+  return {
+    ...MANAGED_RECEIPT,
+    reference: `${MANAGED_IMAGE_REPOSITORIES[profile.agent]}@sha256:${"a".repeat(64)}`,
+    encodedProfile,
+    startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+    ...(corporateCaB64 === undefined ? {} : { corporateCaB64 }),
+  };
+}
 
 function mxcBundle(): InMemoryRuntimeProviderBundle {
   return createInMemoryRuntimeProviderBundle({
@@ -377,6 +402,63 @@ describe("sandbox workload ownership receipt", () => {
     ).toBeUndefined();
   });
 
+  it("rejects a canonical transport containing credential-shaped profile data", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const canonicalProfile = Buffer.from(ENCODED_PROFILE, "base64url").toString("utf8");
+    const encodedProfile = Buffer.from(
+      canonicalProfile.replace(
+        `"model":${JSON.stringify(profile.inference.model)}`,
+        `"model":"nvapi-${"a".repeat(32)}"`,
+      ),
+      "utf8",
+    ).toString("base64url");
+
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...MANAGED_RECEIPT,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("binds the decoded startup-profile agent to the immutable image repository", () => {
+    const hermesReceipt = receiptForProfile(managedStartupE2eProfile("hermes"));
+
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...hermesReceipt,
+        reference: MANAGED_RECEIPT.reference,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("binds corporate CA presence and exact bytes to the decoded profile digest", () => {
+    const corporateCaB64 = Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM, "utf8").toString(
+      "base64",
+    );
+    const receipt = receiptForProfile(
+      managedStartupE2eProfile("openclaw", false, true),
+      corporateCaB64,
+    );
+
+    expect(cloneSandboxWorkloadReceipt(receipt)).toEqual(receipt);
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...receipt,
+        corporateCaB64: Buffer.from("different-ca", "utf8").toString("base64"),
+      }),
+    ).toBeUndefined();
+    const { corporateCaB64: _omittedCa, ...missingCa } = receipt;
+    expect(cloneSandboxWorkloadReceipt(missingCa)).toBeUndefined();
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...MANAGED_RECEIPT,
+        corporateCaB64,
+      }),
+    ).toBeUndefined();
+  });
+
   it("retains an owned legacy image receipt independently from managed cohorts", () => {
     expect(
       cloneSandboxWorkloadReceipt({
@@ -482,7 +564,11 @@ describe("socket-free MXC action contract", () => {
     expect(probeSandbox).toHaveBeenCalledWith(sandboxName);
     expect(stopSandboxChannels).toHaveBeenCalledWith(
       sandboxName,
-      expect.objectContaining({ info: expect.any(Function), warn: expect.any(Function) }),
+      expect.objectContaining({
+        channelStopTransport: "openshell",
+        info: expect.any(Function),
+        warn: expect.any(Function),
+      }),
     );
     expect(state.events).toEqual([
       `start:${sandboxName}`,
