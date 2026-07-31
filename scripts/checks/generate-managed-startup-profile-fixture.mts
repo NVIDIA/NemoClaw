@@ -8,12 +8,13 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   encodeManagedStartupProfile,
+  MANAGED_STARTUP_AGENTS,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
 } from "../../src/lib/onboard/managed-startup/profile.ts";
 
-const AGENTS = new Set<ManagedStartupAgent>(["openclaw", "hermes", "langchain-deepagents-code"]);
+const AGENTS = new Set<ManagedStartupAgent>(MANAGED_STARTUP_AGENTS);
 
 export const MANAGED_STARTUP_E2E_HTTP_PROXY = "http://fixture-http-proxy.example.test:18080";
 export const MANAGED_STARTUP_E2E_HTTPS_PROXY = "http://fixture-https-proxy.example.test:18443";
