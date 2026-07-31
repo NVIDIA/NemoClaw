@@ -39,11 +39,11 @@ import { spawnSync } from "node:child_process";
 import { ROOT } from "../../state/paths";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
-// Outer spawnSync cap (ms) for the throwaway warm-up agent run. The `-m`
+// Outer spawnSync cap (ms) for a throwaway warm-up call. The onboard `-m`
 // one-shot prompt ("ping") returns fast even when it falls back to embedded
 // mode, so 30s comfortably covers gateway-connect + scope-upgrade request, the
-// bounded pending-upgrade poll below, plus shell/agent startup, while never
-// letting a wedged sandbox block onboard.
+// bounded pending-upgrade poll below, plus shell/CLI startup, while never
+// letting a wedged sandbox block onboard or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
 
 // Bounded in-sandbox poll for the pending scope upgrade after the provoke run.
@@ -128,13 +128,28 @@ done
 exit 0
 `;
 
-/**
- * Run the bounded, throwaway scope-upgrade warm-up inside the named sandbox via
- * `openshell sandbox exec`. All failure modes (timeout, sandbox-exec errors,
- * missing openclaw, gateway unreachable) are swallowed: this is best-effort and
- * must never throw — onboard finalization must not be blocked.
- */
-export function runSandboxScopeWarmupRun(sandboxName: string): void {
+// A restored clone must publish its write-scope request before the strict
+// local-state approval pass from #7834. Use a direct gateway call here: unlike
+// `openclaw agent`, this command cannot silently continue in embedded mode.
+// The runtime env carries shared gateway auth for owned admin RPCs; remove it
+// before this ordinary CLI call so OpenClaw uses the clone's stored device
+// credential and publishes the exact write-scope upgrade request.
+// When the clone is already fully paired, the call creates only a tagged empty
+// warm-up session, matching the existing user-facing session filter contract.
+export const RESTORED_CLONE_WARMUP_SCRIPT = `
+PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
+[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+command -v openclaw >/dev/null 2>&1 || exit 0
+unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD \
+  NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || exit 0
+session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
+params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
+NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
+  openclaw gateway call sessions.create --params "$params" --json >/dev/null 2>&1 || true
+exit 0
+`;
+
+function runSandboxWarmupScript(sandboxName: string, script: string): void {
   // Lazy require: `adapters/openshell/resolve` pulls in `runner`, whose
   // load-time `require("./platform")` cannot be resolved by the Vitest TS
   // loader. Importing it here keeps this module unit-testable in-process.
@@ -149,7 +164,7 @@ export function runSandboxScopeWarmupRun(sandboxName: string): void {
     if (!openshellBinary) return;
     spawnSync(
       openshellBinary,
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", WARMUP_SCRIPT],
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
       {
         cwd: ROOT,
         env: process.env,
@@ -158,6 +173,24 @@ export function runSandboxScopeWarmupRun(sandboxName: string): void {
       },
     );
   } catch {
-    /* defense-in-depth — never throw from the onboard finalization path */
+    /* defense-in-depth — never throw from a warm-up path */
   }
+}
+
+/**
+ * Run the bounded, throwaway scope-upgrade warm-up inside the named sandbox via
+ * `openshell sandbox exec`. All failure modes (timeout, sandbox-exec errors,
+ * missing openclaw, gateway unreachable) are swallowed: this is best-effort and
+ * must never throw — onboard finalization must not be blocked.
+ */
+export function runSandboxScopeWarmupRun(sandboxName: string): void {
+  runSandboxWarmupScript(sandboxName, WARMUP_SCRIPT);
+}
+
+/**
+ * Attempt to publish a restored clone's write-scope request without an
+ * embedded fallback. Failures remain non-blocking.
+ */
+export function runRestoredSandboxScopeWarmupRun(sandboxName: string): void {
+  runSandboxWarmupScript(sandboxName, RESTORED_CLONE_WARMUP_SCRIPT);
 }

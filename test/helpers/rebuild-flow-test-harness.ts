@@ -33,6 +33,9 @@ const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 const sandboxList = requireDist("../../openshell-sandbox-list.js");
 const resolve = requireDist("../../adapters/openshell/resolve.js");
+const gatewayTeardownAuthority = requireDist(
+  "../../onboard/gateway-teardown-authority.js",
+) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 const agentDefs = requireDist("../../agent/defs.js");
 const agentRuntime = requireDist("../../agent/runtime.js");
 const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
@@ -61,6 +64,13 @@ const mcpBridge = requireDist("./mcp-bridge.js");
 const messaging = requireDist("../../messaging/index.js");
 const shields = requireDist("../../shields/index.js");
 
+function sourceSandboxGateway(argv: string[], verb: string): string | null {
+  const gatewayFlag = argv.indexOf("-g");
+  return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
+    ? (argv[gatewayFlag + 1] ?? null)
+    : null;
+}
+
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
 
@@ -86,6 +96,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
       status: 0,
@@ -424,12 +446,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           failedFiles: [],
         })),
     );
+  const deletedSourceGateways = new Set<string>();
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
       const overrideResult = overrides.runOpenshell?.(argv);
       if (overrideResult) return overrideResult;
+      const deleteGateway = sourceSandboxGateway(argv, "delete");
+      if (deleteGateway) {
+        deletedSourceGateways.add(deleteGateway);
+        return { status: 0, output: "" };
+      }
       if (
         argv.join(" ") === "sandbox get alpha" ||
         argv.join(" ") === "sandbox get -g nemoclaw alpha"
@@ -447,8 +475,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      return overrides.captureOpenshell
-        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+      if (overrides.captureOpenshell) {
+        return overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined);
+      }
+      const probedGateway = sourceSandboxGateway(argv, "get");
+      const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+      return probedGateway && !deletedSourceGateways.has(probedGateway)
+        ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
   const defaultRemovalReceipt = {
