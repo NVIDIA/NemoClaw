@@ -166,6 +166,7 @@ export const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() 
 export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   (
     policyPath: string,
@@ -303,6 +304,7 @@ vi.mock("./destroy", () => ({
 
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: establishRestoredSandboxGatewayPairingMock,
+  waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
 export function resetSnapshotRestoreMocks(): void {
@@ -360,6 +362,7 @@ export function resetSnapshotRestoreMocks(): void {
     sawProgress: false,
     forcedReady: false,
   }));
+  waitForRestoredSandboxGatewaySupervisorMock.mockReturnValue(true);
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
 }
 
