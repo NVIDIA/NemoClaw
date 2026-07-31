@@ -33,8 +33,8 @@
  *   - Deliberately out of scope for this merge gate: physical DGX Spark /
  *     GB10 / aarch64 hardware, provider breadth beyond `cloud-openclaw`, and
  *     destructive host reboot / OOM / manual `kubectl delete pod` triggers.
- *     The Docker-driver branch below does restart the registered sandbox
- *     container, then proves the legacy keepalive migration restores the
+ *     The Docker-driver branch below restarts the registered sandbox
+ *     container, then proves that its persisted startup command restores the
  *     managed supervisor topology without relying on ordinary sandbox exec.
  *     Kubernetes triggers still need a dedicated platform-runtime job.
  *
@@ -147,7 +147,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       "wipe guard chain and gateway tree",
       "recover gateway through connect probe",
       "validate recovered guard and stable PID",
-      "restart legacy Docker sandbox",
+      "restart Docker sandbox with persisted startup command",
       "recover managed supervisor and inference",
     ],
   },
@@ -167,14 +167,14 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   await artifacts.target.declare({
     id: "gateway-guard-recovery",
     boundary: "sandbox-lifecycle",
-    issues: ["#2701", "#2478", "#6635"],
+    issues: ["#2701", "#2478"],
     acceptanceCoverage: {
       covered: [
         "production connect --probe-only recovery route",
         "authenticated PID 1 OpenClaw recovery supervisor",
         "pod-recreate-equivalent empty /tmp guard chain plus missing gateway process",
-        "Docker container restart with a legacy keepalive startup",
-        "container-identity-pinned supervisor recreation with managed health proof",
+        "Docker container restart with a persisted managed startup command",
+        "container identity preservation with managed supervisor health proof",
         "no rebuild required for the recovered runtime state",
       ],
       intentionallyOutOfScope: [
@@ -282,32 +282,32 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
 
   expect(stablePid).toBeGreaterThan(0);
 
-  progress.phase("restart legacy Docker sandbox");
-  // ── Assert #6635 legacy Docker restart recovery ────────────────
-  // Fresh non-GPU OpenClaw containers on this OpenShell floor still carry the
-  // legacy keepalive. Restarting the container therefore kills the initial
-  // OpenShell workload session and deterministically leaves no managed
-  // supervisor. Recovery must upgrade that container through the host-side
-  // transaction and commit only after managed control accepts the new tree.
-  const originalContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
-  expect(
-    await inspectStartupCommand(host, originalContainerId, "legacy-restart-command-before"),
-  ).toBe("sleep infinity");
+  progress.phase("restart Docker sandbox with persisted startup command");
+  // A Docker restart must reuse the container and its credential-free managed
+  // startup command. The command must restore the supervisor without a
+  // container recreation transaction.
+  const originalContainerId = await findSandboxContainer(host, "restart-container-before");
+  const originalStartupCommand = await inspectStartupCommand(
+    host,
+    originalContainerId,
+    "restart-command-before",
+  );
+  expect(originalStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
   await host.cleanupForward(18789, {
-    artifactName: "legacy-restart-stop-dashboard-forward",
+    artifactName: "restart-stop-dashboard-forward",
     env: buildAvailabilityProbeEnv(),
   });
   const restart = await host.command("docker", ["restart", originalContainerId], {
-    artifactName: "legacy-restart-docker-restart",
+    artifactName: "restart-docker-restart",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 120_000,
   });
   expect(restart.exitCode, resultText(restart)).toBe(0);
 
   progress.phase("recover managed supervisor and inference");
-  const credentialCanary = "nemoclaw-e2e-recovery-secret-6635";
+  const credentialCanary = "nemoclaw-e2e-recovery-secret-restart";
   const trustedRecovery = await host.nemoclaw([instance.sandboxName, "recover"], {
-    artifactName: "legacy-restart-trusted-recover",
+    artifactName: "restart-trusted-recover",
     env: {
       ...buildAvailabilityProbeEnv(),
       NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
@@ -318,14 +318,16 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
-  expect(resultText(trustedRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
+  expect(resultText(trustedRecovery)).toMatch(
+    /Probe complete: (?:recovered OpenClaw gateway|OpenClaw gateway is running)/,
+  );
 
-  const recoveredContainerId = await findSandboxContainer(host, "legacy-restart-container-after");
-  expect(recoveredContainerId).not.toBe(originalContainerId);
+  const recoveredContainerId = await findSandboxContainer(host, "restart-container-after");
+  expect(recoveredContainerId).toBe(originalContainerId);
   const recoveredStartupCommand = await inspectStartupCommand(
     host,
     recoveredContainerId,
-    "legacy-restart-command-after",
+    "restart-command-after",
   );
   expect(recoveredStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
   expect(recoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
@@ -335,7 +337,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     instance.sandboxName,
     ["python3", "-c", SUPERVISOR_TOPOLOGY_SCRIPT],
     {
-      artifactName: "legacy-restart-managed-supervisor-topology",
+      artifactName: "restart-managed-supervisor-topology",
       env: buildAvailabilityProbeEnv(),
     },
   );
@@ -346,7 +348,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     "curl",
     ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:18789/health"],
     {
-      artifactName: "legacy-restart-forwarded-health",
+      artifactName: "restart-forwarded-health",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     },
@@ -362,12 +364,12 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       "main",
       "--json",
       "--session-id",
-      `e2e-6635-${Date.now()}-${process.pid}`,
+      `e2e-restart-${Date.now()}-${process.pid}`,
       "-m",
       "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
     ],
     {
-      artifactName: "legacy-restart-agent-inference",
+      artifactName: "restart-agent-inference",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
     },
