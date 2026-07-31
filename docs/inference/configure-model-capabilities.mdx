@@ -89,7 +89,7 @@ When a resumed onboard on the `compatible-endpoint` provider sees an explicit `N
 Deep Agents Code applies the recorded reasoning effort from the sandbox image instead, and has no `inference set` path.
 Refer to [Quickstart with Deep Agents](/user-guide/deepagents/get-started/quickstart) for that agent's behavior.
 
-To change the reasoning effort on a running OpenClaw or Hermes sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
+To change the reasoning effort on a running OpenClaw sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
 
 ```bash
 nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --endpoint-url <recorded-url> --reasoning-effort high

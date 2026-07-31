@@ -34,6 +34,15 @@ export function writeManagedReasoningEffort(root: string, content: string, mode 
   return capabilityPath;
 }
 
+export function linkManagedReasoningEffort(root: string, content: string, mode = 0o444): string {
+  const targetPath = path.join(root, "managed-reasoning-effort-target");
+  fs.writeFileSync(targetPath, content, { mode });
+  fs.chmodSync(targetPath, mode);
+  const capabilityPath = managedReasoningEffortPath(root);
+  fs.symlinkSync(targetPath, capabilityPath);
+  return capabilityPath;
+}
+
 export function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });

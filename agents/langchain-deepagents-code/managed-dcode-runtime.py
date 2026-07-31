@@ -1367,6 +1367,7 @@ def managed_reasoning_effort() -> str | None:
         try:
             os.close(descriptor)
         except OSError:
+            # Cleanup cannot weaken the endpoint-default capability result.
             pass
 
     raw = b"".join(chunks)

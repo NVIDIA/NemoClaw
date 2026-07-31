@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   cleanupPackageFixtures,
   createPackageFixture,
+  linkManagedReasoningEffort,
   patchFixture,
   writeManagedReasoningEffort,
 } from "./helpers/langchain-deepagents-code-patch-fixture";
@@ -21,6 +22,14 @@ const BASE_OPENROUTER_KWARGS = `{
     "api_key": "nemoclaw-managed-inference",
     "base_url": "https://inference.local/v1",
 }`;
+const REJECTED_VALIDATION = `
+from deepagents_code import config
+from deepagents_code._nemoclaw_managed import managed_reasoning_effort
+
+assert managed_reasoning_effort() is None
+assert "extra_body" not in config._get_provider_kwargs("openai")
+print("managed-reasoning-effort-rejected-ok")
+`;
 
 function runValidation(tempDir: string, validation: string): string {
   return execFileSync("python3", ["-c", validation], {
@@ -78,29 +87,35 @@ print("managed-reasoning-effort-unset-ok")
     expect(output).toContain("managed-reasoning-effort-unset-ok");
   });
 
+  it("falls back to the endpoint default for a missing capability file (#7938)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+
+    const output = runValidation(tempDir, REJECTED_VALIDATION);
+
+    expect(output).toContain("managed-reasoning-effort-rejected-ok");
+  });
+
   it.each([
-    ["a missing capability file", null, 0o444],
     ["unrecognized contents", "extreme\n", 0o444],
     ["a writable capability file", "high\n", 0o644],
     ["contents without the trailing newline", "high", 0o444],
   ])("falls back to the endpoint default for %s (#7938)", (_case, contents, mode) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
-    if (contents !== null) {
-      writeManagedReasoningEffort(tempDir, contents, mode);
-    }
+    writeManagedReasoningEffort(tempDir, contents, mode);
 
-    const output = runValidation(
-      tempDir,
-      `
-from deepagents_code import config
-from deepagents_code._nemoclaw_managed import managed_reasoning_effort
+    const output = runValidation(tempDir, REJECTED_VALIDATION);
 
-assert managed_reasoning_effort() is None
-assert "extra_body" not in config._get_provider_kwargs("openai")
-print("managed-reasoning-effort-rejected-ok")
-`,
-    );
+    expect(output).toContain("managed-reasoning-effort-rejected-ok");
+  });
+
+  it("rejects a symbolic-link capability path (#7938)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    linkManagedReasoningEffort(tempDir, "high\n");
+
+    const output = runValidation(tempDir, REJECTED_VALIDATION);
 
     expect(output).toContain("managed-reasoning-effort-rejected-ok");
   });
