@@ -337,6 +337,10 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("Never guess or substitute an attribution identity");
     expect(policy).toContain("Never add or copy a DCO declaration");
     expect(policy).toContain("leave the winner unset and ask the contributor");
+    const sourceDcoPolicyIndex = policy.indexOf("Confirm that the source PR already contains");
+    const transferPolicyIndex = policy.indexOf("After both checks pass");
+    expect(sourceDcoPolicyIndex).toBeGreaterThanOrEqual(0);
+    expect(transferPolicyIndex).toBeGreaterThan(sourceDcoPolicyIndex);
     expect(policy).toContain("does not require co-authorship");
     expect(policy).toContain("does not replace attribution in the merged PR history");
 
@@ -345,6 +349,19 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(comparator).toContain("`transferred`");
     expect(comparator).toContain("`unclear`");
     expect(comparator).toContain("leave `winner` null");
+    expect(finder).toContain("../nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh");
+    for (const pattern of [
+      "supersedes #N",
+      "replaces #N",
+      "closes in favor of #N",
+      "closed in favor of #N",
+      "folds in #N",
+    ]) {
+      expect(comparator).toContain(pattern);
+      expect(finder).toContain(pattern);
+    }
+    expect(comparator).toContain("A `follow-up to #N` statement is a related-PR signal");
+    expect(finder).toContain("A `follow-up to #N` statement is a related-PR signal");
 
     expect(tiebreakers).toContain("it does not rank a candidate");
     expect(tiebreakers).not.toContain("**Supersession.**");
@@ -352,18 +369,37 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(verdict).toContain("git cherry-pick -S -x <source-sha>");
     expect(verdict).toContain("Co-authored-by: Name <email>");
-    expect(verdict).toContain("using the exact author identity from the source commit");
+    expect(verdict).toContain("using the verified source-commit identity");
     expect(verdict).toContain("run the comparator again on the updated SHA");
-    expect(verdict).toContain("Transfer the test from PR #B before merge");
-    expect(verdict).toContain("Merge PR #A only if the new verdict selects it");
-    expect(verdict.indexOf("Transfer the test from PR #B before merge")).toBeLessThan(
-      verdict.indexOf("Merge PR #A only if the new verdict selects it"),
+    expect(verdict).toContain("contains the contributor's `Signed-off-by:` declaration");
+    expect(verdict).toContain("Do not add or copy that declaration");
+    expect(verdict).toContain("Keep the replacement author's own DCO declaration");
+    expect(verdict).toContain("every replacement commit appears as `Verified` in GitHub");
+
+    const sourceDcoIndex = verdict.indexOf("Confirm that PR #B contains the contributor's");
+    const identityIndex = verdict.indexOf(
+      "Read the exact author name and email from the source commit",
     );
+    const transferIndex = verdict.indexOf("Transfer the test from PR #B before merge");
+    const rerunIndex = verdict.indexOf("run the comparator again on the updated SHA");
+    const mergeIndex = verdict.indexOf("Merge PR #A only if the new verdict selects it");
+    const closeIndex = verdict.indexOf("After PR #A merges, close PR #B");
+
+    expect(sourceDcoIndex).toBeGreaterThanOrEqual(0);
+    expect(identityIndex).toBeGreaterThanOrEqual(0);
+    expect(transferIndex).toBeGreaterThan(sourceDcoIndex);
+    expect(transferIndex).toBeGreaterThan(identityIndex);
+    expect(rerunIndex).toBeGreaterThan(transferIndex);
+    expect(mergeIndex).toBeGreaterThan(rerunIndex);
+    expect(closeIndex).toBeGreaterThan(mergeIndex);
 
     expect(finder).toContain("../nemoclaw-maintainer-policies/references/workflow-policy.md");
+    expect(finder).toContain("This skill reports recommendations only");
     expect(finder).toContain(
-      "Do not recommend closing the source PR until the target contains the required attribution",
+      "Do not recommend closing the source PR until another authorized workflow",
     );
+    expect(finder).toContain("merged the selected target");
+    expect(finder).toContain("After the updated verdict selects #1416 and #1416 merges");
   });
 
   it("keeps PR workflow writes behind their safety checks", () => {

@@ -65,7 +65,9 @@ Applies a single default order with stop conditions.
 scripts/parse-supersession.sh <pr-number-1> <pr-number-2> ...
 ```
 
-Parse these statements from each PR body: `supersedes #N`, `replaces #N`, `closes in favor of #N`, and `folds in #N`.
+Parse the canonical statement set implemented by `scripts/parse-supersession.sh`:
+`supersedes #N`, `replaces #N`, `closes in favor of #N`, `closed in favor of #N`, and `folds in #N`.
+A `follow-up to #N` statement is a related-PR signal, not a supersession declaration, unless one of these phrases also appears.
 These statements record a relationship.
 They do not rank a candidate or prove that its diff contains another contributor's work.
 
