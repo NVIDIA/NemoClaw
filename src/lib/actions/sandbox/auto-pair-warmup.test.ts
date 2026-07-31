@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { RESTORED_CLONE_WARMUP_SCRIPT, WARMUP_SCRIPT, WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
@@ -88,6 +91,58 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       timeout: 10_000,
     });
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  itWithSh("uses clone device auth after sourcing restored-clone routing (#7834)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-warmup-"));
+    const binDir = path.join(fixtureRoot, "bin");
+    const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
+    const callLog = path.join(fixtureRoot, "call.log");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      proxyEnv,
+      [
+        "export OPENCLAW_GATEWAY_TOKEN=shared-token",
+        "export OPENCLAW_GATEWAY_PASSWORD=shared-password",
+        "export OPENCLAW_GATEWAY_PORT=18789",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(binDir, "openclaw"),
+      [
+        "#!/bin/sh",
+        "{",
+        "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
+        "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
+        "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
+        "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
+        "  printf 'argv=%s\\n' \"$*\"",
+        '} > "$NEMOCLAW_TEST_CALL_LOG"',
+        "exit 23",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const script = RESTORED_CLONE_WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv);
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_CALL_LOG: callLog,
+          PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(callLog, "utf8")).toMatch(
+        /^token=unset\npassword=unset\nport=18789\nforce=1\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("forces device pairing only for the provoke command on OpenClaw 2026.7.1", () => {
