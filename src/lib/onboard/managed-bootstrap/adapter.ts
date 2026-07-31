@@ -929,7 +929,7 @@ function normalizePreparedReplacement(
   });
 }
 
-function createPreparedAuthority(
+export function createManagedBootstrapPreparedAuthority(
   transaction: ManagedBootstrapPreparedTransaction,
 ): ManagedBootstrapPreparedAuthority {
   const { handle, snapshot, prepared } = transaction;
@@ -1349,7 +1349,7 @@ export async function activateManagedBootstrapSequence(
   let durablePreparation: ManagedBootstrapDurablePreparationReceipt | null = null;
   let replacement: ManagedBootstrapReplacementHandle | null = null;
   try {
-    const authority = createPreparedAuthority(input.transaction);
+    const authority = createManagedBootstrapPreparedAuthority(input.transaction);
     durablePreparation = normalizeDurablePreparationReceipt(
       await input.authorityStore.recordPreparedAuthority(authority),
       authority,

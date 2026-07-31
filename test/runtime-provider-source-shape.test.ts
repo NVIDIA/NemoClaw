@@ -63,6 +63,10 @@ describe("runtime provider central source boundary", () => {
       join(repoRoot, "src/lib/onboard/runtime-provider/docker.ts"),
       "utf8",
     );
+    const dockerBootstrapAdapter = readFileSync(
+      join(repoRoot, "src/lib/onboard/managed-bootstrap/docker.ts"),
+      "utf8",
+    );
     const managedDockerfiles = [
       readFileSync(join(repoRoot, "Dockerfile"), "utf8"),
       readFileSync(join(repoRoot, "agents/hermes/Dockerfile"), "utf8"),
@@ -83,6 +87,9 @@ describe("runtime provider central source boundary", () => {
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
     );
     expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
+    expect(dockerBootstrapAdapter).toContain('"rollback-authorized"');
+    expect(dockerBootstrapAdapter).toContain('"shared-state-committed"');
+    expect(bootstrapProtocol[2]).not.toMatch(/from\s+["'][^"']*docker/u);
 
     for (const dockerfile of managedDockerfiles) {
       expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
