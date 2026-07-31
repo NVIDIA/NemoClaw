@@ -249,6 +249,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
   ["openshell-credential-generation-window", CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION],
   ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
+  ["openshell-gateway-upgrade", "${{ always() && steps.gateway_upgrade_tier.outputs.run == '1' }}"],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {

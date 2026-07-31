@@ -23,6 +23,9 @@ export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 const PREINSTALLED_E2E_JOBS = new Set(["staging-brev-launchable"]);
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
+const PREPARE_CALLER_CONDITIONS = new Map([
+  ["openshell-gateway-upgrade", "${{ steps.gateway_upgrade_tier.outputs.run == '1' }}"],
+]);
 
 const NO_BUILD_JOBS = new Set([
   "generate-matrix",
@@ -158,7 +161,16 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
       errors.push(`${jobName} prepare-e2e must set build-cli to false`);
     }
+    const callerCondition = PREPARE_CALLER_CONDITIONS.get(jobName);
     const allowedKeys = shouldBuild ? ["name", "uses"] : ["name", "uses", "with"];
+    if (callerCondition !== undefined) {
+      allowedKeys.push("if");
+      if (prepare.if !== callerCondition) {
+        errors.push(
+          `${jobName} prepare-e2e invocation must remain gated by its reviewed caller condition`,
+        );
+      }
+    }
     if (!isDeepStrictEqual(Object.keys(prepare).sort(), allowedKeys.sort())) {
       errors.push(`${jobName} prepare-e2e invocation must not override its canonical contract`);
     }

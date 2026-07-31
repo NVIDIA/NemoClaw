@@ -63,6 +63,89 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     );
   });
 
+  it("documents retained gateway upgrade execution tiers (#7920)", () => {
+    const workflow = readOpenShellGatewayUpgradeWorkflow();
+    const job = (workflow.jobs as Record<string, Record<string, unknown>>)[
+      "openshell-gateway-upgrade"
+    ];
+    const strategy = job.strategy as Record<string, Record<string, unknown>>;
+    const fixtures = strategy.matrix.include as Array<Record<string, unknown>>;
+    expect(
+      fixtures.map((fixture) => ({
+        execution_tier: fixture.execution_tier,
+        id: fixture.id,
+        unique_boundary: fixture.unique_boundary,
+      })),
+    ).toEqual([
+      {
+        execution_tier: "weekly-release",
+        id: "v0.0.36-x86_64",
+        unique_boundary: "oldest-supported OpenShell/NemoClaw gateway migration baseline",
+      },
+      {
+        execution_tier: "weekly-release",
+        id: "v0.0.55-x86_64",
+        unique_boundary: "OpenShell 0.0.44 gateway migration on x86_64",
+      },
+      {
+        execution_tier: "weekly-release",
+        id: "v0.0.55-aarch64",
+        unique_boundary: "OpenShell 0.0.44 gateway migration on arm64",
+      },
+      {
+        execution_tier: "weekly-release",
+        id: "v0.0.74-x86_64",
+        unique_boundary: "immediate-predecessor OpenShell 0.0.72 gateway migration",
+      },
+      {
+        execution_tier: "nightly",
+        id: "v0.0.89-x86_64",
+        unique_boundary: "current OpenClaw state-upgrade gateway migration",
+      },
+    ]);
+
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const classify = steps.find(
+      (step) => step.name === "Classify OpenShell gateway upgrade coverage tier",
+    );
+    expect(classify).toMatchObject({
+      env: expect.objectContaining({
+        CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+        EVENT_NAME: "${{ github.event_name }}",
+        EXECUTION_TIER: "${{ matrix.execution_tier }}",
+        INCLUDE_STAGING_BREV_LAUNCHABLE:
+          "${{ inputs.include_staging_brev_launchable && '1' || '0' }}",
+        JOBS: "${{ inputs.jobs }}",
+        MATRIX_ID: "${{ matrix.id }}",
+        TARGETS: "${{ inputs.targets }}",
+        UNIQUE_BOUNDARY: "${{ matrix.unique_boundary }}",
+      }),
+      id: "gateway_upgrade_tier",
+    });
+    const classifyRun = String(classify?.run);
+    expect(classifyRun).toContain("date -u +%u");
+    expect(classifyRun).toContain("explicit-selection");
+    expect(classifyRun).toContain("weekly-retained");
+    expect(classifyRun).toContain("release-qualification");
+    expect(classifyRun).toContain("skipped-by-tier");
+    expect(classifyRun).toContain("GITHUB_STEP_SUMMARY");
+
+    expect(steps.find((step) => step.name === "Prepare E2E workspace")?.if).toBe(
+      "${{ steps.gateway_upgrade_tier.outputs.run == '1' }}",
+    );
+    expect(
+      steps.find((step) => step.name === "Run OpenShell gateway upgrade live Vitest test")?.if,
+    ).toBe("${{ steps.gateway_upgrade_tier.outputs.run == '1' }}");
+    expect(
+      steps.find((step) => step.name === "Upload OpenShell gateway upgrade artifacts")?.if,
+    ).toBe("${{ always() && steps.gateway_upgrade_tier.outputs.run == '1' }}");
+    const skipped = steps.find(
+      (step) => step.name === "Record skipped OpenShell gateway upgrade row",
+    );
+    expect(skipped?.if).toBe("${{ steps.gateway_upgrade_tier.outputs.run != '1' }}");
+    expect(String(skipped?.run)).toContain("skipped-by-tier");
+  });
+
   it("freshens only the retryable old fixture install", () => {
     expect(oldGatewayUpgradeInstallerArgs("old-install.sh")).toEqual([
       "old-install.sh",

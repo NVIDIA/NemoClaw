@@ -10,7 +10,12 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-upgrade";
+const CLASSIFY_STEP_NAME = "Classify OpenShell gateway upgrade coverage tier";
+const PREPARE_STEP_NAME = "Prepare E2E workspace";
 const RUN_STEP_NAME = "Run OpenShell gateway upgrade live Vitest test";
+const SKIP_STEP_NAME = "Record skipped OpenShell gateway upgrade row";
+const UPLOAD_STEP_NAME = "Upload OpenShell gateway upgrade artifacts";
+const GATEWAY_TIER_RUN_GATE = "${{ steps.gateway_upgrade_tier.outputs.run == '1' }}";
 const RUN_COMMAND =
   "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts";
 
@@ -21,6 +26,8 @@ const EXPECTED_V055_FIXTURES: WorkflowRecord[] = [
   {
     id: "v0.0.55-x86_64",
     runner: "ubuntu-latest",
+    execution_tier: "weekly-release",
+    unique_boundary: "OpenShell 0.0.44 gateway migration on x86_64",
     shard: "v0-0-55-x86-64",
     nemoclaw_ref: "v0.0.55",
     nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
@@ -33,6 +40,8 @@ const EXPECTED_V055_FIXTURES: WorkflowRecord[] = [
   {
     id: "v0.0.55-aarch64",
     runner: "ubuntu-24.04-arm",
+    execution_tier: "weekly-release",
+    unique_boundary: "OpenShell 0.0.44 gateway migration on arm64",
     shard: "v0-0-55-aarch64",
     nemoclaw_ref: "v0.0.55",
     nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
@@ -47,6 +56,8 @@ const EXPECTED_V055_FIXTURES: WorkflowRecord[] = [
 const EXPECTED_V074_FIXTURE: WorkflowRecord = {
   id: "v0.0.74-x86_64",
   runner: "ubuntu-latest",
+  execution_tier: "weekly-release",
+  unique_boundary: "immediate-predecessor OpenShell 0.0.72 gateway migration",
   shard: "v0-0-74-x86-64",
   nemoclaw_ref: "v0.0.74",
   nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
@@ -60,6 +71,8 @@ const EXPECTED_V074_FIXTURE: WorkflowRecord = {
 const EXPECTED_V089_FIXTURE: WorkflowRecord = {
   id: "v0.0.89-x86_64",
   runner: "ubuntu-latest",
+  execution_tier: "nightly",
+  unique_boundary: "current OpenClaw state-upgrade gateway migration",
   shard: "v0-0-89-x86-64",
   nemoclaw_ref: "v0.0.89",
   nemoclaw_commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
@@ -72,40 +85,92 @@ const EXPECTED_V089_FIXTURE: WorkflowRecord = {
   openclaw_state_upgrade: "1",
 };
 
+const EXPECTED_FIXTURE_TIERS: WorkflowRecord[] = [
+  {
+    execution_tier: "weekly-release",
+    id: "v0.0.36-x86_64",
+    unique_boundary: "oldest-supported OpenShell/NemoClaw gateway migration baseline",
+  },
+  {
+    execution_tier: "weekly-release",
+    id: "v0.0.55-x86_64",
+    unique_boundary: "OpenShell 0.0.44 gateway migration on x86_64",
+  },
+  {
+    execution_tier: "weekly-release",
+    id: "v0.0.55-aarch64",
+    unique_boundary: "OpenShell 0.0.44 gateway migration on arm64",
+  },
+  {
+    execution_tier: "weekly-release",
+    id: "v0.0.74-x86_64",
+    unique_boundary: "immediate-predecessor OpenShell 0.0.72 gateway migration",
+  },
+  {
+    execution_tier: "nightly",
+    id: "v0.0.89-x86_64",
+    unique_boundary: "current OpenClaw state-upgrade gateway migration",
+  },
+];
+
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
     : {};
 }
 
+function gatewayFixtures(job: WorkflowRecord): WorkflowRecord[] {
+  const include = record(record(job.strategy).matrix).include;
+  return Array.isArray(include) ? include.map(record) : [];
+}
+
 function jobSteps(job: WorkflowRecord): WorkflowStep[] {
   return Array.isArray(job.steps) ? (job.steps as WorkflowStep[]) : [];
 }
 
+function findStep(job: WorkflowRecord, name: string): WorkflowStep {
+  return jobSteps(job).find((step) => step.name === name) ?? {};
+}
+
+function fixtureTiers(job: WorkflowRecord): WorkflowRecord[] {
+  return gatewayFixtures(job).map((fixture) => ({
+    execution_tier: fixture.execution_tier,
+    id: fixture.id,
+    unique_boundary: fixture.unique_boundary,
+  }));
+}
+
 function v055Fixtures(job: WorkflowRecord): WorkflowRecord[] {
-  const include = record(record(job.strategy).matrix).include;
-  return Array.isArray(include)
-    ? include.map(record).filter((fixture) => fixture.nemoclaw_ref === "v0.0.55")
-    : [];
+  return gatewayFixtures(job).filter((fixture) => fixture.nemoclaw_ref === "v0.0.55");
 }
 
 function v074Fixture(job: WorkflowRecord): WorkflowRecord {
-  const include = record(record(job.strategy).matrix).include;
-  return Array.isArray(include)
-    ? (include.map(record).find((fixture) => fixture.nemoclaw_ref === "v0.0.74") ?? {})
-    : {};
+  return gatewayFixtures(job).find((fixture) => fixture.nemoclaw_ref === "v0.0.74") ?? {};
 }
 
 function v089Fixture(job: WorkflowRecord): WorkflowRecord {
-  const include = record(record(job.strategy).matrix).include;
-  return Array.isArray(include)
-    ? (include.map(record).find((fixture) => fixture.nemoclaw_ref === "v0.0.89") ?? {})
-    : {};
+  return gatewayFixtures(job).find((fixture) => fixture.nemoclaw_ref === "v0.0.89") ?? {};
 }
 
-function requireRunContains(errors: string[], step: WorkflowStep, fragment: string): void {
+function requireRunContains(
+  errors: string[],
+  step: WorkflowStep,
+  stepName: string,
+  fragment: string,
+): void {
   if (!step.run?.includes(fragment)) {
-    errors.push(`${JOB_NAME} step '${RUN_STEP_NAME}' must run: ${fragment}`);
+    errors.push(`${JOB_NAME} step '${stepName}' must run: ${fragment}`);
+  }
+}
+
+function requireStepIf(
+  errors: string[],
+  step: WorkflowStep,
+  stepName: string,
+  expectedIf: string,
+): void {
+  if (step.if !== expectedIf) {
+    errors.push(`${JOB_NAME} step '${stepName}' must be gated by: ${expectedIf}`);
   }
 }
 
@@ -121,6 +186,11 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
 
   if (job["runs-on"] !== "${{ matrix.runner }}") {
     errors.push(`${JOB_NAME} must run on \${{ matrix.runner }}`);
+  }
+  if (!isDeepStrictEqual(fixtureTiers(job), EXPECTED_FIXTURE_TIERS)) {
+    errors.push(
+      `${JOB_NAME} matrix must document retained fixture execution tiers and unique boundaries`,
+    );
   }
   if (!isDeepStrictEqual(v055Fixtures(job), EXPECTED_V055_FIXTURES)) {
     errors.push(`${JOB_NAME} v0.0.55 matrix must pin x86_64 and arm64 upgrade fixtures`);
@@ -141,9 +211,68 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
   if (env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF !== "${{ matrix.openclaw_state_upgrade }}") {
     errors.push(`${JOB_NAME} must bind the OpenClaw state-upgrade proof flag from its fixture`);
   }
+  if (env.NEMOCLAW_GATEWAY_UPGRADE_EXECUTION_TIER !== "${{ matrix.execution_tier }}") {
+    errors.push(`${JOB_NAME} must bind the gateway upgrade execution tier from its fixture`);
+  }
+  if (env.NEMOCLAW_GATEWAY_UPGRADE_UNIQUE_BOUNDARY !== "${{ matrix.unique_boundary }}") {
+    errors.push(`${JOB_NAME} must bind the gateway upgrade unique boundary from its fixture`);
+  }
 
-  const run = jobSteps(job).find((step) => step.name === RUN_STEP_NAME) ?? {};
-  requireRunContains(errors, run, RUN_COMMAND);
+  const classify = findStep(job, CLASSIFY_STEP_NAME);
+  if (classify.id !== "gateway_upgrade_tier") {
+    errors.push(
+      `${JOB_NAME} step '${CLASSIFY_STEP_NAME}' must expose gateway_upgrade_tier outputs`,
+    );
+  }
+  const classifyEnv = record(classify.env);
+  const expectedClassifyEnv: WorkflowRecord = {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    EXECUTION_TIER: "${{ matrix.execution_tier }}",
+    INCLUDE_STAGING_BREV_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && '1' || '0' }}",
+    JOBS: "${{ inputs.jobs }}",
+    MATRIX_ID: "${{ matrix.id }}",
+    TARGETS: "${{ inputs.targets }}",
+    UNIQUE_BOUNDARY: "${{ matrix.unique_boundary }}",
+  };
+  for (const [key, expected] of Object.entries(expectedClassifyEnv)) {
+    if (classifyEnv[key] !== expected) {
+      errors.push(
+        `${JOB_NAME} step '${CLASSIFY_STEP_NAME}' must bind ${key} from workflow context`,
+      );
+    }
+  }
+  for (const fragment of [
+    "date -u +%u",
+    "explicit-selection",
+    "weekly-retained",
+    "release-qualification",
+    "skipped-by-tier",
+    "GITHUB_STEP_SUMMARY",
+  ]) {
+    requireRunContains(errors, classify, CLASSIFY_STEP_NAME, fragment);
+  }
+
+  requireStepIf(errors, findStep(job, PREPARE_STEP_NAME), PREPARE_STEP_NAME, GATEWAY_TIER_RUN_GATE);
+  const run = findStep(job, RUN_STEP_NAME);
+  requireStepIf(errors, run, RUN_STEP_NAME, GATEWAY_TIER_RUN_GATE);
+  requireRunContains(errors, run, RUN_STEP_NAME, RUN_COMMAND);
+
+  const skipped = findStep(job, SKIP_STEP_NAME);
+  requireStepIf(
+    errors,
+    skipped,
+    SKIP_STEP_NAME,
+    "${{ steps.gateway_upgrade_tier.outputs.run != '1' }}",
+  );
+  requireRunContains(errors, skipped, SKIP_STEP_NAME, "skipped-by-tier");
+
+  requireStepIf(
+    errors,
+    findStep(job, UPLOAD_STEP_NAME),
+    UPLOAD_STEP_NAME,
+    "${{ always() && steps.gateway_upgrade_tier.outputs.run == '1' }}",
+  );
 
   return errors;
 }
