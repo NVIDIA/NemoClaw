@@ -10,6 +10,8 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import zlib from "node:zlib";
+import { vi } from "vitest";
+import { handleHermesBrokerCoexistencePortal } from "./helpers/hermes-tool-gateway-broker-fixture";
 import { describe, expect, test as it } from "./helpers/owned-test-resources";
 import { testTimeout } from "./helpers/timeouts";
 
@@ -28,6 +30,14 @@ const BROKER_WRAPPER = path.join(
   "src",
   "lib",
   "hermes-tool-gateway-broker.ts",
+);
+const CONTROL_CONTRACT = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "host",
+  "tool-gateway-control-contract.ts",
 );
 
 const BROKER_READINESS_TIMEOUT_MS = 15_000;
@@ -70,6 +80,45 @@ function brokerDiagnostics(child: ChildProcess, output: () => string): string {
   ].join("; ");
 }
 
+function controlRequest(
+  socketPath: string,
+  route:
+    | "/credentials/activate"
+    | "/credentials/discard"
+    | "/credentials/register"
+    | "/credentials/stage"
+    | "/credentials/status"
+    | "/credentials/unregister",
+  payload: Record<string, unknown>,
+): Promise<{ readonly body: string; readonly status: number }> {
+  const body = JSON.stringify(payload);
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        socketPath,
+        path: route,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            body: Buffer.concat(chunks).toString("utf8"),
+            status: response.statusCode ?? 0,
+          }),
+        );
+      },
+    );
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 async function waitForBrokerCondition(
   description: string,
   child: ChildProcess,
@@ -97,6 +146,14 @@ async function waitForBrokerCondition(
 }
 
 describe("Hermes managed-tool gateway broker", () => {
+  it("keeps the local client deadline beyond the broker's end-to-end deadline", () => {
+    const contract = require(CONTROL_CONTRACT);
+    expect(contract.HERMES_CLONE_CONTROL_CLIENT_TIMEOUT_MS).toBe(
+      contract.HERMES_CLONE_CONTROL_DEADLINE_MS + contract.HERMES_CLONE_CONTROL_CLIENT_MARGIN_MS,
+    );
+    expect(contract.HERMES_CLONE_CONTROL_CLIENT_MARGIN_MS).toBeGreaterThan(0);
+  });
+
   it("only auto-recovers for Hermes sandboxes with selected managed tools", () => {
     delete require.cache[require.resolve(BROKER_WRAPPER)];
     const broker = require(BROKER_WRAPPER);
@@ -125,6 +182,132 @@ describe("Hermes managed-tool gateway broker", () => {
         hermesToolGateways: ["nous-web"],
       }),
     ).toBe(true);
+    expect(
+      broker.matchesHermesToolGatewayProviderState(
+        {
+          name: "clone",
+          agent: "hermes",
+          hermesToolGateways: ["nous-web"],
+          hermesInferenceProvider: "clone-hermes-inference",
+        },
+        {
+          sandbox: "clone",
+          provider_name: "clone-hermes-tool-gateway",
+          inference_provider_name: "clone-hermes-inference",
+        },
+      ),
+    ).toBe(true);
+    expect(
+      broker.matchesHermesToolGatewayProviderState(
+        {
+          name: "clone",
+          agent: "hermes",
+          hermesToolGateways: ["nous-web"],
+          hermesInferenceProvider: "clone-hermes-inference",
+        },
+        {
+          sandbox: "clone",
+          provider_name: "clone-hermes-tool-gateway",
+          inference_provider_name: "hermes-provider",
+        },
+      ),
+    ).toBe(false);
+    expect(
+      broker.planHermesToolGatewayBrokerRefresh({
+        currentBrokerHealthy: true,
+        hashMatches: false,
+      }),
+    ).toBe("preserve-runtime-mismatch");
+    expect(
+      broker.planHermesToolGatewayBrokerRefresh({
+        currentBrokerHealthy: true,
+        hashMatches: true,
+      }),
+    ).toBe("register-with-current");
+    expect(
+      broker.planHermesToolGatewayBrokerRefresh({
+        currentBrokerHealthy: false,
+        hashMatches: false,
+      }),
+    ).toBe("start-or-restart");
+  });
+
+  it("preserves durable state when live credential unregister fails", () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const unlinkState = vi.fn();
+
+    expect(
+      broker.removeHermesToolGatewayProviderState("clone", {
+        getStatePath: () => "/test-only/clone.json",
+        controlSocketExists: () => true,
+        unregister: () => false,
+        unlinkState,
+      }),
+    ).toBe(false);
+    expect(unlinkState).not.toHaveBeenCalled();
+  });
+
+  it("removes broker state only for the exact registry identity", () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const removeState = vi.fn(() => true);
+    const entry = {
+      name: "clone",
+      agent: "hermes",
+      hermesToolGateways: [],
+      hermesInferenceProvider: "clone-hermes-inference",
+    };
+    const exactState = {
+      sandbox: "clone",
+      provider_name: "clone-hermes-tool-gateway",
+      inference_provider_name: "clone-hermes-inference",
+    };
+    const deps = {
+      getStatePath: () => "/test-only/clone.json",
+      stateExists: () => true,
+      removeState,
+    };
+
+    expect(
+      broker.removeHermesToolGatewayProviderStateForSandboxEntry(
+        { ...entry, hermesInferenceProvider: "other-hermes-inference" },
+        { ...deps, stateExists: () => false },
+      ),
+    ).toBe(false);
+    expect(
+      broker.removeHermesToolGatewayProviderStateForSandboxEntry(entry, {
+        ...deps,
+        readState: () => ({ ...exactState, sandbox: "other" }),
+      }),
+    ).toBe(false);
+    expect(removeState).not.toHaveBeenCalled();
+
+    expect(
+      broker.removeHermesToolGatewayProviderStateForSandboxEntry(entry, {
+        ...deps,
+        readState: () => exactState,
+      }),
+    ).toBe(true);
+    expect(removeState).toHaveBeenCalledExactlyOnceWith("clone");
+  });
+
+  it("probes private broker boot/control and classifies failures before clone mutation", async () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+
+    expect(() =>
+      broker.probeHermesToolGatewayBrokerStart({
+        spawnSyncImpl: () => ({ status: 2 }),
+      }),
+    ).toThrow("could not bind its runtime endpoints");
+    expect(() =>
+      broker.probeHermesToolGatewayBrokerStart({
+        spawnSyncImpl: () => ({ status: 3 }),
+      }),
+    ).toThrow("control registration path failed");
+    const probePort = await freePort();
+    expect(() => broker.probeHermesToolGatewayBrokerStart({ port: probePort })).not.toThrow();
   });
 
   it("refreshes via header, replaces upstream auth, normalizes responses, and rotates OpenShell storage", {
@@ -343,7 +526,8 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(openshellOutput).toContain(
       "provider update sandbox-hermes-tool-gateway --credential NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
     );
-    expect(openshellOutput).toContain("refresh=refresh-2");
+    expect(openshellOutput).toContain("refresh=broker-1");
+    expect(openshellOutput).not.toContain("refresh=refresh-2");
     expect(openshellOutput).toContain(
       "provider update hermes-provider --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://inference-api.nousresearch.com/v1",
     );
@@ -390,5 +574,264 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(output).not.toContain("access-2");
     expect(output).not.toContain("sandbox-secret");
     expect(output).not.toContain("agent-key-2");
+  });
+
+  it("keeps source and destination credentials live in one broker process and unregisters only the destination", {
+    timeout: BROKER_TEST_TIMEOUT_MS,
+  }, async ({ resources }) => {
+    const tmp = resources.temporaryDirectory("nemoclaw-hermes-tool-broker-coexistence-");
+    const stateDir = path.join(tmp, "state");
+    const binDir = path.join(tmp, "bin");
+    // AF_UNIX paths are short on macOS; the Vitest-owned TMPDIR itself can
+    // exceed that limit before the socket name is appended.
+    const socketDir = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-broker-"));
+    const controlSocket = path.join(socketDir, "control.sock");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(binDir, { recursive: true });
+    const openshellLog = path.join(tmp, "openshell.log");
+    const openshellBin = path.join(binDir, "openshell");
+    fs.writeFileSync(
+      openshellBin,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${openshellLog}"\nexit 0\n`,
+      { mode: 0o755 },
+    );
+
+    const writeState = (
+      sandbox: string,
+      brokerToken: string,
+      refreshToken: string,
+      inferenceProviderName: string,
+    ): void => {
+      fs.writeFileSync(
+        path.join(stateDir, `${sandbox}.json`),
+        JSON.stringify(
+          {
+            version: 1,
+            sandbox,
+            provider_name: `${sandbox}-hermes-tool-gateway`,
+            inference_provider_name: inferenceProviderName,
+            inference_credential_env: "OPENAI_API_KEY",
+            credential_env: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+            broker_token: brokerToken,
+            broker_token_sha256: sha256(brokerToken),
+            refresh_token_sha256: sha256(refreshToken),
+            client_id: "hermes-cli",
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+    };
+    writeState("source", "source-broker-token", "source-refresh-token", "hermes-provider");
+    writeState(
+      "destination",
+      "destination-broker-token",
+      "destination-refresh-token",
+      "destination-hermes-inference",
+    );
+
+    const refreshHeaders: string[] = [];
+    const portal = resources.ownServer(
+      http.createServer((req, res) =>
+        handleHermesBrokerCoexistencePortal(refreshHeaders, req, res),
+      ),
+    );
+    const portalPort = await listen(portal);
+
+    const upstreamAuthorizations: string[] = [];
+    const upstream = resources.ownServer(
+      http.createServer((req, res) => {
+        upstreamAuthorizations.push(String(req.headers.authorization || ""));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      }),
+    );
+    const upstreamPort = await listen(upstream);
+    const matrixPath = path.join(tmp, "matrix.json");
+    fs.writeFileSync(
+      matrixPath,
+      JSON.stringify({
+        "nous-web": {
+          service: "firecrawl",
+          upstream: `http://127.0.0.1:${upstreamPort}`,
+        },
+      }),
+    );
+    const brokerPort = await freePort();
+    const child = resources.ownChild(
+      spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        env: {
+          ...process.env,
+          HERMES_TOOL_GATEWAY_PORT: String(brokerPort),
+          HERMES_TOOL_GATEWAY_STATE_DIR: stateDir,
+          HERMES_TOOL_GATEWAY_MATRIX_PATH: matrixPath,
+          HERMES_TOOL_GATEWAY_CONTROL_SOCKET: controlSocket,
+          HERMES_INFERENCE_AGENT_KEY_REFRESH_INTERVAL_MS: "3600000",
+          NOUS_PORTAL_BASE_URL: `http://127.0.0.1:${portalPort}`,
+          NEMOCLAW_OPENSHELL_BIN: openshellBin,
+          NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "source-refresh-token",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    await waitForBrokerCondition(
+      "broker and private control socket",
+      child,
+      () => output,
+      async () => {
+        const response = await fetch(`http://127.0.0.1:${brokerPort}/health`, {
+          signal: AbortSignal.timeout(1_000),
+        });
+        return (
+          response.status === 200 &&
+          fs.existsSync(controlSocket) &&
+          (fs.statSync(controlSocket).mode & 0o777) === 0o600
+        );
+      },
+    );
+
+    const proxy = (brokerToken: string) =>
+      fetch(`http://127.0.0.1:${brokerPort}/firecrawl/v1/scrape`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${brokerToken}` },
+        body: "{}",
+      });
+
+    expect((await proxy("source-broker-token")).status).toBe(200);
+    await expect(
+      controlRequest(controlSocket, "/credentials/register", {
+        sandbox: "destination",
+        refresh_token: "destination-refresh-token",
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    expect((await proxy("destination-broker-token")).status).toBe(200);
+
+    const stagedPayload = {
+      sandbox: "staged",
+      refresh_token: "staged-refresh-token",
+      inference_provider_name: "staged-hermes-inference",
+      request_id: `nc_clone_${"3".repeat(32)}`,
+      deadline_at_ms: Date.now() + 120_000,
+    };
+    const stagedResponse = await controlRequest(controlSocket, "/credentials/stage", stagedPayload);
+    expect(stagedResponse.status, `${stagedResponse.body}\n${output}`).toBe(200);
+    const staged = JSON.parse(stagedResponse.body) as {
+      activation_token: string;
+      broker_token: string;
+    };
+    expect(staged.activation_token).toMatch(/^nc_activate_/u);
+    expect(staged.broker_token).toMatch(/^nc_broker_/u);
+    const repeatedStage = await controlRequest(controlSocket, "/credentials/stage", stagedPayload);
+    expect(repeatedStage.status).toBe(200);
+    expect(JSON.parse(repeatedStage.body)).toMatchObject(staged);
+    writeState("staged", staged.broker_token, "staged-refresh-token", "staged-hermes-inference");
+    await expect(
+      controlRequest(controlSocket, "/credentials/activate", {
+        sandbox: "staged",
+        activation_token: staged.activation_token,
+        deadline_at_ms: Date.now() + 120_000,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      controlRequest(controlSocket, "/credentials/activate", {
+        sandbox: "staged",
+        activation_token: staged.activation_token,
+        deadline_at_ms: Date.now() + 120_000,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      controlRequest(controlSocket, "/credentials/status", {
+        activation_token: staged.activation_token,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+
+    const discardedPayload = {
+      sandbox: "discarded",
+      refresh_token: "discarded-refresh-token",
+      inference_provider_name: "discarded-hermes-inference",
+      request_id: `nc_clone_${"4".repeat(32)}`,
+      deadline_at_ms: Date.now() + 120_000,
+    };
+    const discardedStage = await controlRequest(
+      controlSocket,
+      "/credentials/stage",
+      discardedPayload,
+    );
+    const discarded = JSON.parse(discardedStage.body) as { activation_token: string };
+    await expect(
+      controlRequest(controlSocket, "/credentials/discard", {
+        sandbox: "discarded",
+        activation_token: discarded.activation_token,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      controlRequest(controlSocket, "/credentials/discard", {
+        sandbox: "discarded",
+        activation_token: discarded.activation_token,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      controlRequest(controlSocket, "/credentials/stage", discardedPayload),
+    ).resolves.toMatchObject({ status: 400 });
+
+    await expect(
+      controlRequest(controlSocket, "/credentials/stage", {
+        sandbox: "deadline",
+        refresh_token: "deadline-refresh-token",
+        inference_provider_name: "deadline-hermes-inference",
+        request_id: `nc_clone_${"5".repeat(32)}`,
+        deadline_at_ms: Date.now() + 50,
+      }),
+    ).resolves.toMatchObject({ status: 400 });
+    await expect(
+      controlRequest(controlSocket, "/credentials/stage", {
+        sandbox: "Invalid_Sandbox",
+        refresh_token: "must-not-reach-portal",
+        inference_provider_name: "valid-hermes-inference",
+        request_id: `nc_clone_${"6".repeat(32)}`,
+        deadline_at_ms: Date.now() + 120_000,
+      }),
+    ).resolves.toMatchObject({ status: 400 });
+    expect(refreshHeaders).not.toContain("must-not-reach-portal");
+    expect((await proxy(staged.broker_token)).status).toBe(200);
+
+    await expect(
+      controlRequest(controlSocket, "/credentials/unregister", {
+        sandbox: "destination",
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    expect((await proxy("destination-broker-token")).status).toBe(401);
+    expect((await proxy("source-broker-token")).status).toBe(200);
+
+    expect(upstreamAuthorizations).toEqual([
+      "Bearer access-source",
+      "Bearer access-destination",
+      "Bearer access-staged",
+      "Bearer access-source",
+    ]);
+    expect(refreshHeaders).toEqual(
+      expect.arrayContaining(["source-refresh-token", "destination-refresh-token"]),
+    );
+    const openshellUpdates = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellUpdates).toContain(
+      "provider update hermes-provider --credential OPENAI_API_KEY",
+    );
+    expect(openshellUpdates).toContain(
+      "provider update destination-hermes-inference --credential OPENAI_API_KEY",
+    );
+    expect(openshellUpdates).toContain(
+      "provider update staged-hermes-inference --credential OPENAI_API_KEY",
+    );
+    expect(output).not.toContain("source-refresh-token");
+    expect(output).not.toContain("destination-refresh-token");
   });
 });
