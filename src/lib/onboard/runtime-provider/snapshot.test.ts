@@ -538,6 +538,7 @@ function dockerSnapshot(
     deviceRequests: null,
     devices: null,
     runtime: "runc",
+    nvidiaVisibleDevices: null,
     nativeGpuAttachmentState: "absent",
     containerId: "c".repeat(64),
     ...overrides,
@@ -577,6 +578,7 @@ describe("Docker provider snapshot evidence", () => {
         ],
         nativeGpuAttachmentState: "present",
         runtime: "nvidia",
+        nvidiaVisibleDevices: "GPU-live-0",
       }),
     );
     const observed = observeDockerRuntimeSnapshot(
@@ -599,7 +601,7 @@ describe("Docker provider snapshot evidence", () => {
         acceleration: {
           kind: "gpu",
           vendor: "nvidia",
-          devices: ["docker-device-id:GPU-live-0"],
+          devices: ["docker-device-id:GPU-live-0", "docker-nvidia-visible-device:GPU-live-0"],
         },
       },
     });
@@ -624,11 +626,12 @@ describe("Docker provider snapshot evidence", () => {
             ],
             nativeGpuAttachmentState: "present",
             runtime: "nvidia",
+            nvidiaVisibleDevices: "all",
           }),
       },
     );
     expect(allDevices.runtime.acceleration).toMatchObject({
-      devices: ["docker-device-request:nvidia:count=-1"],
+      devices: ["docker-device-request:nvidia:count=-1", "docker-nvidia-visible-devices:all"],
     });
 
     for (const snapshot of [
@@ -636,6 +639,7 @@ describe("Docker provider snapshot evidence", () => {
         deviceRequests: null,
         nativeGpuAttachmentState: "present",
         runtime: "nvidia",
+        nvidiaVisibleDevices: null,
       }),
       dockerSnapshot({
         deviceRequests: [
@@ -661,10 +665,42 @@ describe("Docker provider snapshot evidence", () => {
     }
   });
 
-  it("runs the in-sandbox managed-profile verifier during restore and fails closed on refusal", () => {
+  it("captures the NVIDIA Container Runtime selector used by Jetson", () => {
+    const observed = observeDockerRuntimeSnapshot(
+      sandbox({ openshellDriver: "docker" }),
+      "docker",
+      {
+        captureHostCommand: dockerLifecycleCapture(),
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: null,
+            devices: null,
+            nativeGpuAttachmentState: "present",
+            runtime: "nvidia",
+            nvidiaVisibleDevices: "0,GPU-live-1",
+          }),
+      },
+    );
+
+    expect(observed.runtime.acceleration).toEqual({
+      kind: "gpu",
+      vendor: "nvidia",
+      devices: ["docker-nvidia-visible-device:0", "docker-nvidia-visible-device:GPU-live-1"],
+    });
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("runs the in-sandbox %s profile verifier and fails closed on refusal", (agent) => {
+    const authority = {
+      agent,
+      profileFingerprint: managedProfile.profileFingerprint,
+    };
     const captureOpenShell = vi.fn(() => ({
       status: 0,
-      output: "[managed-startup] verified openclaw profile completion\n",
+      output: `[managed-startup] verified ${agent} profile completion\n`,
       stdout: "",
       stderr: "",
     }));
@@ -675,7 +711,7 @@ describe("Docker provider snapshot evidence", () => {
     };
     const surface = createDockerRuntimeProviderSnapshotSurface("docker", dependencies);
     if (!surface.supported) throw new Error("Docker snapshot surface must be supported");
-    const target = sandbox({ openshellDriver: "docker" });
+    const target = sandbox({ agent, openshellDriver: "docker" });
     const preflight = surface.preflight("restore", target);
     const source = snapshotSource(preflight, {
       schemaVersion: 1,
@@ -683,8 +719,8 @@ describe("Docker provider snapshot evidence", () => {
       runtime: { kind: "docker-container", handle: "c".repeat(64) },
       acceleration: { kind: "none" },
     });
-    const receipt = surface.restore(target, preflight, source, managedProfile);
-    expect(receipt.managedProfile).toEqual(managedProfile);
+    const receipt = surface.restore(target, preflight, source, authority);
+    expect(receipt.managedProfile).toEqual(authority);
     expect(captureOpenShell).toHaveBeenCalledWith(
       [
         "sandbox",
@@ -700,9 +736,9 @@ describe("Docker provider snapshot evidence", () => {
         "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
         "--verify-completion",
         "--agent",
-        "openclaw",
+        agent,
         "--profile-fingerprint",
-        managedProfile.profileFingerprint,
+        authority.profileFingerprint,
       ],
       expect.objectContaining({
         ignoreError: true,
@@ -723,7 +759,7 @@ describe("Docker provider snapshot evidence", () => {
     if (!denied.supported) throw new Error("Docker snapshot surface must be supported");
     const deniedPreflight = denied.preflight("restore", target);
     const deniedSource = snapshotSource(deniedPreflight, source.runtime);
-    expect(() => denied.restore(target, deniedPreflight, deniedSource, managedProfile)).toThrow(
+    expect(() => denied.restore(target, deniedPreflight, deniedSource, authority)).toThrow(
       /managed profile restoration could not be proven/u,
     );
   });

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
+  getSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   parseReadySandboxNames: vi.fn(),
@@ -24,10 +25,17 @@ vi.mock("../state/registry", () => ({
   isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
     entry.pendingRouteReservation === true && entry.createdAt === undefined,
   listSandboxes: mocks.listSandboxes,
+  getSandbox: mocks.getSandbox,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
   BackupResult: {},
+}));
+vi.mock("../state/mcp-lifecycle-lock", () => ({
+  withSandboxMutationLock: vi.fn((_name, callback) => callback()),
+}));
+vi.mock("./sandbox/snapshot/backup-authority", () => ({
+  backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
 }));
 vi.mock("../openshell-sandbox-list", () => ({
   captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,

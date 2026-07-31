@@ -14,12 +14,14 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -29,6 +31,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "child_process";
+import { isDeepStrictEqual } from "node:util";
 
 import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
@@ -60,7 +63,7 @@ import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
 } from "./registry/runtime-snapshot.js";
-import type { SandboxWorkloadReceipt } from "./registry/types.js";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
@@ -139,6 +142,12 @@ export interface BackupOptions {
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
+  /**
+   * Internal publication fence for provider-backed backups. The callback
+   * runs after data capture and sanitization but before the manifest becomes
+   * visible to restore and rebuild flows.
+   */
+  validateBeforePublish?: () => void;
 }
 
 export interface InstanceBackup {
@@ -190,7 +199,24 @@ export interface RestoreResult {
   error?: string;
 }
 
-export interface RecreatedSandboxRestoreOptions {
+export interface SnapshotRestoreAuthority {
+  readonly schemaVersion: 1;
+  readonly backupPath: string;
+  readonly contentSha256: string;
+}
+
+export interface SnapshotRestoreOptions {
+  /**
+   * Content identity captured from the selected manifest and every backup
+   * payload. The state layer revalidates it after local staging and before
+   * the first remote filesystem mutation.
+   */
+  readonly authority?: SnapshotRestoreAuthority;
+  /** Internal provider fence invoked at the same last-safe mutation edge. */
+  readonly validateBeforeMutation?: () => void;
+}
+
+export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   /** Agent in the newly created target image, not the backup manifest agent. */
   targetAgentType: string;
   /** Explicit capability for custom images whose config must be restored wholesale. */
@@ -204,6 +230,8 @@ interface InternalRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   discoverFreshOpenClawImagePluginInstalls?: true;
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  authority?: SnapshotRestoreAuthority;
+  validateBeforeMutation?: () => void;
 }
 
 export interface TarValidationResult {
@@ -936,6 +964,63 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   };
 }
 
+function validateSnapshotPublication(
+  backupPath: string,
+  validateBeforePublish: BackupOptions["validateBeforePublish"],
+): string | null {
+  if (!validateBeforePublish) return null;
+  try {
+    validateBeforePublish();
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    try {
+      rmSync(backupPath, { recursive: true, force: true });
+      return `Snapshot authority changed during backup: ${detail}`;
+    } catch (cleanupError) {
+      const cleanupDetail =
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      return (
+        `Snapshot authority changed during backup: ${detail}. ` +
+        `The unpublished backup at '${backupPath}' could not be removed: ${cleanupDetail}`
+      );
+    }
+  }
+}
+
+function resolveOpenClawBackupMetadata(
+  agentName: string,
+  sandbox: SandboxEntry | null,
+  configDir: string,
+): {
+  readonly reconcileImagePluginProvenance: boolean;
+  readonly pluginInstalls?: OpenClawImagePluginInstall[];
+  readonly error?: string;
+} {
+  const reconcileImagePluginProvenance =
+    agentName === "openclaw" && Boolean(sandbox?.fromDockerfile);
+  if (
+    agentName !== "openclaw" ||
+    (!reconcileImagePluginProvenance && sandbox?.openclawImagePluginInstalls === undefined)
+  ) {
+    return { reconcileImagePluginProvenance };
+  }
+  const provenance = parseOpenClawImagePluginInstalls(
+    sandbox?.openclawImagePluginInstalls,
+    configDir,
+  );
+  if (!provenance.ok) {
+    return {
+      reconcileImagePluginProvenance,
+      error: "registered OpenClaw image plugin provenance is missing or invalid",
+    };
+  }
+  return {
+    reconcileImagePluginProvenance,
+    pluginInstalls: cloneOpenClawImagePluginInstalls(provenance.pluginInstalls),
+  };
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -963,25 +1048,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   }
 
-  const reconcileOpenClawImagePluginProvenance =
-    agentName === "openclaw" && Boolean(sb?.fromDockerfile);
-  let openclawImagePluginInstalls: OpenClawImagePluginInstall[] | undefined;
-  if (
-    agentName === "openclaw" &&
-    (reconcileOpenClawImagePluginProvenance || sb?.openclawImagePluginInstalls !== undefined)
-  ) {
-    const provenance = parseOpenClawImagePluginInstalls(sb?.openclawImagePluginInstalls, dir);
-    if (!provenance.ok) {
-      return {
-        success: false,
-        backedUpDirs: [],
-        failedDirs: [],
-        backedUpFiles: [],
-        failedFiles: [],
-        error: "registered OpenClaw image plugin provenance is missing or invalid",
-      };
-    }
-    openclawImagePluginInstalls = cloneOpenClawImagePluginInstalls(provenance.pluginInstalls);
+  const openClawMetadata = resolveOpenClawBackupMetadata(agentName, sb, dir);
+  if (openClawMetadata.error) {
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: openClawMetadata.error,
+    };
   }
 
   // Validate user-supplied name and check for conflicts BEFORE creating any
@@ -1018,6 +1094,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
+  if (existsSync(backupPath)) {
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: `Snapshot path '${backupPath}' already exists; retry the backup.`,
+    };
+  }
 
   // SECURITY: Verify backup destination ancestors are not symlinks.
   // Without this check, an attacker who plants ~/.nemoclaw/rebuild-backups
@@ -1048,8 +1134,10 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     agentType: agentName,
     agentVersion: sb?.agentVersion || null,
     expectedVersion: agent.expectedVersion,
-    ...(openclawImagePluginInstalls !== undefined ? { openclawImagePluginInstalls } : {}),
-    ...(reconcileOpenClawImagePluginProvenance
+    ...(openClawMetadata.pluginInstalls !== undefined
+      ? { openclawImagePluginInstalls: openClawMetadata.pluginInstalls }
+      : {}),
+    ...(openClawMetadata.reconcileImagePluginProvenance
       ? { reconcileOpenClawImagePluginProvenance: true }
       : {}),
     stateDirs,
@@ -1073,6 +1161,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   if (stateDirs.length === 0 && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
+    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    if (publicationError) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: publicationError,
+      };
+    }
     writeManifest(backupPath, manifest);
     return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
   }
@@ -1398,6 +1497,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     manifest.stateDirs.includes(failedDir),
   );
 
+  const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+  if (publicationError) {
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: publicationError,
+    };
+  }
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;
 
@@ -1415,10 +1525,140 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
 // ── Restore ────────────────────────────────────────────────────────
 
+type SnapshotManifestAuthority = Pick<
+  RebuildManifest,
+  "sandboxName" | "timestamp" | "agentType" | "backupPath" | "workload" | "runtimeSnapshot"
+>;
+
+function snapshotManifestAuthority(manifest: RebuildManifest): SnapshotManifestAuthority {
+  return {
+    sandboxName: manifest.sandboxName,
+    timestamp: manifest.timestamp,
+    agentType: manifest.agentType,
+    backupPath: path.resolve(manifest.backupPath),
+    workload: manifest.workload,
+    runtimeSnapshot: manifest.runtimeSnapshot,
+  };
+}
+
+function hashSnapshotTree(backupPath: string): string {
+  const hash = createHash("sha256");
+  const visit = (directory: string, relativeDirectory: string): void => {
+    const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = path.posix.join(
+        relativeDirectory.split(path.sep).join(path.posix.sep),
+        entry.name,
+      );
+      const stat = lstatSync(fullPath);
+      if (stat.isDirectory()) {
+        hash.update(JSON.stringify(["directory", relativePath]), "utf8");
+        visit(fullPath, relativePath);
+        continue;
+      }
+      if (stat.isSymbolicLink()) {
+        hash.update(JSON.stringify(["symlink", relativePath, readlinkSync(fullPath)]), "utf8");
+        continue;
+      }
+      if (!stat.isFile()) {
+        throw new Error(`snapshot contains unsupported entry '${relativePath}'`);
+      }
+      hash.update(JSON.stringify(["file", relativePath, stat.size]), "utf8");
+      const descriptor = openSync(fullPath, "r");
+      try {
+        const opened = fstatSync(descriptor);
+        if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino) {
+          throw new Error(`snapshot entry '${relativePath}' changed while it was opened`);
+        }
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        for (;;) {
+          const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+          if (bytesRead === 0) break;
+          hash.update(buffer.subarray(0, bytesRead));
+        }
+        const after = fstatSync(descriptor);
+        if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+          throw new Error(`snapshot entry '${relativePath}' changed while it was read`);
+        }
+      } finally {
+        closeSync(descriptor);
+      }
+    }
+  };
+  visit(backupPath, "");
+  return hash.digest("hex");
+}
+
+/**
+ * Bind a selected, validated manifest to all bytes that restore can consume.
+ * Returns null for an unsafe path, malformed manifest, selection drift, or a
+ * payload that changes while it is being hashed.
+ */
+export function captureSnapshotRestoreAuthority(
+  backupPath: string,
+  expectedManifest?: RebuildManifest,
+): SnapshotRestoreAuthority | null {
+  try {
+    const root = path.resolve(REBUILD_BACKUPS_DIR);
+    const candidate = path.resolve(backupPath);
+    if (candidate === root || !isWithinRoot(candidate, root)) return null;
+    rejectSymlinksOnPath(candidate);
+    if (!lstatSync(path.join(candidate, "rebuild-manifest.json")).isFile()) return null;
+    const manifest = readManifest(candidate);
+    if (!manifest || path.resolve(manifest.backupPath) !== candidate) return null;
+    if (
+      expectedManifest &&
+      !isDeepStrictEqual(
+        snapshotManifestAuthority(manifest),
+        snapshotManifestAuthority(expectedManifest),
+      )
+    ) {
+      return null;
+    }
+    return {
+      schemaVersion: 1,
+      backupPath: candidate,
+      contentSha256: hashSnapshotTree(candidate),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function validateSnapshotRestoreMutation(
+  backupPath: string,
+  options: Pick<InternalRestoreOptions, "authority" | "validateBeforeMutation">,
+): string | null {
+  if (options.authority) {
+    const current = captureSnapshotRestoreAuthority(backupPath);
+    if (
+      !current ||
+      current.backupPath !== options.authority.backupPath ||
+      current.contentSha256 !== options.authority.contentSha256
+    ) {
+      return "Selected snapshot content changed before filesystem mutation";
+    }
+  }
+  try {
+    options.validateBeforeMutation?.();
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `Runtime authority changed before filesystem mutation: ${detail}`;
+  }
+}
+
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(sandboxName: string, backupPath: string): RestoreResult {
+export function restoreSandboxState(
+  sandboxName: string,
+  backupPath: string,
+  options: SnapshotRestoreOptions = {},
+): RestoreResult {
   const target = registry.getSandbox(sandboxName);
   if (!target) {
     return {
@@ -1433,6 +1673,10 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: String(target.agent || "openclaw"),
     ...(target.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+    ...(options.authority ? { authority: options.authority } : {}),
+    ...(options.validateBeforeMutation
+      ? { validateBeforeMutation: options.validateBeforeMutation }
+      : {}),
   });
 }
 
@@ -1451,6 +1695,10 @@ export function restoreRecreatedSandboxState(
       ? { discoverFreshOpenClawImagePluginInstalls: true }
       : {}),
     freshOpenClawImagePluginInstalls: options.freshOpenClawImagePluginInstalls,
+    ...(options.authority ? { authority: options.authority } : {}),
+    ...(options.validateBeforeMutation
+      ? { validateBeforeMutation: options.validateBeforeMutation }
+      : {}),
   });
 }
 
@@ -1714,6 +1962,11 @@ function restoreSandboxStateInternal(
         };
       }
       restoreTar = tarResult.stdout;
+    }
+
+    const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+    if (mutationAuthorityError) {
+      return failRestoreContract(mutationAuthorityError);
     }
 
     // Remove existing state dirs before extracting so stale files from later
