@@ -912,6 +912,7 @@ test("mcp-bridge", {
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactPrefix: "openclaw",
     hostSecret: HOST_SECRET,
+    progress,
   });
   await assertBridgeInfrastructure(host, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
@@ -1214,6 +1215,7 @@ mcpBridgeShardTest("hermes")(
       sandboxName: HERMES_SANDBOX_NAME,
       artifactPrefix: "hermes",
       hostSecret: HOST_SECRET,
+      progress,
     });
     await assertBridgeInfrastructure(host, sandbox, {
       sandboxName: HERMES_SANDBOX_NAME,
@@ -1401,6 +1403,7 @@ mcpBridgeShardTest("deepagents")(
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactPrefix: "deepagents",
       hostSecret: HOST_SECRET,
+      progress,
     });
     await assertBridgeInfrastructure(host, sandbox, {
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
