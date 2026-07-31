@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 import { filterEnabledPlanEntries } from "./applier/plan-filter";
 import type {
@@ -78,6 +80,22 @@ function buildFile(
 }
 
 describe("post-agent-install messaging selection", () => {
+  it("loads through Node's direct TypeScript ESM path used by image builds", () => {
+    const moduleUrl = new URL("./post-agent-install-selection.ts", import.meta.url).href;
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--input-type=module",
+        "--eval",
+        `import(${JSON.stringify(moduleUrl)})`,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect({ status: result.status, signal: result.signal }).toEqual({ status: 0, signal: null });
+  });
+
   it("uses the shared enabled-channel contract and preserves canonical ordering", () => {
     const selection = plan({
       channels: [channel(" Discord "), channel(" TeLeGrAm "), channel("DISCORD")],
