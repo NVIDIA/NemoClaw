@@ -176,6 +176,10 @@ describe("PR review advisor comment CLI", () => {
       partial: false,
       confidence: "high",
       counts: { blockers: 1, warnings: 1, suggestions: 1 },
+      e2e: {
+        recommended: [{ id: "security-posture" }],
+        optional: [],
+      },
     });
     expect(completed.fingerprints?.findings).toMatch(/^[0-9a-f]{64}$/u);
     expect(completed.fingerprints?.e2e).toMatch(/^[0-9a-f]{64}$/u);
@@ -280,7 +284,7 @@ describe("PR review advisor comment CLI", () => {
     }
   });
 
-  it("renders sanitized model-lane status and structural disagreement only", () => {
+  it("renders sanitized model-lane status and visible E2E disagreements (#8016)", () => {
     const result = {
       version: 1,
       headSha: "a".repeat(40),
@@ -316,7 +320,24 @@ describe("PR review advisor comment CLI", () => {
       summary: { confidence: "low", oneLine: "do not publish this summary" },
       findings: [{ severity: "warning", title: "do not publish this finding" }],
       e2e: {
-        coverage: { requiredTests: [{ id: "security-posture" }], optionalTests: [] },
+        coverage: {
+          requiredTests: [
+            {
+              id: "full-e2e",
+              reason: "Cover the shipped startup chain. @team </details>",
+            },
+          ],
+          optionalTests: [
+            {
+              id: "full-e2e",
+              reason: "do not publish a duplicate selector",
+            },
+            {
+              id: "not-allowlisted",
+              reason: "do not publish an unknown selector",
+            },
+          ],
+        },
         targets: { required: [], optional: [] },
       },
     };
@@ -343,8 +364,69 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).toContain("severity counts match");
     expect(comment).not.toContain("do not publish this summary");
     expect(comment).not.toContain("do not publish this finding");
+    expect(comment).toContain(
+      "<summary>1 additional E2E selection from the second opinion</summary>",
+    );
+    expect(comment).toContain(
+      "<code>full-e2e</code>: The completed second-opinion lane identified E2E coverage that the primary lane omitted.",
+    );
+    expect(comment).not.toContain("Cover the shipped startup chain");
+    expect(comment).not.toContain("do not publish a duplicate selector");
+    expect(comment).not.toContain("not-allowlisted");
+    expect(comment).not.toContain("do not publish an unknown selector");
+    expect(comment).toContain(
+      "Second-opinion E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate.",
+    );
     expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
     expect(comment.match(/<code>vllm-docker-storage<\/code>/gu)).toHaveLength(1);
+    expect(comment.match(/<code>full-e2e<\/code>/gu)).toHaveLength(1);
+
+    const completedPartialComment = buildComment({
+      summary: "# ignored\n",
+      result,
+      lanes: {
+        primary,
+        secondOpinion: { ...secondOpinion, partial: true },
+      },
+    });
+    expect(completedPartialComment).not.toContain(
+      "additional E2E selection from the second opinion",
+    );
+    expect(completedPartialComment).not.toContain("<code>full-e2e</code>");
+
+    const malformedSecondOpinionResult = {
+      ...secondOpinionResult,
+      e2e: {
+        coverage: {
+          requiredTests: [null, "invalid", { id: "full-e2e", reason: "valid coverage" }],
+          optionalTests: [],
+        },
+        targets: {
+          required: [
+            null,
+            "invalid",
+            {
+              id: "security-posture",
+              workflow: "e2e.yaml",
+              selectorType: "job",
+              required: true,
+              reason: "valid target",
+            },
+          ],
+          optional: [],
+        },
+      },
+    };
+    expect(
+      normalizeAdvisorLaneReport(
+        malformedSecondOpinionResult,
+        malformedSecondOpinionResult,
+        result.headSha,
+      ).e2e,
+    ).toEqual({
+      recommended: [{ id: "security-posture" }, { id: "full-e2e" }],
+      optional: [],
+    });
 
     const partialComment = buildComment({
       summary: "# ignored\n",
@@ -365,5 +447,6 @@ describe("PR review advisor comment CLI", () => {
     expect(partialComment).not.toContain("do not publish this provider failure");
     expect(partialComment).not.toContain("do not publish this summary");
     expect(partialComment).not.toContain("do not publish this finding");
+    expect(partialComment).not.toContain("full-e2e");
   });
 });

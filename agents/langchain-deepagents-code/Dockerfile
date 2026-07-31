@@ -117,6 +117,7 @@ ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_REASONING_EFFORT=
 ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled
 ARG NEMOCLAW_BUILD_ID=default
@@ -131,6 +132,10 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
     && case "$NEMOCLAW_DCODE_AUTO_APPROVAL" in \
         disabled|thread-opt-in) ;; \
         *) echo "ERROR: NEMOCLAW_DCODE_AUTO_APPROVAL must be disabled or thread-opt-in" >&2; exit 1 ;; \
+    esac \
+    && case "$NEMOCLAW_REASONING_EFFORT" in \
+        ""|low|medium|high) ;; \
+        *) echo "ERROR: NEMOCLAW_REASONING_EFFORT must be empty, low, medium, or high" >&2; exit 1 ;; \
     esac
 
 # The launcher and startup script read these root-owned files instead of
@@ -143,8 +148,10 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
     && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
     && printf '%s\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval \
-    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
-    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
+    && printf '%s\n' "$NEMOCLAW_REASONING_EFFORT" > /usr/local/share/nemoclaw/dcode-reasoning-effort \
+    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
+    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
+    && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && test "$empty_prompt_status" -eq 2 \
@@ -164,6 +171,7 @@ ENV HOME=/sandbox \
     NEMOCLAW_UPSTREAM_ENDPOINT_URL=${NEMOCLAW_UPSTREAM_ENDPOINT_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_REASONING_EFFORT=${NEMOCLAW_REASONING_EFFORT} \
     NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1 \
@@ -239,6 +247,8 @@ RUN set -eu; \
         "vim-tiny=2:9.2.0782-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
     test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
@@ -248,6 +258,9 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
+    test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \

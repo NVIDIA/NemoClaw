@@ -39,6 +39,7 @@ export interface RebuildDestroyPhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
 }
@@ -229,6 +230,7 @@ export async function runRebuildDestroyPhase(
     bail,
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
+    validateAtDeleteEdge,
     onDeleted,
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
@@ -353,6 +355,35 @@ export async function runRebuildDestroyPhase(
         : "Sandbox delete target changed during rebuild preparation.",
     );
     return null;
+  }
+
+  if (validateAtDeleteEdge) {
+    let validation: RebuildDeleteValidationResult;
+    try {
+      validation = validateAtDeleteEdge();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Unexpected delete-edge validation failure: ${redactFull(detail)}`);
+      validation = {
+        ok: false,
+        message: "Replacement validation failed before sandbox deletion.",
+      };
+    }
+    if (!validation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+      );
+      relockShieldsIfNeeded(true);
+      bail(
+        mcpRecoveryFailure
+          ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : validation.message,
+        validation.code,
+      );
+      return null;
+    }
   }
 
   log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);

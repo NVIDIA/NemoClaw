@@ -215,7 +215,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 
       expect(readTextFileSnapshot(fixture.configPath)).toBe(fixture.trustedConfig);
       expect(mode(fixture.sandboxDir)).toBe(0o1775);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
       expect(mode(fixture.configPath)).toBe(0o444);
       expect(strictHashIsValid(fixture)).toBe(true);
       expect(fs.existsSync(fixture.statePath)).toBe(false);
@@ -318,6 +318,9 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 
   it("preserves an already trusted shields-up directory posture across seal and unseal", () => {
     const fixture = createRestartFixture();
+    // 0755 is the pre-#7865 locked root. Sandboxes locked by an older CLI keep
+    // it until the next `shields up` repairs them, so seal/unseal must still
+    // classify and restore it rather than refusing the tree.
     fs.chmodSync(fixture.sandboxDir, 0o755);
     fs.chmodSync(fixture.hermesDir, 0o755);
     fs.chmodSync(fixture.configPath, 0o444);

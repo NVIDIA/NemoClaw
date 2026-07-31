@@ -48,6 +48,15 @@ export interface OpenShellGatewayUserServiceStartResult {
   started: boolean;
 }
 
+export interface OpenShellGatewayUserServiceStopResult {
+  attempted: boolean;
+  manager?: "homebrew" | "systemd";
+  reason?: string;
+  serviceName?: string;
+  statusCommand?: string;
+  stopped: boolean;
+}
+
 export interface SpawnSyncLikeResult {
   error?: Error;
   status: number | null;
@@ -198,6 +207,19 @@ function runBrew(
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
   return runCommand("brew", args, opts);
+}
+
+function runStopService(
+  service: OpenShellGatewayUserServiceTarget,
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+) {
+  return service.manager === "homebrew"
+    ? runBrew(["services", "stop", service.serviceName], opts)
+    : runSystemctlUser(["stop", service.serviceName], opts);
+}
+
+function stopServiceCommandName(service: OpenShellGatewayUserServiceTarget): string {
+  return service.manager === "homebrew" ? "brew" : "systemctl";
 }
 
 function readTextFileIfPresent(
@@ -539,7 +561,7 @@ export function startOpenShellGatewayUserService(
       reason: "service not installed",
     };
   }
-  const command = service.manager === "homebrew" ? "brew" : "systemctl";
+  const command = stopServiceCommandName(service);
   if (!commandExists(command)) {
     return serviceFailure(service, `${command} is not available`, true);
   }
@@ -590,10 +612,7 @@ export function startOpenShellGatewayUserService(
   );
   if (envFailure) return envFailure;
 
-  const stop =
-    service.manager === "homebrew"
-      ? runBrew(["services", "stop", service.serviceName], { env, spawnSyncImpl })
-      : runSystemctlUser(["stop", service.serviceName], { env, spawnSyncImpl });
+  const stop = runStopService(service, { env, spawnSyncImpl });
   if (!stop.ok) {
     const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
     return serviceFailure(
@@ -640,6 +659,40 @@ export function startOpenShellGatewayUserService(
     started: true,
     statusCommand: service.statusCommand,
   };
+}
+
+export function stopOpenShellGatewayUserService(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): OpenShellGatewayUserServiceStopResult {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux" && platform !== "darwin") {
+    return { attempted: false, stopped: false, reason: "unsupported platform" };
+  }
+  const env = opts.env ?? process.env;
+  const home = effectiveHome(opts.home, opts.env);
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  const service = resolveOpenShellGatewayUserService({ ...opts, env, home });
+  if (!service) return { attempted: false, stopped: false, reason: "service not installed" };
+
+  const describe = (stopped: boolean, reason?: string): OpenShellGatewayUserServiceStopResult => ({
+    attempted: true,
+    manager: service.manager,
+    serviceName: service.serviceName,
+    statusCommand: service.statusCommand,
+    stopped,
+    ...(reason === undefined ? {} : { reason }),
+  });
+  const command = stopServiceCommandName(service);
+  if (!commandExists(command)) return describe(false, `${command} is not available`);
+  if (service.manager === "systemd") {
+    const identity = validateSystemdServiceIdentity(service, { env, spawnSyncImpl });
+    if (!identity.ok) return describe(false, identity.reason ?? "service identity is invalid");
+  }
+  const stop = runStopService(service, { env, spawnSyncImpl });
+  if (stop.ok) return describe(true);
+  const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
+  return describe(false, `${prefix} ${service.serviceName} failed: ${stop.reason}`);
 }
 
 export async function startPackageManagedDockerDriverGateway({
