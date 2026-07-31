@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-managed-route";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
@@ -64,7 +64,7 @@ describe("runInferenceSet Hermes routing", () => {
         {
           name: "hermes-provider",
           base_url: "https://inference.local/v1",
-          api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+          api_key: HERMES_PROXY_REWRITE_SENTINEL,
           discover_models: true,
         },
       ],
@@ -72,13 +72,13 @@ describe("runInferenceSet Hermes routing", () => {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
         base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
       },
       providers: {
         "hermes-provider": {
           name: "hermes-provider",
           api: "https://inference.local/v1",
-          api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+          api_key: HERMES_PROXY_REWRITE_SENTINEL,
           default_model: "openai/gpt-5.4-mini",
           discover_models: true,
         },
@@ -376,7 +376,7 @@ describe("runInferenceSet Hermes routing", () => {
       default: "claude-sonnet-proxy",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     // The upstream annotation must track the selected provider together with
     // the API-family field, so the two cannot drift apart on later switches.
@@ -534,7 +534,7 @@ describe("runInferenceSet Hermes routing", () => {
       default: "anthropic.claude-sonnet-4-6-20260101-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(result).toMatchObject({
       providerKey: "inference",

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-managed-route";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
@@ -32,7 +32,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "openai/gpt-5.4-mini",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(config._nemoclaw_upstream).toEqual({
       provider: "hermes-provider",
@@ -43,7 +43,7 @@ describe("patchHermesInferenceConfig", () => {
       "hermes-provider": {
         name: "hermes-provider",
         api: "https://inference.local/v1",
-        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
         default_model: "openai/gpt-5.4-mini",
         discover_models: true,
       },
@@ -52,7 +52,7 @@ describe("patchHermesInferenceConfig", () => {
       {
         name: "hermes-provider",
         base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
         discover_models: true,
       },
     ]);
@@ -79,7 +79,7 @@ describe("patchHermesInferenceConfig", () => {
 
       patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
 
-      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
     }
   });
 
@@ -104,7 +104,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "claude-sonnet-4-6",
       provider: "custom",
       base_url: "https://inference.local",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
       api_mode: "anthropic_messages",
     });
   });
@@ -125,7 +125,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
   });
 
@@ -149,7 +149,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "anthropic.claude-3-5-sonnet-20240620-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
   });
 });

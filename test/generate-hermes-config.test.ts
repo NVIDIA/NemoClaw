@@ -14,7 +14,7 @@ import {
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
 import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-managed-route";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../src/lib/hermes-managed-route";
 import {
   applyCompatibleEndpointContextWindow,
   resetCompatibleEndpointContextWindowAutoState,
@@ -447,7 +447,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(config.platforms).toEqual({
       api_server: {
@@ -530,7 +530,7 @@ describe("agents/hermes/generate-config.ts", () => {
       "nvidia-prod": {
         name: "nvidia-prod",
         api: "https://inference.local/v1",
-        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
         default_model: "nvidia/nemotron-3-super-120b-a12b",
         discover_models: true,
       },
@@ -539,7 +539,7 @@ describe("agents/hermes/generate-config.ts", () => {
       {
         name: "nvidia-prod",
         base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        api_key: HERMES_PROXY_REWRITE_SENTINEL,
         discover_models: true,
       },
     ]);
@@ -681,7 +681,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
       api_mode: "anthropic_messages",
     });
   });
@@ -699,7 +699,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "nvidia/nvidia/nemotron-3-super-v3",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(config._nemoclaw_upstream).toEqual({
       provider: "compatible-anthropic-endpoint",
@@ -732,13 +732,13 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(typeof config.model.api_key).toBe("string");
     expect(config.model.api_key.startsWith("sk-")).toBe(true);
     expect(config.model.api_key).not.toBe("no-key-required");
-    expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+    expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
   it("keeps generated and inference-switch Hermes proxy placeholders in sync", () => {
     const { config } = runConfigScript();
 
-    expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+    expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
   it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", async () => {
@@ -1125,7 +1125,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "moonshotai/kimi-k2.6",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(config.kimi).toBeUndefined();
     expect(config.openclawPlugins).toBeUndefined();
