@@ -34,6 +34,7 @@ const OLD_ID = "2".repeat(64);
 const NEW_ID = "3".repeat(64);
 const CONFIG_ID = `sha256:${"4".repeat(64)}`;
 const MANIFEST = `sha256:${"5".repeat(64)}` as const;
+const FINALIZATION_AUTHORITY = "6".repeat(64);
 const REPOSITORY = "registry.example/nemoclaw/hermes";
 const IMAGE = `${REPOSITORY}@${MANIFEST}`;
 const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "supervise"] as const;
@@ -423,6 +424,7 @@ describe("Docker managed bootstrap adapter", () => {
     await expect(
       adapter.finalizeBootstrap({
         outcome: "commit",
+        authorityFingerprint: FINALIZATION_AUTHORITY,
         handle,
         snapshot,
         prepared,
@@ -430,7 +432,10 @@ describe("Docker managed bootstrap adapter", () => {
         replacement,
         completion: completion(replacement),
       }),
-    ).resolves.toMatchObject({ outcome: "committed" });
+    ).resolves.toMatchObject({
+      outcome: "committed",
+      authorityFingerprint: FINALIZATION_AUTHORITY,
+    });
     expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
       fake.events.indexOf(`rm:${OLD_ID}`),
     );
@@ -464,6 +469,7 @@ describe("Docker managed bootstrap adapter", () => {
     await expect(
       restarted.finalizeBootstrap({
         outcome: "rollback",
+        authorityFingerprint: FINALIZATION_AUTHORITY,
         handle,
         snapshot,
         prepared,
@@ -504,6 +510,7 @@ describe("Docker managed bootstrap adapter", () => {
     await expect(
       createDockerManagedBootstrapAdapter(fake.deps).finalizeBootstrap({
         outcome: "rollback",
+        authorityFingerprint: FINALIZATION_AUTHORITY,
         handle,
         snapshot,
         prepared,
@@ -539,6 +546,7 @@ describe("Docker managed bootstrap adapter", () => {
     await expect(
       adapter.finalizeBootstrap({
         outcome: "rollback",
+        authorityFingerprint: FINALIZATION_AUTHORITY,
         handle,
         snapshot,
         prepared,
@@ -578,6 +586,7 @@ describe("Docker managed bootstrap adapter", () => {
     await expect(
       adapter.finalizeBootstrap({
         outcome: "rollback",
+        authorityFingerprint: FINALIZATION_AUTHORITY,
         handle,
         snapshot,
         prepared,
@@ -611,6 +620,7 @@ describe("Docker managed bootstrap adapter", () => {
     await expect(
       adapter.finalizeBootstrap({
         outcome: "rollback",
+        authorityFingerprint: FINALIZATION_AUTHORITY,
         handle,
         snapshot,
         prepared,
@@ -638,6 +648,12 @@ describe("Docker managed bootstrap adapter", () => {
         plan,
         bootstrapIdentity: IDENTITY,
         heldWorkloadArgv: heldArgv,
+        createReceipt: {
+          sandbox,
+          ready: true,
+          readyAt: "2026-07-31T12:00:00.000Z",
+        },
+        authorityFingerprint: FINALIZATION_AUTHORITY,
       }),
     ).rejects.toMatchObject({
       name: "ManagedBootstrapOwnerCleanupRequiredError",
@@ -647,5 +663,45 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.original.State?.Running).toBe(false);
     expect(fake.events).not.toContain(`rm:${OLD_ID}`);
     expect(vi.mocked(fake.deps.runOpenshell!)).not.toHaveBeenCalled();
+  });
+
+  it("refuses incomplete-create cleanup when the durable receipt identifies another owner", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { plan } = authority();
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan,
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv,
+        createReceipt: {
+          sandbox: { ...sandbox, sandboxId: "sandbox-future" },
+          ready: true,
+          readyAt: "2026-07-31T12:00:00.000Z",
+        },
+        authorityFingerprint: FINALIZATION_AUTHORITY,
+      }),
+    ).rejects.toThrow("refused a same-name durable owner");
+    expect(fake.deps.dockerStop).not.toHaveBeenCalled();
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unbound finalization fingerprint before incomplete-create mutation", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { plan } = authority();
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan,
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv,
+        createReceipt: null,
+        authorityFingerprint: "not-a-fingerprint",
+      }),
+    ).rejects.toThrow("fingerprint must be lowercase SHA-256");
+    expect(fake.deps.dockerRun).not.toHaveBeenCalled();
+    expect(fake.deps.dockerStop).not.toHaveBeenCalled();
   });
 });

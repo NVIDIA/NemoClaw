@@ -91,6 +91,7 @@ import {
 } from "./envelope";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
+const AUTHORITY_FINGERPRINT_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ARGV_BYTES = 128 * 1024;
 const MAX_CONTAINER_NAME_LENGTH = 253;
@@ -182,6 +183,14 @@ function commandDetail(result: DockerCommandResult): string {
   )}`
     .trim()
     .slice(-1200);
+}
+
+function assertFinalizationAuthorityFingerprint(value: string): void {
+  if (!AUTHORITY_FINGERPRINT_RE.test(value)) {
+    throw new Error(
+      "Managed bootstrap Docker finalization authority fingerprint must be lowercase SHA-256.",
+    );
+  }
 }
 
 function isExactMissingDockerContainer(containerId: string, result: DockerCommandResult): boolean {
@@ -1364,6 +1373,19 @@ function resolveIncompleteCreateSandbox(
     throw new Error("Managed bootstrap Docker incomplete-create cleanup received another driver.");
   }
   assertManagedBootstrapIdentity(input.bootstrapIdentity);
+  const exactOwner = input.createReceipt?.sandbox ?? null;
+  if (
+    input.createReceipt !== null &&
+    (input.createReceipt.ready !== true ||
+      exactOwner === null ||
+      exactOwner.sandboxName !== input.plan.sandboxName ||
+      exactOwner.driverId !== input.plan.driverId ||
+      exactOwner.sandboxId.length === 0)
+  ) {
+    throw new Error(
+      "Managed bootstrap Docker incomplete-create receipt does not identify the planned durable owner.",
+    );
+  }
   const query = queryOpenShellDockerSandboxContainers(input.plan.sandboxName, deps);
   if (!query.ok) {
     throw new Error(`Managed bootstrap Docker incomplete-create discovery failed: ${query.error}`);
@@ -1388,6 +1410,16 @@ function resolveIncompleteCreateSandbox(
     sandboxId,
     driverId: input.plan.driverId,
   });
+  if (
+    exactOwner !== null &&
+    (sandbox.sandboxName !== exactOwner.sandboxName ||
+      sandbox.sandboxId !== exactOwner.sandboxId ||
+      sandbox.driverId !== exactOwner.driverId)
+  ) {
+    throw new Error(
+      "Managed bootstrap Docker incomplete-create cleanup refused a same-name durable owner.",
+    );
+  }
   assertImage(inspect, input.plan.image, deps);
   assertMetadata(inspect, sandbox, input.plan.metadata);
   assertHeldCommand(inspect, input.heldWorkloadArgv, input.bootstrapIdentity);
@@ -1696,12 +1728,14 @@ export function createDockerManagedBootstrapAdapter(
   const rollbackTombstones = new Map<string, DockerBootstrapRollbackTombstone>();
   const completedRollback = (
     handle: ManagedBootstrapHeldWorkloadHandle,
+    authorityFingerprint: string,
     alreadyRolledBack: boolean,
   ): ManagedBootstrapFinalizationReceipt => {
     const receipt = Object.freeze({
       schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
       sandbox: handle.sandbox,
       bootstrapIdentity: handle.bootstrapIdentity,
+      authorityFingerprint,
       outcome: "rolled-back",
       restoredRuntimeId: null,
       restoredSpecHash: null,
@@ -1709,7 +1743,7 @@ export function createDockerManagedBootstrapAdapter(
       alreadyRolledBack,
       finalizedAt: deps.now().toISOString(),
     } satisfies ManagedBootstrapFinalizationReceipt);
-    rollbackTombstones.set(handle.bootstrapIdentity, {
+    rollbackTombstones.set(authorityFingerprint, {
       profileFingerprint: handle.plan.profile.fingerprint,
       imageReference: expectedImageReference(
         handle.plan.image.repository,
@@ -1721,14 +1755,17 @@ export function createDockerManagedBootstrapAdapter(
   };
   const priorRollback = (
     handle: ManagedBootstrapHeldWorkloadHandle,
+    authorityFingerprint: string,
   ): ManagedBootstrapFinalizationReceipt | null => {
-    const tombstone = rollbackTombstones.get(handle.bootstrapIdentity);
+    const tombstone = rollbackTombstones.get(authorityFingerprint);
     if (!tombstone) return null;
     const receipt = tombstone.receipt;
     if (
       receipt.sandbox.sandboxName !== handle.sandbox.sandboxName ||
       receipt.sandbox.sandboxId !== handle.sandbox.sandboxId ||
       receipt.sandbox.driverId !== handle.sandbox.driverId ||
+      receipt.bootstrapIdentity !== handle.bootstrapIdentity ||
+      receipt.authorityFingerprint !== authorityFingerprint ||
       tombstone.profileFingerprint !== handle.plan.profile.fingerprint ||
       tombstone.imageReference !==
         expectedImageReference(handle.plan.image.repository, handle.plan.image.manifestDigest)
@@ -1741,6 +1778,7 @@ export function createDockerManagedBootstrapAdapter(
     });
   };
   const rollbackBootstrapNow = ({
+    authorityFingerprint,
     handle,
     snapshot,
     prepared,
@@ -1748,6 +1786,7 @@ export function createDockerManagedBootstrapAdapter(
     replacement,
     sharedStateAlreadyRolledBack = false,
   }: {
+    readonly authorityFingerprint: string;
     readonly handle: ManagedBootstrapHeldWorkloadHandle;
     readonly snapshot: ManagedBootstrapObservedSnapshot | null;
     readonly prepared: ManagedBootstrapPreparedReplacementHandle | null;
@@ -1755,11 +1794,11 @@ export function createDockerManagedBootstrapAdapter(
     readonly replacement: ManagedBootstrapReplacementHandle | null;
     readonly sharedStateAlreadyRolledBack?: boolean;
   }): ManagedBootstrapFinalizationReceipt => {
-    const finalized = priorRollback(handle);
+    const finalized = priorRollback(handle, authorityFingerprint);
     if (finalized) return finalized;
     const journal = deps.journalStore.load(handle.bootstrapIdentity);
     if (
-      committedTransactions.has(handle.bootstrapIdentity) ||
+      committedTransactions.has(authorityFingerprint) ||
       journal?.phase === "shared-state-committed"
     ) {
       throw new ManagedBootstrapDurableCommitCleanupPendingError({
@@ -1778,7 +1817,7 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       removeOwnedWorkload(handle.sandbox, deps);
-      return completedRollback(handle, false);
+      return completedRollback(handle, authorityFingerprint, false);
     }
 
     const preparedAuthority = resolvePreparedRollbackAuthority({
@@ -1859,7 +1898,7 @@ export function createDockerManagedBootstrapAdapter(
         }
       }
       removeOwnedWorkload(handle.sandbox, deps, snapshot.runtimeId);
-      return completedRollback(handle, true);
+      return completedRollback(handle, authorityFingerprint, true);
     }
 
     if (!preparedAuthority || !durablePreparation) {
@@ -1914,7 +1953,7 @@ export function createDockerManagedBootstrapAdapter(
       }
       removeDockerBootstrapJournalDurably(journal, deps);
       removeOwnedWorkload(handle.sandbox, deps, journal.originalRuntimeId);
-      return completedRollback(handle, false);
+      return completedRollback(handle, authorityFingerprint, false);
     }
 
     if (journal.phase !== "cutover" && journal.phase !== "rollback-authorized") {
@@ -2094,17 +2133,18 @@ export function createDockerManagedBootstrapAdapter(
     }
     removeDockerBootstrapJournalDurably(activeJournal, deps);
     removeOwnedWorkload(handle.sandbox, deps, activeJournal.originalRuntimeId);
-    return completedRollback(handle, false);
+    return completedRollback(handle, authorityFingerprint, false);
   };
   const commitBootstrapNow = (
     receipt: ManagedBootstrapCompletionReceipt,
     transaction: DockerBootstrapTransaction,
     input: {
+      readonly authorityFingerprint: string;
       readonly sharedStateStatus: "committed" | "none";
       readonly sharedStateTransaction: ReturnType<typeof managedSharedStateTransaction>;
     },
   ): void => {
-    if (committedTransactions.has(receipt.bootstrapIdentity)) return;
+    if (committedTransactions.has(input.authorityFingerprint)) return;
     if (
       transaction.phase !== "shared-state-committed" ||
       transaction.replacementRuntimeId !== receipt.runtimeId ||
@@ -2196,11 +2236,12 @@ export function createDockerManagedBootstrapAdapter(
       }
     }
     removeDockerBootstrapJournalDurably(transaction, deps);
-    committedTransactions.add(receipt.bootstrapIdentity);
+    committedTransactions.add(input.authorityFingerprint);
   };
   const finalizeBootstrap = async (
     input: Parameters<ManagedBootstrapAdapter["finalizeBootstrap"]>[0],
   ): Promise<ManagedBootstrapFinalizationReceipt> => {
+    assertFinalizationAuthorityFingerprint(input.authorityFingerprint);
     if (input.outcome === "rollback") {
       return rollbackBootstrapNow(input);
     }
@@ -2225,11 +2266,12 @@ export function createDockerManagedBootstrapAdapter(
     let journal = deps.journalStore.load(handle.bootstrapIdentity);
 
     if (!journal) {
-      if (committedTransactions.has(completion.bootstrapIdentity)) {
+      if (committedTransactions.has(input.authorityFingerprint)) {
         return Object.freeze({
           schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
           sandbox: handle.sandbox,
           bootstrapIdentity: handle.bootstrapIdentity,
+          authorityFingerprint: input.authorityFingerprint,
           outcome: "committed",
           restoredRuntimeId: null,
           restoredSpecHash: null,
@@ -2271,11 +2313,12 @@ export function createDockerManagedBootstrapAdapter(
           detail: "the retired-journal replacement does not match the exact completion receipt",
         });
       }
-      committedTransactions.add(completion.bootstrapIdentity);
+      committedTransactions.add(input.authorityFingerprint);
       return Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox: handle.sandbox,
         bootstrapIdentity: handle.bootstrapIdentity,
+        authorityFingerprint: input.authorityFingerprint,
         outcome: "committed",
         restoredRuntimeId: null,
         restoredSpecHash: null,
@@ -2353,6 +2396,7 @@ export function createDockerManagedBootstrapAdapter(
             }
             journal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
             await rollbackBootstrapNow({
+              authorityFingerprint: input.authorityFingerprint,
               handle,
               snapshot,
               prepared,
@@ -2377,6 +2421,7 @@ export function createDockerManagedBootstrapAdapter(
     }
 
     commitBootstrapNow(completion, journal, {
+      authorityFingerprint: input.authorityFingerprint,
       sharedStateStatus: sharedStatus === "committed" ? "committed" : "none",
       sharedStateTransaction: sharedTransaction,
     });
@@ -2384,6 +2429,7 @@ export function createDockerManagedBootstrapAdapter(
       schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
       sandbox: handle.sandbox,
       bootstrapIdentity: handle.bootstrapIdentity,
+      authorityFingerprint: input.authorityFingerprint,
       outcome: "committed",
       restoredRuntimeId: null,
       restoredSpecHash: null,
@@ -2432,12 +2478,14 @@ export function createDockerManagedBootstrapAdapter(
     },
 
     async cleanupIncompleteCreate(input) {
+      assertFinalizationAuthorityFingerprint(input.authorityFingerprint);
       const { sandbox, runtimeId } = resolveIncompleteCreateSandbox(input, deps);
       removeOwnedWorkload(sandbox, deps, runtimeId);
       return Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox,
         bootstrapIdentity: input.bootstrapIdentity,
+        authorityFingerprint: input.authorityFingerprint,
         outcome: "rolled-back",
         restoredRuntimeId: null,
         restoredSpecHash: null,

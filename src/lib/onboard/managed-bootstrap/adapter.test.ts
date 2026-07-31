@@ -184,11 +184,13 @@ function completionFor(
 function rolledBackReceipt(
   handle: ManagedBootstrapHeldWorkloadHandle,
   snapshot: ManagedBootstrapObservedSnapshot | null,
+  authorityFingerprint: string,
 ): ManagedBootstrapFinalizationReceipt {
   return {
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandbox: handle.sandbox,
     bootstrapIdentity: IDENTITY,
+    authorityFingerprint,
     outcome: "rolled-back",
     restoredRuntimeId: snapshot?.runtimeId ?? null,
     restoredSpecHash: snapshot?.specHash ?? null,
@@ -198,11 +200,12 @@ function rolledBackReceipt(
   };
 }
 
-function cleanupReceipt(): ManagedBootstrapFinalizationReceipt {
+function cleanupReceipt(authorityFingerprint: string): ManagedBootstrapFinalizationReceipt {
   return {
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandbox: sandbox(),
     bootstrapIdentity: IDENTITY,
+    authorityFingerprint,
     outcome: "rolled-back",
     restoredRuntimeId: null,
     restoredSpecHash: null,
@@ -240,9 +243,9 @@ function adapterFor(agent: ManagedStartupAgent): Fixture {
       raw.handle = handleFor(request, receipt);
       return raw.handle;
     }),
-    cleanupIncompleteCreate: vi.fn(async () => {
+    cleanupIncompleteCreate: vi.fn(async (input) => {
       order.push("cleanup-incomplete");
-      return cleanupReceipt();
+      return cleanupReceipt(input.authorityFingerprint);
     }),
     discoverHeldWorkload: vi.fn(async (input) => {
       order.push("discover");
@@ -281,11 +284,14 @@ function adapterFor(agent: ManagedStartupAgent): Fixture {
     }),
     finalizeBootstrap: vi.fn(async (input) => {
       order.push(input.outcome);
-      if (input.outcome === "rollback") return rolledBackReceipt(input.handle, input.snapshot);
+      if (input.outcome === "rollback") {
+        return rolledBackReceipt(input.handle, input.snapshot, input.authorityFingerprint);
+      }
       return {
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox: input.handle.sandbox,
         bootstrapIdentity: IDENTITY,
+        authorityFingerprint: input.authorityFingerprint,
         outcome: "committed" as const,
         restoredRuntimeId: null,
         restoredSpecHash: null,
@@ -349,6 +355,51 @@ async function captureFailure<T>(promise: Promise<T>) {
   }
   throw new Error("Expected managed bootstrap operation to fail.");
 }
+
+const ROLLBACK_FAILURE_STAGES = [
+  {
+    stage: "discover",
+    snapshot: false,
+    prepared: false,
+    durablePreparation: false,
+    replacement: false,
+  },
+  {
+    stage: "inspect",
+    snapshot: false,
+    prepared: false,
+    durablePreparation: false,
+    replacement: false,
+  },
+  {
+    stage: "prepare",
+    snapshot: true,
+    prepared: false,
+    durablePreparation: false,
+    replacement: false,
+  },
+  {
+    stage: "record",
+    snapshot: true,
+    prepared: true,
+    durablePreparation: false,
+    replacement: false,
+  },
+  {
+    stage: "activate",
+    snapshot: true,
+    prepared: true,
+    durablePreparation: true,
+    replacement: false,
+  },
+  {
+    stage: "await",
+    snapshot: true,
+    prepared: true,
+    durablePreparation: true,
+    replacement: true,
+  },
+] as const;
 
 describe("managed bootstrap adapter contract", () => {
   it.each(
@@ -484,15 +535,163 @@ describe("managed bootstrap adapter contract", () => {
     );
 
     expect(fixture.adapter.cleanupIncompleteCreate).toHaveBeenCalledWith({
-      plan: expect.objectContaining({ sandboxName: "alpha", driverId: "mxc-fixture" }),
+      plan: expect.objectContaining({
+        sandboxName: "alpha",
+        driverId: "mxc-fixture",
+      }),
       bootstrapIdentity: IDENTITY,
       heldWorkloadArgv: expect.arrayContaining([IDENTITY]),
+      createReceipt:
+        failureMode === "returns without launch"
+          ? null
+          : expect.objectContaining({ sandbox: sandbox(), ready: true }),
+      authorityFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
     expect(failure.managedBootstrapRollback).toMatchObject({
       outcome: "rolled-back",
       heldWorkloadRemoved: true,
       bootstrapIdentity: IDENTITY,
     });
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS.flatMap((agent) =>
+      (["before-launch", "after-launch"] as const).map((failureMode) => ({
+        agent,
+        failureMode,
+      })),
+    ),
+  )("binds $agent incomplete-create cleanup to exact ownership $failureMode", async ({
+    agent,
+    failureMode,
+  }) => {
+    const fixture = adapterFor(agent);
+    vi.mocked(fixture.adapter.createHeldWorkload).mockImplementationOnce(async (input) => {
+      if (failureMode === "after-launch") {
+        await input.launch({
+          heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+            input.request,
+            input.bootstrapIdentity as string,
+            input.plan.intendedWorkloadArgv,
+          ),
+          bootstrapIdentity: input.bootstrapIdentity as string,
+        });
+      }
+      throw new Error(`create failed ${failureMode}`);
+    });
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(fixture.adapter, preparationInput(agent)),
+    );
+    const cleanup = vi.mocked(fixture.adapter.cleanupIncompleteCreate).mock.calls[0]?.[0];
+
+    expect(cleanup?.bootstrapIdentity).toBe(IDENTITY);
+    expect(cleanup?.authorityFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(cleanup?.createReceipt).toEqual(failureMode === "after-launch" ? createReceipt() : null);
+    expect(failure.managedBootstrapRollback?.authorityFingerprint).toBe(
+      cleanup?.authorityFingerprint,
+    );
+    expect(fixture.adapter.finalizeBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("rejects incomplete-create cleanup that substitutes a same-name owner", async () => {
+    const fixture = adapterFor("openclaw");
+    vi.mocked(fixture.adapter.createHeldWorkload).mockImplementationOnce(async (input) => {
+      await input.launch({
+        heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+          input.request,
+          input.bootstrapIdentity as string,
+          input.plan.intendedWorkloadArgv,
+        ),
+        bootstrapIdentity: input.bootstrapIdentity as string,
+      });
+      throw new Error("create failed after exact owner materialized");
+    });
+    vi.mocked(fixture.adapter.cleanupIncompleteCreate).mockImplementationOnce(async (input) => ({
+      ...cleanupReceipt(input.authorityFingerprint),
+      sandbox: { ...sandbox(), sandboxId: "sandbox-future" },
+    }));
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(fixture.adapter, preparationInput("openclaw")),
+    );
+
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(Error);
+    expect(failure.message).toContain("incomplete-create cleanup sandbox");
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS.flatMap((agent) =>
+      ROLLBACK_FAILURE_STAGES.map((failure) => ({ agent, ...failure })),
+    ),
+  )("rolls back $agent with exact authority after $stage failure", async ({
+    agent,
+    stage,
+    snapshot,
+    prepared,
+    durablePreparation,
+    replacement,
+  }) => {
+    const fixture = adapterFor(agent);
+    const injected = new Error(`injected ${stage} failure`);
+    if (stage === "discover") {
+      vi.mocked(fixture.adapter.discoverHeldWorkload).mockRejectedValueOnce(injected);
+    } else if (stage === "inspect") {
+      vi.mocked(fixture.adapter.inspectHeldWorkload).mockRejectedValueOnce(injected);
+    } else if (stage === "prepare") {
+      vi.mocked(fixture.adapter.prepareBootstrapReplacement).mockRejectedValueOnce(injected);
+    }
+
+    let failure: Awaited<ReturnType<typeof captureFailure>>;
+    if (stage === "discover" || stage === "inspect" || stage === "prepare") {
+      failure = await captureFailure(
+        prepareManagedBootstrapSequence(fixture.adapter, preparationInput(agent)),
+      );
+    } else {
+      const transaction = await prepareManagedBootstrapSequence(
+        fixture.adapter,
+        preparationInput(agent),
+      );
+      if (stage === "activate") {
+        vi.mocked(fixture.adapter.activateBootstrapReplacement).mockRejectedValueOnce(injected);
+      } else if (stage === "await") {
+        vi.mocked(fixture.adapter.awaitBootstrap).mockRejectedValueOnce(injected);
+      }
+      failure = await captureFailure(
+        activateManagedBootstrapSequence(fixture.adapter, {
+          transaction,
+          authorityStore:
+            stage === "record"
+              ? {
+                  recordPreparedAuthority: vi.fn(async () => {
+                    throw injected;
+                  }),
+                }
+              : authorityStore(fixture.order),
+          timeoutSecs: 30,
+        }),
+      );
+    }
+
+    const rollback = vi.mocked(fixture.adapter.finalizeBootstrap).mock.calls.at(-1)?.[0];
+    expect(failure.message).toContain(`injected ${stage} failure`);
+    expect(rollback).toMatchObject({
+      outcome: "rollback",
+      authorityFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      handle: expect.objectContaining({
+        bootstrapIdentity: IDENTITY,
+        sandbox: sandbox(),
+      }),
+      completion: null,
+    });
+    expect(rollback?.snapshot !== null).toBe(snapshot);
+    expect(rollback?.prepared !== null).toBe(prepared);
+    expect(rollback?.durablePreparation !== null).toBe(durablePreparation);
+    expect(rollback?.replacement !== null).toBe(replacement);
+    expect(failure.managedBootstrapRollback?.authorityFingerprint).toBe(
+      rollback?.authorityFingerprint,
+    );
   });
 
   it("rolls back a prepared replacement when durable recording fails, before activation", async () => {
@@ -517,6 +716,7 @@ describe("managed bootstrap adapter contract", () => {
     expect(fixture.adapter.activateBootstrapReplacement).not.toHaveBeenCalled();
     expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledWith({
       outcome: "rollback",
+      authorityFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       handle: prepared.handle,
       snapshot: prepared.snapshot,
       prepared: prepared.prepared,
@@ -551,7 +751,9 @@ describe("managed bootstrap adapter contract", () => {
 
     expect(failure.message).toContain("changed prepared authority");
     expect(fixture.adapter.activateBootstrapReplacement).not.toHaveBeenCalled();
-    expect(failure.managedBootstrapRollback).toMatchObject({ outcome: "rolled-back" });
+    expect(failure.managedBootstrapRollback).toMatchObject({
+      outcome: "rolled-back",
+    });
   });
 
   it("rejects activated-runtime drift and rolls back from the prepared authority", async () => {
@@ -577,10 +779,13 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.message).toContain("changed immutable prepared authority");
     expect(fixture.adapter.finalizeBootstrap).toHaveBeenLastCalledWith({
       outcome: "rollback",
+      authorityFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       handle: prepared.handle,
       snapshot: prepared.snapshot,
       prepared: prepared.prepared,
-      durablePreparation: expect.objectContaining({ bootstrapIdentity: IDENTITY }),
+      durablePreparation: expect.objectContaining({
+        bootstrapIdentity: IDENTITY,
+      }),
       replacement: null,
       completion: null,
     });
@@ -613,10 +818,14 @@ describe("managed bootstrap adapter contract", () => {
 
   it("binds rollback and commit receipts to the exact captured snapshot", async () => {
     const result = await prepareAndActivate("langchain-deepagents-code");
-    vi.mocked(result.adapter.finalizeBootstrap).mockResolvedValueOnce({
-      ...rolledBackReceipt(result.activated.handle, result.activated.snapshot),
+    vi.mocked(result.adapter.finalizeBootstrap).mockImplementationOnce(async (input) => ({
+      ...rolledBackReceipt(
+        result.activated.handle,
+        result.activated.snapshot,
+        input.authorityFingerprint,
+      ),
       restoredRuntimeId: "b".repeat(64),
-    });
+    }));
     await expect(
       finalizeManagedBootstrapSequence(result.adapter, {
         outcome: "rollback",
@@ -634,6 +843,101 @@ describe("managed bootstrap adapter contract", () => {
       bootstrapIdentity: IDENTITY,
       restoredRuntimeId: null,
     });
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("finalizes %s idempotently without re-entering provider cleanup", async (agent) => {
+    const fixture = adapterFor(agent);
+    const prepared = await prepareManagedBootstrapSequence(
+      fixture.adapter,
+      preparationInput(agent),
+    );
+
+    const first = await finalizeManagedBootstrapSequence(fixture.adapter, {
+      outcome: "rollback",
+      transaction: prepared,
+    });
+    const repeated = await finalizeManagedBootstrapSequence(fixture.adapter, {
+      outcome: "rollback",
+      transaction: prepared,
+    });
+
+    expect(repeated).toBe(first);
+    expect(first.authorityFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
+    await expect(
+      finalizeManagedBootstrapSequence(fixture.adapter, {
+        outcome: "commit",
+        transaction: prepared,
+      }),
+    ).rejects.toThrow("cannot change its durable outcome");
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes rollback authority when only the durable sandbox ID changes", async () => {
+    const finalizeForSandbox = async (sandboxId: string) => {
+      const fixture = adapterFor("hermes");
+      const input = preparationInput("hermes");
+      const prepared = await prepareManagedBootstrapSequence(fixture.adapter, {
+        ...input,
+        create: {
+          ...input.create,
+          launch: vi.fn(async () => ({
+            ...createReceipt(),
+            sandbox: { ...sandbox(), sandboxId },
+          })),
+        },
+      });
+      return finalizeManagedBootstrapSequence(fixture.adapter, {
+        outcome: "rollback",
+        transaction: prepared,
+      });
+    };
+
+    const original = await finalizeForSandbox("sandbox-alpha");
+    const future = await finalizeForSandbox("sandbox-future");
+
+    expect(original.sandbox.sandboxName).toBe(future.sandbox.sandboxName);
+    expect(original.bootstrapIdentity).toBe(future.bootstrapIdentity);
+    expect(original.authorityFingerprint).not.toBe(future.authorityFingerprint);
+  });
+
+  it("binds commit and rollback decisions to the same exact activated authority", async () => {
+    const committed = await prepareAndActivate("hermes");
+    const rolledBack = await prepareAndActivate("hermes");
+
+    await finalizeManagedBootstrapSequence(committed.adapter, {
+      outcome: "commit",
+      transaction: committed.activated,
+    });
+    await finalizeManagedBootstrapSequence(rolledBack.adapter, {
+      outcome: "rollback",
+      transaction: rolledBack.activated,
+    });
+
+    const commitInput = vi.mocked(committed.adapter.finalizeBootstrap).mock.calls.at(-1)?.[0];
+    const rollbackInput = vi.mocked(rolledBack.adapter.finalizeBootstrap).mock.calls.at(-1)?.[0];
+    expect(commitInput?.authorityFingerprint).toBe(rollbackInput?.authorityFingerprint);
+  });
+
+  it("rejects a finalization receipt from another exact cleanup authority", async () => {
+    const fixture = adapterFor("openclaw");
+    const prepared = await prepareManagedBootstrapSequence(
+      fixture.adapter,
+      preparationInput("openclaw"),
+    );
+    vi.mocked(fixture.adapter.finalizeBootstrap).mockImplementationOnce(async (input) => ({
+      ...rolledBackReceipt(input.handle, input.snapshot, input.authorityFingerprint),
+      authorityFingerprint: "f".repeat(64),
+    }));
+
+    await expect(
+      finalizeManagedBootstrapSequence(fixture.adapter, {
+        outcome: "rollback",
+        transaction: prepared,
+      }),
+    ).rejects.toThrow("changed exact transaction authority");
   });
 
   it("refuses commit before activation has produced an exact completion receipt", async () => {

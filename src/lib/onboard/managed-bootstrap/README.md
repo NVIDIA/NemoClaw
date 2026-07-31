@@ -20,6 +20,17 @@ original runtime. Provider results are copied into deeply frozen coordinator
 authority, and finalization receipts must either prove exact snapshot restore
 or exact workload absence.
 
+Cleanup authority is equally exact. An incomplete create receives the durable
+create receipt when the authorized launch produced one; without that receipt a
+provider may reconcile only resources it can bind to the random bootstrap
+identity, never a planned sandbox name alone. Every cleanup or finalization
+receipt echoes a SHA-256 fingerprint of the complete coordinator-owned
+authority. Repeating finalization with the same transaction and outcome returns
+the frozen receipt without re-entering provider cleanup, while an attempt to
+change the outcome fails closed. The all-agent contract matrix exercises
+rollback after discovery, inspection, replacement preparation, durable
+recording, activation, and completion failures.
+
 `scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
 that the later all-agent packaging slice will install as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. It authenticates a fixed,

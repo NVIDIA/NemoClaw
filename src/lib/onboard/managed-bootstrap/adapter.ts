@@ -97,6 +97,13 @@ export interface ManagedBootstrapIncompleteCreateCleanupInput {
   readonly plan: ManagedBootstrapExpectedPlan;
   readonly bootstrapIdentity: string;
   readonly heldWorkloadArgv: readonly string[];
+  /**
+   * Exact durable owner returned by the one authorized launch, or null when
+   * launch never materialized a caller-owned sandbox. A provider must never
+   * substitute the planned sandbox name for this identity.
+   */
+  readonly createReceipt: ManagedBootstrapCreateReceipt | null;
+  readonly authorityFingerprint: string;
 }
 
 export interface ManagedBootstrapDiscoveryInput {
@@ -227,6 +234,8 @@ export interface ManagedBootstrapFinalizationReceipt {
   readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly bootstrapIdentity: string;
+  /** SHA-256 of the exact coordinator-owned cleanup/finalization authority. */
+  readonly authorityFingerprint: string;
   readonly outcome: "committed" | "rolled-back";
   readonly restoredRuntimeId: string | null;
   readonly restoredSpecHash: string | null;
@@ -363,6 +372,7 @@ export interface ManagedBootstrapAdapter {
   /** Commit or roll back using exact handles captured by this transaction. */
   finalizeBootstrap(input: {
     readonly outcome: "commit" | "rollback";
+    readonly authorityFingerprint: string;
     readonly handle: ManagedBootstrapHeldWorkloadHandle;
     readonly snapshot: ManagedBootstrapObservedSnapshot | null;
     readonly prepared: ManagedBootstrapPreparedReplacementHandle | null;
@@ -664,6 +674,41 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
+}
+
+function fingerprintAuthority(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+}
+
+function incompleteCreateAuthorityFingerprint(input: {
+  readonly plan: ManagedBootstrapExpectedPlan;
+  readonly bootstrapIdentity: string;
+  readonly heldWorkloadArgv: readonly string[];
+  readonly createReceipt: ManagedBootstrapCreateReceipt | null;
+}): string {
+  return fingerprintAuthority({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    phase: "incomplete-create",
+    ...input,
+  });
+}
+
+type FinalizationAuthorityInput = Omit<
+  Parameters<ManagedBootstrapAdapter["finalizeBootstrap"]>[0],
+  "authorityFingerprint"
+>;
+
+function finalizationAuthorityFingerprint(input: FinalizationAuthorityInput): string {
+  return fingerprintAuthority({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    phase: "finalization",
+    handle: input.handle,
+    snapshot: input.snapshot,
+    prepared: input.prepared,
+    durablePreparation: input.durablePreparation,
+    replacement: input.replacement,
+    completion: input.completion,
+  });
 }
 
 export function assertManagedBootstrapIdentity(value: string): void {
@@ -1083,6 +1128,7 @@ function normalizeFinalizationReceipt(
     readonly outcome: "commit" | "rollback";
     readonly handle: ManagedBootstrapHeldWorkloadHandle;
     readonly snapshot: ManagedBootstrapObservedSnapshot | null;
+    readonly authorityFingerprint: string;
   },
 ): ManagedBootstrapFinalizationReceipt {
   if (
@@ -1095,8 +1141,11 @@ function normalizeFinalizationReceipt(
     protocolFail("finalization receipt has an invalid schema or outcome");
   }
   assertExact(candidate.sandbox, input.handle.sandbox, "finalization sandbox");
-  if (candidate.bootstrapIdentity !== input.handle.bootstrapIdentity) {
-    protocolFail("finalization receipt bootstrap identity changed");
+  if (
+    candidate.bootstrapIdentity !== input.handle.bootstrapIdentity ||
+    candidate.authorityFingerprint !== input.authorityFingerprint
+  ) {
+    protocolFail("finalization receipt changed exact transaction authority");
   }
   if (
     typeof candidate.heldWorkloadRemoved !== "boolean" ||
@@ -1128,6 +1177,7 @@ function normalizeFinalizationReceipt(
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandbox: input.handle.sandbox,
     bootstrapIdentity: input.handle.bootstrapIdentity,
+    authorityFingerprint: input.authorityFingerprint,
     outcome: candidate.outcome,
     restoredRuntimeId: candidate.restoredRuntimeId,
     restoredSpecHash: candidate.restoredSpecHash,
@@ -1141,6 +1191,8 @@ function normalizeIncompleteCreateCleanupReceipt(
   candidate: ManagedBootstrapFinalizationReceipt,
   plan: ManagedBootstrapExpectedPlan,
   bootstrapIdentity: string,
+  authorityFingerprint: string,
+  createReceipt: ManagedBootstrapCreateReceipt | null,
 ): ManagedBootstrapFinalizationReceipt {
   if (
     typeof candidate !== "object" ||
@@ -1149,6 +1201,7 @@ function normalizeIncompleteCreateCleanupReceipt(
     candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
     candidate.outcome !== "rolled-back" ||
     candidate.bootstrapIdentity !== bootstrapIdentity ||
+    candidate.authorityFingerprint !== authorityFingerprint ||
     candidate.heldWorkloadRemoved !== true ||
     candidate.restoredRuntimeId !== null ||
     candidate.restoredSpecHash !== null ||
@@ -1157,11 +1210,15 @@ function normalizeIncompleteCreateCleanupReceipt(
     protocolFail("incomplete-create cleanup receipt does not prove exact absence");
   }
   const sandbox = freezeSandboxIdentity(candidate.sandbox, plan);
+  if (createReceipt !== null) {
+    assertExact(sandbox, createReceipt.sandbox, "incomplete-create cleanup sandbox");
+  }
   assertTimestamp(candidate.finalizedAt, "incomplete-create cleanup timestamp");
   return Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandbox,
     bootstrapIdentity,
+    authorityFingerprint,
     outcome: "rolled-back",
     restoredRuntimeId: null,
     restoredSpecHash: null,
@@ -1195,16 +1252,28 @@ async function rollbackAfterFailure(
 ): Promise<never> {
   const failure = error instanceof Error ? error : new Error(String(error));
   try {
+    const authority: FinalizationAuthorityInput = {
+      outcome: "rollback",
+      ...input,
+      completion: null,
+    };
+    const authorityFingerprint = finalizationAuthorityFingerprint(authority);
     const rollback = normalizeFinalizationReceipt(
       await adapter.finalizeBootstrap({
-        outcome: "rollback",
-        ...input,
-        completion: null,
+        ...authority,
+        authorityFingerprint,
       }),
-      { outcome: "rollback", handle: input.handle, snapshot: input.snapshot },
+      {
+        outcome: "rollback",
+        handle: input.handle,
+        snapshot: input.snapshot,
+        authorityFingerprint,
+      },
     );
     (
-      failure as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }
+      failure as Error & {
+        managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
+      }
     ).managedBootstrapRollback = rollback;
   } catch (rollbackError) {
     attachManagedBootstrapRollbackError(failure, rollbackError);
@@ -1223,6 +1292,13 @@ type ManagedBootstrapCoordinatorState =
   | "finalization-indeterminate";
 
 const TRANSACTION_STATES = new WeakMap<object, ManagedBootstrapCoordinatorState>();
+const FINALIZATION_RECEIPTS = new WeakMap<
+  object,
+  {
+    readonly outcome: "commit" | "rollback";
+    readonly receipt: ManagedBootstrapFinalizationReceipt;
+  }
+>();
 
 /**
  * Create the held workload and stopped replacement without a destructive
@@ -1283,13 +1359,27 @@ export async function prepareManagedBootstrapSequence(
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     try {
-      const rollback = normalizeIncompleteCreateCleanupReceipt(
-        await adapter.cleanupIncompleteCreate({ plan, bootstrapIdentity, heldWorkloadArgv }),
+      const cleanupAuthority = {
         plan,
         bootstrapIdentity,
+        heldWorkloadArgv,
+        createReceipt: launchReceipt,
+      } as const;
+      const authorityFingerprint = incompleteCreateAuthorityFingerprint(cleanupAuthority);
+      const rollback = normalizeIncompleteCreateCleanupReceipt(
+        await adapter.cleanupIncompleteCreate({
+          ...cleanupAuthority,
+          authorityFingerprint,
+        }),
+        plan,
+        bootstrapIdentity,
+        authorityFingerprint,
+        launchReceipt,
       );
       (
-        failure as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }
+        failure as Error & {
+          managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt;
+        }
       ).managedBootstrapRollback = rollback;
     } catch (cleanupError) {
       attachManagedBootstrapRollbackError(failure, cleanupError);
@@ -1405,6 +1495,13 @@ export async function finalizeManagedBootstrapSequence(
   },
 ): Promise<ManagedBootstrapFinalizationReceipt> {
   const state = TRANSACTION_STATES.get(input.transaction);
+  if (state === "finalized") {
+    const prior = FINALIZATION_RECEIPTS.get(input.transaction);
+    if (!prior || prior.outcome !== input.outcome) {
+      protocolFail("finalized transaction cannot change its durable outcome");
+    }
+    return prior.receipt;
+  }
   const activated = state === "activated";
   if (!activated && state !== "prepared") {
     protocolFail("finalization requires an exact coordinator-owned transaction");
@@ -1419,22 +1516,33 @@ export async function finalizeManagedBootstrapSequence(
   const completion = activated
     ? (transaction as ManagedBootstrapActivatedTransaction).completion
     : null;
+  const authority: FinalizationAuthorityInput = {
+    outcome: input.outcome,
+    handle: transaction.handle,
+    snapshot: transaction.snapshot,
+    prepared: transaction.prepared,
+    durablePreparation: activated
+      ? (transaction as ManagedBootstrapActivatedTransaction).durablePreparation
+      : null,
+    replacement,
+    completion,
+  };
+  const authorityFingerprint = finalizationAuthorityFingerprint(authority);
   TRANSACTION_STATES.set(transaction, "finalizing");
   try {
     const receipt = normalizeFinalizationReceipt(
       await adapter.finalizeBootstrap({
+        ...authority,
+        authorityFingerprint,
+      }),
+      {
         outcome: input.outcome,
         handle: transaction.handle,
         snapshot: transaction.snapshot,
-        prepared: transaction.prepared,
-        durablePreparation: activated
-          ? (transaction as ManagedBootstrapActivatedTransaction).durablePreparation
-          : null,
-        replacement,
-        completion,
-      }),
-      { outcome: input.outcome, handle: transaction.handle, snapshot: transaction.snapshot },
+        authorityFingerprint,
+      },
     );
+    FINALIZATION_RECEIPTS.set(transaction, { outcome: input.outcome, receipt });
     TRANSACTION_STATES.set(transaction, "finalized");
     return receipt;
   } catch (error) {
