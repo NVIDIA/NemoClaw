@@ -275,7 +275,9 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
         targetGatewayPort: 8080,
       }),
     );
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).toHaveBeenCalledOnce();
+    // The journaled source row is the durable replacement contract, so it is
+    // preserved until replacement registration commits (#7734).
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
   });
@@ -365,10 +367,12 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("Backing up sandbox state");
     expect(output).toContain("Creating new sandbox with current image");
     expect(output).toContain("Recovery recreate failed");
-    // The preserved entry must survive the failed recreate. Its obsolete image
-    // tag is intentionally cleared so a leftover image remains eligible for GC.
+    // The preserved entry must survive the failed recreate carrying no obsolete
+    // image tag, so a leftover image remains eligible for GC. The journaled row
+    // is now preserved in place rather than removed and restored, so the field
+    // is absent instead of explicitly null (#7734).
     const registry = readRegistry(fixture);
     expect(registry.defaultSandbox).toBe(fixture.sandboxName);
-    expect(registry.sandboxes[fixture.sandboxName].imageTag).toBe(null);
+    expect(registry.sandboxes[fixture.sandboxName].imageTag ?? null).toBe(null);
   });
 });

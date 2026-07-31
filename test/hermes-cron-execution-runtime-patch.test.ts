@@ -12,6 +12,10 @@ import { afterEach, describe, expect, it } from "vitest";
 const root = path.join(import.meta.dirname, "..");
 const patcher = path.join(root, "agents", "hermes", "patch-cron-execution-runtime.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
+const imageBuildProbes = fs.readFileSync(
+  path.join(root, "agents", "hermes", "image-build-probes.py"),
+  "utf8",
+);
 const fixtures: string[] = [];
 
 const upstreamExecutions = `\
@@ -117,9 +121,9 @@ describe("Hermes cron execution runtime patch", () => {
     expect(dockerfile).toMatch(
       /patch-cron-execution-runtime[.]py \\\n\s+--executions \/opt\/hermes\/cron\/executions[.]py \\\n\s+--backup \/opt\/hermes\/hermes_cli\/backup[.]py/u,
     );
-    expect(dockerfile).toContain(
+    expect(imageBuildProbes).toContain(
       'expected = get_hermes_home().resolve() / "runtime" / "cron-executions.db"',
     );
-    expect(dockerfile).toContain('assert "cron/executions.db" not in _QUICK_STATE_FILES');
+    expect(imageBuildProbes).toContain('assert "cron/executions.db" not in _QUICK_STATE_FILES');
   });
 });

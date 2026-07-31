@@ -48,6 +48,7 @@ export type ManagedSupervisorRelaunchDeps = {
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
+  restartRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
@@ -136,6 +137,7 @@ export function relaunchManagedSupervisorSession(
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
+  const restartRestoredManagedGateway = deps.restartRestoredManagedGateway;
   const backupState = deps.backupState ?? sandboxState.backupSandboxState;
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
@@ -205,7 +207,7 @@ export function relaunchManagedSupervisorSession(
           }
           return completed.outcome;
         }
-        if (!supervisorReady) {
+        const finalizeFailure = () => {
           const finalized = finalize({ result, supervisorReady: false });
           const outcome = {
             ...finalized,
@@ -214,6 +216,9 @@ export function relaunchManagedSupervisorSession(
           };
           completed = { supervisorReady, outcome };
           return outcome;
+        };
+        if (!supervisorReady) {
+          return finalizeFailure();
         }
         let replacementOwned = false;
         try {
@@ -225,14 +230,7 @@ export function relaunchManagedSupervisorSession(
           replacementOwned = false;
         }
         if (!replacementOwned) {
-          const finalized = finalize({ result, supervisorReady: false });
-          const outcome = {
-            ...finalized,
-            stateRestored: false,
-            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
-          };
-          completed = { supervisorReady, outcome };
-          return outcome;
+          return finalizeFailure();
         }
         let stateRestored = false;
         try {
@@ -241,14 +239,22 @@ export function relaunchManagedSupervisorSession(
           stateRestored = false;
         }
         if (!stateRestored) {
-          const finalized = finalize({ result, supervisorReady: false });
-          const outcome = {
-            ...finalized,
-            stateRestored: false,
-            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
-          };
-          completed = { supervisorReady, outcome };
-          return outcome;
+          return finalizeFailure();
+        }
+        let restoredManagedGatewayReady = false;
+        try {
+          restoredManagedGatewayReady =
+            restartRestoredManagedGateway?.(result.newContainerId) === true;
+        } catch {
+          restoredManagedGatewayReady = false;
+        }
+        if (!restoredManagedGatewayReady) {
+          // Apply restored state to a fresh managed gateway process. OpenClaw
+          // can otherwise retain pre-restore runtime state or enter its
+          // in-process reload path. Keep the previous container available for
+          // rollback until the pinned replacement restart and health proof
+          // both succeed.
+          return finalizeFailure();
         }
         const outcome = {
           ...finalize({ result, supervisorReady: true }),

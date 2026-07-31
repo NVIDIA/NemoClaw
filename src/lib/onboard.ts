@@ -596,6 +596,7 @@ import { filterEnabledChannelsByAgent } from "./onboard/messaging-state";
 import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import * as ollamaFlow from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
+import * as recreateJournal from "./onboard/onboard-recreate-journal";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
@@ -785,7 +786,7 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
   });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, runOpenshell, getSandboxStateFromOutputs, note });
+const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, runOpenshell, getSandboxStateFromOutputs, note, getGatewayName: () => GATEWAY_NAME });
 
 const {
   executeSandboxCommandForVerification,
@@ -2287,7 +2288,7 @@ async function createSandboxWithBaseImageResolution(
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const recreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
+  let recreateRuntime: import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime | recreateJournal.OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
   const restoreReusedSandboxDashboard = (selectionVerified: boolean): void => {
     ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
       sandboxName,
@@ -2549,16 +2550,13 @@ async function createSandboxWithBaseImageResolution(
 
     if (preservedMcpState) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      const explicitObservability = observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true);
-      console.error(
-        `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
-      );
-      console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}${explicitObservability ? ` ${explicitObservability}` : ""}${dcodeAutoApprovalPlan.rebuildFlag}\` so MCP providers and adapter state are preserved transactionally.`,
-      );
+      for (const hint of recreateJournal.managedMcpRecreateRefusalHints({ sandboxName, cliName: cliName(), toolDisclosure: effectiveToolDisclosure, rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag, observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true) })) console.error(hint);
       process.exit(1);
     }
-
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (!createIntent?.recreateTransaction) recreateRuntime = recreateJournal.openOnboardRecreateJournal({ target: { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT }, agentName: getRequestedSandboxAgentName(agent) || "openclaw", note, observe: (probeTarget) => getSandboxRecreateObservation(probeTarget.sandboxName, probeTarget.gatewayName), intent: { agent: getRequestedSandboxAgentName(agent) || null, fromDockerfile: fromDockerfile ?? null, provider: provider ?? null, model: model ?? null, preferredInferenceApi: preferredInferenceApi ?? null, sandboxGpuConfig: effectiveSandboxGpuConfig ?? null, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, toolDisclosure: effectiveToolDisclosure, dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null, observabilityEnabled: createIntent?.observabilityEnabled === true, policyTier: createIntent?.policyTier ?? null } });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); restoreReusedSandboxDashboard(true); return sandboxName; }
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
@@ -2580,9 +2578,8 @@ async function createSandboxWithBaseImageResolution(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
-    recreateRuntime.advance("deleting");
-    runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
-    runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); }
     recreateRuntime.confirmDeleted();
     if (previousEntry?.imageTag) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2861,6 +2858,7 @@ async function createSandboxWithBaseImageResolution(
         }),
     },
   );
+  if ("complete" in recreateRuntime) recreateRuntime.complete();
   restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
@@ -4380,6 +4378,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
       authoritativePolicyTier:
         opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+      recreateJournalTargetIntentFingerprint: opts.recreateJournalTargetIntentFingerprint ?? null,
       resumeAgentChanged,
       requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
