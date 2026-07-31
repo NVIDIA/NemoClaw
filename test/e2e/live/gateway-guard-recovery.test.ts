@@ -42,6 +42,8 @@
  * #2701 guard-chain assertion.
  */
 
+import { fileURLToPath } from "node:url";
+
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -60,6 +62,9 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-2701";
+const LEGACY_KEEPALIVE_FIXTURE = fileURLToPath(
+  new URL("./gateway-guard-legacy-keepalive-fixture.ts", import.meta.url),
+);
 
 const STARTUP_COMMAND_INSPECT_SCRIPT = String.raw`
 const { spawnSync } = require("node:child_process");
@@ -147,7 +152,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       "wipe guard chain and gateway tree",
       "recover gateway through connect probe",
       "validate recovered guard and stable PID",
-      "restart legacy Docker sandbox",
+      "recreate and restart sandbox container with legacy keepalive",
       "recover managed supervisor and inference",
     ],
   },
@@ -282,22 +287,37 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
 
   expect(stablePid).toBeGreaterThan(0);
 
-  progress.phase("restart legacy Docker sandbox");
+  progress.phase("recreate and restart sandbox container with legacy keepalive");
   // ── Assert #6635 legacy Docker restart recovery ────────────────
-  // Fresh non-GPU OpenClaw containers on this OpenShell floor still carry the
-  // legacy keepalive. Restarting the container therefore kills the initial
-  // OpenShell workload session and deterministically leaves no managed
-  // supervisor. Recovery must upgrade that container through the host-side
-  // transaction and commit only after managed control accepts the new tree.
-  const originalContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
+  // Current onboarding persists nemoclaw-start. Recreate the sandbox container
+  // with the exact legacy keepalive before restarting it so this target
+  // continues to prove the compatibility migration rather than asserting
+  // stale defaults.
+  const modernContainerId = await findSandboxContainer(host, "legacy-restart-modern-container");
   expect(
-    await inspectStartupCommand(host, originalContainerId, "legacy-restart-command-before"),
-  ).toBe("sleep infinity");
+    await inspectStartupCommand(host, modernContainerId, "legacy-restart-modern-command"),
+  ).toMatch(/(?:^| )nemoclaw-start$/);
   await host.cleanupForward(18789, {
     artifactName: "legacy-restart-stop-dashboard-forward",
     env: buildAvailabilityProbeEnv(),
   });
-  const restart = await host.command("docker", ["restart", originalContainerId], {
+  const createLegacyKeepalive = await host.command(
+    "npx",
+    ["--no-install", "tsx", LEGACY_KEEPALIVE_FIXTURE, instance.sandboxName, modernContainerId],
+    {
+      artifactName: "legacy-restart-create-keepalive",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 240_000,
+    },
+  );
+  expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
+
+  const legacyContainerId = await findSandboxContainer(host, "legacy-restart-legacy-container");
+  expect(legacyContainerId).not.toBe(modernContainerId);
+  expect(
+    await inspectStartupCommand(host, legacyContainerId, "legacy-restart-legacy-command"),
+  ).toBe("sleep infinity");
+  const restart = await host.command("docker", ["restart", legacyContainerId], {
     artifactName: "legacy-restart-docker-restart",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 120_000,
@@ -321,7 +341,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   expect(resultText(trustedRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
 
   const recoveredContainerId = await findSandboxContainer(host, "legacy-restart-container-after");
-  expect(recoveredContainerId).not.toBe(originalContainerId);
+  expect(recoveredContainerId).not.toBe(legacyContainerId);
   const recoveredStartupCommand = await inspectStartupCommand(
     host,
     recoveredContainerId,
