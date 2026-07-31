@@ -71,7 +71,7 @@ function createStationFixture(marker: "regular-file" | "symbolic-link"): string 
 
 function reportForStationHost(root: string) {
   return createHostReadinessReport(
-    { nemoclawVersion: "0.0.0-test", now: () => NOW },
+    { nemoclawVersion: "0.0.0-test", sourceRevision: "1".repeat(40), now: () => NOW },
     {
       architecture: "arm64",
       assess: () =>
