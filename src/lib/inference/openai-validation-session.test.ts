@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { probeOpenAiLikeEndpointWithValidationSession } from "./openai-validation-session";
 import {
   createOpenAiValidationTestDeps,
@@ -143,5 +143,37 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(result).toMatchObject({ ok: true, api: "openai-responses" });
     expect(paths).toEqual(["/v1/responses", "/v1/responses"]);
     expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("caps only the native streaming Responses request timeout (#7792)", async () => {
+    let responsesCalls = 0;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      responsesCalls += 1;
+      response.end(
+        responsesCalls === 1
+          ? '{"output":[{"type":"message"}]}'
+          : "event: response.output_text.delta\ndata: {}\n\n",
+      );
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    harness.getResponsesTimeoutMs = () => 20_000;
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      { probeStreaming: true },
+      harness,
+    );
+
+    const responsesTimeouts = timeoutSpy.mock.calls
+      .map(([, timeoutMs]) => timeoutMs)
+      .filter((timeoutMs) => timeoutMs === 20_000 || timeoutMs === 12_000);
+    timeoutSpy.mockRestore();
+    expect(result).toMatchObject({ ok: true, api: "openai-responses" });
+    expect(responsesTimeouts).toEqual([20_000, 12_000]);
   });
 });
