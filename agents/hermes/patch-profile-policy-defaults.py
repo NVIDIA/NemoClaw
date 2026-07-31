@@ -29,6 +29,12 @@ homes. It also fixes independent config copies and loaders that bypass
 Every input file is bound to the exact upstream v2026.7.20 source hash before
 any edit. A Hermes upgrade must deliberately refresh these hashes and source
 shapes instead of silently carrying the patch forward.
+
+Delete this compatibility patch only when the pinned Hermes release applies
+the managed-policy values to a config-less named profile across
+``DEFAULT_CONFIG`` and every independent fallback listed above. The unmodified
+upstream files must then pass the ``profile-policy`` image probe and
+``test/hermes-profile-policy-defaults.test.ts``.
 """
 
 from __future__ import annotations
