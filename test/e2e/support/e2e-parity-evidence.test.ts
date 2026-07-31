@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,7 +32,7 @@ function evidenceInput(provider: "docker" | "test-mxc"): ExecutionEvidenceInput 
   const runtimeCase = matrix.cases.find(
     (entry) => entry.scenario.agent === "openclaw" && entry.profile.provider === provider,
   );
-  if (!runtimeCase) throw new Error(`Missing fixture runtime case for ${provider}`);
+  assert.ok(runtimeCase, `Missing fixture runtime case for ${provider}`);
   const resolved = resolveRuntimeCase(matrix, {
     scenarioId: runtimeCase.scenario.id,
     profileId: runtimeCase.profile.id,

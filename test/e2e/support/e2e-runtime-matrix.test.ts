@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -46,12 +48,11 @@ function fakeRuntimeProvider(
     },
     lifecycle: {
       async executeAdapter(adapterId, request) {
-        if (
-          !adapterId.startsWith(`${profile.provider}.`) ||
-          !adapterId.endsWith(`.${request.obligationId}`)
-        ) {
-          throw new Error(`Fixture provider cannot execute ${adapterId}`);
-        }
+        assert.ok(
+          adapterId.startsWith(`${profile.provider}.`) &&
+            adapterId.endsWith(`.${request.obligationId}`),
+          `Fixture provider cannot execute ${adapterId}`,
+        );
         adapterCalls.push(adapterId);
       },
       async cleanup() {
@@ -308,7 +309,7 @@ describe("cross-runtime E2E matrix compiler", () => {
     const matrix = compileRuntimeMatrix(foundationDefinition());
     for (const runtimeCase of matrix.cases.filter((entry) => entry.scenario.agent === "openclaw")) {
       const shard = matrix.shards.find((entry) => entry.cases.includes(runtimeCase));
-      if (!shard) throw new Error(`Missing shard for ${runtimeCase.id}`);
+      assert.ok(shard, `Missing shard for ${runtimeCase.id}`);
       const adapterCalls: string[] = [];
       const resolved = resolveRuntimeCase(matrix, {
         scenarioId: runtimeCase.scenario.id,
