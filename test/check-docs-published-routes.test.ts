@@ -18,6 +18,7 @@ import {
   findBrokenPublishedRoutes,
   findMissingDirectLegacyManageSandboxRedirects,
   findMissingDirectLegacyReleaseNotesRedirects,
+  renderPublishedPageBodies,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.mts";
 
@@ -464,16 +465,17 @@ describe("Manage Sandboxes extension routes", () => {
   it("publishes the Deep Agents runtime guide only in the Deep Agents guide", () => {
     const source = "manage-sandboxes/run-deep-agents-code.mdx";
     const quickstartSource = "get-started/quickstart-langchain-deepagents-code.mdx";
-    const quickstart = readFileSync(path.join(repoRoot, "docs", quickstartSource), "utf8");
     const quickstartRoute = "/user-guide/deepagents/get-started/quickstart";
     const runtimeRoute =
       "/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code";
+    const [quickstartPage] = renderPublishedPageBodies(quickstartSource, index);
 
     expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([runtimeRoute]);
     expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
     expect(findBrokenPublishedRoutes(quickstartSource, index)).toEqual([]);
+    expect(quickstartPage.route).toBe(quickstartRoute);
     expect(
-      extractMarkdownLinks(quickstart).map(({ target }) =>
+      extractMarkdownLinks(quickstartPage.body).map(({ target }) =>
         resolvePublishedRoute(quickstartRoute, target),
       ),
     ).toContain(runtimeRoute);
@@ -490,12 +492,12 @@ describe("Manage Sandboxes extension routes", () => {
   });
 
   it("preserves the legacy Deep Agents harness anchor", () => {
-    const quickstart = readFileSync(
-      path.join(repoRoot, "docs", "get-started/quickstart-langchain-deepagents-code.mdx"),
-      "utf8",
+    const [quickstartPage] = renderPublishedPageBodies(
+      "get-started/quickstart-langchain-deepagents-code.mdx",
+      index,
     );
 
-    expect(quickstart.match(/<a\s+id=["']use-the-harness["']\s*><\/a>/g)).toHaveLength(1);
+    expect(quickstartPage.body.match(/<a\s+id=["']use-the-harness["']\s*><\/a>/g)).toHaveLength(1);
   });
 });
 
