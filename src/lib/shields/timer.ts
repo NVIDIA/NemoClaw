@@ -304,11 +304,11 @@ async function runRestoreTimer(
             deadlineAuthoritative: true,
           });
           const status = typeof result.status === "number" ? result.status : 1;
-          if (result.managedMcpOmissions?.length) {
-            managedMcpWarning = `Auto-restore omitted ${String(
-              result.managedMcpOmissions.length,
-            )} unproven managed MCP policy entries`;
-          }
+          managedMcpWarning = result.managedMcpOmissions?.length
+            ? `Auto-restore omitted ${String(
+                result.managedMcpOmissions.length,
+              )} unproven managed MCP policy entries`
+            : undefined;
 
           if (status !== 0) {
             appendAudit({

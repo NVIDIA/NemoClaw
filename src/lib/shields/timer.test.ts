@@ -9,7 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMcpLifecycleLockPath, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
-  applyShieldsPolicySnapshot: vi.fn(() => ({ status: 0 })),
+  applyShieldsPolicySnapshot: vi.fn(
+    (): {
+      status: number;
+      managedMcpOmissions?: Array<{ server: string; reason: string }>;
+    } => ({ status: 0 }),
+  ),
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
@@ -357,7 +362,14 @@ describe("shields timer authorization", () => {
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
       expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
       expect(fs.existsSync(`${sandboxMutationLockPath}.deadline`)).toBe(true);
-      return { status: 17 };
+      return {
+        status: 17,
+        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
+      };
+    });
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValueOnce({
+      status: 0,
+      managedMcpOmissions: [],
     });
     const args = timer.parseTimerArgs([
       sandboxName,
@@ -378,6 +390,19 @@ describe("shields timer authorization", () => {
     expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
+    const audits = fs
+      .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const successAudits = audits.filter((audit) => audit.action === "shields_auto_restore");
+    expect(successAudits).toEqual([
+      expect.objectContaining({
+        action: "shields_auto_restore",
+        sandbox: sandboxName,
+      }),
+    ]);
+    expect(successAudits[0]).not.toHaveProperty("warning");
   });
 
   it("does not restore or rewrite state when marker pid mismatches", async () => {
