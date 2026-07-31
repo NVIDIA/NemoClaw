@@ -718,7 +718,13 @@ describe("Hermes supervised auxiliary recovery", () => {
       "health:5252:6",
       "stable:5252",
     ]);
-    expect(result.stderr).toContain("Hermes gateway failed health validation (1/4)");
+    expect(result.stderr.match(/Hermes gateway failed health validation \(\d\/4\)/g)).toEqual([
+      "Hermes gateway failed health validation (1/4)",
+      "Hermes gateway failed health validation (2/4)",
+      "Hermes gateway failed health validation (3/4)",
+      "Hermes gateway failed health validation (4/4)",
+      "Hermes gateway failed health validation (1/4)",
+    ]);
     expect(result.stderr).not.toContain("Hermes gateway failed health validation (5/4)");
     expect(result.stdout).not.toContain("stop:5252");
   });
