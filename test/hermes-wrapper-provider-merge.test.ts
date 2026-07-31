@@ -13,9 +13,11 @@
 // Windows does not see a spurious red on `npm test`. See `.github/workflows/`
 // for the canonical CI runner image.
 
+import fs from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
-import { canRun, runWrapper } from "./helpers/hermes-wrapper-harness.ts";
+import { ADAPTER, canRun, runWrapper } from "./helpers/hermes-wrapper-harness.ts";
 
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge", () => {
   it("merges separate --provider and -m flags into the combined form (#7361)", () => {
@@ -71,13 +73,29 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     }
   });
 
-  it("merges after an unquoted multi-word continue session name (#7361)", () => {
+  it("rejects an ambiguous unquoted multi-word continue form (#8011)", () => {
+    const argv = [
+      "-c",
+      "Pokemon",
+      "Agent",
+      "Dev",
+      "--provider",
+      "nvidia-prod",
+      "--model",
+      "nvidia/nemotron-3-super-120b-a12b",
+    ];
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("ambiguous session name");
+  });
+
+  it("merges after a quoted multi-word continue session name (#8011)", () => {
     const run = runWrapper(
       [
         "-c",
-        "Pokemon",
-        "Agent",
-        "Dev",
+        "Pokemon Agent Dev",
         "--provider",
         "nvidia-prod",
         "--model",
@@ -89,9 +107,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.status).toBe(0);
     expect(run.realArgv).toEqual([
       "-c",
-      "Pokemon",
-      "Agent",
-      "Dev",
+      "Pokemon Agent Dev",
       "--model",
       "nvidia-prod/nvidia/nemotron-3-super-120b-a12b",
     ]);
@@ -119,13 +135,29 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     ]);
   });
 
-  it("merges after an unquoted multi-word resume session name (#7361)", () => {
+  it("rejects an ambiguous unquoted multi-word resume form (#8011)", () => {
+    const argv = [
+      "-r",
+      "My",
+      "Session",
+      "Name",
+      "--provider",
+      "nvidia-prod",
+      "--model",
+      "nvidia/nemotron-3-super-120b-a12b",
+    ];
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("ambiguous session name");
+  });
+
+  it("merges after a quoted multi-word resume session name (#8011)", () => {
     const run = runWrapper(
       [
         "-r",
-        "My",
-        "Session",
-        "Name",
+        "My Session Name",
         "--provider",
         "nvidia-prod",
         "--model",
@@ -137,9 +169,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.status).toBe(0);
     expect(run.realArgv).toEqual([
       "-r",
-      "My",
-      "Session",
-      "Name",
+      "My Session Name",
       "--model",
       "nvidia-prod/nvidia/nemotron-3-super-120b-a12b",
     ]);
@@ -221,7 +251,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     ]);
   });
 
-  it("passes through provider/model flags owned by another command (#7361)", () => {
+  it("rejects ambiguous session text before provider/model flags owned by another command (#8011)", () => {
     const argv = [
       "-c",
       "my",
@@ -236,11 +266,55 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
 
     const run = runWrapper(argv, {});
 
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("ambiguous session name");
+  });
+
+  it("passes a new upstream command through without an adapter release (#8011)", () => {
+    const argv = [
+      "future-command",
+      "--provider",
+      "nvidia-prod",
+      "--model",
+      "nvidia/nemotron-3-super-120b-a12b",
+    ];
+
+    const run = runWrapper(argv, {});
+
     expect(run.status).toBe(0);
     expect(run.realArgv).toEqual(argv);
   });
 
-  it("does not consume the Hermes 0.19 console subcommand as continuation text (#7361)", () => {
+  it("rejects an unknown adapter version before invoking Hermes (#8011)", () => {
+    const adapter = JSON.parse(fs.readFileSync(ADAPTER, "utf-8"));
+    adapter.adapter_version = 2;
+
+    const run = runWrapper(
+      ["--provider", "nvidia-prod", "--model", "nvidia/nemotron-3-super-120b-a12b"],
+      {},
+      { adapter },
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("unsupported Hermes CLI adapter version: 2");
+  });
+
+  it("rejects an unknown upstream CLI version before translating (#8011)", () => {
+    const run = runWrapper(
+      ["--provider", "nvidia-prod", "--model", "nvidia/nemotron-3-super-120b-a12b"],
+      {},
+      { upstreamVersion: "0.20.0" },
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("adapter targets Hermes 0.19.0");
+    expect(run.stderr).toContain("installed CLI reports 0.20.0");
+  });
+
+  it("rejects ambiguous continuation text before the Hermes 0.19 console command (#8011)", () => {
     const argv = [
       "-c",
       "my",
@@ -255,8 +329,9 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
 
     const run = runWrapper(argv, {});
 
-    expect(run.status).toBe(0);
-    expect(run.realArgv).toEqual(argv);
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("ambiguous session name");
   });
 
   it("passes through --provider alone without -m (#7361)", () => {

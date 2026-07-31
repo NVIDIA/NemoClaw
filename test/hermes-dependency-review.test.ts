@@ -17,7 +17,9 @@ const config = fs.readFileSync(
   "utf8",
 );
 const manifest = fs.readFileSync(path.join(root, "agents", "hermes", "manifest.yaml"), "utf8");
-const wrapper = fs.readFileSync(path.join(root, "agents", "hermes", "hermes-wrapper.py"), "utf8");
+const cliAdapter = JSON.parse(
+  fs.readFileSync(path.join(root, "agents", "hermes", "hermes-cli-adapter-v1.json"), "utf8"),
+);
 const review = fs.readFileSync(
   path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
   "utf8",
@@ -96,10 +98,10 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");
   });
 
-  it("keeps wrapper parsing aligned with the target CLI", () => {
-    for (const expected of ['"--usage-file"', '"--no-restore-cwd"', '"--safe-mode"', '"console"']) {
-      expect(wrapper).toContain(expected);
-    }
+  it("binds the CLI adapter to the target Hermes version", () => {
+    expect(cliAdapter.adapter_version).toBe(1);
+    expect(cliAdapter.upstream_cli_version).toBe("0.19.0");
+    expect(cliAdapter.managed_commands).toEqual(["chat"]);
   });
 
   it("accepts uv build metadata and rejects a different semantic version", () => {

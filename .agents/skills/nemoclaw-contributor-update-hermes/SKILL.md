@@ -105,7 +105,7 @@ Map each material change through these NemoClaw surfaces:
 
 - generated config schema, defaults, migrations, approval behavior, and config-less named-profile fallbacks;
 - isolated-home config mirrors, parse failures, stale policy, and secret-safe error reporting;
-- wrapper flags, subcommands, argument translation, and help probes;
+- CLI adapter options, managed argument translation, and public help probes;
 - session preview, Langfuse, and managed light-skin workarounds;
 - durable SQLite ledgers, state directories, backups, rebuilds, and rollback;
 - Python extras, the complete `uv.lock` closure, npm bridge packages, licenses, notices, advisories, and native builds;
@@ -165,7 +165,7 @@ Do not use a local moving tag as PR or release evidence.
 
 Run concern-specific unit and integration tests.
 Build the final Hermes image against the locally built base.
-Require the Dockerfile source-shape guards, wrapper help probes, patch smoke tests, generated-config checks, dependency audit, and installed-version checks to pass.
+Require the Dockerfile source-shape guards, CLI adapter validation, public help probes, patch smoke tests, generated-config checks, dependency audit, and installed-version checks to pass.
 
 Use BuildKit for the final image build.
 `agents/hermes/Dockerfile` invokes the checked-in `image-build-probes.py` runner for source and

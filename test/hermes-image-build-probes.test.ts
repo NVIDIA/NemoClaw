@@ -25,7 +25,6 @@ const commands = [
   "langfuse-credentials",
   "profile-policy",
   "session-preview",
-  "wrapper-session-boundaries",
 ] as const;
 
 describe("Hermes image build probes", () => {

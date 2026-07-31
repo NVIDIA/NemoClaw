@@ -31,6 +31,14 @@ export const VALIDATOR = path.join(
   "hermes",
   "validate-env-secret-boundary.py",
 );
+export const ADAPTER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "agents",
+  "hermes",
+  "hermes-cli-adapter-v1.json",
+);
 
 export function python3Available(): boolean {
   try {
@@ -60,12 +68,18 @@ export function runWrapper(
     shadowHelpers?: Record<string, string>;
     stub?: StubBehaviour;
     stubMode?: number;
+    adapter?: object;
+    upstreamVersion?: string;
     validatorScript?: string;
   } = {},
 ): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+    const adapterContent = opts.adapter
+      ? `${JSON.stringify(opts.adapter, null, 2)}\n`
+      : fs.readFileSync(ADAPTER, "utf-8");
+    fs.writeFileSync(path.join(dir, "hermes-cli-adapter-v1.json"), adapterContent);
     const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
     // Source-layout filename lets the wrapper's dev fallback pick it up.
     fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
@@ -79,6 +93,7 @@ export function runWrapper(
     const stubExit = opts.stub?.exitCode ?? 0;
     const stubScript = [
       "#!/usr/bin/env bash",
+      `if [ "\${NEMOCLAW_HERMES_ADAPTER_VERSION_PROBE:-}" = "1" ]; then printf 'Hermes Agent v${opts.upstreamVersion ?? "0.19.0"}\\n'; exit 0; fi`,
       `node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))' ${JSON.stringify(marker)} "$@"`,
       stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
       stubStderr
