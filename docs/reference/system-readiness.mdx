@@ -52,6 +52,49 @@ Consumers can ignore fields that they do not recognize within major version 1.
 Use stable capability and finding IDs instead of parsing human summaries.
 Treat bounded evidence as diagnostic context unless an observation, capability, or finding references that evidence ID.
 
+## Verify the report producer
+
+Schema version `1.1.0` adds a required immutable identity for the CLI build that produced the report.
+The identity is present for `supported`, `incompatible`, and `inconclusive` reports.
+
+| Field | Consumer use |
+| --- | --- |
+| `provenance.nemoclawVersion` | Public version of the executing CLI build. |
+| `provenance.sourceRevision` | Full immutable source revision of that build. |
+| `provenance.observedAt` | Time when the host observation started. |
+
+A Git-described version can use a value such as `0.0.96-35-g8bfff4526`.
+The version must begin with three dot-separated digit groups.
+It can add an alphanumeric prerelease suffix after `-` and an alphanumeric build suffix after `+`; each suffix can also contain `.` and `-` separators.
+The revision after `g` must match the leading characters of `sourceRevision`.
+Packaged releases retain the full revision in their compiled build identity when Git metadata is unavailable at runtime.
+
+A strict scenario must fail closed before it uses readiness facts.
+Apply these checks in order:
+
+1. Reject an unknown schema major version.
+2. Require `schemaVersion` `1.1.0` or later within schema major 1.
+3. Compare the leading `X.Y.Z` release identity in `nemoclawVersion` with the scenario minimum.
+4. If the scenario supplies an expected source revision, require an exact `sourceRevision` match.
+5. If `nemoclawVersion` has a Git revision suffix, require it to match `sourceRevision`.
+6. Require `status: "supported"` and retain the producer identity in the admission receipt.
+
+An admission receipt can retain this bounded projection:
+
+```json
+{
+  "readinessStatus": "supported",
+  "readinessProducer": {
+    "schemaVersion": "1.1.0",
+    "nemoclawVersion": "0.0.96-35-g8bfff4526",
+    "sourceRevision": "8bfff4526aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+```
+
+Retain the full `sourceRevision` even when the scenario accepts every build above a minimum release.
+Do not use `observedAt` as build identity.
+
 ## Interpret Docker storage
 
 The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.

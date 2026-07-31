@@ -33,7 +33,7 @@ export const REVIEWED_NPM_PACKAGES = {
   tar: "7.5.19",
 } as const;
 
-const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0"]);
+const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0"]);
 
 type JsonRecord = Record<string, unknown>;
 

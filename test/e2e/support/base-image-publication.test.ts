@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   collectPaginated,
+  expandBaseImagePushPaths,
   type FirstParentHistory,
   githubRequest,
   type PublicationRun,
@@ -144,8 +145,14 @@ function publisherJob(
 function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string, unknown>[] {
   const runAttempt = overrides.runAttempt ?? 1;
   return [
-    publisherJob("Build and push OpenClaw base image", { id: 1, run_attempt: runAttempt }),
-    publisherJob("Build and push Hermes base image", { id: 2, run_attempt: runAttempt }),
+    publisherJob("Build and push OpenClaw base image", {
+      id: 1,
+      run_attempt: runAttempt,
+    }),
+    publisherJob("Build and push Hermes base image", {
+      id: 2,
+      run_attempt: runAttempt,
+    }),
     publisherJob("Build and push Deep Agents Code base image", {
       id: 3,
       run_attempt: runAttempt,
@@ -154,7 +161,7 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
-  it("extracts the checked-in literal publisher paths without runtime dependencies (#7372)", () => {
+  it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
     const source = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
       "utf8",
@@ -163,9 +170,19 @@ describe("base-image publication evidence", () => {
     expect(parseBaseImagePushPaths(source)).toEqual(
       expect.arrayContaining([
         ".github/workflows/base-image.yaml",
+        "Dockerfile",
         "Dockerfile.base",
+        "agents/**",
         "agents/hermes/Dockerfile.base",
         "agents/langchain-deepagents-code/Dockerfile.base",
+        "nemoclaw/**",
+        "nemoclaw-blueprint/**",
+        "scripts/**",
+        "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
+        "src/lib/messaging/**",
+        "src/lib/tool-disclosure.ts",
+        "tools/mcp-tool-discovery-runtime/**",
+        "tsconfig.runtime-preloads.json",
       ]),
     );
   });
@@ -214,6 +231,70 @@ describe("base-image publication evidence", () => {
     ],
   ])("rejects %s in publisher trigger paths (#7372)", (_case, source, expected) => {
     expect(() => parseBaseImagePushPaths(source)).toThrow(expected);
+  });
+
+  it("expands only reviewed glob families against first-parent Git history (#7744)", () => {
+    const calls: string[][] = [];
+    const expanded = expandBaseImagePushPaths(
+      EXPECTED_SHA,
+      ["Dockerfile", "agents/**", "src/lib/messaging/**"],
+      (args) => {
+        calls.push(args);
+        const pathspec = required(args.at(-1), "glob expansion call is missing a pathspec");
+        return required(
+          new Map([
+            [
+              ":(glob)agents/**",
+              "agents/hermes/Dockerfile\nagents/openclaw/manifest.yaml\nagents/hermes/Dockerfile",
+            ],
+            [
+              ":(glob)src/lib/messaging/**",
+              "src/lib/messaging/channels/slack.ts\nsrc/lib/messaging/types.ts",
+            ],
+          ]).get(pathspec),
+          `unexpected glob expansion: ${args.join(" ")}`,
+        );
+      },
+    );
+
+    expect(expanded).toEqual([
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/openclaw/manifest.yaml",
+      "src/lib/messaging/channels/slack.ts",
+      "src/lib/messaging/types.ts",
+    ]);
+    expect(calls).toEqual([
+      [
+        "log",
+        "--first-parent",
+        "--diff-merges=first-parent",
+        "--format=",
+        "--name-only",
+        EXPECTED_SHA,
+        "--",
+        ":(glob)agents/**",
+      ],
+      [
+        "log",
+        "--first-parent",
+        "--diff-merges=first-parent",
+        "--format=",
+        "--name-only",
+        EXPECTED_SHA,
+        "--",
+        ":(glob)src/lib/messaging/**",
+      ],
+    ]);
+  });
+
+  it("fails closed when a reviewed glob is empty or Git returns an out-of-family path (#7744)", () => {
+    expect(() => expandBaseImagePushPaths(EXPECTED_SHA, ["agents/**"], () => "")).toThrow(
+      /did not match Git history/u,
+    );
+    expect(() =>
+      expandBaseImagePushPaths(EXPECTED_SHA, ["agents/**"], () => "scripts/escaped.sh"),
+    ).toThrow(/outside reviewed/u);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
@@ -312,7 +393,9 @@ describe("base-image publication evidence", () => {
   });
 
   it("collects page-two evidence and rejects duplicate or truncated pagination (#7372)", async () => {
-    const entries = Array.from({ length: 101 }, (_, index) => ({ id: index + 1 }));
+    const entries = Array.from({ length: 101 }, (_, index) => ({
+      id: index + 1,
+    }));
     const pages = [
       { total_count: entries.length, workflow_runs: entries.slice(0, 100) },
       { total_count: entries.length, workflow_runs: entries.slice(100) },
@@ -355,7 +438,10 @@ describe("base-image publication evidence", () => {
       WORKFLOW_ID,
     );
 
-    expect(selection).toMatchObject({ state: "ready", run: { headSha: EXPECTED_SHA } });
+    expect(selection).toMatchObject({
+      state: "ready",
+      run: { headSha: EXPECTED_SHA },
+    });
   });
 
   it("prefers the graph-newest trusted run without relying on API order (#7372)", () => {
@@ -376,7 +462,10 @@ describe("base-image publication evidence", () => {
       WORKFLOW_ID,
     );
 
-    expect(selection).toMatchObject({ state: "ready", run: { id: 11, headSha: DESCENDANT_SHA } });
+    expect(selection).toMatchObject({
+      state: "ready",
+      run: { id: 11, headSha: DESCENDANT_SHA },
+    });
   });
 
   it("ignores pre-rename workflow metadata outside the eligible history (#7372)", () => {
@@ -434,7 +523,10 @@ describe("base-image publication evidence", () => {
       selectPublicationRun(
         runsPayload([
           workflowRun(),
-          workflowRun({ id: RUN_ID + 1, html_url: `${RUN_URL_ROOT}/${RUN_ID + 1}` }),
+          workflowRun({
+            id: RUN_ID + 1,
+            html_url: `${RUN_URL_ROOT}/${RUN_ID + 1}`,
+          }),
         ]),
         history(),
         WORKFLOW_ID,
@@ -465,7 +557,10 @@ describe("base-image publication evidence", () => {
         run_attempt: 1,
         conclusion: "failure",
       }),
-      publisherJob("Build and push Hermes base image", { id: 5, run_attempt: 2 }),
+      publisherJob("Build and push Hermes base image", {
+        id: 5,
+        run_attempt: 2,
+      }),
     ].filter((job, index) => index !== 1);
 
     expect(() => validatePublisherJobs({ total_count: jobs.length, jobs }, run)).not.toThrow();
@@ -582,7 +677,10 @@ describe("base-image publication evidence", () => {
   it("retries bounded transient and rate-limited GitHub responses (#7372)", async () => {
     const transientResponses: Array<Response | Error> = [
       new Error("network unavailable"),
-      new Response("unavailable", { status: 503, headers: { "retry-after": "2" } }),
+      new Response("unavailable", {
+        status: 503,
+        headers: { "retry-after": "2" },
+      }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     ];
     const transientSleeps: number[] = [];

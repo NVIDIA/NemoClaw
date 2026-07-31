@@ -52,6 +52,7 @@ const rebuildInference = requireDist("./rebuild-inference-preflight.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
+const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 const shields = requireDist("../../shields/index.js");
 
 type RebuildFlowStep = {
@@ -137,6 +138,9 @@ export type RebuildFlowOverrides = {
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
+  revalidateRebuildRouteBeforeDelete?: (
+    receipt: Record<string, unknown>,
+  ) => { ok: true; receipt: Record<string, unknown> } | { ok: false; message: string };
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -442,6 +446,42 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockImplementation(
+    (...args: unknown[]) => {
+      const input = args[0] as {
+        sandboxName: string;
+        gatewayName: string;
+        targetUpdate: Record<string, unknown>;
+      };
+      if (!registry.updateSandbox(input.sandboxName, input.targetUpdate)) {
+        return {
+          ok: false,
+          message: "Sandbox registry entry disappeared during rebuild route preflight.",
+        };
+      }
+      return {
+        ok: true,
+        receipt: {
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          route: {
+            provider: input.targetUpdate.provider ?? null,
+            model: input.targetUpdate.model ?? null,
+            endpointUrl: input.targetUpdate.endpointUrl ?? null,
+            preferredInferenceApi: input.targetUpdate.preferredInferenceApi ?? null,
+            credentialEnv: input.targetUpdate.credentialEnv ?? null,
+          },
+          migratedSandboxNames: [],
+        },
+      };
+    },
+  );
+  vi.spyOn(rebuildRoutePreflight, "revalidateRebuildRouteBeforeDelete").mockImplementation(
+    (...args: unknown[]) => {
+      const receipt = args[0] as Record<string, unknown>;
+      return overrides.revalidateRebuildRouteBeforeDelete?.(receipt) ?? { ok: true, receipt };
+    },
+  );
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation(() => undefined);
