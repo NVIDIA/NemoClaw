@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 const repoRoot = join(import.meta.dirname, "..");
 
 describe("runtime provider central source boundary", () => {
-  // source-shape-contract: compatibility -- Central non-snapshot actions must stay provider-neutral while production selection excludes unqualified future providers and managed-bootstrap dependencies
-  it("keeps provider identities and implementations behind the one bundle composition", () => {
+  // source-shape-contract: compatibility -- Migrated lifecycle and mutation consumers must stay provider-neutral while production selection excludes unqualified future providers and managed-bootstrap dependencies
+  it("keeps migrated provider identities and implementations behind the one bundle composition", () => {
     const centralConsumers = [
       readFileSync(join(repoRoot, "src/lib/actions/inference-set.ts"), "utf8"),
       readFileSync(join(repoRoot, "src/lib/actions/sandbox/destroy-execution.ts"), "utf8"),
@@ -37,6 +37,7 @@ describe("runtime provider central source boundary", () => {
       expect(source).not.toMatch(/\b(?:openshellDriver|driverName)\s*={2,3}\s*["'][^"']+["']/u);
       expect(source).not.toMatch(/switch\s*\([^)]*\b(?:openshellDriver|driverName)\b[^)]*\)/u);
     }
+    expect(centralConsumers[4]).toMatch(/resolved\.lifecycle\.verifyStarted\(/u);
     expect(providerContract.join("\n")).not.toMatch(/managed-bootstrap/u);
     expect(providerContract[1]).not.toMatch(/\b(?:podman|mxc)\b/iu);
   });

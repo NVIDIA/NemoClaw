@@ -104,6 +104,9 @@ export function createInMemoryRuntimeProviderBundle({
         input.log(`  In-memory workload '${input.sandboxName}' started.`);
         return { exitCode: 0 };
       },
+      async verifyStarted(input: RuntimeProviderLifecycleInput) {
+        event("verify-started", input.sandboxName);
+      },
       stop(input: RuntimeProviderLifecycleInput, hooks: RuntimeProviderLifecycleStopHooks) {
         const wasRunning = state.running.delete(input.sandboxName);
         const beforeStop = wasRunning ? hooks.beforeStop : () => undefined;

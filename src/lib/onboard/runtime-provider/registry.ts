@@ -278,6 +278,7 @@ function validateSupportedSurfaceSchemas(
       );
     }
     requireFunction(surfaces.lifecycle, "start", "lifecycle");
+    requireFunction(surfaces.lifecycle, "verifyStarted", "lifecycle");
     requireFunction(surfaces.lifecycle, "stop", "lifecycle");
   }
   if (surfaces.mutationAuthority.supported === true) {

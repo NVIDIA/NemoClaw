@@ -508,7 +508,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps provider identities and implementations behind the one bundle composition",
+      "test": "keeps migrated provider identities and implementations behind the one bundle composition",
       "category": "compatibility"
     },
     {

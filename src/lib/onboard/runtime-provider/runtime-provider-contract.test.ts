@@ -12,9 +12,12 @@ import {
   createInMemoryRuntimeProviderBundle,
   type InMemoryRuntimeProviderBundle,
 } from "../../../../test/helpers/runtime-provider-bundle";
+import { requireInferenceSetRuntimeAuthority } from "../../actions/inference-set-provider";
 import { removeSandboxImage } from "../../actions/sandbox/destroy";
+import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
@@ -22,6 +25,7 @@ import {
   encodeManagedStartupProfile,
   type ManagedStartupProfile,
 } from "../managed-startup/profile";
+import { registerCreatedSandbox } from "../sandbox-registration";
 import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import {
@@ -136,8 +140,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.isFrozen(registered.workload.profile.support?.platforms)).toBe(true);
     expectSupportedSurface(registered.lifecycle);
     expect(Object.isFrozen(registered.lifecycle.start)).toBe(true);
+    expect(Object.isFrozen(registered.lifecycle.verifyStarted)).toBe(true);
     expect(registered).not.toBe(source);
     expect(registered.lifecycle.start).not.toBe(source.lifecycle.start);
+    expect(registered.lifecycle.verifyStarted).not.toBe(source.lifecycle.verifyStarted);
     expect(() => {
       (registered.workload.profile.hostArchitectures as string[]).push("s390x");
     }).toThrow(TypeError);
@@ -321,6 +327,18 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(RuntimeProviderRegistrationError);
   });
 
+  it("rejects a lifecycle surface without provider-owned post-start verification", () => {
+    const bundle = mxcBundle();
+    expectSupportedSurface(bundle.lifecycle);
+    const { verifyStarted: _verifyStarted, ...incomplete } = bundle.lifecycle;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "lifecycle", incomplete)],
+      ]),
+    ).toThrow(/lifecycle\.verifyStarted must be a function/u);
+  });
+
   it("rejects capability/surface drift and duplicate operation-scoped engine identities", () => {
     const bundle = mxcBundle();
     expect(() =>
@@ -498,7 +516,9 @@ describe("sandbox workload ownership receipt", () => {
 describe("socket-free MXC action contract", () => {
   const agents = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
-  it.each(agents)("routes %s lifecycle and cleanup through one injected bundle", async (agent) => {
+  it.each(
+    agents,
+  )("routes %s registration, lifecycle, inference authority, destroy, and cleanup through one injected bundle", async (agent) => {
     const state = {
       events: [] as string[],
       running: new Set<string>(),
@@ -512,10 +532,31 @@ describe("socket-free MXC action contract", () => {
     const providers = createRuntimeProviderBundleRegistry([["mxc", bundle]]);
     const sandboxName = `${agent}-sandbox`;
     const imageTag = `mxc-memory:${agent}`;
-    const entry: SandboxEntry = {
-      name: sandboxName,
-      agent,
-      openshellDriver: "mxc",
+    const registerSandbox = vi.fn();
+    const entry = registerCreatedSandbox({
+      sandboxName,
+      inferenceSelection: {
+        model: "test/model",
+        provider: "nvidia-prod",
+        endpointUrl: null,
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
+      },
+      runtimeFields: {
+        gpuEnabled: false,
+        hostGpuDetected: false,
+        sandboxGpuEnabled: false,
+        sandboxGpuMode: "auto",
+        sandboxGpuDevice: null,
+        openshellDriver: "mxc",
+        openshellVersion: "test",
+      },
+      agent: loadAgent(agent),
+      agentVersionKnown: false,
       imageTag,
       workload: {
         schemaVersion: 1,
@@ -523,18 +564,32 @@ describe("socket-free MXC action contract", () => {
         reference: imageTag,
         shared: false,
       },
-    };
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      registerSandbox,
+      runtimeProviders: providers,
+    });
     state.workloads.add(imageTag);
     const getSandbox = vi.fn(() => entry);
-    const probeSandbox = vi.fn(async () => undefined);
     const stopSandboxChannels = vi.fn();
     const teardownSandboxDashboardForward = vi.fn();
+    const cleanupShieldsArtifacts = vi.fn();
+    const runOpenshell = vi.fn((args: string[]) => {
+      if (args[0] === "sandbox" && args[1] === "delete") {
+        state.events.push(`delete:${sandboxName}`);
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
 
     await expect(
       startSandbox(sandboxName, {
         getSandbox,
         runtimeProviders: providers,
-        probeSandbox,
         log: vi.fn(),
       }),
     ).resolves.toEqual({ exitCode: 0 });
@@ -548,6 +603,22 @@ describe("socket-free MXC action contract", () => {
         warn: vi.fn(),
       }),
     ).toEqual({ exitCode: 0 });
+    expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
+    await expect(
+      executeSandboxDestroy({
+        cleanupShieldsArtifacts,
+        force: false,
+        runOpenshell,
+        sandbox: entry,
+        sandboxConfirmedAbsent: false,
+        sandboxName,
+        runtimeProviders: providers,
+        deps: {
+          readTimerMarker: () => null,
+          wipeSandboxState: vi.fn(),
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true });
     expect(
       removeSandboxImage(sandboxName, {
         getSandbox,
@@ -561,7 +632,12 @@ describe("socket-free MXC action contract", () => {
       reference: imageTag,
     });
 
-    expect(probeSandbox).toHaveBeenCalledWith(sandboxName);
+    expect(registerSandbox).toHaveBeenCalledWith(entry);
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(cleanupShieldsArtifacts).toHaveBeenCalledWith(sandboxName);
     expect(stopSandboxChannels).toHaveBeenCalledWith(
       sandboxName,
       expect.objectContaining({
@@ -572,7 +648,10 @@ describe("socket-free MXC action contract", () => {
     );
     expect(state.events).toEqual([
       `start:${sandboxName}`,
+      `verify-started:${sandboxName}`,
       `stop:${sandboxName}`,
+      `prepare-destroy:${sandboxName}`,
+      `delete:${sandboxName}`,
       `cleanup:${sandboxName}`,
     ]);
     expect(state.running).not.toContain(sandboxName);

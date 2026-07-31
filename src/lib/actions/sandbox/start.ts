@@ -11,21 +11,18 @@ import {
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
 
-// Lazy require keeps the heavy connect module out of this module's load path;
-// tests inject `deps.probeSandbox`.
-function loadConnectProbe(): (sandboxName: string) => Promise<void> {
+function verifyGateway(sandboxName: string): Promise<void> {
   const { connectSandbox } = require("./connect") as {
-    connectSandbox: (sandboxName: string, options?: { probeOnly?: boolean }) => Promise<void>;
+    connectSandbox: (name: string, options?: { probeOnly?: boolean }) => Promise<void>;
   };
-  return (sandboxName) => connectSandbox(sandboxName, { probeOnly: true });
+  return connectSandbox(sandboxName, { probeOnly: true });
 }
 
 export interface SandboxStartDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  /** Gateway/forward health probe; defaults to the `recover` action body. */
-  probeSandbox?: (sandboxName: string) => Promise<void>;
+  verifyGateway?: (sandboxName: string) => Promise<void>;
   log?: (message: string) => void;
 }
 
@@ -59,6 +56,6 @@ export async function startSandbox(
   if (result.exitCode !== 0) return result;
 
   log("  Checking gateway health and host forwards…");
-  await (deps.probeSandbox ?? loadConnectProbe())(sandboxName);
+  await resolved.lifecycle.verifyStarted(input, deps.verifyGateway ?? verifyGateway);
   return { exitCode: 0 };
 }

@@ -180,6 +180,10 @@ export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: "docker-kubectl-first" | "openshell";
       start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
+      verifyStarted(
+        input: RuntimeProviderLifecycleInput,
+        verifyGateway: (sandboxName: string) => Promise<void>,
+      ): Promise<void>;
       stop(
         input: RuntimeProviderLifecycleInput,
         hooks: RuntimeProviderLifecycleStopHooks,

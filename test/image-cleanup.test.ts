@@ -4,25 +4,24 @@
 // Verify that sandbox lifecycle operations clean up host-side Docker images.
 // See: https://github.com/NVIDIA/NemoClaw/issues/2086
 
-import { describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { describe, expect, it, vi } from "vitest";
+import { help as renderRootHelp } from "../src/lib/actions/root-help";
 import {
   cleanupShieldsDestroyArtifacts,
   removeSandboxImage,
   removeSandboxRegistryEntry,
   removeShieldsState,
 } from "../src/lib/actions/sandbox/destroy";
-import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
-import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
-import { resolveNemoclawStateDir } from "../src/lib/state/paths";
-import { help as renderRootHelp } from "../src/lib/actions/root-help";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
+import { normalizeGarbageCollectImagesOptions } from "../src/lib/domain/lifecycle/options";
+import { getSandboxDeleteOutcome } from "../src/lib/domain/sandbox/destroy";
 import { createDockerRuntimeProviderBundle } from "../src/lib/onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../src/lib/onboard/runtime-provider/registry";
+import { resolveNemoclawStateDir } from "../src/lib/state/paths";
 
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   it("removes sandbox images before deleting the registry entry", () => {
@@ -107,7 +106,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     expect(removeImage).not.toHaveBeenCalled();
   });
 
-  it("fails closed when a managed workload receipt was dropped as malformed", () => {
+  it("protects a managed image and removes its registry row when its receipt was dropped", () => {
     const removeImage = vi.fn(() => ({ status: 0 }));
     const runtimeProviders = createRuntimeProviderBundleRegistry([
       ["docker", createDockerRuntimeProviderBundle({ removeImage })],
@@ -124,8 +123,17 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
       runtimeProviders,
     });
 
-    expect(result).toEqual({ status: "skipped", reason: "authority-unproven" });
+    expect(result).toEqual({ status: "skipped", reason: "shared-image" });
     expect(removeImage).not.toHaveBeenCalled();
+
+    const removeSandbox = vi.fn(() => true);
+    expect(
+      removeSandboxRegistryEntry("alpha", {
+        removeImage: () => result,
+        removeSandbox,
+      }),
+    ).toBe(true);
+    expect(removeSandbox).toHaveBeenCalledWith("alpha");
   });
 
   it("treats missing sandbox delete results as already gone", () => {

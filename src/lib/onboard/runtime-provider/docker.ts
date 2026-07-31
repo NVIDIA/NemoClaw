@@ -223,7 +223,7 @@ function removeOwnedDockerWorkload(
         imageTag.startsWith(`${repository}:`),
     )
   ) {
-    return { status: "skipped", reason: "authority-unproven" };
+    return { status: "skipped", reason: "shared-image" };
   }
   if (
     workload?.kind === "legacy-dockerfile" &&
@@ -315,6 +315,7 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       channelStopTransport: "docker-kubectl-first",
       start: (input) => startDockerSandbox(input, deps),
+      verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
       stop: (input, hooks) => stopDockerSandbox(input, hooks, deps),
     },
     mutationAuthority: {
