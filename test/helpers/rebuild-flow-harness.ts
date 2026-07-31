@@ -53,7 +53,9 @@ const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
-const gatewayTeardownAuthority = requireDist("../../onboard/gateway-teardown-authority.js");
+const gatewayTeardownAuthority = requireDist(
+  "../../onboard/gateway-teardown-authority.js",
+) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 const shields = requireDist("../../shields/index.js");
 
 type RebuildFlowStep = {

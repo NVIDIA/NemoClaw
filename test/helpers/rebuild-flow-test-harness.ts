@@ -33,7 +33,9 @@ const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 const sandboxList = requireDist("../../openshell-sandbox-list.js");
 const resolve = requireDist("../../adapters/openshell/resolve.js");
-const gatewayTeardownAuthority = requireDist("../../onboard/gateway-teardown-authority.js");
+const gatewayTeardownAuthority = requireDist(
+  "../../onboard/gateway-teardown-authority.js",
+) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 const agentDefs = requireDist("../../agent/defs.js");
 const agentRuntime = requireDist("../../agent/runtime.js");
 const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
