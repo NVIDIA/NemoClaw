@@ -113,7 +113,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving MCP-bearing registry entry across sandbox recreation",
+        "Preserving journaled source registry entry across sandbox recreation",
       );
       expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
       expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
@@ -178,7 +178,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).toHaveBeenCalledOnce();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving baseline-exclusion registry entry across sandbox recreation",
+        "Preserving journaled source registry entry across sandbox recreation",
       );
       expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
       expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
@@ -257,7 +257,7 @@ network_policies:
       expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
       expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving baseline-exclusion registry entry across sandbox recreation",
+        "Preserving journaled source registry entry across sandbox recreation",
       );
     });
 
@@ -267,7 +267,7 @@ network_policies:
       const probeSequence = [
         {
           event: "stale-live",
-          result: { status: 0, output: "Sandbox: alpha\nPhase: Ready" },
+          result: { status: 0, output: "Sandbox: alpha\nId: sbx-0d6f4c2a91\nPhase: Ready" },
         },
         {
           event: "absent",
@@ -290,12 +290,14 @@ network_policies:
         harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(events).toEqual(["stale-live", "absent", "onboard"]);
+      // Open the journal against the live source, wait for absence, then prove
+      // absence once more before the journal records the deleted phase (#7734).
+      expect(events).toEqual(["stale-live", "absent", "absent", "onboard"]);
       expect(
         harness.captureOpenshellSpy.mock.calls.filter(
           ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get -g nemoclaw alpha",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
     });
 
     it("accepts the agent version cached by the confirmation probe before lock acquisition", async () => {
@@ -402,18 +404,18 @@ network_policies:
       }
     });
 
-    it("relocks as absent when registry cleanup throws after confirmed delete", async () => {
+    it("relocks as absent and keeps the journaled row when replacement creation fails (#7734)", async () => {
       const harness = createRebuildFlowHarness({
-        removeSandboxRegistryEntryWithReceipt: () => {
-          throw new Error("registry cleanup after delete failed");
+        onboard: () => {
+          throw new Error("recreate failed");
         },
       });
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("registry cleanup after delete failed");
+      ).rejects.toThrow("Recreate failed");
 
-      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.relockSpy).toHaveBeenLastCalledWith(
         "alpha",
         expect.any(Object),
