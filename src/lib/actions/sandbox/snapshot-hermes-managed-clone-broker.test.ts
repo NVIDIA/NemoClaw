@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, type Mock, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { HermesToolGatewayCloneBroker } from "../../hermes-tool-gateway-clone-broker";
 import {
@@ -135,27 +135,50 @@ function providerRunner() {
   return { createCredentials, live, run };
 }
 
-function broker(): HermesToolGatewayCloneBroker & {
-  activateHermesToolGatewayCloneBinding: ReturnType<typeof vi.fn>;
-  discardHermesToolGatewayCloneBinding: ReturnType<typeof vi.fn>;
-  preflightHermesToolGatewayCloneBinding: ReturnType<typeof vi.fn>;
-  stageHermesToolGatewayCloneBinding: ReturnType<typeof vi.fn>;
-} {
+type HermesBrokerMock = Omit<
+  HermesToolGatewayCloneBroker,
+  | "activateHermesToolGatewayCloneBinding"
+  | "discardHermesToolGatewayCloneBinding"
+  | "preflightHermesToolGatewayCloneBinding"
+  | "stageHermesToolGatewayCloneBinding"
+> & {
+  activateHermesToolGatewayCloneBinding: Mock<
+    HermesToolGatewayCloneBroker["activateHermesToolGatewayCloneBinding"]
+  >;
+  discardHermesToolGatewayCloneBinding: Mock<
+    HermesToolGatewayCloneBroker["discardHermesToolGatewayCloneBinding"]
+  >;
+  preflightHermesToolGatewayCloneBinding: Mock<
+    HermesToolGatewayCloneBroker["preflightHermesToolGatewayCloneBinding"]
+  >;
+  stageHermesToolGatewayCloneBinding: Mock<
+    HermesToolGatewayCloneBroker["stageHermesToolGatewayCloneBinding"]
+  >;
+};
+
+function broker(): HermesBrokerMock {
   return {
     HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
     getHermesToolGatewayProviderName: (name) => `${name}-hermes-tool-gateway`,
     getHermesInferenceProviderName: (name) => `${name}-hermes-inference`,
-    preflightHermesToolGatewayCloneBinding: vi.fn(),
-    stageHermesToolGatewayCloneBinding: vi.fn(() => ({
+    preflightHermesToolGatewayCloneBinding:
+      vi.fn<HermesToolGatewayCloneBroker["preflightHermesToolGatewayCloneBinding"]>(),
+    stageHermesToolGatewayCloneBinding: vi.fn<
+      HermesToolGatewayCloneBroker["stageHermesToolGatewayCloneBinding"]
+    >(() => ({
       activationToken: `nc_activate_${"a".repeat(43)}`,
       brokerToken: `nc_broker_${"b".repeat(43)}`,
       requestId: `nc_clone_${"1".repeat(32)}`,
     })),
-    activateHermesToolGatewayCloneBinding: vi.fn(() => ({
+    activateHermesToolGatewayCloneBinding: vi.fn<
+      HermesToolGatewayCloneBroker["activateHermesToolGatewayCloneBinding"]
+    >(() => ({
       file: "/tmp/destination.json",
       brokerToken: `nc_broker_${"b".repeat(43)}`,
     })),
-    discardHermesToolGatewayCloneBinding: vi.fn(() => true),
+    discardHermesToolGatewayCloneBinding: vi.fn<
+      HermesToolGatewayCloneBroker["discardHermesToolGatewayCloneBinding"]
+    >(() => true),
     bindHermesToolGatewayCloneProviderState: vi.fn(() => ({
       file: "/tmp/destination.json",
       brokerToken: `nc_broker_${"b".repeat(43)}`,
@@ -269,16 +292,19 @@ describe("Hermes managed clone broker transaction", () => {
       transactionId: "2".repeat(32),
     });
 
-    expect(() =>
+    let thrown: unknown;
+    try {
       provisionHermesManagedCloneBrokerTransaction(prepared, {
         ...authority(source),
         environment: environment(),
         runOpenshell: runner.run,
         broker: hostBroker,
-      }),
-    ).toThrowError(
-      expect.objectContaining<HermesManagedCloneBrokerTransactionError>({ cleanupDeferred: true }),
-    );
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(HermesManagedCloneBrokerTransactionError);
+    expect((thrown as HermesManagedCloneBrokerTransactionError).cleanupDeferred).toBe(true);
     expect(runner.live.size).toBe(2);
     expect(hostBroker.discardHermesToolGatewayCloneBinding).not.toHaveBeenCalled();
   });
