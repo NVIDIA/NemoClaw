@@ -254,6 +254,17 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       },
     },
     {
+      expected: { observed: "0", reason: "explicit-selection", run: "1" },
+      name: "owning-file PR selection",
+      scenario: {
+        checkoutSha: "candidate-sha",
+        eventName: "workflow_dispatch",
+        executionTier: "weekly-release",
+        jobs: "openshell-gateway-upgrade",
+        weekday: "1",
+      },
+    },
+    {
       expected: { observed: "0", reason: "nightly-canonical", run: "1" },
       name: "nightly canonical row",
       scenario: { eventName: "schedule", executionTier: "nightly", weekday: "1" },
