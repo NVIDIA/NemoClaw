@@ -29,6 +29,8 @@ function runNormalizer(argv: readonly string[]) {
     "printf 'CA=%s\\n' \"${NEMOCLAW_CORPORATE_CA_B64-__UNSET__}\"",
     "printf 'HTTP_PROXY=%s\\n' \"${HTTP_PROXY-__UNSET__}\"",
     "printf 'NO_PROXY=%s\\n' \"${NO_PROXY-__UNSET__}\"",
+    "printf 'FAST_REENTRY_INTERVAL=%s\\n' \"${NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS-__UNSET__}\"",
+    "printf 'FAST_REENTRY_POLLS=%s\\n' \"${NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS-__UNSET__}\"",
     `printf 'ARG=%s\\n' "$@"`,
   ].join("\n");
   return spawnSync("/bin/bash", ["-c", harness, "entrypoint-env-wrapper-test", HELPER, ...argv], {
@@ -48,6 +50,8 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       "NEMOCLAW_CORPORATE_CA_B64=Y2E=",
       "HTTP_PROXY=http://user:pass@proxy.example.test:18080",
       "NO_PROXY=localhost,127.0.0.1",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=3",
       "nemoclaw-start",
       "/bin/sh",
       "-c",
@@ -60,6 +64,8 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stdout).toContain("CA=Y2E=");
     expect(result.stdout).toContain("HTTP_PROXY=http://user:pass@proxy.example.test:18080");
     expect(result.stdout).toContain("NO_PROXY=localhost,127.0.0.1");
+    expect(result.stdout).toContain("FAST_REENTRY_INTERVAL=0.25");
+    expect(result.stdout).toContain("FAST_REENTRY_POLLS=3");
     expect(result.stdout).toContain("ARG=/bin/sh\nARG=-c\nARG=printf managed command\n");
   });
 
