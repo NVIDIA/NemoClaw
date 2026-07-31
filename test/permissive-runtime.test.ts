@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { buildMcpBridgePolicyYaml } from "../src/lib/actions/sandbox/mcp-bridge-policy-render.js";
+import { withoutProviderComposedPolicies } from "../src/lib/policy/merge.js";
 import { buildRuntimePermissivePolicy } from "../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
@@ -317,6 +318,31 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
     });
     expect(out).toBe(basePath);
+  });
+
+  it("carries across exactly what the canonical provider filter keeps (#7952)", () => {
+    // This helper inlines the provider-composed prefix instead of importing
+    // the canonical filter, which is only reachable through a built
+    // artifact. Compare the two by behavior so the copies cannot drift.
+    const live = {
+      ...GENERATED_MCP,
+      nvidia: { name: "nvidia" },
+      _provider_openai: { name: "_provider_openai" },
+      _provider_nvidia_nim: { name: "_provider_nvidia_nim" },
+    };
+    const expected = Object.keys(withoutProviderComposedPolicies(live)).sort();
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: YAML.stringify({ network_policies: live }),
+      // A base with no routes of its own, so the applied document holds
+      // exactly what the merge chose to carry across.
+      readBasePolicy: () => YAML.stringify({ filesystem_policy: { include_workdir: true } }),
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(Object.keys(result.network_policies).sort()).toEqual(expected);
+    expect(expected).toContain(MCP_KEY);
   });
 
   it("replaces a non-mapping base network_policies rather than indexing into it", () => {
