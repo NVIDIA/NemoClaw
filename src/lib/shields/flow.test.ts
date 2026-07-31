@@ -18,6 +18,7 @@ const shieldsModulePath = "./index.js";
 type ShieldsHarness = {
   applyShieldsPolicySnapshot: typeof import("./index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
+  cleanupTempDirSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
   policySetBodies: string[];
@@ -38,6 +39,7 @@ type HarnessOptions = {
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
+  failStateSave?: boolean;
   invokedAs?: "nemoclaw" | "nemohermes";
   openClawGuardFailure?: {
     code: string;
@@ -62,15 +64,18 @@ type HarnessOptions = {
 };
 
 function managedMcpPolicy(server: string, address = "8.8.8.8") {
-  const key = `mcp_bridge_${server}`;
   const content = buildMcpBridgePolicyYaml(
     server,
     `https://${server}.example.com/mcp`,
     "hermes-config",
     [address],
   );
-  const networkPolicy = YAML.parse(content).network_policies[key];
-  return { content, networkPolicy, server };
+  const entries = Object.entries(YAML.parse(content).network_policies as Record<string, unknown>);
+  if (entries.length !== 1) {
+    throw new Error(`Expected one rendered MCP policy for ${server}, found ${entries.length}`);
+  }
+  const [key, networkPolicy] = entries[0]!;
+  return { content, key, networkPolicy, server };
 }
 
 function managedMcpSandbox(policies: Array<ReturnType<typeof managedMcpPolicy>>): SandboxEntry {
@@ -129,6 +134,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
+  const tempFiles = requireDist("../onboard/temp-files.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
   let openClawPosture: "locked" | "mutable" = "mutable";
@@ -162,6 +168,9 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     options.sandboxEntry ?? { name: "openclaw", openshellDriver: "docker" },
   );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
+  const permissiveRuntime = requireDist(
+    "./permissive-runtime.js",
+  ) as typeof import("./permissive-runtime.js");
   const directSandboxUnavailableError = new Error(
     "No running direct OpenShell sandbox container found for 'openclaw' (driver: docker). Expected a running container named openshell-openclaw or openshell-openclaw-*. Is the sandbox running?",
   );
@@ -257,6 +266,19 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
           : "";
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  const cleanupTempDirSpy = vi.spyOn(tempFiles, "cleanupTempDir");
+  if (options.failStateSave) {
+    const buildRuntimePermissivePolicy = permissiveRuntime.buildRuntimePermissivePolicy;
+    vi.spyOn(permissiveRuntime, "buildRuntimePermissivePolicy").mockImplementation(
+      (basePath, deps) => {
+        const runtimePolicy = buildRuntimePermissivePolicy(basePath, deps);
+        fs.mkdirSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"), {
+          recursive: true,
+        });
+        return runtimePolicy;
+      },
+    );
+  }
 
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();
@@ -265,6 +287,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   return {
     applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
+    cleanupTempDirSpy,
     errorSpy,
     logSpy,
     policySetBodies,
@@ -367,6 +390,63 @@ describe("shields command flow", () => {
     const applied = YAML.parse(harness.policySetBodies.at(-1)!);
     expect(applied.network_policies.mcp_bridge_alpha).toEqual(alpha.networkPolicy);
     expect(applied.network_policies).not.toHaveProperty("restrictive_baseline");
+  });
+
+  it("cleans the staged managed MCP policy when timer startup fails", () => {
+    const alpha = managedMcpPolicy("alpha");
+    const harness = createHarness({
+      fork: () => {
+        throw new Error("timer startup failed");
+      },
+      livePolicy: YAML.stringify({
+        version: 1,
+        network_policies: { [alpha.key]: alpha.networkPolicy },
+      }),
+      sandboxEntry: managedMcpSandbox([alpha]),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "cleanup coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Cannot start auto-restore timer: timer startup failed");
+
+    expect(harness.cleanupTempDirSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw-permissive-runtime"),
+      "nemoclaw-permissive-runtime",
+    );
+    const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
+    expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
+  });
+
+  it("cleans the staged managed MCP policy when state persistence fails", () => {
+    const alpha = managedMcpPolicy("alpha");
+    const harness = createHarness({
+      failStateSave: true,
+      livePolicy: YAML.stringify({
+        version: 1,
+        network_policies: { [alpha.key]: alpha.networkPolicy },
+      }),
+      sandboxEntry: managedMcpSandbox([alpha]),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "cleanup coverage",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/EISDIR|directory/i);
+
+    expect(harness.cleanupTempDirSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw-permissive-runtime"),
+      "nemoclaw-permissive-runtime",
+    );
+    const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
+    expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
   });
 
   it("timer restore uses persisted MCP ownership after its transition marker clears (#7952)", () => {
@@ -520,9 +600,9 @@ describe("shields command flow", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const snapshotPath = path.join(stateDir, "policy-snapshot-many-managed-keys.yaml");
     const policies = Array.from({ length: 257 }, (_, index) => managedMcpPolicy(`server${index}`));
-    const keys = policies.map(({ server }) => `mcp_bridge_${server}`);
+    const keys = policies.map(({ key }) => key);
     const networkPolicies = Object.fromEntries(
-      policies.map(({ networkPolicy, server }) => [`mcp_bridge_${server}`, networkPolicy]),
+      policies.map(({ key, networkPolicy }) => [key, networkPolicy]),
     );
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(snapshotPath, YAML.stringify({ network_policies: networkPolicies }));

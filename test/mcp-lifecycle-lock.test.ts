@@ -306,7 +306,7 @@ const releasePath = process.argv[3];
     children.delete(child);
   });
 
-  it("permanently contains an atomic lock left by a dead owner", async () => {
+  it("recovers an atomic lock left by a dead owner", async () => {
     const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
     const containmentPath = `${lockPath}.containment`;
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -324,11 +324,89 @@ const releasePath = process.argv[3];
       })}\n`,
     );
 
-    await expect(
-      lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
-    ).rejects.toThrow("Sandbox mutation containment is active");
-    expect(fs.existsSync(lockPath)).toBe(true);
-    expect(fs.existsSync(containmentPath)).toBe(true);
+    let entered = false;
+    await lifecycleLock.withMcpLifecycleLock(
+      "alpha",
+      () => {
+        entered = true;
+      },
+      options(),
+    );
+    expect(entered).toBe(true);
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(containmentPath)).toBe(false);
+  });
+
+  it("recovers an atomic lock left by a dead owner for synchronous callers", () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    const containmentPath = `${lockPath}.containment`;
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sandboxName: "alpha",
+        pid: 2_147_483_647,
+        processIdentity: "dead-process",
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
+        token: "stale-sync-token",
+        acquiredAt: "2026-01-01T00:00:00.000Z",
+      })}\n`,
+    );
+
+    expect(lifecycleLock.withMcpLifecycleLockSync("alpha", () => "acquired", options())).toBe(
+      "acquired",
+    );
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(containmentPath)).toBe(false);
+  });
+
+  it("preserves a replacement main lock published during stale recovery", async () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sandboxName: "alpha",
+        pid: 2_147_483_647,
+        processIdentity: "dead-process",
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
+        token: "observed-stale-token",
+        acquiredAt: "2026-01-01T00:00:00.000Z",
+      })}\n`,
+    );
+    const replacement = {
+      version: 1,
+      sandboxName: "alpha",
+      pid: process.pid,
+      processIdentity: currentProcessIdentity,
+      hostIdentity: currentHostIdentity,
+      pidNamespaceIdentity: currentPidNamespaceIdentity,
+      token: "replacement-main-token",
+      acquiredAt: new Date().toISOString(),
+    };
+    const rename = fs.promises.rename.bind(fs.promises);
+    let injectedReplacement = false;
+    const renameSpy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      if (!injectedReplacement && String(from) === lockPath) {
+        injectedReplacement = true;
+        fs.unlinkSync(lockPath);
+        fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+      }
+      return rename(from, to);
+    });
+
+    try {
+      await expect(
+        lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 50 })),
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+    } finally {
+      renameSpy.mockRestore();
+    }
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("replacement-main-token");
   });
 
   it("permanently contains a stale deadline generation before an ordinary mutation", async () => {
@@ -588,7 +666,7 @@ const releasePath = process.argv[3];
   });
 
   it.skipIf(currentProcessIdentity === null)(
-    "permanently contains a recycled PID because prior descendants are unknown",
+    "recovers a recycled PID after confirming a fresh process-start mismatch",
     async () => {
       const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
       const containmentPath = `${lockPath}.containment`;
@@ -608,10 +686,10 @@ const releasePath = process.argv[3];
       );
 
       await expect(
-        lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
-      ).rejects.toThrow("Sandbox mutation containment is active");
-      expect(fs.existsSync(lockPath)).toBe(true);
-      expect(fs.existsSync(containmentPath)).toBe(true);
+        lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options()),
+      ).resolves.toBeUndefined();
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(containmentPath)).toBe(false);
     },
   );
 

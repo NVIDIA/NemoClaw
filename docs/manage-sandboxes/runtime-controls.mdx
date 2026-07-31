@@ -124,7 +124,10 @@ A surviving server keeps its recorded endpoint and address pins while its policy
 When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window while the deadline gate stays closed.
 If the command cannot complete and commit restoration within that window, NemoClaw converts the deadline gate into durable containment.
 NemoClaw commits the containment record before it returns the failure, so new mutations remain blocked until operator resolution.
-NemoClaw also records durable containment if the recorded owner exits before releasing its exact lock generation, because surviving descendants cannot be ruled out.
+For an ordinary lifecycle lock, NemoClaw reclaims only an exact, structurally valid stale generation for the same sandbox.
+It rechecks the generation under an exclusive stale-lock reaper gate before removal.
+An expired deadline owner or interrupted reaper still records durable containment because surviving descendants cannot be ruled out.
+NemoClaw fails closed for corrupt, non-regular, wrong-sandbox, ambiguous, foreign, and live identities instead of deleting those generations.
 Stop all NemoClaw processes for that sandbox, then follow the exact lock-generation recovery guidance in the reported error or audit entry.
 Do not remove a recorded lifecycle lock while any NemoClaw process for that sandbox is running.
 

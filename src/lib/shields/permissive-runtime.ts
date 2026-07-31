@@ -193,7 +193,7 @@ export interface ManagedMcpRuntimePolicyDeps {
  * shields-down window.
  */
 export function buildRuntimeManagedMcpPolicy(
-  basePolicyPath: string,
+  _basePolicyPath: string,
   deps: ManagedMcpRuntimePolicyDeps,
 ): string {
   const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
@@ -240,7 +240,7 @@ export interface DeadlineManagedMcpRuntimePolicy {
 }
 
 export function buildDeadlineRuntimeManagedMcpPolicy(
-  basePolicyPath: string,
+  _basePolicyPath: string,
   deps: ManagedMcpRuntimePolicyDeps,
 ): DeadlineManagedMcpRuntimePolicy {
   const baseYaml = deps.readBasePolicy();

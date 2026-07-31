@@ -24,6 +24,8 @@ import {
   mcpLifecycleLockPathExistsSync,
   readMcpLifecycleLockObservation,
   readMcpLifecycleLockObservationSync,
+  reclaimStaleMcpLifecycleLockGeneration,
+  reclaimStaleMcpLifecycleLockGenerationSync,
   safelyReleaseMcpLifecycleLock,
   safelyReleaseMcpLifecycleLockSync,
   writeMcpLifecycleLockCandidateAndLink,
@@ -203,6 +205,100 @@ function classifyObservedMcpLifecycleLock(
   );
 }
 
+function isValidMainOwnerForSandbox(observation: LockObservation, sandboxName: string): boolean {
+  return observation.owner?.sandboxName === sandboxName;
+}
+
+async function tryReapStaleMainLock(
+  lockPath: string,
+  sandboxName: string,
+  stateDir: string,
+  corruptLockGraceMs: number,
+  corruptTracker: CorruptGenerationTracker,
+): Promise<boolean> {
+  const containmentPath = committedContainmentPath(lockPath);
+  const deadlinePath = `${lockPath}.deadline`;
+  if (
+    (await mcpLifecycleLockPathExists(containmentPath)) ||
+    (await mcpLifecycleLockPathExists(deadlinePath))
+  ) {
+    return false;
+  }
+
+  const takeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
+  const reaperPath = `${lockPath}.reaper`;
+  const reaperToken = crypto.randomUUID();
+  const reaperOwner = createMcpLifecycleLockOwner(sandboxName, reaperToken, takeoverToken);
+  if (!(await writeMcpLifecycleLockCandidateAndLink(reaperPath, reaperOwner))) return false;
+
+  try {
+    if (
+      (await mcpLifecycleLockPathExists(containmentPath)) ||
+      (await mcpLifecycleLockPathExists(deadlinePath)) ||
+      readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken
+    ) {
+      return false;
+    }
+    const latest = await readMcpLifecycleLockObservation(lockPath);
+    if (!latest) return true;
+    if (
+      !isValidMainOwnerForSandbox(latest, sandboxName) ||
+      classifyObservedMcpLifecycleLock(latest, sandboxName, corruptLockGraceMs, corruptTracker) !==
+        "stale"
+    ) {
+      return false;
+    }
+    return reclaimStaleMcpLifecycleLockGeneration(lockPath, latest);
+  } finally {
+    await safelyReleaseMcpLifecycleLock(reaperPath, reaperToken);
+  }
+}
+
+function tryReapStaleMainLockSync(
+  lockPath: string,
+  sandboxName: string,
+  stateDir: string,
+  corruptLockGraceMs: number,
+  corruptTracker: CorruptGenerationTracker,
+): boolean {
+  const containmentPath = committedContainmentPath(lockPath);
+  const deadlinePath = `${lockPath}.deadline`;
+  if (
+    mcpLifecycleLockPathExistsSync(containmentPath) ||
+    mcpLifecycleLockPathExistsSync(deadlinePath)
+  ) {
+    return false;
+  }
+
+  const takeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
+  const reaperPath = `${lockPath}.reaper`;
+  const reaperToken = crypto.randomUUID();
+  const reaperOwner = createMcpLifecycleLockOwner(sandboxName, reaperToken, takeoverToken);
+  if (!writeMcpLifecycleLockCandidateAndLinkSync(reaperPath, reaperOwner)) return false;
+
+  try {
+    if (
+      mcpLifecycleLockPathExistsSync(containmentPath) ||
+      mcpLifecycleLockPathExistsSync(deadlinePath) ||
+      readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken
+    ) {
+      return false;
+    }
+    const latest = readMcpLifecycleLockObservationSync(lockPath);
+    if (!latest) return true;
+    if (
+      !isValidMainOwnerForSandbox(latest, sandboxName) ||
+      classifyObservedMcpLifecycleLock(latest, sandboxName, corruptLockGraceMs, corruptTracker) !==
+        "stale"
+    ) {
+      return false;
+    }
+    return reclaimStaleMcpLifecycleLockGenerationSync(lockPath, latest);
+  } finally {
+    safelyReleaseMcpLifecycleLockSync(reaperPath, reaperToken);
+  }
+}
+
 async function acquireMcpLifecycleLock(
   sandboxName: string,
   options: McpLifecycleLockOptions,
@@ -328,6 +424,16 @@ async function acquireMcpLifecycleLock(
           corruptMainTracker,
         ) === "stale"
       ) {
+        if (isValidMainOwnerForSandbox(observation, sandboxName)) {
+          await tryReapStaleMainLock(
+            lockPath,
+            sandboxName,
+            stateDir,
+            corruptLockGraceMs,
+            corruptMainTracker,
+          );
+          continue;
+        }
         ensurePermanentContainmentForStaleGenerationSync(
           lockPath,
           sandboxName,
@@ -463,6 +569,16 @@ function acquireMcpLifecycleLockSync(
           corruptMainTracker,
         ) === "stale"
       ) {
+        if (isValidMainOwnerForSandbox(observation, sandboxName)) {
+          tryReapStaleMainLockSync(
+            lockPath,
+            sandboxName,
+            options.stateDir,
+            corruptLockGraceMs,
+            corruptMainTracker,
+          );
+          continue;
+        }
         ensurePermanentContainmentForStaleGenerationSync(
           lockPath,
           sandboxName,

@@ -548,6 +548,21 @@ describe("shields — unit logic", () => {
         return readFileWithUnreadableRegistry(originalReadFileSync, file, options) as never;
       });
       vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      const originalRmSync = fs.rmSync.bind(fs);
+      let appliedPolicy = "";
+      vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+        const cleanupDir = String(target);
+        if (
+          path.basename(cleanupDir).startsWith("nemoclaw-permissive-runtime-") &&
+          fs.existsSync(cleanupDir)
+        ) {
+          const policyFile = fs.readdirSync(cleanupDir).find((name) => name.endsWith(".yaml"));
+          if (policyFile) {
+            appliedPolicy = originalReadFileSync(path.join(cleanupDir, policyFile), "utf-8");
+          }
+        }
+        originalRmSync(target, options);
+      });
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
 
       const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
@@ -559,14 +574,8 @@ describe("shields — unit logic", () => {
       expect(result.managedMcpOmissions).toEqual([
         expect.objectContaining({ reason: expect.stringMatching(/Cannot read config file:/) }),
       ]);
-      const { composeDeadlineManagedMcpPolicies } = await import("./mcp-policy-transition");
-      const composition = composeDeadlineManagedMcpPolicies(
-        fs.readFileSync(snapshotPath, "utf-8"),
-        [],
-        ["mcp_bridge_alpha"],
-      );
-      expect(composition.yaml).toContain("restrictive_baseline");
-      expect(composition.yaml).not.toContain("mcp_bridge_alpha");
+      expect(appliedPolicy).toContain("restrictive_baseline");
+      expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
     });
 
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {

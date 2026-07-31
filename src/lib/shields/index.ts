@@ -3166,114 +3166,114 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   const now = new Date().toISOString();
   let transition: ShieldsDownTransition | null = null;
 
-  // Commit the host-side recovery authority before weakening policy or file
-  // permissions. If this process is killed later, the detached timer and its
-  // marker already exist and the persisted state honestly reports shields
-  // down. A crash can therefore never leave an untracked mutable window.
-  if (!opts.skipTimer) {
-    const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
-    const processToken = opts.processToken ?? randomBytes(16).toString("hex");
-    if (!/^[0-9a-f]{32}$/.test(processToken)) {
-      throw new Error("Invalid shields-down recovery process token");
-    }
-    const timerScript = path.join(__dirname, "timer.ts");
-    const timerScriptJs = timerScript.replace(/\.ts$/, ".js");
-    const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
-    transition = {
-      version: 1,
-      phase: "preparing",
-      ownerPid: process.pid,
-      ownerStartIdentity:
-        readProcessStartIdentity(process.pid) ??
-        (() => {
-          throw new Error("Cannot identify shields-down owner process");
-        })(),
-      ownerMcpProcessIdentity:
-        readMcpLockProcessIdentity(process.pid, true) ??
-        (() => {
-          throw new Error("Cannot identify shields-down lifecycle owner process");
-        })(),
-      processToken,
-      sandboxName,
-      snapshotPath,
-      managedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
-    };
-    const leaseOwnerPid = opts.deferAutoRestoreWhileOwnerAlive ? transition.ownerPid : null;
-    const leaseOwnerStartIdentity = opts.deferAutoRestoreWhileOwnerAlive
-      ? transition.ownerStartIdentity
-      : null;
-    let timerChild: ReturnType<typeof fork> | null = null;
-
-    try {
-      // Publish the forward-transition ownership marker before authorizing the
-      // timer. If the timeout expires while this command is still weakening
-      // policy/config, the timer waits for phase=active or owner death instead
-      // of racing the forward mutations.
-      writeShieldsDownTransition(transition, null);
-      timerChild = fork(
-        actualScript,
-        [
-          sandboxName,
-          snapshotPath,
-          restoreAt.toISOString(),
-          target.configPath,
-          target.configDir,
-          processToken,
-          opts.allowLegacyHermesProtocol === true ? "1" : "0",
-          leaseOwnerPid === null ? "" : String(leaseOwnerPid),
-          leaseOwnerStartIdentity ?? "",
-        ],
-        {
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore", "ipc"],
-        },
-      );
-      if (!timerChild.pid) throw new Error("auto-restore timer did not report a process id");
-      writeTimerMarkerAtomic(sandboxName, {
-        pid: timerChild.pid,
+  try {
+    // Commit the host-side recovery authority before weakening policy or file
+    // permissions. If this process is killed later, the detached timer and its
+    // marker already exist and the persisted state honestly reports shields
+    // down. A crash can therefore never leave an untracked mutable window.
+    if (!opts.skipTimer) {
+      const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
+      const processToken = opts.processToken ?? randomBytes(16).toString("hex");
+      if (!/^[0-9a-f]{32}$/.test(processToken)) {
+        throw new Error("Invalid shields-down recovery process token");
+      }
+      const timerScript = path.join(__dirname, "timer.ts");
+      const timerScriptJs = timerScript.replace(/\.ts$/, ".js");
+      const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
+      transition = {
+        version: 1,
+        phase: "preparing",
+        ownerPid: process.pid,
+        ownerStartIdentity:
+          readProcessStartIdentity(process.pid) ??
+          (() => {
+            throw new Error("Cannot identify shields-down owner process");
+          })(),
+        ownerMcpProcessIdentity:
+          readMcpLockProcessIdentity(process.pid, true) ??
+          (() => {
+            throw new Error("Cannot identify shields-down lifecycle owner process");
+          })(),
+        processToken,
         sandboxName,
         snapshotPath,
-        restoreAt: restoreAt.toISOString(),
-        processToken,
-        allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
-        ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
-          ? { leaseOwnerPid, leaseOwnerStartIdentity }
-          : {}),
-      });
-      if (!timerChild.send({ type: "authorize", processToken })) {
-        throw new Error("auto-restore timer authorization channel closed early");
+        managedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
+      };
+      const leaseOwnerPid = opts.deferAutoRestoreWhileOwnerAlive ? transition.ownerPid : null;
+      const leaseOwnerStartIdentity = opts.deferAutoRestoreWhileOwnerAlive
+        ? transition.ownerStartIdentity
+        : null;
+      let timerChild: ReturnType<typeof fork> | null = null;
+
+      try {
+        // Publish the forward-transition ownership marker before authorizing the
+        // timer. If the timeout expires while this command is still weakening
+        // policy/config, the timer waits for phase=active or owner death instead
+        // of racing the forward mutations.
+        writeShieldsDownTransition(transition, null);
+        timerChild = fork(
+          actualScript,
+          [
+            sandboxName,
+            snapshotPath,
+            restoreAt.toISOString(),
+            target.configPath,
+            target.configDir,
+            processToken,
+            opts.allowLegacyHermesProtocol === true ? "1" : "0",
+            leaseOwnerPid === null ? "" : String(leaseOwnerPid),
+            leaseOwnerStartIdentity ?? "",
+          ],
+          {
+            detached: true,
+            stdio: ["ignore", "ignore", "ignore", "ipc"],
+          },
+        );
+        if (!timerChild.pid) throw new Error("auto-restore timer did not report a process id");
+        writeTimerMarkerAtomic(sandboxName, {
+          pid: timerChild.pid,
+          sandboxName,
+          snapshotPath,
+          restoreAt: restoreAt.toISOString(),
+          processToken,
+          allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
+          ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
+            ? { leaseOwnerPid, leaseOwnerStartIdentity }
+            : {}),
+        });
+        if (!timerChild.send({ type: "authorize", processToken })) {
+          throw new Error("auto-restore timer authorization channel closed early");
+        }
+        timerChild.disconnect();
+        timerChild.unref();
+      } catch (err) {
+        clearTimerMarker(sandboxName);
+        clearShieldsDownTransition(sandboxName, processToken);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  Cannot start auto-restore timer: ${message}`);
+        return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
       }
-      timerChild.disconnect();
-      timerChild.unref();
-    } catch (err) {
-      clearTimerMarker(sandboxName);
-      clearShieldsDownTransition(sandboxName, processToken);
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`  Cannot start auto-restore timer: ${message}`);
-      return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
     }
-  }
 
-  try {
-    saveShieldsState(sandboxName, {
-      shieldsDown: true,
-      shieldsDownAt: now,
-      shieldsDownTimeout: timeoutSeconds,
-      shieldsDownReason: reason,
-      shieldsDownPolicy: policyName,
-      shieldsPolicySnapshotPath: snapshotPath,
-      shieldsManagedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
-    });
-  } catch (error) {
-    if (transition) {
-      clearShieldsDownTransition(sandboxName, transition.processToken);
-      killTimer(sandboxName);
+    try {
+      saveShieldsState(sandboxName, {
+        shieldsDown: true,
+        shieldsDownAt: now,
+        shieldsDownTimeout: timeoutSeconds,
+        shieldsDownReason: reason,
+        shieldsDownPolicy: policyName,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
+      });
+    } catch (error) {
+      if (transition) {
+        clearShieldsDownTransition(sandboxName, transition.processToken);
+        killTimer(sandboxName);
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  console.log(`  Applying ${policyName} policy...`);
-  try {
+    console.log(`  Applying ${policyName} policy...`);
     run(buildPolicySetCommand(policyFile, sandboxName));
   } finally {
     if (policyFileIsTemp) {
