@@ -9,7 +9,7 @@
  */
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/index.ts";
+import { resultText, shellQuote } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
@@ -74,7 +74,7 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     dashboardPort: DASHBOARD_PORT,
     contracts: [
       "onboard succeeds with device auth enabled",
-      "onboard authenticates to the fixture inference endpoint",
+      "the onboarded inference route authenticates to the fixture endpoint",
       "/health is reachable from inside the sandbox",
       "the authenticated dashboard root may return 401 without being treated as offline",
       "nemoclaw status reports the gateway as live, not Health Offline",
@@ -107,9 +107,51 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
   progress.phase("onboard device-auth OpenClaw sandbox");
   const install = await installDeviceAuthSandbox(host, inferenceConfig, installLog);
   expect(install.exitCode, resultText(install)).toBe(0);
-  expect(inference.requests()).toContainEqual(
+
+  // Ignore incidental onboarding traffic. The fixture appends its ledger row
+  // before responding, so this awaited POST is the publication barrier for the
+  // requests sliced from this offset.
+  const authenticatedRequestOffset = inference.requests().length;
+  const authenticatedProbe = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(
+        JSON.stringify({
+          model: INFERENCE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
+        }),
+      )} >/dev/null`,
+    ),
+    {
+      artifactName: "phase-1-explicit-authenticated-inference-post",
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  const authenticatedRequests = inference.requests().slice(authenticatedRequestOffset);
+  const authenticatedArtifact = "phase-1-explicit-authenticated-inference-requests.json";
+  const authenticatedPhase = "onboard device-auth OpenClaw sandbox";
+  const authenticatedRequestEvidence = authenticatedRequests
+    .slice(0, 20)
+    .map(({ auth, method, model, path }) => ({ auth, method, model, path }));
+  await artifacts.writeJson(authenticatedArtifact, {
+    phase: authenticatedPhase,
+    requestCount: authenticatedRequests.length,
+    requests: authenticatedRequestEvidence,
+    truncated: authenticatedRequests.length > authenticatedRequestEvidence.length,
+  });
+  expect(
+    authenticatedProbe.exitCode,
+    `${authenticatedPhase}: explicit authenticated inference failed; see ${authenticatedArtifact}`,
+  ).toBe(0);
+  expect(
+    authenticatedRequests,
+    `${authenticatedPhase}: explicit verification probe did not reach the authenticated fixture; see ${authenticatedArtifact}`,
+  ).toContainEqual(
     expect.objectContaining({
       auth: "ok",
+      method: "POST",
       model: INFERENCE_MODEL,
       path: "/v1/chat/completions",
     }),
