@@ -3,8 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import * as sandboxState from "../../state/sandbox";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
+import * as snapshotRestore from "./snapshot/restore-authority";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -14,7 +14,7 @@ describe("rebuild restore target forwarding", () => {
   it("forwards the recreated target identity and explicit custom-image capability", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const restoreRecreatedSandboxState = vi
-      .spyOn(sandboxState, "restoreRecreatedSandboxState")
+      .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
       .mockReturnValue({
         success: true,
         restoredDirs: [],
@@ -34,9 +34,14 @@ describe("rebuild restore target forwarding", () => {
       log: vi.fn(),
     });
 
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backup", {
-      targetAgentType: "langchain-deepagents-code",
-      allowCustomImageWholeStateFileRestore: true,
-    });
+    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ backupPath: "/tmp/rebuild-backup" }),
+      {
+        targetAgentType: "langchain-deepagents-code",
+        allowCustomImageWholeStateFileRestore: true,
+      },
+      { getSandbox: expect.any(Function) },
+    );
   });
 });

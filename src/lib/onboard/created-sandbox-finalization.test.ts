@@ -504,6 +504,52 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(pluginInstalls);
   });
 
+  it("defers managed restore before unregistered target authority can be bound", () => {
+    const register = vi.fn();
+    const error = vi.fn();
+
+    expect(() =>
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "openclaw",
+          restoreBackupPath: "/tmp/managed-openclaw-backup",
+          preUpgradeBackup: false,
+          targetAgentType: "openclaw",
+          validateManagedDcode: false,
+          provider: "compatible-endpoint",
+          model: "demo",
+          preferredInferenceApi: "openai-completions",
+        },
+        {
+          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+          restoreRecreatedSandboxState: () => ({
+            success: false,
+            restoredDirs: [],
+            failedDirs: ["manifest"],
+            restoredFiles: [],
+            failedFiles: [],
+            error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+          }),
+          getDcodeSelectionDrift: vi.fn(),
+          register,
+          note: vi.fn(),
+          error,
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      ),
+    ).toThrow("exit 1");
+
+    expect(register).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("restore is deferred"));
+    expect(error).toHaveBeenCalledWith(
+      "  State was not restored and registry metadata was not updated.",
+    );
+    expect(error).toHaveBeenCalledWith('    openshell sandbox delete "openclaw"');
+    expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/managed-openclaw-backup");
+  });
+
   it("fails closed before restore and registration when provenance discovery fails", () => {
     const restoreRecreatedSandboxState = vi.fn();
     const register = vi.fn();

@@ -22,6 +22,7 @@ export {
   prepareSandboxRuntimeRestore,
   SandboxSnapshotProviderError,
 } from "./provider-lifecycle";
+export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 
 /**
  * Resolve the one already-registered provider bundle for a durable sandbox.
