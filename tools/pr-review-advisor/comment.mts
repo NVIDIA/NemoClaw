@@ -492,6 +492,8 @@ function renderSecondOpinionE2eRecommendations(
   if (
     primary.status !== "completed" ||
     secondOpinion.status !== "completed" ||
+    primary.partial ||
+    secondOpinion.partial ||
     !primary.e2e ||
     !secondOpinion.e2e
   ) {
@@ -593,29 +595,22 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
 }
 
 function trustedCoverageIds(
-  items: Array<{ id?: string; reason?: string }> | undefined,
+  items: unknown[] | undefined,
   inventory: TrustedE2eRecommendationInventory,
 ): string[] {
   const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
   const seen = new Set<string>();
   return (items ?? []).flatMap((item) => {
+    if (!isRecord(item)) return [];
     const id = item.id;
-    if (!id || !allowedIds.has(id) || seen.has(id)) return [];
+    if (typeof id !== "string" || !allowedIds.has(id) || seen.has(id)) return [];
     seen.add(id);
     return [id];
   });
 }
 
 function trustedTargetIds(
-  items:
-    | Array<{
-        id?: string;
-        workflow?: string;
-        selectorType?: string;
-        required?: boolean;
-        reason?: string;
-      }>
-    | undefined,
+  items: unknown[] | undefined,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,
@@ -624,9 +619,15 @@ function trustedTargetIds(
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
   const seen = new Set<string>();
   return (items ?? []).flatMap((item) => {
+    if (!isRecord(item)) return [];
     const id = item.id;
     const selectorType = item.selectorType;
-    if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
+    if (
+      typeof id !== "string" ||
+      item.workflow !== inventory.workflow ||
+      item.required !== required
+    )
+      return [];
     const trustedTuple =
       (selectorType === "all" && id === inventory.fanoutId) ||
       (selectorType === "job" && (allowedJobs.has(id) || changedCredentialFreeJobIds.has(id))) ||
@@ -751,16 +752,8 @@ function trustedLaneE2eRecommendations(result: ReviewAdvisorResult): LaneE2eReco
 }
 
 function trustedLaneE2eTier(
-  coverageItems: Array<{ id?: string; reason?: string }> | undefined,
-  targetItems:
-    | Array<{
-        id?: string;
-        workflow?: string;
-        selectorType?: string;
-        required?: boolean;
-        reason?: string;
-      }>
-    | undefined,
+  coverageItems: unknown[] | undefined,
+  targetItems: unknown[] | undefined,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,

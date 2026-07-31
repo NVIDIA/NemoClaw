@@ -381,6 +381,53 @@ describe("PR review advisor comment CLI", () => {
     expect(comment.match(/<code>vllm-docker-storage<\/code>/gu)).toHaveLength(1);
     expect(comment.match(/<code>full-e2e<\/code>/gu)).toHaveLength(1);
 
+    const completedPartialComment = buildComment({
+      summary: "# ignored\n",
+      result,
+      lanes: {
+        primary,
+        secondOpinion: { ...secondOpinion, partial: true },
+      },
+    });
+    expect(completedPartialComment).not.toContain(
+      "additional E2E selection from the second opinion",
+    );
+    expect(completedPartialComment).not.toContain("<code>full-e2e</code>");
+
+    const malformedSecondOpinionResult = {
+      ...secondOpinionResult,
+      e2e: {
+        coverage: {
+          requiredTests: [null, "invalid", { id: "full-e2e", reason: "valid coverage" }],
+          optionalTests: [],
+        },
+        targets: {
+          required: [
+            null,
+            "invalid",
+            {
+              id: "security-posture",
+              workflow: "e2e.yaml",
+              selectorType: "job",
+              required: true,
+              reason: "valid target",
+            },
+          ],
+          optional: [],
+        },
+      },
+    };
+    expect(
+      normalizeAdvisorLaneReport(
+        malformedSecondOpinionResult,
+        malformedSecondOpinionResult,
+        result.headSha,
+      ).e2e,
+    ).toEqual({
+      recommended: [{ id: "security-posture" }, { id: "full-e2e" }],
+      optional: [],
+    });
+
     const partialComment = buildComment({
       summary: "# ignored\n",
       result,
