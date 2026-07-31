@@ -1152,11 +1152,19 @@ Host-side config and inference writes, snapshot mutation, sandbox destruction, a
 When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants are contained.
-If the owner exits before releasing the generation, NemoClaw leaves Shields down, records permanent containment, and reports operator recovery guidance.
+When an interactive command takes over an expired timer, NemoClaw retries restoration for one additional completion-grace window while the deadline gate stays closed.
+If the command cannot complete and commit restoration within that window, NemoClaw converts the deadline gate into durable containment.
+NemoClaw commits the containment record before it returns the failure, so new mutations remain blocked until operator resolution.
+NemoClaw also records durable containment if the recorded owner exits before releasing its exact lock generation, because surviving descendants cannot be ruled out.
 Stop all NemoClaw processes for that sandbox, then follow the exact lock-generation guidance before retrying.
 
-Policy restoration reconciles the current exact managed MCP entries into the saved restrictive policy.
-An MCP server removed during the shields-down window stays removed, while an unrelated surviving server keeps its recorded endpoint and address pins.
+Before a manual Shields transition replaces a policy, NemoClaw requires exact agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
 <AgentOnly variant="openclaw,hermes">
 

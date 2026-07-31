@@ -613,6 +613,40 @@ describe("shields — unit logic", () => {
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
 
+    it("bounds current-generation inline recovery when the snapshot is missing (#7952)", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "c".repeat(32);
+      const missingSnapshotPath = path.join(stateDir(), "missing-current-snapshot.yaml");
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsDownAt: new Date(Date.now() - 60_000).toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "testing",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: missingSnapshotPath,
+        updatedAt: new Date().toISOString(),
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath: missingSnapshotPath,
+        restoreAt: new Date(Date.now() - 30_000).toISOString(),
+        processToken,
+      });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { shieldsStatus } = await loadShieldsModule();
+
+      expect(() => shieldsStatus(sandboxName)).toThrow("Inline auto-restore exhausted 7 attempts");
+      const { getMcpLifecycleLockPath } = await import("../state/mcp-lifecycle-lock");
+      expect(fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, stateDir())}.containment`)).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
+    });
+
     it("shieldsStatus attempts inline recovery when expired marker PID is alive but cmdline does not match recorded timer", async () => {
       const sandboxName = "openclaw";
       const snapshotPath = path.join(stateDir(), "policy-snapshot-test.yaml");

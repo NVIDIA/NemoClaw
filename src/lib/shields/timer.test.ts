@@ -179,6 +179,52 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(true);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "does not restore or rewrite state through a symlinked timer marker",
+    async () => {
+      const timer = await import("./timer");
+      const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+      fs.mkdirSync(stateDir, { recursive: true });
+
+      const sandboxName = "alpha";
+      const snapshotPath = path.join(stateDir, "snapshot.yaml");
+      const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+      const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
+      const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+      const markerTargetPath = path.join(stateDir, "operator-owned-marker.json");
+      const initialState = { shieldsDown: true, updatedAt: "2026-01-01T00:00:00.000Z" };
+      const markerTarget = JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+      });
+
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+      fs.writeFileSync(stateFile, JSON.stringify(initialState, null, 2));
+      fs.writeFileSync(markerTargetPath, markerTarget);
+      fs.symlinkSync(markerTargetPath, markerPath);
+      const args = timer.parseTimerArgs([
+        sandboxName,
+        snapshotPath,
+        restoreAtIso,
+        "",
+        "",
+        PROCESS_TOKEN,
+      ]);
+      expect(args).not.toBeNull();
+
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+
+      expect(exitCode).toBe(0);
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(stateFile, "utf-8"))).toEqual(initialState);
+      expect(fs.lstatSync(markerPath).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(markerTargetPath, "utf-8")).toBe(markerTarget);
+    },
+  );
+
   it("binds rebuild-only legacy authorization to both argv and the root-owned marker", async () => {
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");

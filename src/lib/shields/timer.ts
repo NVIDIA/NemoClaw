@@ -13,6 +13,10 @@ import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { resolveAgentConfig } from "../sandbox/config";
 import { withMcpLifecycleDeadlineFence } from "../state/mcp-lifecycle-lock";
+import {
+  readShieldsTimerMarkerFile,
+  type ShieldsTimerMarker,
+} from "../state/mcp-lifecycle-lock/shields-timer-authority";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
@@ -153,19 +157,14 @@ function updateState(stateFile: string, patch: ShieldsStatePatch): void {
   }
 }
 
-function readTimerMarker(markerPath: string): UnknownRecord | null {
-  try {
-    if (!fs.existsSync(markerPath)) {
-      return null;
-    }
-    const parsed = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
-    return isObjectRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+function readTimerMarker(markerPath: string): ShieldsTimerMarker | null {
+  return readShieldsTimerMarkerFile(markerPath);
 }
 
-function markerRecordMatchesCurrentTimer(marker: UnknownRecord | null, args: TimerArgs): boolean {
+function markerRecordMatchesCurrentTimer(
+  marker: ShieldsTimerMarker | null,
+  args: TimerArgs,
+): boolean {
   if (!marker) return false;
   return (
     marker.pid === process.pid &&

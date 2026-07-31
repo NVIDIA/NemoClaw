@@ -615,6 +615,40 @@ const releasePath = process.argv[3];
     },
   );
 
+  it.skipIf(currentProcessIdentity === null)(
+    "does not treat a recycled same PID as synchronous reentrancy",
+    () => {
+      const processToken = "6".repeat(32);
+      const replacementProcessToken = "7".repeat(32);
+      const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+      writeTimerMarker("alpha", processToken);
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(
+        lockPath,
+        `${JSON.stringify({
+          version: 1,
+          sandboxName: "alpha",
+          pid: process.pid,
+          processIdentity: `${String(currentProcessIdentity)}-different-start`,
+          hostIdentity: currentHostIdentity,
+          pidNamespaceIdentity: currentPidNamespaceIdentity,
+          shieldsTakeoverToken: processToken,
+          token: "recycled-sync-token",
+          acquiredAt: "2026-01-01T00:00:00.000Z",
+        })}\n`,
+      );
+      const onContainment = vi.fn(() => writeTimerMarker("alpha", replacementProcessToken));
+
+      expect(() =>
+        lifecycleLock.withMcpLifecycleDeadlineFenceSync("alpha", processToken, () => undefined, {
+          ...options({ timeoutMs: 10 }),
+          onContainment,
+        }),
+      ).toThrow("Auto-restore authority changed");
+      expect(onContainment).toHaveBeenCalled();
+    },
+  );
+
   it("does not break a long-lived lock owned by the same process identity", async () => {
     const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -700,6 +734,41 @@ const releasePath = process.argv[3];
       fs.rmSync(escapedMarkerPath, { force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "does not derive Shields authority from a symlinked timer marker",
+    async () => {
+      const processToken = "8".repeat(32);
+      const targetPath = path.join(stateDir, "operator-owned-timer-marker.json");
+      const markerPath = path.join(stateDir, "shields-timer-alpha.json");
+      const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+      fs.writeFileSync(
+        targetPath,
+        JSON.stringify({
+          pid: process.pid,
+          sandboxName: "alpha",
+          snapshotPath: path.join(stateDir, "snapshot.yaml"),
+          restoreAt: new Date(Date.now() + 60_000).toISOString(),
+          processToken,
+        }),
+      );
+      fs.symlinkSync(targetPath, markerPath);
+      let observedTakeoverToken: string | undefined;
+
+      await lifecycleLock.withMcpLifecycleLock(
+        "alpha",
+        () => {
+          observedTakeoverToken = JSON.parse(
+            fs.readFileSync(lockPath, "utf8"),
+          ).shieldsTakeoverToken;
+        },
+        options(),
+      );
+
+      expect(observedTakeoverToken).toBeUndefined();
+      expect(JSON.parse(fs.readFileSync(targetPath, "utf8")).processToken).toBe(processToken);
+    },
+  );
 
   it("retries without entering when the timer generation changes during lock publication", async () => {
     const firstProcessToken = "a".repeat(32);
@@ -866,6 +935,7 @@ const releasePath = process.argv[3];
     const childExit = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     const containmentReported = deferred();
     let entered = false;
+    let reportedOwnerPid: number | null = null;
     const deadline = lifecycleLock.withMcpLifecycleDeadlineFence(
       "alpha",
       processToken,
@@ -875,12 +945,13 @@ const releasePath = process.argv[3];
       {
         ...options({ timeoutMs: 10 }),
         onContainment: ({ ownerPid }) => {
-          expect(ownerPid).toBe(child.pid);
+          reportedOwnerPid = ownerPid;
           containmentReported.resolve();
         },
       },
     );
     await containmentReported.promise;
+    expect(reportedOwnerPid).toBe(child.pid);
     expect(entered).toBe(false);
     expect(() => process.kill(child.pid!, 0)).not.toThrow();
 
@@ -910,8 +981,9 @@ const releasePath = process.argv[3];
       })}\n`,
     );
     const deadlinePath = `${lockPath}.deadline`;
+    const deadlineObservations: boolean[] = [];
     const onContainment = vi.fn(() => {
-      expect(fs.existsSync(deadlinePath)).toBe(true);
+      deadlineObservations.push(fs.existsSync(deadlinePath));
     });
     setTimeout(() => writeTimerMarker("alpha", "3".repeat(32)), 40);
 
@@ -921,6 +993,8 @@ const releasePath = process.argv[3];
         onContainment,
       }),
     ).rejects.toThrow("Auto-restore authority changed");
+    expect(deadlineObservations).not.toHaveLength(0);
+    expect(deadlineObservations.every(Boolean)).toBe(true);
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("replacement-generation");
   });
 

@@ -30,6 +30,9 @@ type ShieldsHarness = {
 };
 
 let tmpDir: string;
+const currentProcessStartIdentity = (
+  requireDist("./timer-control.js") as typeof import("./timer-control.js")
+).readProcessStartIdentity(process.pid);
 
 type HarnessOptions = {
   directSandboxUnavailable?: boolean;
@@ -516,12 +519,13 @@ describe("shields command flow", () => {
   it("loads 257 managed keys recorded by Shields down (#7952)", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const snapshotPath = path.join(stateDir, "policy-snapshot-many-managed-keys.yaml");
-    const keys = Array.from({ length: 257 }, (_, index) => `mcp_bridge_server_${index}`);
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      snapshotPath,
-      YAML.stringify({ network_policies: Object.fromEntries(keys.map((key) => [key, {}])) }),
+    const policies = Array.from({ length: 257 }, (_, index) => managedMcpPolicy(`server${index}`));
+    const keys = policies.map(({ server }) => `mcp_bridge_${server}`);
+    const networkPolicies = Object.fromEntries(
+      policies.map(({ networkPolicy, server }) => [`mcp_bridge_${server}`, networkPolicy]),
     );
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, YAML.stringify({ network_policies: networkPolicies }));
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -530,9 +534,17 @@ describe("shields command flow", () => {
         shieldsManagedMcpPolicyKeys: keys,
       }),
     );
-    const harness = createHarness();
+    const harness = createHarness({
+      livePolicy: YAML.stringify({ version: 1, network_policies: networkPolicies }),
+      sandboxEntry: managedMcpSandbox(policies),
+    });
 
     expect(harness.applyShieldsPolicySnapshot("openclaw", snapshotPath).status).toBe(0);
+    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
+    const appliedKeys = Object.keys(applied.network_policies);
+    expect([...appliedKeys].sort()).toEqual([...keys].sort());
+    expect(appliedKeys).toHaveLength(257);
+    expect(appliedKeys).toContain("mcp_bridge_server256");
   });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {
@@ -865,6 +877,48 @@ describe("shields command flow", () => {
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "atomically replaces a timer marker symlink without modifying its target",
+    () => {
+      const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+      const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
+      const markerTargetPath = path.join(stateDir, "operator-owned-marker.json");
+      const markerTarget = "operator-owned marker contents";
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(markerTargetPath, markerTarget);
+      const originalRename = fs.renameSync.bind(fs);
+      const plantMarkerSymlink = () => fs.symlinkSync(markerTargetPath, markerPath);
+      const publicationRoutes = new Map<string, () => void>([[markerPath, plantMarkerSymlink]]);
+      const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+        (publicationRoutes.get(String(destination)) ?? (() => undefined))();
+        originalRename(source, destination);
+      });
+      const harness = createHarness({
+        fork: () => ({
+          pid: 4242,
+          disconnect: vi.fn(),
+          unref: vi.fn(),
+          send: vi.fn(() => true),
+          kill: vi.fn(() => true),
+        }),
+      });
+
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "marker publication coverage",
+        throwOnError: true,
+      });
+
+      expect(renameSpy).toHaveBeenCalledWith(expect.stringContaining(".tmp"), markerPath);
+      expect(fs.lstatSync(markerPath).isSymbolicLink()).toBe(false);
+      expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toMatchObject({
+        pid: 4242,
+        sandboxName: "openclaw",
+      });
+      expect(fs.readFileSync(markerTargetPath, "utf-8")).toBe(markerTarget);
+    },
+  );
+
   it("shieldsUp refuses to mark lockdown active when the saved restrictive policy snapshot is missing", () => {
     const harness = createHarness();
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -1191,4 +1245,73 @@ describe("shields command flow", () => {
       expect.anything(),
     );
   });
+
+  it.skipIf(currentProcessStartIdentity === null)(
+    "bounds live transition takeover before committing durable containment",
+    () => {
+      const sandboxName = "openclaw";
+      const processToken = "8".repeat(32);
+      const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+      const snapshotPath = path.join(stateDir, "policy-snapshot-takeover-exhausted.yaml");
+      const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+      const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+      const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
+      const containmentPath = `${lifecycleLock.getMcpLifecycleLockPath(sandboxName)}.containment`;
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+      fs.writeFileSync(
+        path.join(stateDir, `shields-${sandboxName}.json`),
+        JSON.stringify({
+          shieldsDown: true,
+          shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+          shieldsDownTimeout: 60,
+          shieldsDownReason: "takeover exhaustion coverage",
+          shieldsDownPolicy: "permissive",
+          shieldsPolicySnapshotPath: snapshotPath,
+        }),
+      );
+      fs.writeFileSync(
+        timerMarkerPath,
+        JSON.stringify({
+          pid: 2_147_483_647,
+          sandboxName,
+          snapshotPath,
+          restoreAt: new Date(Date.now() - 60_000).toISOString(),
+          processToken,
+        }),
+      );
+      fs.writeFileSync(
+        transitionLockPath,
+        JSON.stringify({
+          version: 1,
+          sandboxName,
+          pid: process.pid,
+          processStartIdentity: currentProcessStartIdentity,
+          command: "shields down",
+          acquiredAtMs: Date.now(),
+          takeoverToken: processToken,
+        }),
+      );
+      const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+      const harness = createHarness();
+
+      expect(() => harness.shieldsStatus(sandboxName)).toThrow(
+        "Auto-restore transition takeover exhausted 7 attempts",
+      );
+
+      expect(waitSpy.mock.calls.map((call) => call[3])).toEqual([
+        5_000, 5_000, 5_000, 5_000, 5_000, 5_000,
+      ]);
+      expect(fs.existsSync(containmentPath)).toBe(true);
+      expect(harness.auditSpy).toHaveBeenCalledTimes(1);
+      expect(harness.auditSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          error:
+            "Shields transition owner is still active; automatic recovery is waiting behind the deadline gate",
+        }),
+      );
+    },
+  );
 });

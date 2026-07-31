@@ -832,7 +832,16 @@ function clearDeadlineProtectedPathSync(
       Boolean(owner.processIdentity) &&
       owner.hostIdentity === readMcpLockHostIdentity() &&
       owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity();
-    if (exactLocalOwner && owner?.pid === process.pid) {
+    const currentProcessIdentity =
+      exactLocalOwner && owner?.pid === process.pid
+        ? readMcpLockProcessIdentity(process.pid, true)
+        : null;
+    if (
+      exactLocalOwner &&
+      owner?.pid === process.pid &&
+      currentProcessIdentity !== null &&
+      owner.processIdentity === currentProcessIdentity
+    ) {
       const error = new Error(
         "Synchronous auto-restore cannot wait behind a sibling lifecycle operation in this process",
       ) as Error & { code: string };
@@ -860,6 +869,13 @@ function clearDeadlineProtectedPathSync(
           `The exact ${targetLabel} owner was already gone, so surviving descendants cannot be ruled out`,
         ),
       );
+    }
+    if (exactLocalOwner && owner?.pid === process.pid && currentProcessIdentity === null) {
+      const error = new Error(
+        "Synchronous auto-restore cannot verify the process identity of a same-PID lifecycle owner",
+      ) as Error & { code: string };
+      error.code = "NEMOCLAW_SYNC_REENTRANT_OWNER";
+      throw error;
     }
 
     const generation = `${String(observed.dev)}:${String(observed.ino)}:${

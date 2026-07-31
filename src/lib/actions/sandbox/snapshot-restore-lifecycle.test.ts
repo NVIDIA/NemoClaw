@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import { isMcpLifecycleLockHeld, withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
@@ -23,23 +23,42 @@ afterEach(() => {
   }
 });
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
-  it("holds snapshot creation under the lifecycle gate before the timer-bound transition", () => {
-    const source = fs.readFileSync(new URL("./snapshot.ts", import.meta.url), "utf8");
-    const createCase = source.indexOf('case "create":');
-    const listCase = source.indexOf('case "list":', createCase);
-    const createDispatch = source.slice(createCase, listCase);
-    const createFunction = source.indexOf("function runSnapshotCreate");
-    const timerBoundLock = source.indexOf(
-      "withTimerBoundShieldsMutationLock(sandboxName,",
-      createFunction,
+  it("holds snapshot creation under the lifecycle gate before the timer-bound transition (#7952)", async () => {
+    const manifest = {
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    };
+    f.backupSandboxStateMock.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      backedUpFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+      manifest,
+    });
+    f.findBackupMock.mockReturnValue({
+      match: { ...manifest, snapshotVersion: 1 },
+    });
+    let lifecycleHeldDuringTimerTransition = false;
+    f.lifecycleMock.withTimerBoundMock.mockImplementationOnce(
+      (sandboxName: string, _command: string, operation: () => unknown) => {
+        lifecycleHeldDuringTimerTransition = isMcpLifecycleLockHeld(sandboxName);
+        return operation();
+      },
     );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
 
-    expect(createCase).toBeGreaterThanOrEqual(0);
-    expect(listCase).toBeGreaterThan(createCase);
-    expect(createDispatch).toContain(
-      "await withSandboxMutationLock(sandboxName, () => runSnapshotCreate(sandboxName, request));",
+    await runSandboxSnapshot("alpha", { kind: "create" });
+
+    expect(lifecycleHeldDuringTimerTransition).toBe(true);
+    expect(f.lifecycleMock.withTimerBoundMock).toHaveBeenCalledWith(
+      "alpha",
+      "create sandbox snapshot",
+      expect.any(Function),
     );
-    expect(timerBoundLock).toBeGreaterThan(createFunction);
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", { name: null });
+    expect(isMcpLifecycleLockHeld("alpha")).toBe(false);
   });
 
   it("restores the latest snapshot into the source sandbox", async () => {

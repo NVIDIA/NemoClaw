@@ -64,10 +64,25 @@ export function readShieldsTimerMarker(
   stateDir = resolveNemoclawStateDir(),
 ): ShieldsTimerMarker | null {
   try {
-    const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
-    if (!fs.existsSync(markerPath)) return null;
-    const parsed = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
-    return isShieldsTimerMarker(parsed) ? parsed : null;
+    return readShieldsTimerMarkerFile(shieldsTimerMarkerPath(sandboxName, stateDir));
+  } catch {
+    return null;
+  }
+}
+
+export function readShieldsTimerMarkerFile(markerPath: string): ShieldsTimerMarker | null {
+  try {
+    const markerFd = fs.openSync(
+      markerPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    try {
+      if (!fs.fstatSync(markerFd).isFile()) return null;
+      const parsed = JSON.parse(fs.readFileSync(markerFd, "utf-8"));
+      return isShieldsTimerMarker(parsed) ? parsed : null;
+    } finally {
+      fs.closeSync(markerFd);
+    }
   } catch {
     return null;
   }
