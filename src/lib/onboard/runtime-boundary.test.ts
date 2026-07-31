@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   createSession,
@@ -12,6 +12,7 @@ import {
 } from "../state/onboard-session";
 import type { StepMutationOptions } from "../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./machine/events";
+import { markOnboardInterrupted, resetOnboardInterruptForTests } from "./machine/interrupt-state";
 import {
   advanceTo,
   branchTo,
@@ -21,6 +22,10 @@ import {
   retryTo,
 } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
+import {
+  InvalidOnboardMachineTransitionError,
+  OnboardInterruptedError,
+} from "./machine/transitions";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 import { applySessionRecovery } from "./session-recovery";
@@ -597,5 +602,94 @@ describe("OnboardRuntimeBoundary", () => {
       type: "resume.conflict",
       metadata: { field: "sandbox", recorded: "old-sandbox", requested: "new-sandbox" },
     });
+  });
+});
+
+describe("onboarding interrupted while a step is in flight (#7982)", () => {
+  beforeEach(() => {
+    resetOnboardInterruptForTests();
+  });
+
+  afterEach(() => {
+    resetOnboardInterruptForTests();
+  });
+
+  function interruptedAtSandbox() {
+    const harness = createRuntimeHarness({
+      status: "failed",
+      lastStepStarted: "sandbox",
+      failure: {
+        step: "sandbox",
+        message: "Onboarding exited before the step completed.",
+        recordedAt: "2026-05-27T00:00:00.000Z",
+      },
+      machine: {
+        version: 1,
+        state: "failed",
+        stateEnteredAt: "2026-05-27T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+    return { boundary, harness };
+  }
+
+  it("reports the sandbox branch as interrupted rather than an invalid transition", async () => {
+    markOnboardInterrupted("sandbox");
+    const { boundary, harness } = interruptedAtSandbox();
+
+    const applied = boundary.recordStateResult(
+      branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    );
+
+    await expect(applied).rejects.toThrow(OnboardInterruptedError);
+    await expect(applied).rejects.not.toThrow(InvalidOnboardMachineTransitionError);
+    await expect(applied).rejects.toThrow(/during the sandbox step/);
+    await expect(applied).rejects.toThrow(/continue to openclaw/);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("reports an interrupt recorded by another process without an in-process latch", async () => {
+    const { boundary, harness } = interruptedAtSandbox();
+
+    await expect(
+      boundary.recordStateResult(branchTo("openclaw", { metadata: { state: "sandbox" } })),
+    ).rejects.toThrow(OnboardInterruptedError);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+  });
+
+  it("reports an interrupted finalization rather than an invalid completion", async () => {
+    markOnboardInterrupted("policies");
+    const { boundary } = interruptedAtSandbox();
+
+    await expect(boundary.recordStateResult(completeOnboardMachine())).rejects.toThrow(
+      OnboardInterruptedError,
+    );
+  });
+
+  it("still applies a legal branch when no interrupt was recorded", async () => {
+    const harness = createRuntimeHarness({
+      lastStepStarted: "sandbox",
+      machine: {
+        version: 1,
+        state: "sandbox",
+        stateEnteredAt: "2026-05-27T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordStateResult(branchTo("openclaw", { metadata: { state: "sandbox" } }));
+
+    expect(harness.getSession().machine).toMatchObject({ state: "openclaw", revision: 6 });
   });
 });

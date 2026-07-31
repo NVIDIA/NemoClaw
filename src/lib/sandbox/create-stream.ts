@@ -60,6 +60,7 @@ export interface StreamableReadable {
 export interface StreamableChildProcess {
   stdout: StreamableReadable | null;
   stderr: StreamableReadable | null;
+  pid?: number;
   kill?(signal?: NodeJS.Signals | number): boolean;
   removeAllListeners?(event?: string | symbol): void;
   unref?(): void;
@@ -105,9 +106,12 @@ export function streamSandboxCreate(
       "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
     );
   }
-  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {
+  const spawnChild = options.spawnImpl ?? spawn;
+  const ownProcessGroup = spawnChild === spawn && process.platform !== "win32";
+  const child: StreamableChildProcess = spawnChild(spawnCommand, commandArgs, {
     cwd: ROOT,
     env,
+    detached: ownProcessGroup,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -329,9 +333,27 @@ export function streamSandboxCreate(
     }
   }
 
+  function terminateChild(signal: NodeJS.Signals) {
+    try {
+      if (ownProcessGroup && typeof child.pid === "number" && child.pid > 0) {
+        process.kill(-child.pid, signal);
+      } else {
+        child.kill?.(signal);
+      }
+    } catch {
+      // Best effort only — the child may have already exited.
+    }
+  }
+
+  function terminateChildOnHostExit() {
+    if (!settled) terminateChild("SIGKILL");
+  }
+  process.once("exit", terminateChildOnHostExit);
+
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
+    process.removeListener("exit", terminateChildOnHostExit);
     flushPendingLines();
     if (!buildTimingFinished && buildStartedAtMs !== null) {
       finishBuildTiming(status === 0 ? "completed" : "stopped");
@@ -388,11 +410,7 @@ export function streamSandboxCreate(
             const detail = "Sandbox reported Ready before create stream exited; continuing.";
             lines.push(detail);
             printProgressLine(`  ${detail}`);
-            try {
-              child.kill?.("SIGTERM");
-            } catch {
-              // Best effort only — the child may have already exited.
-            }
+            terminateChild("SIGTERM");
             detachChild();
             sawProgress = true;
             finish(0, { forcedReady: true });
@@ -414,11 +432,7 @@ export function streamSandboxCreate(
           const detail = String(failure);
           lines.push(detail);
           printProgressLine(`  ${detail}`);
-          try {
-            child.kill?.("SIGTERM");
-          } catch {
-            // Best effort only — the child may have already exited.
-          }
+          terminateChild("SIGTERM");
           detachChild();
           sawProgress = true;
           finish(1);

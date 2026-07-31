@@ -9,7 +9,10 @@ import {
 } from "../state/onboard-step-mutation";
 import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
-import { assertValidOnboardMachineTransition } from "./machine/transitions";
+import {
+  assertOnboardNotInterrupted,
+  assertValidOnboardMachineTransition,
+} from "./machine/transitions";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
 import type { ResumeConfigConflict } from "./resume-config";
 
@@ -133,6 +136,7 @@ export class OnboardRuntimeBoundary {
       return;
     }
     if (result.type === "complete") {
+      assertOnboardNotInterrupted(current.machine.state, "complete");
       assertValidOnboardMachineTransition(current.machine.state, "complete");
       return;
     }
@@ -148,6 +152,7 @@ export class OnboardRuntimeBoundary {
       return;
     }
 
+    assertOnboardNotInterrupted(current.machine.state, result.next);
     const sourceState =
       result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
     if (current.machine.state === result.next) {

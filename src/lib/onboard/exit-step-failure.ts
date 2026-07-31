@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
+import { markOnboardInterrupted } from "./machine/interrupt-state";
 import { printOnboardResumeHint } from "./resume-hint";
 
 export interface ExitStepFailureSessionDeps {
@@ -47,7 +48,10 @@ export function registerIncompleteOnboardExitFailureHandler(
     // their own recovery guidance (#6003). When an explicit cancel has already
     // cleared the session (or no step started), this is null and stays silent;
     // printOnboardResumeHint also self-dedupes against tailored hints.
-    if (markLastStartedStepFailed(deps, message)) printOnboardResumeHint();
+    const interrupted = markLastStartedStepFailed(deps, message);
+    if (!interrupted) return;
+    markOnboardInterrupted(interrupted.lastStepStarted);
+    printOnboardResumeHint();
   };
 
   processLike.once("exit", (code) => {

@@ -14,6 +14,11 @@ import {
   markLastStartedStepFailed,
   registerIncompleteOnboardExitFailureHandler,
 } from "./exit-step-failure";
+import {
+  isOnboardInterrupted,
+  onboardInterruptedStep,
+  resetOnboardInterruptForTests,
+} from "./machine/interrupt-state";
 import { noteOnboardResumeHintShown, resetOnboardResumeHintForTests } from "./resume-hint";
 
 const originalHome = process.env.HOME;
@@ -38,10 +43,12 @@ beforeEach(async () => {
   machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   resetOnboardResumeHintForTests();
+  resetOnboardInterruptForTests();
 });
 
 afterEach(() => {
   machineEvents.clearOnboardMachineEventListeners();
+  resetOnboardInterruptForTests();
   session.clearSession();
   fs.rmSync(tmpDir, { recursive: true, force: true });
   restoreOriginalHome();
@@ -107,6 +114,40 @@ describe("terminal step failure helper", () => {
     expect(loaded.failure?.step).toBe("inference");
     expect(loaded.failure?.message).toBe("Onboarding exited before the step completed.");
     expect(loaded.machine.state).toBe("failed");
+  });
+
+  it("records the in-flight step as interrupted when the exit backstop fires (#7982)", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const listeners: Array<(code: number) => void> = [];
+    const processLike = {
+      once: (_event: "exit", listener: (code: number) => void) => {
+        listeners.push(listener);
+      },
+    };
+
+    registerIncompleteOnboardExitFailureHandler(
+      session,
+      () => false,
+      "Onboarding exited before the step completed.",
+      processLike,
+    );
+    listeners[0](1);
+    errorSpy.mockRestore();
+
+    expect(requireLoadedSession().machine.state).toBe("failed");
+    expect(isOnboardInterrupted()).toBe(true);
+    expect(onboardInterruptedStep()).toBe("sandbox");
+  });
+
+  it("records rebuild recreate cleanup as a failure without an onboard interrupt (#7982)", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
+
+    markLastStartedStepFailed(session, "Rebuild recreate failed");
+
+    expect(requireLoadedSession().machine.state).toBe("failed");
+    expect(isOnboardInterrupted()).toBe(false);
+    expect(onboardInterruptedStep()).toBeNull();
   });
 
   it("marks rebuild recreate cleanup failures as terminal machine failures", () => {
