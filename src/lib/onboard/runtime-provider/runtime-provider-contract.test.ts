@@ -524,10 +524,12 @@ describe("socket-free MXC action contract", () => {
       running: new Set<string>(),
       workloads: new Set<string>(),
     };
+    const recordEvent = vi.fn((value: string) => state.events.push(value));
     const bundle = createInMemoryRuntimeProviderBundle({
       providerId: "mxc",
       workloadProfile: PORTABLE_PROFILE,
       state,
+      recordEvent,
     });
     const providers = createRuntimeProviderBundleRegistry([["mxc", bundle]]);
     const sandboxName = `${agent}-sandbox`;
@@ -579,12 +581,7 @@ describe("socket-free MXC action contract", () => {
     const stopSandboxChannels = vi.fn();
     const teardownSandboxDashboardForward = vi.fn();
     const cleanupShieldsArtifacts = vi.fn();
-    const runOpenshell = vi.fn((args: string[]) => {
-      if (args[0] === "sandbox" && args[1] === "delete") {
-        state.events.push(`delete:${sandboxName}`);
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
 
     await expect(
       startSandbox(sandboxName, {
@@ -637,6 +634,9 @@ describe("socket-free MXC action contract", () => {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    expect(recordEvent.mock.invocationCallOrder[3]).toBeLessThan(
+      runOpenshell.mock.invocationCallOrder.at(-1)!,
+    );
     expect(cleanupShieldsArtifacts).toHaveBeenCalledWith(sandboxName);
     expect(stopSandboxChannels).toHaveBeenCalledWith(
       sandboxName,
@@ -651,7 +651,6 @@ describe("socket-free MXC action contract", () => {
       `verify-started:${sandboxName}`,
       `stop:${sandboxName}`,
       `prepare-destroy:${sandboxName}`,
-      `delete:${sandboxName}`,
       `cleanup:${sandboxName}`,
     ]);
     expect(state.running).not.toContain(sandboxName);

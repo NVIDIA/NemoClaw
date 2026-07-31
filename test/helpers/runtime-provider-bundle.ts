@@ -30,6 +30,7 @@ type InMemoryRuntimeProviderOptions = {
   readonly workloadProfile: RuntimeProviderWorkloadProfile;
   readonly state?: InMemoryRuntimeProviderState;
   readonly gatewayLauncher?: "nemoclaw" | "openshell";
+  readonly recordEvent?: (event: string) => void;
 };
 
 function unsupported(providerId: string, reason: string) {
@@ -46,9 +47,10 @@ export function createInMemoryRuntimeProviderBundle({
   workloadProfile,
   state = { events: [], running: new Set(), workloads: new Set() },
   gatewayLauncher = "nemoclaw",
+  recordEvent = (value) => state.events.push(value),
 }: InMemoryRuntimeProviderOptions): InMemoryRuntimeProviderBundle {
   const futureReason = "Unsupported by this in-memory contract fixture.";
-  const event = (kind: string, sandboxName: string) => state.events.push(`${kind}:${sandboxName}`);
+  const event = (kind: string, sandboxName: string) => recordEvent(`${kind}:${sandboxName}`);
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
