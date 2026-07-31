@@ -111,9 +111,9 @@ function composedRelaunchTransaction(order: string[]) {
   return { finalizeTransaction, relaunchManagedSupervisorSessionImpl };
 }
 
-function scriptedPinnedGatewayProbes(
+function scriptedPinnedGatewayRecovery(
   order: string[],
-  postRestoreProbe: { status: number; stdout: string; stderr: string },
+  postRestoreRestart: { status: number; stdout: string; stderr: string },
 ) {
   const unavailableProbe = {
     status: 1,
@@ -125,15 +125,18 @@ function scriptedPinnedGatewayProbes(
     stdout: "GATEWAY_PID=4242\n",
     stderr: "",
   };
-  return vi
-    .fn()
-    .mockReturnValueOnce(unavailableProbe)
-    .mockReturnValueOnce(acceptedProbe)
-    .mockImplementationOnce(() => {
-      order.push("post-restore-health");
-      return postRestoreProbe;
-    })
-    .mockReturnValue(postRestoreProbe);
+  let probeCount = 0;
+  return vi.fn((_sandboxName: string, action: string) => {
+    if (action === "restart") {
+      order.push("post-restore-restart");
+      return postRestoreRestart;
+    }
+    if (action !== "probe") {
+      throw new Error(`unexpected managed gateway action: ${action}`);
+    }
+    probeCount += 1;
+    return probeCount === 1 ? unavailableProbe : acceptedProbe;
+  });
 }
 
 describe("waitForManagedGatewaySupervisor", () => {
@@ -454,9 +457,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
     );
-    const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayProbes(order, {
+    const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayRecovery(order, {
       status: 0,
-      stdout: "GATEWAY_PID=4242\n",
+      stdout: `v1 ${"a".repeat(64)} complete ok 4242 4343\nGATEWAY_PID=4343`,
       stderr: "",
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
@@ -480,7 +483,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "recovered-box",
       expect.objectContaining({
         deps: expect.objectContaining({
-          confirmRestoredManagedHealth: expect.any(Function),
+          restartRestoredManagedGateway: expect.any(Function),
         }),
       }),
     );
@@ -490,14 +493,20 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       210000,
       "replacement-container-id",
     );
-    expect(order).toEqual(["restore-state", "post-restore-health", "commit-container"]);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledWith(
+      "recovered-box",
+      "restart",
+      210000,
+      "replacement-container-id",
+    );
+    expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ supervisorReady: true }),
     );
   });
 
-  it("rolls back the composed transaction when post-restore managed health fails", () => {
+  it("rolls back when post-restore restart does not report an exact ok disposition", () => {
     mockOpenClawSandbox("post-restore-failed-box");
     setImmediateRecoveryPolling();
     const order: string[] = [];
@@ -506,10 +515,15 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
     );
-    const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayProbes(order, {
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_UNAVAILABLE",
+    const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayRecovery(order, {
+      status: 0,
+      stdout: `v1 ${"b".repeat(64)} complete already-running 4242 4242\nGATEWAY_PID=4242`,
+      stderr: "",
+    });
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output:
+        "SANDBOX  BIND  PORT  PID  STATUS\npost-restore-failed-box  127.0.0.1  18789  12345  running",
     });
 
     const result = checkAndRecoverSandboxProcesses("post-restore-failed-box", {
@@ -526,8 +540,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recovered: false,
       forwardRecovered: false,
     });
-    expect(order).toEqual(["restore-state", "post-restore-health", "rollback-container"]);
-    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(3);
+    expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ supervisorReady: false }),
@@ -574,7 +588,11 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
     expect(finalize).toHaveBeenCalledOnce();
     expect(finalize).toHaveBeenCalledWith(true);
-    expect(waitForRecreatedSandboxOpenShellReadyImpl).not.toHaveBeenCalled();
+    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledOnce();
+    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
+      "restore-failed-box",
+      expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 180 }),
+    );
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -607,6 +625,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       requestGatewaySupervisorAction,
       requestPinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl: vi.fn(() => true),
     });
 
     expect(result).toMatchObject({
@@ -744,13 +763,13 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
-      recovered: true,
+      recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining("did not become ready in OpenShell"),
     });
     expect(finalize).toHaveBeenCalledOnce();
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(finalize).toHaveBeenCalledWith(false);
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
       "unready-box",
       expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 180 }),
@@ -805,7 +824,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
-      recovered: true,
+      recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining(
@@ -813,7 +832,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ),
     });
     expect(captureOpenshell).toHaveBeenCalled();
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(finalize).toHaveBeenCalledWith(false);
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -856,7 +875,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
-      recovered: true,
+      recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail: expect.stringContaining("failed the managed health guard"),
@@ -864,7 +883,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(result.forwardRecoveryFailureDetail).toContain(
       "unsafe config path: GATEWAY_UNSAFE_CONFIG_PATH",
     );
-    expect(finalize).toHaveBeenCalledWith(true);
+    expect(finalize).toHaveBeenCalledWith(false);
     expect(captureOpenshell).not.toHaveBeenCalled();
   });
 

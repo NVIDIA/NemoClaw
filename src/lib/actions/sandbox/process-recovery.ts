@@ -571,9 +571,14 @@ function recoverSandboxProcesses(
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
             ),
-          confirmRestoredManagedHealth: (containerId) =>
-            waitForRecoveredSandboxGateway(sandboxName, {
+          restartRestoredManagedGateway: (containerId) => {
+            const restarted = parseManagedGatewayControlCompletion(
+              requestPinnedGatewaySupervisorAction(sandboxName, "restart", 210000, containerId),
+            );
+            if (restarted?.disposition !== "ok") return false;
+            return waitForRecoveredSandboxGateway(sandboxName, {
               quiet,
+              initialManagedHealthPassed: true,
               requireManagedProbe: true,
               timeoutSeconds: gatewayRecoveryTimeoutSeconds(agent),
               managedProbeImpl: (name) =>
@@ -581,7 +586,8 @@ function recoverSandboxProcesses(
                   requestGatewaySupervisorActionImpl: (name, action) =>
                     requestPinnedGatewaySupervisorAction(name, action, 210000, containerId),
                 }),
-            }),
+            });
+          },
         },
       });
       if (relaunch) return { kind: "relaunched", relaunch };
@@ -1435,6 +1441,49 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
+    // State restore crosses the OpenShell SSH boundary. Prove the replacement
+    // is both identity-pinned and registered before asking finalize(true) to
+    // mutate it; otherwise a slow control-plane handoff can make a healthy
+    // replacement look like a failed restore and trigger rollback.
+    const readinessFailureDetail = relaunch
+      ? (() => {
+          const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
+            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
+            timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
+          };
+          const readiness =
+            waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
+              ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
+              : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
+                ? ({ ready: true } as const)
+                : ({ failure: "openshell-readiness-failure", ready: false } as const);
+          return readiness.ready
+            ? null
+            : recreatedSandboxOpenShellReadinessFailureDetail(
+                readiness.failure,
+                "openshellError" in readiness ? readiness.openshellError : undefined,
+                readiness.failure === "managed-health-definitive-failure"
+                  ? (relaunchedManagedHealthFailureDetail ?? undefined)
+                  : undefined,
+              );
+        })()
+      : null;
+    if (readinessFailureDetail) {
+      try {
+        relaunch?.finalize(false);
+      } catch {
+        // The readiness error remains authoritative. The detail below directs
+        // the operator to the failed replacement without trusting it.
+      }
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail: readinessFailureDetail,
+      };
+    }
     if (relaunch) {
       try {
         const completion = relaunch.finalize(true);
@@ -1480,39 +1529,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           );
         }
       }
-    }
-    const readinessFailureDetail = relaunch
-      ? (() => {
-          const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
-            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
-            timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
-          };
-          const readiness =
-            waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
-              ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
-              : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
-                ? ({ ready: true } as const)
-                : ({ failure: "openshell-readiness-failure", ready: false } as const);
-          return readiness.ready
-            ? null
-            : recreatedSandboxOpenShellReadinessFailureDetail(
-                readiness.failure,
-                "openshellError" in readiness ? readiness.openshellError : undefined,
-                readiness.failure === "managed-health-definitive-failure"
-                  ? (relaunchedManagedHealthFailureDetail ?? undefined)
-                  : undefined,
-              );
-        })()
-      : null;
-    if (readinessFailureDetail) {
-      return withManagedControlCompletion({
-        checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail: readinessFailureDetail,
-      });
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;

@@ -55,7 +55,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
     })),
     confirmMissingSupervisor: vi.fn(() => true),
-    confirmRestoredManagedHealth: vi.fn(() => true),
+    restartRestoredManagedGateway: vi.fn(() => true),
     backupState: vi.fn(() => ({
       success: true,
       manifest: {
@@ -237,8 +237,8 @@ describe("relaunchManagedSupervisorSession", () => {
           failedFiles: [],
         };
       }),
-      confirmRestoredManagedHealth: vi.fn(() => {
-        order.push("managed-health");
+      restartRestoredManagedGateway: vi.fn(() => {
+        order.push("restart-restored-gateway");
         return true;
       }),
       finalize: vi.fn(() => {
@@ -253,8 +253,8 @@ describe("relaunchManagedSupervisorSession", () => {
       rolledBack: false,
       stateRestored: true,
     });
-    expect(order).toEqual(["restore-state", "managed-health", "commit-container"]);
-    expect(deps.confirmRestoredManagedHealth).toHaveBeenCalledWith("new-container-id");
+    expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
+    expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ newContainerId: "new-container-id" }),
       supervisorReady: true,
@@ -274,8 +274,8 @@ describe("relaunchManagedSupervisorSession", () => {
           failedFiles: [],
         };
       }),
-      confirmRestoredManagedHealth: vi.fn(() => {
-        order.push("managed-health");
+      restartRestoredManagedGateway: vi.fn(() => {
+        order.push("restart-restored-gateway");
         return false;
       }),
       finalize: vi.fn(({ supervisorReady }) => {
@@ -293,7 +293,7 @@ describe("relaunchManagedSupervisorSession", () => {
       stateRestored: false,
       stateBackupRemoved: true,
     });
-    expect(order).toEqual(["restore-state", "managed-health", "rollback-container"]);
+    expect(order).toEqual(["restore-state", "restart-restored-gateway", "rollback-container"]);
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ newContainerId: "new-container-id" }),
       supervisorReady: false,

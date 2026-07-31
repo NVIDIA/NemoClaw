@@ -48,7 +48,7 @@ export type ManagedSupervisorRelaunchDeps = {
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
-  confirmRestoredManagedHealth?: (containerId: string) => boolean;
+  restartRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
@@ -137,7 +137,7 @@ export function relaunchManagedSupervisorSession(
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
-  const confirmRestoredManagedHealth = deps.confirmRestoredManagedHealth;
+  const restartRestoredManagedGateway = deps.restartRestoredManagedGateway;
   const backupState = deps.backupState ?? sandboxState.backupSandboxState;
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
@@ -241,16 +241,19 @@ export function relaunchManagedSupervisorSession(
         if (!stateRestored) {
           return finalizeFailure();
         }
-        let restoredManagedHealth = false;
+        let restoredManagedGatewayReady = false;
         try {
-          restoredManagedHealth = confirmRestoredManagedHealth?.(result.newContainerId) === true;
+          restoredManagedGatewayReady =
+            restartRestoredManagedGateway?.(result.newContainerId) === true;
         } catch {
-          restoredManagedHealth = false;
+          restoredManagedGatewayReady = false;
         }
-        if (!restoredManagedHealth) {
-          // State restoration can trigger a gateway reload. Re-prove the
-          // pinned replacement after that mutation while the previous
-          // container is still available for rollback.
+        if (!restoredManagedGatewayReady) {
+          // Apply restored state to a fresh managed gateway process. OpenClaw
+          // can otherwise retain pre-restore runtime state or enter its
+          // in-process reload path. Keep the previous container available for
+          // rollback until the pinned replacement restart and health proof
+          // both succeed.
           return finalizeFailure();
         }
         const outcome = {
