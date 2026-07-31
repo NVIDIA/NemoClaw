@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 8 as const;
+export const RISK_PLAN_VERSION = 9 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -14,7 +14,12 @@ const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
-const POST_REBOOT_STATUS_RUNTIME = "src/lib/actions/sandbox/status-snapshot.ts";
+const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/status-snapshot.ts",
+  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-startup-command-agent.ts",
+  "src/lib/onboard/sandbox-create-step.ts",
+]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -107,6 +112,7 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/live/cloud-onboard.test.ts",
   "test/e2e/risk-signal-reporter.ts",
 ]);
+const E2E_SUPPORT_FILE = /^test\/e2e\/support\//;
 const FOCUSED_E2E_SUMMARY =
   "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
 const FOCUSED_E2E_INVARIANTS = [
@@ -128,9 +134,9 @@ export function focusedPrE2eTargetsForChangedFiles(
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
-  const postRebootMatchedFiles = changedFiles.includes(POST_REBOOT_STATUS_RUNTIME)
-    ? [POST_REBOOT_STATUS_RUNTIME]
-    : [];
+  const postRebootMatchedFiles = stableUnique(
+    changedFiles.filter((file) => POST_REBOOT_DELIVERY_RUNTIME_FILES.has(file)),
+  );
   return [
     ...(deepAgentsMatchedFiles.length > 0
       ? [
@@ -363,6 +369,7 @@ function normalizeFocusedE2eJobs(
 
 function isRuntimeRelevant(file: string): boolean {
   if (RISK_RELEVANT_TEST_FILES.has(file)) return true;
+  if (E2E_SUPPORT_FILE.test(file)) return false;
   if (file.startsWith("tools/e2e/") || file.startsWith("test/e2e/")) {
     return !/\.(?:md|mdx)$/u.test(file);
   }
@@ -386,8 +393,13 @@ export function buildRiskPlan(options: {
 }): RiskPlan {
   const changedFiles = stableUnique(options.changedFiles);
   const runtimeFiles = changedFiles.filter(isRuntimeRelevant);
+  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
+  const focusedLiveFiles = new Set(focusedE2eJobs.flatMap((selection) => selection.matchedFiles));
   const staticFamilies: RiskPlanFamily[] = RISK_RULES.flatMap((rule) => {
-    const matchedFiles = runtimeFiles.filter(rule.matches);
+    const matchedFiles = runtimeFiles.filter(
+      (file) =>
+        rule.matches(file) && !(rule.id === "e2e-control-plane" && focusedLiveFiles.has(file)),
+    );
     if (matchedFiles.length === 0) return [];
     return [
       {
@@ -401,7 +413,6 @@ export function buildRiskPlan(options: {
       },
     ];
   });
-  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
   const focusedE2eTargets = normalizeFocusedE2eJobs(
     focusedPrE2eTargetsForChangedFiles(changedFiles),
     changedFiles,

@@ -55,7 +55,7 @@
     "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
     "build:policy-boundary": "tsc -p nemoclaw/tsconfig.shared.json",
-    "build:cli": "npm run build:policy-boundary && tsc -p tsconfig.src.json && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
+    "build:cli": "npm run build:policy-boundary && tsc -p tsconfig.src.json && node dist/lib/core/generate-build-identity.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.mts",
@@ -86,7 +86,7 @@
     "docs:preview:watch": "tsx scripts/watch-fern-preview.mts",
     "docs:clean": "rm -rf .fern-cache fern/.fern-cache docs/_build",
     "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (node -e \"require.resolve('p-retry')\" >/dev/null 2>&1 || npm install --omit=dev --ignore-scripts) && if [ -d .git ]; then bash scripts/npm-link-or-shim.sh; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
-    "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc",
+    "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && git rev-parse --verify HEAD > .source-revision && test -s .version && test -s .source-revision && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc",
     "typecheck:scorecard": "tsc --noEmit --types node --strict --allowImportingTsExtensions --module preserve --moduleResolution bundler scripts/scorecard/coordinate-scorecard.mts scripts/scorecard/analyze-trace-timing.mts"
   },
   "dependencies": {
@@ -106,6 +106,7 @@
   ],
   "files": [
     ".version",
+    ".source-revision",
     "bin/",
     "dist/",
     "src/lib/messaging/channels/**/policy/*.{yaml,yml}",

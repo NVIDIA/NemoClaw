@@ -117,6 +117,7 @@ ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_REASONING_EFFORT=
 ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled
 ARG NEMOCLAW_DCODE_VALIDATION_PROFILE_B64=disabled
@@ -142,7 +143,11 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
         && printf '%s' "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" > /tmp/nemoclaw-dcode-validation-profile.encoding \
         && grep -Eq '^[A-Za-z0-9+/]+={0,2}$' /tmp/nemoclaw-dcode-validation-profile.encoding \
         && rm -f /tmp/nemoclaw-dcode-validation-profile.encoding; \
-    fi
+    fi \
+    && case "$NEMOCLAW_REASONING_EFFORT" in \
+        ""|low|medium|high) ;; \
+        *) echo "ERROR: NEMOCLAW_REASONING_EFFORT must be empty, low, medium, or high" >&2; exit 1 ;; \
+    esac
 
 # The launcher and startup script read these root-owned files instead of
 # trusting process-level environment overrides for inference routing. Invoking
@@ -154,6 +159,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
     && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
     && printf '%s\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval \
+    && printf '%s\n' "$NEMOCLAW_REASONING_EFFORT" > /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && if [ "$NEMOCLAW_DCODE_VALIDATION_PROFILE_B64" = "disabled" ]; then \
         rm -f /usr/local/share/nemoclaw/dcode-validation-profile.json; \
     else \
@@ -168,11 +174,11 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
             exit 1; \
         fi; \
     fi \
-    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
+    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && if [ -f /usr/local/share/nemoclaw/dcode-validation-profile.json ]; then \
         chown root:root /usr/local/share/nemoclaw/dcode-validation-profile.json; \
     fi \
-    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval \
+    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && if [ -f /usr/local/share/nemoclaw/dcode-validation-profile.json ]; then \
         chown root:root /usr/local/share/nemoclaw/dcode-validation-profile.json; \
         chmod 0444 /usr/local/share/nemoclaw/dcode-validation-profile.json; \
@@ -199,6 +205,7 @@ ENV HOME=/sandbox \
     NEMOCLAW_UPSTREAM_ENDPOINT_URL=${NEMOCLAW_UPSTREAM_ENDPOINT_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_REASONING_EFFORT=${NEMOCLAW_REASONING_EFFORT} \
     NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1 \

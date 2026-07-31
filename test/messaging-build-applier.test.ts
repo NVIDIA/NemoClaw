@@ -158,6 +158,7 @@ function runApplierProcess(
   agent: "hermes" | "openclaw",
   phase: MessagingBuildPhase,
   dryRun = false,
+  managedStartupRuntime = false,
 ) {
   return spawnSync(
     "node",
@@ -169,6 +170,7 @@ function runApplierProcess(
       "--phase",
       phase,
       ...(dryRun ? ["--dry-run"] : []),
+      ...(managedStartupRuntime ? ["--managed-startup-runtime"] : []),
     ],
     {
       encoding: "utf-8",
@@ -1209,7 +1211,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("reapplies OpenClaw messaging render after doctor rewrites config", async () => {
+  it("keeps doctor rerendering while managed startup skips the broad doctor", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-doctor-rewrite-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -1271,6 +1273,29 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.plugins?.entries?.slack).toEqual({ enabled: true });
       expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
       expect(config.channels?.wechat).toBeUndefined();
+
+      fs.writeFileSync(
+        path.join(tmp, ".openclaw", "openclaw.json"),
+        `${JSON.stringify({ channels: {}, plugins: { entries: {} } }, null, 2)}\n`,
+      );
+      fs.writeFileSync(tracePath, "");
+      const managedResult = runApplierProcess(env, "openclaw", "post-agent-install", false, true);
+      expect(managedResult.status, managedResult.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8")).toBe("");
+      const managedConfig = JSON.parse(
+        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
+      );
+      expect(managedConfig.channels?.telegram?.accounts?.default).toMatchObject({
+        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        enabled: true,
+      });
+      expect(managedConfig.channels?.discord?.enabled).toBe(true);
+      expect(managedConfig.plugins?.entries?.discord).toEqual({ enabled: true });
+      expect(managedConfig.channels?.slack?.enabled).toBe(true);
+      expect(managedConfig.plugins?.entries?.slack).toEqual({ enabled: true });
+      expect(managedConfig.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+        enabled: true,
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
