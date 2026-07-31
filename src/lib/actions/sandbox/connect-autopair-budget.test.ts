@@ -31,7 +31,7 @@ describe("connect auto-pair budget", () => {
     expect(CONNECT_AUTO_PAIR_TIMEOUT_MS).toBeGreaterThan(innerWorstCaseMs);
   });
 
-  it("keeps one OpenShell operation allowance beyond inner work", () => {
+  it("keeps 30 seconds of transport headroom beyond inner work", () => {
     expect(CONNECT_AUTO_PAIR_TIMEOUT_MS - innerWorstCaseMs).toBeGreaterThanOrEqual(
       CONNECT_AUTO_PAIR_TRANSPORT_HEADROOM_MS,
     );
