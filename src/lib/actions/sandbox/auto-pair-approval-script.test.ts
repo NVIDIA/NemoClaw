@@ -112,6 +112,13 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     for (const receipt of [
       "approved-one",
       "list-failed",
+      "list-state-path-invalid",
+      "list-platform-unsupported",
+      "list-state-root-failed",
+      "list-devices-directory-failed",
+      "list-pending-unsafe",
+      "list-pending-unstable",
+      "list-pending-invalid-shape",
       "list-pending-unavailable",
       "list-timeout",
       "list-exec-failed",

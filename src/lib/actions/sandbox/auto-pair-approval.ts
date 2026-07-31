@@ -107,6 +107,13 @@ export type AutoPairApprovalReceipt =
   | "exec-signal"
   | "exec-invalid-receipt"
   | "list-failed"
+  | "list-state-path-invalid"
+  | "list-platform-unsupported"
+  | "list-state-root-failed"
+  | "list-devices-directory-failed"
+  | "list-pending-unsafe"
+  | "list-pending-unstable"
+  | "list-pending-invalid-shape"
   | "list-pending-unavailable"
   | "list-timeout"
   | "list-exec-failed"
@@ -125,7 +132,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-pending-unavailable|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-state-path-invalid|list-platform-unsupported|list-state-root-failed|list-devices-directory-failed|list-pending-unsafe|list-pending-unstable|list-pending-invalid-shape|list-pending-unavailable|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -366,10 +373,10 @@ import time
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 if not os.path.isabs(state_dir):
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-state-path-invalid")}
 for required_flag in ('O_DIRECTORY', 'O_NOFOLLOW'):
     if not hasattr(os, required_flag):
-        ${exitWithReceipt("list-failed")}
+        ${exitWithReceipt("list-platform-unsupported")}
 clone_directory_flags = (
     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
 )
@@ -413,7 +420,7 @@ def open_clone_state_root():
 try:
     clone_state_dir_fd = open_clone_state_root()
 except OSError:
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-state-root-failed")}
 
 def clone_state_root_is_current():
     try:
@@ -486,7 +493,7 @@ def read_clone_json(directory_fd, directory_name, entry_name):
 try:
     clone_devices_dir_fd = open_clone_directory('devices')
 except OSError:
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-devices-directory-failed")}
 # The gateway can publish pending.json immediately after the warm-up. Retry only
 # a missing entry before publication, invalid JSON during truncate/write, or an
 # opened inode that an atomic replace unlinked. Unsafe filesystem shapes and
@@ -504,17 +511,17 @@ for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
     except (CloneStateEntryRotated, json.JSONDecodeError):
         pending_read_failure = 'unstable'
     except (OSError, ValueError):
-        ${exitWithReceipt("list-failed")}
+        ${exitWithReceipt("list-pending-unsafe")}
     else:
         if not isinstance(local_pending_by_id, dict):
-            ${exitWithReceipt("list-failed")}
+            ${exitWithReceipt("list-pending-invalid-shape")}
         break
     if pending_read_attempt + 1 < PENDING_READ_ATTEMPTS:
         time.sleep(PENDING_READ_POLL_S)
 else:
     if pending_read_failure == 'unavailable':
         ${exitWithReceipt("list-pending-unavailable")}
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-pending-unstable")}
 pending = list(local_pending_by_id.values())
 `
     : `

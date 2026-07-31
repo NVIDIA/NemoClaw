@@ -1046,15 +1046,15 @@ ${persistentRaceNeedle}`,
         primaryPending,
       );
 
-      for (const preparePendingState of [
-        () => fs.writeFileSync(clonePendingPath, "{"),
-        () => fs.writeFileSync(clonePendingPath, "[]"),
-      ]) {
+      for (const [preparePendingState, receipt] of [
+        [() => fs.writeFileSync(clonePendingPath, "{"), "list-pending-unstable"],
+        [() => fs.writeFileSync(clonePendingPath, "[]"), "list-pending-invalid-shape"],
+      ] as const) {
         resetLogs();
         preparePendingState();
         const failed = execute();
         expect(failed.status).toBe(0);
-        expect(parseAutoPairApprovalReceipt(failed.stdout)).toBe("list-failed");
+        expect(parseAutoPairApprovalReceipt(failed.stdout)).toBe(receipt);
         expect(readApprovals()).toEqual([]);
         expect(`${failed.stdout}${failed.stderr}`.includes("raw list output")).toBe(false);
         expect(fs.existsSync(listEnvFile)).toBe(false);
@@ -1083,7 +1083,7 @@ ${persistentRaceNeedle}`,
 
       resetLogs();
       const hardLinked = run([foreignRequest, repairRequest], { hardLinkPending: true });
-      expect(parseAutoPairApprovalReceipt(hardLinked.stdout)).toBe("list-failed");
+      expect(parseAutoPairApprovalReceipt(hardLinked.stdout)).toBe("list-pending-unsafe");
       expect(readApprovals()).toEqual([]);
 
       resetLogs();
@@ -1155,7 +1155,9 @@ ${persistentRaceNeedle}`,
       expect(persistentSwapOccurred).toBe(true);
       fs.unlinkSync(devicesDir);
       fs.renameSync(devicesRaceBackup, devicesDir);
-      expect(parseAutoPairApprovalReceipt(persistentDevicesRace.stdout)).toBe("list-failed");
+      expect(parseAutoPairApprovalReceipt(persistentDevicesRace.stdout)).toBe(
+        "list-pending-unsafe",
+      );
       expect(persistentDevicesRace.stdout.trim().split(/\r?\n/).length).toBe(1);
       expect(persistentDevicesRace.stderr.length).toBe(0);
       expect(readApproveCalls().length).toBe(0);
