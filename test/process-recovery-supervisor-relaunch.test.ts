@@ -125,18 +125,25 @@ function scriptedPinnedGatewayRecovery(
     stdout: "GATEWAY_PID=4242\n",
     stderr: "",
   };
-  let probeCount = 0;
-  return vi.fn((_sandboxName: string, action: string) => {
-    if (action === "restart") {
+  const probeResults = [unavailableProbe, acceptedProbe] as const;
+  let probeIndex = 0;
+  const actions = {
+    probe: () => {
+      const result = probeResults[Math.min(probeIndex, probeResults.length - 1)];
+      probeIndex += 1;
+      return result;
+    },
+    recover: () => {
+      throw new Error("unexpected managed gateway action: recover");
+    },
+    restart: () => {
       order.push("post-restore-restart");
       return postRestoreRestart;
-    }
-    if (action !== "probe") {
-      throw new Error(`unexpected managed gateway action: ${action}`);
-    }
-    probeCount += 1;
-    return probeCount === 1 ? unavailableProbe : acceptedProbe;
-  });
+    },
+  };
+  return vi.fn((_sandboxName: string, action: "probe" | "recover" | "restart") =>
+    actions[action](),
+  );
 }
 
 describe("waitForManagedGatewaySupervisor", () => {
