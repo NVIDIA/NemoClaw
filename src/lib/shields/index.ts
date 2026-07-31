@@ -1772,10 +1772,7 @@ function unlockAgentConfigUnderMutationLock(
       issues.push(`config dir stat failed: ${msg}`);
     }
 
-    if (
-      openClawProtocol ||
-      (requiresProtectedSandboxParent(target) && target.agentName !== "hermes")
-    ) {
+    if (requiresProtectedSandboxParent(target) && target.agentName !== "hermes") {
       try {
         const parentPerms = privilegedSandboxExecCapture(sandboxName, [
           "stat",
@@ -2129,9 +2126,8 @@ function lockAgentConfigUnderMutationLock(
       // parent metadata. Verify the recursively locked tree while rollback is
       // still available, then verify the parent after the final commit below.
       verifyParentProtection:
-        (target.agentName === "hermes" && transaction === null) ||
-        openClawProtocol ||
-        target.agentName === "langchain-deepagents-code",
+        requiresProtectedSandboxParent(target) &&
+        (target.agentName !== "hermes" || transaction === null),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
     });

@@ -29,9 +29,9 @@ function makeConfigDir(): string {
   return configDir;
 }
 
-function runRepairCommand(command: string[], env: NodeJS.ProcessEnv = process.env): RepairOutcome {
+function runRepairCommand(command: string[]): RepairOutcome {
   const [binary, ...args] = command;
-  const result = spawnSync(binary, args, { encoding: "utf-8", env });
+  const result = spawnSync(binary, args, { encoding: "utf-8" });
   ifError(result.error);
   return { status: result.status, stderr: (result.stderr ?? "").trim() };
 }
@@ -198,11 +198,10 @@ describe("buildConfigHashRepairCommand", () => {
     const parentDir = path.dirname(configDir);
     fs.chmodSync(parentDir, 0o755);
     const { buildConfigHashRepairCommand } = await loadSeal();
+    const command = buildConfigHashRepairCommand(configDir, path.join(configDir, "config.toml"));
+    command.push("--test-protect-parent");
 
-    const outcome = runRepairCommand(
-      buildConfigHashRepairCommand(configDir, path.join(configDir, "config.toml")),
-      { ...process.env, NEMOCLAW_TEST_PROTECT_CONFIG_PARENT: "1" },
-    );
+    const outcome = runRepairCommand(command);
 
     expect(outcome).toEqual({ status: 0, stderr: "" });
     expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o1775);
@@ -219,11 +218,10 @@ describe("buildConfigHashRepairCommand", () => {
     fs.chmodSync(configDir, 0o2770);
     const initialConfigMode = fs.statSync(configDir).mode & 0o7777;
     const { buildConfigHashRepairCommand } = await loadSeal();
+    const command = buildConfigHashRepairCommand(configDir, path.join(configDir, "config.toml"));
+    command.push("--test-protect-parent");
 
-    const outcome = runRepairCommand(
-      buildConfigHashRepairCommand(configDir, path.join(configDir, "config.toml")),
-      { ...process.env, NEMOCLAW_TEST_PROTECT_CONFIG_PARENT: "1" },
-    );
+    const outcome = runRepairCommand(command);
 
     expect(outcome.status).toBe(1);
     expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o751);

@@ -138,14 +138,15 @@ if parent_dir in ("", config_dir) or config_dir_name in ("", ".", ".."):
 parent_fd = open_checked(parent_dir, True)
 parent_stat = os.fstat(parent_fd)
 parent_mode = stat.S_IMODE(parent_stat.st_mode)
-protect_parent = (
-    parent_dir == "/sandbox"
-    or os.environ.get("NEMOCLAW_TEST_PROTECT_CONFIG_PARENT") == "1"
-)
+test_protect_parent = len(sys.argv) == 4 and sys.argv[3] == "--test-protect-parent"
+if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and not test_protect_parent):
+    os.close(parent_fd)
+    die("unsupported config hash repair arguments")
+protect_parent = parent_dir == "/sandbox" or test_protect_parent
 if protect_parent:
     sandbox_gid = (
         os.getegid()
-        if os.environ.get("NEMOCLAW_TEST_PROTECT_CONFIG_PARENT") == "1"
+        if test_protect_parent
         else grp.getgrnam("sandbox").gr_gid
     )
 else:
