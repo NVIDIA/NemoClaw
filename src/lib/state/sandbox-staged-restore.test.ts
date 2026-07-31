@@ -79,11 +79,21 @@ function runHermesRestore(options: {
       options.seedExistingState === true ? seedExistingStateFixture : () => undefined;
     const rollbackSeeder =
       options.seedUnrecoveredRollback === true ? seedUnrecoveredRollbackFixture : () => undefined;
+    const drainSeeder =
+      options.preexistingDrain === true
+        ? () => fs.writeFileSync(drainMarker, "external\n")
+        : () => undefined;
+    const restoredScriptSeeder =
+      options.missingRestoredScript === true
+        ? () => undefined
+        : () =>
+            fs.writeFileSync(
+              path.join(backupPath, "scripts", "digest.sh"),
+              "#!/bin/bash\necho ok\n",
+            );
     existingStateSeeder(hermesDir);
     rollbackSeeder(hermesDir);
-    if (options.preexistingDrain === true) {
-      fs.writeFileSync(drainMarker, "external\n");
-    }
+    drainSeeder();
 
     for (const stateDir of options.stateDirs) {
       fs.mkdirSync(path.join(backupPath, stateDir), { recursive: true });
@@ -92,9 +102,7 @@ function runHermesRestore(options: {
       path.join(backupPath, "cron", "jobs.json"),
       '{"jobs":[{"enabled":true,"script":"digest.sh"}]}\n',
     );
-    if (options.missingRestoredScript !== true) {
-      fs.writeFileSync(path.join(backupPath, "scripts", "digest.sh"), "#!/bin/bash\necho ok\n");
-    }
+    restoredScriptSeeder();
 
     fs.writeFileSync(
       path.join(backupPath, "rebuild-manifest.json"),
