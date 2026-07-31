@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { sanitizeBackupDirectory } from "./sandbox.js";
 
@@ -26,6 +28,7 @@ function createBackup(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const testDirectory of testDirectories.splice(0)) {
     rmSync(testDirectory, { recursive: true, force: true });
   }
@@ -45,6 +48,18 @@ describe("rebuild backup credential sanitization", () => {
     expect(statSync(envPath).mode & 0o777).toBe(0o600);
   });
 
+  it("restricts an already-safe config artifact without changing its content", () => {
+    const backupPath = createBackup();
+    const envPath = join(backupPath, "state", ".env");
+    const contents = "LOG_LEVEL=info\n";
+    writeFileSync(envPath, contents, { mode: 0o644 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(envPath, "utf-8")).toBe(contents);
+    expect(statSync(envPath).mode & 0o777).toBe(0o600);
+  });
+
   it("omits unsanitizable config and env artifacts", () => {
     const backupPath = createBackup();
     const yamlPath = join(backupPath, "state", "config.yaml");
@@ -53,12 +68,10 @@ describe("rebuild backup credential sanitization", () => {
     const safePath = join(backupPath, "state", "notes.txt");
     writeFileSync(yamlPath, "api_key: [unclosed\n");
     writeFileSync(jsonPath, '{"apiKey":');
-    writeFileSync(envPath, "DB_PASS=raw-secret\n");
+    writeFileSync(envPath, Buffer.from([0xff]));
     writeFileSync(safePath, "safe");
 
-    sanitizeBackupDirectory(backupPath, {
-      sanitizeEnvFile: () => false,
-    });
+    sanitizeBackupDirectory(backupPath);
 
     expect(existsSync(yamlPath)).toBe(false);
     expect(existsSync(jsonPath)).toBe(false);
@@ -73,7 +86,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(() =>
       sanitizeBackupDirectory(backupPath, {
-        unlinkFile: () => {
+        sanitizeDirectory: () => {
           throw new Error("injected unlink failure");
         },
       }),
@@ -88,7 +101,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(() =>
       sanitizeBackupDirectory(backupPath, {
-        unlinkFile: () => {
+        sanitizeDirectory: () => {
           throw new Error("injected unlink failure");
         },
         removeBackup: () => undefined,
@@ -96,5 +109,36 @@ describe("rebuild backup credential sanitization", () => {
       }),
     ).toThrow("Credential sanitization failed and the incomplete backup remains");
     expect(existsSync(backupPath)).toBe(true);
+  });
+
+  it("fails closed when a scanned parent directory is swapped before apply", () => {
+    const backupPath = createBackup();
+    const nestedPath = join(backupPath, "state", "nested");
+    const movedPath = join(backupPath, "state", "nested-original");
+    mkdirSync(nestedPath);
+    writeFileSync(join(nestedPath, "config.json"), '{"apiKey":"sk-inside-secret"}');
+
+    const outsidePath = mkdtempSync(join(tmpdir(), "nemoclaw-sanitize-outside-"));
+    const wrapperPath = mkdtempSync(join(tmpdir(), "nemoclaw-sanitize-python-"));
+    testDirectories.push(outsidePath, wrapperPath);
+    const outsideConfigPath = join(outsidePath, "config.json");
+    const outsideContents = '{"apiKey":"sk-outside-secret"}';
+    writeFileSync(outsideConfigPath, outsideContents);
+
+    const realPython = execFileSync("which", ["python3"], { encoding: "utf-8" }).trim();
+    const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
+    const pythonWrapper = join(wrapperPath, "python3");
+    writeFileSync(
+      pythonWrapper,
+      `#!/bin/sh\nif [ "$4" = "apply" ]; then\n  mv ${shellQuote(nestedPath)} ${shellQuote(movedPath)}\n  ln -s ${shellQuote(outsidePath)} ${shellQuote(nestedPath)}\nfi\nexec ${shellQuote(realPython)} "$@"\n`,
+    );
+    chmodSync(pythonWrapper, 0o755);
+    vi.stubEnv("PATH", `${wrapperPath}:${process.env.PATH ?? ""}`);
+
+    expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
+      "Credential sanitization failed; removed the incomplete backup",
+    );
+    expect(existsSync(backupPath)).toBe(false);
+    expect(readFileSync(outsideConfigPath, "utf-8")).toBe(outsideContents);
   });
 });

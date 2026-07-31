@@ -1,8 +1,53 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
+import path from "node:path";
+
+const HELPER_TIMEOUT_MS = 60_000;
+const HELPER_MAX_BUFFER_BYTES = 48 * 1024 * 1024;
+
+function snapshotSanitizerEnvironment(): Record<string, string> {
+  return typeof process.env.PATH === "string" ? { PATH: process.env.PATH } : {};
+}
+
+export interface SnapshotFileIdentity {
+  readonly dev: string;
+  readonly ino: string;
+  readonly mode: string;
+  readonly nlink: string;
+  readonly size: string;
+  readonly mtimeNs: string;
+  readonly ctimeNs: string;
+}
+
+export interface SnapshotScannedFile {
+  readonly path: string;
+  readonly metadata: SnapshotFileIdentity;
+  readonly content?: string;
+}
+
+export interface DescriptorSnapshotScan {
+  readonly root: SnapshotFileIdentity;
+  readonly directories: Readonly<Record<string, SnapshotFileIdentity>>;
+  readonly files: readonly SnapshotScannedFile[];
+}
+
+export interface SnapshotSanitizationAction {
+  readonly kind: "remove" | "replace";
+  readonly path: string;
+  readonly metadata: SnapshotFileIdentity;
+  readonly content?: string;
+}
+
+export interface DescriptorSnapshotRoot {
+  readonly canonicalPath: string;
+  readonly identity: SnapshotFileIdentity;
+}
+
 /**
- * Descriptor-relative filesystem helper for migration snapshot sanitization.
+ * Descriptor-relative filesystem helper for copied snapshot sanitization.
  *
  * The plugin package publishes compiled JavaScript only, so the helper is
  * passed as immutable source to an isolated Python interpreter. Every path
@@ -10,7 +55,7 @@
  * and every mutation revalidates the exact inode version observed by the
  * read pass before replacing or unlinking it.
  */
-export const SNAPSHOT_SANITIZER_PYTHON = String.raw`
+const SNAPSHOT_SANITIZER_PYTHON = String.raw`
 import base64
 import json
 import os
@@ -437,3 +482,146 @@ if __name__ == "__main__":
     except Exception as error:
         fail(str(error))
 `.trim();
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFileIdentity(value: unknown): value is SnapshotFileIdentity {
+  if (!isObjectRecord(value)) return false;
+  return ["dev", "ino", "mode", "nlink", "size", "mtimeNs", "ctimeNs"].every(
+    (key) => typeof value[key] === "string",
+  );
+}
+
+function isSafeRelativePath(value: unknown): value is string {
+  if (typeof value !== "string" || value === "" || path.isAbsolute(value)) return false;
+  if (value.includes("\\")) return false;
+  return value.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+function parseScanResult(stdout: string): DescriptorSnapshotScan | null {
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (!isObjectRecord(parsed) || !isFileIdentity(parsed.root)) return null;
+    if (!isObjectRecord(parsed.directories) || !Array.isArray(parsed.files)) return null;
+
+    const directories: Record<string, SnapshotFileIdentity> = {};
+    for (const [relativePath, identity] of Object.entries(parsed.directories)) {
+      if (!isSafeRelativePath(relativePath) || !isFileIdentity(identity)) return null;
+      directories[relativePath] = identity;
+    }
+
+    const files: SnapshotScannedFile[] = [];
+    for (const value of parsed.files) {
+      if (!isObjectRecord(value) || !isSafeRelativePath(value.path)) return null;
+      if (!isFileIdentity(value.metadata)) return null;
+      if (value.content !== undefined && typeof value.content !== "string") return null;
+      files.push({
+        path: value.path,
+        metadata: value.metadata,
+        ...(typeof value.content === "string" ? { content: value.content } : {}),
+      });
+    }
+    return { root: parsed.root, directories, files };
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve and pin one snapshot root without accepting a final-component symlink. */
+export function inspectDescriptorSnapshotRoot(rootPath: string): DescriptorSnapshotRoot | null {
+  let observed: ReturnType<typeof lstatSync>;
+  try {
+    observed = lstatSync(rootPath, { bigint: true });
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (!observed.isDirectory() || observed.isSymbolicLink()) {
+    throw new Error(`Snapshot root is not a safe directory: ${rootPath}`);
+  }
+  const canonicalPath = realpathSync(rootPath);
+  const canonical = lstatSync(canonicalPath, { bigint: true });
+  if (canonical.dev !== observed.dev || canonical.ino !== observed.ino) {
+    throw new Error(`Snapshot root changed while it was resolved: ${rootPath}`);
+  }
+  return {
+    canonicalPath,
+    identity: {
+      dev: String(observed.dev),
+      ino: String(observed.ino),
+      mode: String(observed.mode),
+      nlink: String(observed.nlink),
+      size: String(observed.size),
+      mtimeNs: String(observed.mtimeNs),
+      ctimeNs: String(observed.ctimeNs),
+    },
+  };
+}
+
+/** Read a bounded snapshot tree through pinned directory descriptors. */
+export function scanDescriptorSnapshot(
+  root: DescriptorSnapshotRoot,
+  sensitiveNames: ReadonlySet<string>,
+  targetName?: string,
+): DescriptorSnapshotScan | null {
+  const mode = targetName === undefined ? "scan-tree" : "scan-file";
+  const result = spawnSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      SNAPSHOT_SANITIZER_PYTHON,
+      mode,
+      root.canonicalPath,
+      JSON.stringify(root.identity),
+      targetName ?? "",
+      JSON.stringify([...sensitiveNames]),
+    ],
+    {
+      encoding: "utf-8",
+      env: snapshotSanitizerEnvironment(),
+      maxBuffer: HELPER_MAX_BUFFER_BYTES,
+      timeout: HELPER_TIMEOUT_MS,
+    },
+  );
+  if (result.status !== 0 || result.error) return null;
+  return parseScanResult(result.stdout);
+}
+
+/** Install or remove sanitized artifacts through their pinned parent descriptors. */
+export function applyDescriptorSnapshotActions(
+  root: DescriptorSnapshotRoot,
+  scan: DescriptorSnapshotScan,
+  actions: readonly SnapshotSanitizationAction[],
+): boolean {
+  if (actions.length === 0) return true;
+  const result = spawnSync(
+    "python3",
+    ["-I", "-c", SNAPSHOT_SANITIZER_PYTHON, "apply", root.canonicalPath],
+    {
+      encoding: "utf-8",
+      env: snapshotSanitizerEnvironment(),
+      input: JSON.stringify({ root: scan.root, directories: scan.directories, actions }),
+      maxBuffer: HELPER_MAX_BUFFER_BYTES,
+      timeout: HELPER_TIMEOUT_MS,
+    },
+  );
+  return result.status === 0 && !result.error;
+}
+
+/** Decode one helper payload and reject non-canonical base64 or invalid UTF-8. */
+export function decodeDescriptorSnapshotContent(content: string | undefined): string | null {
+  if (
+    content === undefined ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(content)
+  ) {
+    return null;
+  }
+  const decoded = Buffer.from(content, "base64");
+  if (decoded.toString("base64") !== content) return null;
+  const utf8 = decoded.toString("utf-8");
+  if (!Buffer.from(utf8, "utf-8").equals(decoded)) return null;
+  return utf8;
+}

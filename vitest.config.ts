@@ -24,6 +24,9 @@ const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
+const canonicalSnapshotSanitizerBoundary = path.resolve(
+  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
+);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -35,6 +38,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
+  },
+  {
+    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
+    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =

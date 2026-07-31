@@ -428,6 +428,56 @@ function toConfigValue(value: unknown): ConfigValue | typeof UNREPRESENTABLE_CON
 }
 
 /**
+ * Strip credential fields from a Hermes YAML config body.
+ *
+ * Returns null when the document cannot be represented safely. Empty and
+ * comment-only documents are returned unchanged because they contain no
+ * credential material.
+ */
+export function sanitizeYamlConfigContent(rawConfig: string): string | null {
+  try {
+    const parsed = parseYaml(rawConfig);
+    if (parsed === null || parsed === undefined) return rawConfig;
+    const configValue = toConfigValue(parsed);
+    if (configValue === UNREPRESENTABLE_CONFIG_VALUE || !isConfigObject(configValue)) {
+      return null;
+    }
+
+    const { gateway: _gateway, ...config } = configValue;
+    return stringifyYaml(stripCredentials(config));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Strip credential fields from a JSON or YAML config body.
+ *
+ * The filename is used only to decide whether a non-JSON document is an
+ * allowed YAML target. Returns null when the input cannot be sanitized.
+ */
+export function sanitizeConfigFileContent(configName: string, rawConfig: string): string | null {
+  try {
+    const parsed = parseJson<ConfigValue | object>(rawConfig);
+    if (!isConfigValue(parsed)) return null;
+    let config = parsed;
+    if (isConfigObject(parsed)) {
+      const { gateway: _gateway, ...withoutGateway } = parsed;
+      config = withoutGateway;
+    }
+    return JSON.stringify(stripCredentials(config), null, 2);
+  } catch {
+    // Fall through to YAML for Hermes and other non-JSON configs.
+  }
+
+  const normalized = basename(configName).toLowerCase();
+  if (normalized.endsWith(".yaml") || normalized.endsWith(".yml")) {
+    return sanitizeYamlConfigContent(rawConfig);
+  }
+  return null;
+}
+
+/**
  * Strip credential fields from a Hermes YAML config file in-place.
  * Removes the "gateway" section when present (auth tokens — regenerated
  * at startup), matching JSON sanitization.
@@ -438,19 +488,11 @@ export function sanitizeYamlConfigFile(
 ): boolean {
   const rawConfig = readRegularFileNoFollow(configPath);
   if (rawConfig === null) return false;
+  const sanitized = sanitizeYamlConfigContent(rawConfig);
+  if (sanitized === null) return false;
+  if (sanitized === rawConfig) return true;
   try {
-    const parsed = parseYaml(rawConfig);
-    // Empty and comment-only YAML documents contain no credentials. Preserve
-    // them instead of misclassifying the parser's null result as unsafe.
-    if (parsed === null || parsed === undefined) return true;
-    const configValue = toConfigValue(parsed);
-    if (configValue === UNREPRESENTABLE_CONFIG_VALUE || !isConfigObject(configValue)) {
-      return false;
-    }
-
-    const { gateway: _gateway, ...config } = configValue;
-    const sanitized = stripCredentials(config);
-    writeSanitized(configPath, stringifyYaml(sanitized));
+    writeSanitized(configPath, sanitized);
     return true;
   } catch {
     return false;
@@ -468,27 +510,15 @@ export function sanitizeYamlConfigFile(
 export function sanitizeConfigFile(configPath: string): boolean {
   const rawConfig = readRegularFileNoFollow(configPath);
   if (rawConfig === null) return false;
-
+  const sanitized = sanitizeConfigFileContent(configPath, rawConfig);
+  if (sanitized === null) return false;
+  if (sanitized === rawConfig) return true;
   try {
-    const parsed = parseJson<ConfigValue | object>(rawConfig);
-    if (!isConfigValue(parsed)) return false;
-    let config = parsed;
-    if (isConfigObject(parsed)) {
-      const { gateway: _gateway, ...withoutGateway } = parsed;
-      config = withoutGateway;
-    }
-    const sanitized = stripCredentials(config);
-    writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
+    writeFileAtomically(configPath, sanitized);
     return true;
   } catch {
-    // Fall through to YAML for Hermes and other non-JSON configs.
+    return false;
   }
-
-  const normalized = basename(configPath).toLowerCase();
-  if (normalized.endsWith(".yaml") || normalized.endsWith(".yml")) {
-    return sanitizeYamlConfigFile(configPath);
-  }
-  return false;
 }
 
 /**

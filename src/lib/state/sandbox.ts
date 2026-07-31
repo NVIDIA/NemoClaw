@@ -24,7 +24,6 @@ import {
   renameSync,
   rmSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -44,11 +43,7 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import {
-  isSensitiveFile,
-  sanitizeConfigFile,
-  sanitizeEnvFile,
-} from "../security/credential-filter.js";
+import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -626,22 +621,14 @@ function computeBlueprintDigest(): string | null {
   return null;
 }
 
-/**
- * Walk a local directory and sanitize any JSON config files found.
- * Also removes files that match CREDENTIAL_SENSITIVE_BASENAMES.
- */
 export interface BackupSanitizationOperations {
-  sanitizeConfigFile: (filePath: string) => boolean;
-  sanitizeEnvFile: (filePath: string) => boolean;
-  unlinkFile: (filePath: string) => void;
+  sanitizeDirectory: (backupPath: string) => void;
   removeBackup: (backupPath: string) => void;
   backupExists: (backupPath: string) => boolean;
 }
 
 const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
-  sanitizeConfigFile,
-  sanitizeEnvFile,
-  unlinkFile: unlinkSync,
+  sanitizeDirectory: sanitizeSnapshotDirectory,
   removeBackup: (backupPath) => rmSync(backupPath, { recursive: true, force: true }),
   backupExists: existsSync,
 };
@@ -651,38 +638,10 @@ export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
 ): void {
-  if (!existsSync(dirPath)) return;
   const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
 
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile()) {
-        const name = entry.name.toLowerCase();
-        if (isSensitiveFile(entry.name)) {
-          operations.unlinkFile(fullPath);
-        } else if (name.endsWith(".json") || name.endsWith(".yaml") || name.endsWith(".yml")) {
-          // JSON (OpenClaw) and YAML (Hermes config.yaml) both carry secrets.
-          // Fail closed: omit the artifact when sanitization cannot run.
-          if (!operations.sanitizeConfigFile(fullPath)) {
-            operations.unlinkFile(fullPath);
-          }
-        } else if (name === ".env" || name.endsWith(".env")) {
-          // Hermes stores API keys in .env alongside config.yaml.
-          if (operations.sanitizeEnvFile(fullPath)) {
-            chmodSync(fullPath, 0o600);
-          } else {
-            operations.unlinkFile(fullPath);
-          }
-        }
-      }
-    }
-  };
-
   try {
-    walk(dirPath);
+    operations.sanitizeDirectory(dirPath);
   } catch (error) {
     try {
       operations.removeBackup(dirPath);
