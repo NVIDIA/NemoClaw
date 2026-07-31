@@ -60,6 +60,7 @@ export interface StreamableReadable {
 export interface StreamableChildProcess {
   stdout: StreamableReadable | null;
   stderr: StreamableReadable | null;
+  pid?: number;
   kill?(signal?: NodeJS.Signals | number): boolean;
   removeAllListeners?(event?: string | symbol): void;
   unref?(): void;
@@ -105,9 +106,12 @@ export function streamSandboxCreate(
       "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
     );
   }
-  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {
+  const spawnChild = options.spawnImpl ?? spawn;
+  const ownProcessGroup = spawnChild === spawn && process.platform !== "win32";
+  const child: StreamableChildProcess = spawnChild(spawnCommand, commandArgs, {
     cwd: ROOT,
     env,
+    detached: ownProcessGroup,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -329,9 +333,45 @@ export function streamSandboxCreate(
     }
   }
 
+  function terminateChild(signal: NodeJS.Signals) {
+    try {
+      if (ownProcessGroup && typeof child.pid === "number" && child.pid > 0) {
+        process.kill(-child.pid, signal);
+      } else {
+        child.kill?.(signal);
+      }
+    } catch {
+      // Best effort only — the child may have already exited.
+    }
+  }
+
+  function terminateChildOnHostExit() {
+    if (!settled) terminateChild("SIGKILL");
+  }
+
+  function removeHostExitListeners() {
+    process.removeListener("exit", terminateChildOnHostExit);
+    process.removeListener("SIGINT", onHostSigint);
+    process.removeListener("SIGTERM", onHostSigterm);
+  }
+
+  function handleHostSignal(signal: NodeJS.Signals) {
+    terminateChildOnHostExit();
+    removeHostExitListeners();
+    process.kill(process.pid, signal);
+  }
+
+  const onHostSigint = () => handleHostSignal("SIGINT");
+  const onHostSigterm = () => handleHostSignal("SIGTERM");
+
+  process.once("exit", terminateChildOnHostExit);
+  process.on("SIGINT", onHostSigint);
+  process.on("SIGTERM", onHostSigterm);
+
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
+    removeHostExitListeners();
     flushPendingLines();
     if (!buildTimingFinished && buildStartedAtMs !== null) {
       finishBuildTiming(status === 0 ? "completed" : "stopped");
@@ -388,11 +428,7 @@ export function streamSandboxCreate(
             const detail = "Sandbox reported Ready before create stream exited; continuing.";
             lines.push(detail);
             printProgressLine(`  ${detail}`);
-            try {
-              child.kill?.("SIGTERM");
-            } catch {
-              // Best effort only — the child may have already exited.
-            }
+            terminateChild("SIGTERM");
             detachChild();
             sawProgress = true;
             finish(0, { forcedReady: true });
@@ -414,11 +450,7 @@ export function streamSandboxCreate(
           const detail = String(failure);
           lines.push(detail);
           printProgressLine(`  ${detail}`);
-          try {
-            child.kill?.("SIGTERM");
-          } catch {
-            // Best effort only — the child may have already exited.
-          }
+          terminateChild("SIGTERM");
           detachChild();
           sawProgress = true;
           finish(1);
