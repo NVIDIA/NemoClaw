@@ -5,6 +5,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
+import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -192,6 +193,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
+  }
+  // Isolation removed the ambient reasoning inputs so an unrelated onboard
+  // cannot steer this recreate (#5735). The recreate still has to reapply the
+  // *recorded* compatible-endpoint reasoning configuration: both the recovered
+  // provider selection and the sandbox image patch that bakes
+  // ARG NEMOCLAW_REASONING_EFFORT read it from the process env, so without this
+  // seed the replacement records no reasoning effort (#7940). The isolation
+  // restore puts the caller's ambient values back on success and failure.
+  if (resumeConfig.provider === "compatible-endpoint") {
+    process.env.NEMOCLAW_REASONING = resumeConfig.compatibleEndpointReasoning ?? "false";
+    applyReasoningEffortEnv(resumeConfig.compatibleEndpointReasoningEffort);
   }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
