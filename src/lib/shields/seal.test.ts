@@ -47,6 +47,18 @@ function hashRecordPath(configDir: string): string {
   return path.join(configDir, ".config-hash");
 }
 
+function readBodyAndMode(pathname: string): { body: string; mode: number } {
+  const fd = fs.openSync(pathname, "r");
+  try {
+    return {
+      body: fs.readFileSync(fd, "utf-8"),
+      mode: fs.fstatSync(fd).mode & 0o777,
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function racePlantWrapper(source: string, outside: string): string {
   const encoded = Buffer.from(source, "utf-8").toString("base64");
   return String.raw`
@@ -228,8 +240,7 @@ describe("buildConfigHashRepairCommand", () => {
 
     expect(await runRepair(configDir)).toEqual({ status: 0, stderr: "" });
 
-    expect(fs.readFileSync(record, "utf-8")).toBe(staleRecord);
-    expect(fs.statSync(record).mode & 0o777).toBe(0o640);
+    expect(readBodyAndMode(record)).toEqual({ body: staleRecord, mode: 0o640 });
   });
 
   it("refuses a symlink planted at the record name", async () => {
