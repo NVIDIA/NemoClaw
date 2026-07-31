@@ -57,7 +57,14 @@ describe("PR E2E signal shard policy", () => {
       "mcp-bridge",
       "openshell-credential-generation-window",
     ]);
+    expect(
+      expandPrGateJobSelections(["mcp-bridge", "openshell-credential-generation-window"]),
+    ).toEqual(["mcp-bridge", "openshell-credential-generation-window"]);
     expect(expectedSignalShards(["mcp-bridge"])).toEqual({
+      "mcp-bridge": ["openclaw", "hermes", "deepagents"],
+      "openshell-credential-generation-window": ["default"],
+    });
+    expect(expectedSignalShards(["mcp-bridge", "openshell-credential-generation-window"])).toEqual({
       "mcp-bridge": ["openclaw", "hermes", "deepagents"],
       "openshell-credential-generation-window": ["default"],
     });
