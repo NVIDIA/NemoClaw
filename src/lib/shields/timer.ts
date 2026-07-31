@@ -11,8 +11,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { buildPolicySetCommand } from "../policy";
-import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "../state/paths";
@@ -291,9 +289,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
           }
 
           // Restore policy (slow — openshell policy set --wait blocks)
-          const result = run(buildPolicySetCommand(args.snapshotPath, args.sandboxName), {
-            ignoreError: true,
-          });
+          const result = shields.applyShieldsPolicySnapshot(args.sandboxName, args.snapshotPath);
           const status = typeof result.status === "number" ? result.status : 1;
 
           if (status !== 0) {

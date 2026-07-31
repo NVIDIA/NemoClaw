@@ -58,7 +58,11 @@ const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
 const { resolveAgentConfig } = require("../sandbox/config");
 const {
+  buildRuntimeManagedMcpPolicy,
   buildRuntimePermissivePolicy,
+  hasManagedMcpPolicyClaims,
+  inspectExactManagedMcpPolicies,
+  isManagedMcpPolicyKey,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
@@ -716,6 +720,8 @@ interface ShieldsState {
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
   shieldsPolicySnapshotPath?: string | null;
+  /** Exact generated MCP keys owned in the restrictive snapshot. */
+  shieldsManagedMcpPolicyKeys?: string[];
   chattrApplied?: boolean;
   // SHA-256 seal of each locked file, captured by `shields up` after the
   // lock verification passes. `shields status` re-hashes the same files
@@ -946,6 +952,17 @@ function isOptionalHashMap(value: unknown): value is { [path: string]: string } 
   return true;
 }
 
+function isOptionalManagedMcpPolicyKeys(value: unknown): value is string[] | undefined {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > 256) return false;
+  const keys = new Set<string>();
+  for (const key of value) {
+    if (!isManagedMcpPolicyKey(key) || keys.has(key)) return false;
+    keys.add(key);
+  }
+  return true;
+}
+
 function isShieldsState(value: unknown): value is ShieldsState {
   return (
     isObjectRecord(value) &&
@@ -955,6 +972,7 @@ function isShieldsState(value: unknown): value is ShieldsState {
     isOptionalNullableString(value.shieldsDownReason) &&
     isOptionalNullableString(value.shieldsDownPolicy) &&
     isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    isOptionalManagedMcpPolicyKeys(value.shieldsManagedMcpPolicyKeys) &&
     isOptionalBoolean(value.chattrApplied) &&
     isOptionalHashMap(value.fileHashes) &&
     isOptionalString(value.updatedAt)
@@ -2226,9 +2244,7 @@ function synchronizeAutoRestoreTransition(
   // above waits until the forward path has either committed its last weakening
   // mutation or its owner has died; restore the restrictive snapshot again at
   // that stable boundary before locking config.
-  const restoreResult = run(buildPolicySetCommand(transition.snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  const restoreResult = applyShieldsPolicySnapshot(sandboxName, transition.snapshotPath);
   const status = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (status !== 0) {
     throw new Error(
@@ -2330,6 +2346,73 @@ function lockAgentConfig(
   });
 }
 
+function resolveExactManagedMcpPolicies(
+  sandboxName: string,
+  livePolicyYaml?: string,
+): ReturnType<typeof inspectExactManagedMcpPolicies> {
+  if (!hasManagedMcpPolicyClaims(sandboxName)) return [];
+
+  let effectiveLivePolicy = livePolicyYaml;
+  if (!effectiveLivePolicy) {
+    let rawPolicy: string;
+    try {
+      rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+    } catch (error) {
+      throw new Error("Cannot read the live gateway policy for managed MCP reconciliation", {
+        cause: error,
+      });
+    }
+    effectiveLivePolicy = parseCurrentPolicy(rawPolicy);
+  }
+  if (!effectiveLivePolicy) {
+    throw new Error("Cannot parse the live gateway policy for managed MCP reconciliation");
+  }
+  return inspectExactManagedMcpPolicies(sandboxName, effectiveLivePolicy);
+}
+
+/**
+ * Restore a saved complete policy while reconciling only exact generated MCP
+ * entries. Snapshot-time keys are removed before current owned entries are
+ * overlaid, so changes made during the Shields-down window survive both manual
+ * and timer restoration.
+ */
+function applyShieldsPolicySnapshot(
+  sandboxName: string,
+  snapshotPath: string,
+): ReturnType<typeof run> {
+  const state = loadShieldsState(sandboxName);
+  const snapshotManagedPolicyKeys = state.shieldsManagedMcpPolicyKeys;
+  // A timer or manual restore created by an older NemoClaw build has no exact
+  // snapshot-time ownership manifest. Preserve its prior raw-snapshot behavior
+  // instead of guessing from lifetime MCP tombstones or deleting an unowned
+  // same-prefix key.
+  if (snapshotManagedPolicyKeys === undefined) {
+    return run(buildPolicySetCommand(snapshotPath, sandboxName), {
+      ignoreError: true,
+    });
+  }
+  if (state.shieldsPolicySnapshotPath !== snapshotPath) {
+    throw new Error("Saved managed MCP ownership does not match the Shields policy snapshot");
+  }
+
+  const managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName);
+  const runtimePolicyPath = buildRuntimeManagedMcpPolicy(snapshotPath, {
+    managedMcpPolicies,
+    snapshotManagedPolicyKeys,
+    readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
+  });
+  const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
+  try {
+    return run(buildPolicySetCommand(runtimePolicyPath, sandboxName), {
+      ignoreError: true,
+    });
+  } finally {
+    if (runtimePolicyIsTemp) {
+      cleanupTempDir(runtimePolicyPath, "nemoclaw-permissive-runtime");
+    }
+  }
+}
+
 function rollbackShieldsDown(
   sandboxName: string,
   target: AgentConfigTarget,
@@ -2338,12 +2421,16 @@ function rollbackShieldsDown(
   cachedProtocol?: HermesShieldsProtocol,
 ): void {
   console.error("  Rolling back — restoring policy from snapshot...");
-  const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  let rollbackResult: ReturnType<typeof run> | null = null;
+  try {
+    rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Warning: Policy restore preparation failed during rollback: ${message}`);
+  }
   let rollbackChattrApplied: boolean | null = null;
   let rollbackFileHashes: { [path: string]: string } | null = null;
-  if (rollbackResult.status === 0) {
+  if (rollbackResult?.status === 0) {
     // Re-confirm after the settle window so a reconciler revert cannot leave
     // the rolled-back config DRIFTED — same fail-closed treatment as the
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
@@ -2397,9 +2484,17 @@ function activateLockdownFromSnapshot(
     return { ok: false, error: "saved snapshot is missing" };
   }
 
-  const restoreResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  let restoreResult: ReturnType<typeof run>;
+  try {
+    restoreResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `policy restore preparation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   const restoreStatus = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (restoreStatus !== 0) {
     return {
@@ -2644,6 +2739,19 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
   }
 
+  let managedMcpPolicies: ReturnType<typeof inspectExactManagedMcpPolicies>;
+  try {
+    managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName, policyYaml);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot preserve managed MCP policy state: ${message}`);
+    return failShieldsCommand(
+      `Cannot preserve managed MCP policy state: ${message}`,
+      opts.throwOnError,
+    );
+  }
+  const snapshotManagedMcpPolicyKeys = managedMcpPolicies.map((policy) => policy.key);
+
   const ts = Date.now();
   const snapshotPath = path.join(STATE_DIR, `policy-snapshot-${ts}.yaml`);
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
@@ -2653,25 +2761,40 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   // 2. Determine and apply relaxed policy
   let policyFile: string;
   let policyFileIsTemp = false;
-  if (policyName === "permissive") {
-    const basePath = resolvePermissivePolicyPath(sandboxName);
-    // Union the live sandbox's filesystem_policy.read_only/read_write into
-    // the static permissive baseline. OpenShell rejects removal of those
-    // paths on a live sandbox, and runtime-injected entries (/proc on
-    // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
-    // etc.) are not present in the static YAML. See #3942, #3957, #3168.
-    // policyYaml is the pre-parsed body we already captured for the
-    // snapshot above — reuse it instead of re-fetching.
-    policyFile = buildRuntimePermissivePolicy(basePath, {
-      livePolicyYaml: policyYaml,
-      readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
-    });
-    policyFileIsTemp = policyFile !== basePath;
-  } else if (fs.existsSync(policyName)) {
-    policyFile = path.resolve(policyName);
-  } else {
-    console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
-    return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
+  try {
+    if (policyName === "permissive") {
+      const basePath = resolvePermissivePolicyPath(sandboxName);
+      // Union the live sandbox's filesystem_policy.read_only/read_write into
+      // the static permissive baseline. OpenShell rejects removal of those
+      // paths on a live sandbox, and runtime-injected entries (/proc on
+      // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
+      // etc.) are not present in the static YAML. See #3942, #3957, #3168.
+      // policyYaml is the pre-parsed body we already captured for the
+      // snapshot above — reuse it instead of re-fetching. Exact generated MCP
+      // entries are overlaid without copying any unrelated live egress.
+      policyFile = buildRuntimePermissivePolicy(basePath, {
+        livePolicyYaml: policyYaml,
+        managedMcpPolicies,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      policyFileIsTemp = policyFile !== basePath;
+    } else if (fs.existsSync(policyName)) {
+      const basePath = path.resolve(policyName);
+      policyFile = buildRuntimeManagedMcpPolicy(basePath, {
+        managedMcpPolicies,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      policyFileIsTemp = policyFile !== basePath;
+    } else {
+      console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
+      fs.rmSync(snapshotPath, { force: true });
+      return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
+    }
+  } catch (error) {
+    fs.rmSync(snapshotPath, { force: true });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot compose Shields-down policy: ${message}`);
+    return failShieldsCommand(`Cannot compose Shields-down policy: ${message}`, opts.throwOnError);
   }
 
   const now = new Date().toISOString();
@@ -2776,6 +2899,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       shieldsDownReason: reason,
       shieldsDownPolicy: policyName,
       shieldsPolicySnapshotPath: snapshotPath,
+      shieldsManagedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
     });
   } catch (error) {
     if (transition) {
@@ -3402,6 +3526,7 @@ function clearShieldsState(sandboxName: string): void {
 // ---------------------------------------------------------------------------
 
 export {
+  applyShieldsPolicySnapshot,
   clearShieldsState,
   DEFAULT_TIMEOUT_SECONDS,
   deriveShieldsMode,

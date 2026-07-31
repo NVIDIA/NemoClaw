@@ -1170,6 +1170,13 @@ mcpBridgeShardTest("hermes")(
       challenge: TOOL_CHALLENGE,
       resultToken: hermesResult,
     });
+    const assertHermesToolCall = (artifactName: string) =>
+      assertRealAdapterToolCall(sandbox, fakeMcp, {
+        agent: "hermes",
+        sandboxName: HERMES_SANDBOX_NAME,
+        resultToken: hermesResult,
+        artifactName,
+      });
     cleanup.add("stop fake Hermes MCP HTTPS server", () => fakeMcp.close());
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
@@ -1231,6 +1238,7 @@ mcpBridgeShardTest("hermes")(
       HERMES_SANDBOX_NAME,
       mcpUrl,
     );
+    await assertHermesToolCall("hermes-real-mcp-tool-call-immediately-after-shields-down");
     await assertSecretAbsentFromSandbox(
       sandbox,
       HERMES_SANDBOX_NAME,
@@ -1250,14 +1258,10 @@ mcpBridgeShardTest("hermes")(
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
     });
+    await assertHermesToolCall("hermes-real-mcp-tool-call-after-dns-rebinding-remove");
     const survivingDiscoveryOffset = fakeMcp.requests.length;
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "hermes",
-      sandboxName: HERMES_SANDBOX_NAME,
-      resultToken: hermesResult,
-      artifactName: "hermes-real-mcp-tool-call-after-rediscovery-restart",
-    });
+    await assertHermesToolCall("hermes-real-mcp-tool-call-after-rediscovery-restart");
     await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
     fakeMcp.setSecret(ROTATED_HOST_SECRET);
     await rotateBridgeCredential(host, HERMES_SANDBOX_NAME, "hermes");

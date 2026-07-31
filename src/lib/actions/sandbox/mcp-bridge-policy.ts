@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import YAML from "yaml";
+
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -23,6 +26,184 @@ export {
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy-render";
+export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
+
+export interface ExactManagedMcpPolicy {
+  key: string;
+  networkPolicy: unknown;
+  policyName: string;
+  server: string;
+}
+
+type ManagedMcpPolicyInspectionDeps = {
+  getSandbox: typeof registry.getSandbox;
+};
+
+const managedMcpPolicyInspectionDeps: ManagedMcpPolicyInspectionDeps = {
+  getSandbox: registry.getSandbox,
+};
+
+function parseManagedPolicyDocument(source: string, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(source);
+  } catch {
+    throw new Error(`${label} is not valid YAML`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a YAML mapping`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function readManagedNetworkPolicies(
+  document: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> {
+  const networkPolicies = document.network_policies;
+  if (networkPolicies === undefined || networkPolicies === null) return {};
+  if (typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    throw new Error(`${label} network_policies must be a mapping`);
+  }
+  return networkPolicies as Record<string, unknown>;
+}
+
+function requireCanonicalManagedPolicy(
+  sandbox: registry.SandboxEntry,
+  server: string,
+  livePolicies: Record<string, unknown>,
+): ExactManagedMcpPolicy {
+  const bridge = sandbox.mcp?.bridges[server];
+  if (!bridge || bridge.addState || bridge.server !== server) {
+    throw new Error(`Managed MCP bridge '${server}' has an incomplete lifecycle transition`);
+  }
+
+  const policyName = buildMcpBridgePolicyName(server);
+  const policyKey = buildMcpBridgePolicyKey(server);
+  if (bridge.policyName !== policyName) {
+    throw new Error(`Managed MCP bridge '${server}' has a non-canonical policy name`);
+  }
+
+  const registrations = (sandbox.customPolicies ?? []).filter(
+    (policy) => policy.name === policyName,
+  );
+  if (registrations.length !== 1) {
+    throw new Error(
+      `Managed MCP bridge '${server}' does not have one exact policy ownership record`,
+    );
+  }
+  const [registration] = registrations;
+  if (registration?.sourcePath !== MCP_BRIDGE_POLICY_SOURCE) {
+    throw new Error(`Managed MCP bridge '${server}' has no NemoClaw-owned policy record`);
+  }
+  if (registration.pendingContent !== undefined) {
+    throw new Error(`Managed MCP bridge '${server}' has an incomplete policy transition`);
+  }
+
+  const registeredDocument = parseManagedPolicyDocument(
+    registration.content,
+    `Managed MCP policy '${policyName}'`,
+  );
+  const preset = registeredDocument.preset;
+  if (
+    !preset ||
+    typeof preset !== "object" ||
+    Array.isArray(preset) ||
+    (preset as Record<string, unknown>).name !== policyName
+  ) {
+    throw new Error(`Managed MCP policy '${policyName}' has non-canonical preset metadata`);
+  }
+  const registeredPolicies = readManagedNetworkPolicies(
+    registeredDocument,
+    `Managed MCP policy '${policyName}'`,
+  );
+  const registeredKeys = Object.keys(registeredPolicies);
+  if (registeredKeys.length !== 1 || registeredKeys[0] !== policyKey) {
+    throw new Error(`Managed MCP policy '${policyName}' has a non-canonical network policy key`);
+  }
+
+  if (!Object.hasOwn(livePolicies, policyKey)) {
+    throw new Error(`Managed MCP policy '${policyName}' is absent from the live gateway policy`);
+  }
+  if (!isDeepStrictEqual(livePolicies[policyKey], registeredPolicies[policyKey])) {
+    throw new Error(`Managed MCP policy '${policyName}' has drifted from its ownership record`);
+  }
+
+  return {
+    key: policyKey,
+    networkPolicy: registeredPolicies[policyKey],
+    policyName,
+    server,
+  };
+}
+
+/**
+ * Resolve the exact generated MCP entries that NemoClaw currently owns.
+ *
+ * The registry is an ownership claim, not sufficient authority to overwrite
+ * the gateway. Every committed bridge must have one canonical, fully
+ * committed custom-policy record whose sole network entry exactly matches the
+ * live base policy.
+ */
+export function inspectExactManagedMcpPolicies(
+  sandboxName: string,
+  livePolicyYaml: string,
+  deps: ManagedMcpPolicyInspectionDeps = managedMcpPolicyInspectionDeps,
+): ExactManagedMcpPolicy[] {
+  const sandbox = deps.getSandbox(sandboxName);
+  if (!sandbox?.mcp) return [];
+  if (sandbox.mcp.destroyPreparedAt || sandbox.mcp.destroyPendingAt) {
+    throw new Error("Managed MCP sandbox destruction is incomplete");
+  }
+
+  const bridgeEntries = Object.entries(sandbox.mcp.bridges);
+  if (bridgeEntries.some(([, bridge]) => bridge.addState !== undefined)) {
+    throw new Error("A managed MCP bridge lifecycle transition is incomplete");
+  }
+  const generatedRegistrations = (sandbox.customPolicies ?? []).filter(
+    (policy) => policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE,
+  );
+  if (bridgeEntries.length === 0 && generatedRegistrations.length === 0) return [];
+
+  const liveDocument = parseManagedPolicyDocument(livePolicyYaml, "Live gateway policy");
+  const livePolicies = readManagedNetworkPolicies(liveDocument, "Live gateway policy");
+  const exact = bridgeEntries.map(([server]) =>
+    requireCanonicalManagedPolicy(sandbox, server, livePolicies),
+  );
+
+  const committedPolicyNames = new Set(exact.map((entry) => entry.policyName));
+  const orphaned = generatedRegistrations.find(
+    (registration) => !committedPolicyNames.has(registration.name),
+  );
+  if (orphaned) {
+    throw new Error(
+      `Generated MCP policy '${orphaned.name}' has no committed managed bridge ownership`,
+    );
+  }
+
+  const keys = new Set<string>();
+  for (const entry of exact) {
+    if (keys.has(entry.key)) {
+      throw new Error(`Managed MCP policy key '${entry.key}' has ambiguous bridge ownership`);
+    }
+    keys.add(entry.key);
+  }
+  return exact.sort((left, right) => left.key.localeCompare(right.key));
+}
+
+export function hasManagedMcpPolicyClaims(
+  sandboxName: string,
+  deps: ManagedMcpPolicyInspectionDeps = managedMcpPolicyInspectionDeps,
+): boolean {
+  const sandbox = deps.getSandbox(sandboxName);
+  if (!sandbox?.mcp) return false;
+  return (
+    Object.keys(sandbox.mcp.bridges).length > 0 ||
+    Boolean(sandbox.mcp.destroyPreparedAt) ||
+    Boolean(sandbox.mcp.destroyPendingAt) ||
+    (sandbox.customPolicies ?? []).some((policy) => policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE)
+  );
+}
 
 type GeneratedPolicyRegistrationState = {
   policy: registry.CustomPolicyEntry;

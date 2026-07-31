@@ -317,29 +317,51 @@ network_policies:
     expect(source).toContain(").toHaveLength(0);");
   });
 
-  it("captures the Hermes rediscovery offset after route removal and before restart", () => {
+  it("proves the surviving Hermes route before and after the unrelated route lifecycle", () => {
     const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
     const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
     const remove = source.indexOf("const remove = await host.nemoclaw", denialProof);
     const hermesTest = source.indexOf('mcpBridgeShardTest("hermes")');
+    const shieldsDown = source.indexOf(
+      "assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout",
+      hermesTest,
+    );
+    const afterShieldsDownToolCall = source.indexOf(
+      "hermes-real-mcp-tool-call-immediately-after-shields-down",
+      shieldsDown,
+    );
     const rebinding = source.indexOf("await assertAdapterDnsRebindingDenied", hermesTest);
-    const offset = source.indexOf(
-      "const survivingDiscoveryOffset = fakeMcp.requests.length",
+    const afterRemoveToolCall = source.indexOf(
+      "hermes-real-mcp-tool-call-after-dns-rebinding-remove",
       rebinding,
     );
+    const offset = source.indexOf(
+      "const survivingDiscoveryOffset = fakeMcp.requests.length",
+      afterRemoveToolCall,
+    );
     const restart = source.indexOf("await restartBridgeWithoutHostSecret", offset);
-    const toolCall = source.indexOf("await assertRealAdapterToolCall", restart);
-    const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", toolCall);
+    const afterRestartToolCall = source.indexOf(
+      "hermes-real-mcp-tool-call-after-rediscovery-restart",
+      restart,
+    );
+    const rediscovery = source.indexOf(
+      "await assertAuthenticatedMcpRediscovery",
+      afterRestartToolCall,
+    );
 
     expect(denialProof).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(denialProof);
     expect(remove).toBeGreaterThan(restore);
+    expect(shieldsDown).toBeGreaterThan(hermesTest);
+    expect(afterShieldsDownToolCall).toBeGreaterThan(shieldsDown);
     expect(rebinding).toBeGreaterThan(hermesTest);
-    expect(offset).toBeGreaterThan(rebinding);
+    expect(rebinding).toBeGreaterThan(afterShieldsDownToolCall);
+    expect(afterRemoveToolCall).toBeGreaterThan(rebinding);
+    expect(offset).toBeGreaterThan(afterRemoveToolCall);
     expect(restart).toBeGreaterThan(offset);
-    expect(toolCall).toBeGreaterThan(restart);
-    expect(rediscovery).toBeGreaterThan(toolCall);
+    expect(afterRestartToolCall).toBeGreaterThan(restart);
+    expect(rediscovery).toBeGreaterThan(afterRestartToolCall);
     expect(source).toContain("Hermes MCP rediscovery after explicit restart");
   });
 

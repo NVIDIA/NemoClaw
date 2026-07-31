@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
+import type { SandboxEntry } from "../state/registry";
 
 const requireDist = createRequire(import.meta.url);
 const shieldsModulePath = "./index.js";
@@ -26,9 +28,11 @@ setInterval(() => {}, 60000);
 `;
 
 type ShieldsHarness = {
+  applyShieldsPolicySnapshot: typeof import("./index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
+  policySetBodies: string[];
   runSpy: MockInstance;
   shieldsDown: typeof import("./index.js").shieldsDown;
   shieldsStatus: typeof import("./index.js").shieldsStatus;
@@ -61,7 +65,9 @@ type HarnessOptions = {
     send: () => boolean;
     kill: () => boolean;
   };
+  livePolicy?: string;
   run?: (cmd: unknown) => { status: number };
+  sandboxEntry?: SandboxEntry;
 };
 
 function throwHarnessError(error: Error): never {
@@ -87,16 +93,24 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
   const childProcess = requireDist("node:child_process");
+  const policySetBodies: string[] = [];
   let openClawPosture: "locked" | "mutable" = "mutable";
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
-  vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
+  vi.spyOn(runner, "runCapture").mockReturnValue(
+    options.livePolicy ?? "version: 1\nnetwork_policies:\n  test: {}\n",
+  );
   const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
     return options.run ? options.run(cmd) : { status: 0 };
   });
   options.fork && vi.spyOn(childProcess, "fork").mockImplementation(options.fork);
   vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
-  vi.spyOn(policy, "buildPolicySetCommand").mockReturnValue(["openshell", "policy", "set"]);
+  vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((file: string) => {
+    if (fs.existsSync(file)) {
+      policySetBodies.push(fs.readFileSync(file, "utf-8"));
+    }
+    return ["openshell", "policy", "set"];
+  });
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
   vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(
     path.join(tmpDir, "permissive.yaml"),
@@ -109,7 +123,9 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     configPath: "/sandbox/.openclaw/openclaw.json",
     format: "json",
   });
-  vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "openclaw", openshellDriver: "docker" });
+  vi.spyOn(registry, "getSandbox").mockReturnValue(
+    options.sandboxEntry ?? { name: "openclaw", openshellDriver: "docker" },
+  );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
   const directSandboxUnavailableError = new Error(
     "No running direct OpenShell sandbox container found for 'openclaw' (driver: docker). Expected a running container named openshell-openclaw or openshell-openclaw-*. Is the sandbox running?",
@@ -212,9 +228,11 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   errorSpy.mockClear();
   auditSpy.mockClear();
   return {
+    applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
     errorSpy,
     logSpy,
+    policySetBodies,
     runSpy,
     shieldsDown: shields.shieldsDown,
     shieldsStatus: shields.shieldsStatus,
@@ -281,6 +299,183 @@ describe("shields command flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Config unlocked for openclaw (no auto-lockdown timer",
     );
+  });
+
+  it("shieldsDown preserves an exact managed MCP policy and records its snapshot key (#7952)", {
+    timeout: 15_000,
+  }, () => {
+    const managedPolicy = YAML.stringify({
+      preset: {
+        name: "mcp-bridge-alpha",
+        description: "Generated MCP policy for alpha",
+      },
+      network_policies: {
+        mcp_bridge_alpha: {
+          name: "mcp_bridge_alpha",
+          endpoints: [
+            {
+              host: "alpha.example.com",
+              port: 443,
+              path: "/mcp",
+              protocol: "mcp",
+            },
+          ],
+          binaries: [{ path: "/opt/hermes/.venv/bin/python*" }],
+        },
+      },
+    });
+    const managedNetworkPolicy = YAML.parse(managedPolicy).network_policies.mcp_bridge_alpha;
+    const harness = createHarness({
+      livePolicy: YAML.stringify({
+        version: 1,
+        network_policies: {
+          restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
+          mcp_bridge_alpha: managedNetworkPolicy,
+        },
+      }),
+      sandboxEntry: {
+        name: "openclaw",
+        openshellDriver: "docker",
+        customPolicies: [
+          {
+            name: "mcp-bridge-alpha",
+            content: managedPolicy,
+            sourcePath: "generated:nemoclaw-mcp-bridge",
+          },
+        ],
+        mcp: {
+          bridges: {
+            alpha: {
+              server: "alpha",
+              agent: "hermes",
+              adapter: "hermes-config",
+              url: "https://alpha.example.com/mcp",
+              env: ["MCP_SECRET"],
+              policyName: "mcp-bridge-alpha",
+              addedAt: "2026-07-30T00:00:00.000Z",
+            },
+          },
+        },
+      },
+    });
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "managed MCP transition coverage",
+      skipTimer: true,
+      throwOnError: true,
+    });
+
+    const state = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"), "utf-8"),
+    );
+    expect(state.shieldsManagedMcpPolicyKeys).toEqual(["mcp_bridge_alpha"]);
+    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
+    expect(applied.network_policies.mcp_bridge_alpha).toEqual(managedNetworkPolicy);
+    expect(applied.network_policies).not.toHaveProperty("restrictive_baseline");
+  });
+
+  it("shared snapshot restore keeps managed MCP additions made while Shields are down (#7952)", () => {
+    const policyFor = (server: string, address: string) =>
+      YAML.stringify({
+        preset: {
+          name: `mcp-bridge-${server}`,
+          description: `Generated MCP policy for ${server}`,
+        },
+        network_policies: {
+          [`mcp_bridge_${server}`]: {
+            name: `mcp_bridge_${server}`,
+            endpoints: [
+              {
+                host: `${server}.example.com`,
+                port: 443,
+                path: "/mcp",
+                protocol: "mcp",
+                allowed_ips: [address],
+              },
+            ],
+            binaries: [{ path: "/opt/hermes/.venv/bin/python*" }],
+          },
+        },
+      });
+    const alphaPolicy = policyFor("alpha", "8.8.8.8");
+    const betaPolicy = policyFor("beta", "1.1.1.1");
+    const alphaEntry = YAML.parse(alphaPolicy).network_policies.mcp_bridge_alpha;
+    const betaEntry = YAML.parse(betaPolicy).network_policies.mcp_bridge_beta;
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-managed-restore.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      snapshotPath,
+      YAML.stringify({
+        version: 1,
+        network_policies: {
+          restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
+          mcp_bridge_alpha: alphaEntry,
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: ["mcp_bridge_alpha"],
+      }),
+    );
+    const harness = createHarness({
+      livePolicy: YAML.stringify({
+        version: 1,
+        network_policies: {
+          permissive_baseline: { endpoints: [{ host: "*" }] },
+          mcp_bridge_alpha: alphaEntry,
+          mcp_bridge_beta: betaEntry,
+        },
+      }),
+      sandboxEntry: {
+        name: "openclaw",
+        openshellDriver: "docker",
+        customPolicies: [
+          {
+            name: "mcp-bridge-alpha",
+            content: alphaPolicy,
+            sourcePath: "generated:nemoclaw-mcp-bridge",
+          },
+          {
+            name: "mcp-bridge-beta",
+            content: betaPolicy,
+            sourcePath: "generated:nemoclaw-mcp-bridge",
+          },
+        ],
+        mcp: {
+          bridges: Object.fromEntries(
+            ["alpha", "beta"].map((server) => [
+              server,
+              {
+                server,
+                agent: "hermes",
+                adapter: "hermes-config",
+                url: `https://${server}.example.com/mcp`,
+                env: ["MCP_SECRET"],
+                policyName: `mcp-bridge-${server}`,
+                addedAt: "2026-07-30T00:00:00.000Z",
+              },
+            ]),
+          ),
+        },
+      },
+    });
+
+    const result = harness.applyShieldsPolicySnapshot("openclaw", snapshotPath);
+
+    expect(result.status).toBe(0);
+    const restored = YAML.parse(harness.policySetBodies.at(-1)!);
+    expect(Object.keys(restored.network_policies).sort()).toEqual([
+      "mcp_bridge_alpha",
+      "mcp_bridge_beta",
+      "restrictive_baseline",
+    ]);
+    expect(restored.network_policies.mcp_bridge_beta).toEqual(betaEntry);
   });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {
