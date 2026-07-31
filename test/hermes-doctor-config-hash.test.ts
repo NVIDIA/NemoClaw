@@ -66,6 +66,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const libDir = path.join(tmp, "usr-local-lib-nemoclaw");
     const preloadsDir = path.join(libDir, "preloads");
     const buildMcpDigestPath = path.join(libDir, "build-hermes-mcp-digest.py");
+    const restoreCronGuardPath = path.join(libDir, "hermes-restore-cron-guard.py");
     const mcpConfigTransactionPath = path.join(libDir, "hermes-mcp-config-transaction.py");
     const langfuseCredentialPatcherPath = path.join(
       libDir,
@@ -104,6 +105,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "hermes-runtime-config-guard.py"),
         path.join(libDir, "finalize-tirith-marker.py"),
         buildMcpDigestPath,
+        restoreCronGuardPath,
         mcpConfigTransactionPath,
         mcpCredentialBoundaryPath,
         path.join(libDir, "state-dir-guard.py"),
@@ -142,7 +144,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(result.stderr).toBe("");
       expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
         [
-          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${mcpCredentialBoundaryPath}`,
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${restoreCronGuardPath} ${mcpCredentialBoundaryPath}`,
           `-R 0:0 ${preloadsDir}`,
           "",
         ].join("\n"),
@@ -155,6 +157,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");
+      expect(mode(restoreCronGuardPath)).toBe("555");
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
       expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
       expect(mode(path.join(libDir, "managed-gateway-control.py"))).toBe("500");
@@ -255,7 +258,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect([mode(configPath), mode(envPath)]).toEqual(["640", "640"]);
 
       const hash = runDockerShell(hashCommand, sandboxRoot);
-      expect(hash.result.status).toBe(0);
+      expect(hash.result.status, hash.result.stderr).toBe(0);
       expect(hash.result.stderr).toBe("");
       expect(mode(path.join(etcDir, "hermes.config-hash"))).toBe("444");
       const verifyHash = spawnSync("sha256sum", ["-c", path.join(etcDir, "hermes.config-hash")], {

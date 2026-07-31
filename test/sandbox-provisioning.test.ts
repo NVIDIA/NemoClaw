@@ -1107,6 +1107,7 @@ describe("Hermes sandbox provisioning", () => {
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
     const buildMcpDigestPath = path.join(localLib, "build-hermes-mcp-digest.py");
+    const restoreCronGuardPath = path.join(localLib, "hermes-restore-cron-guard.py");
     const mcpConfigTransactionPath = path.join(localLib, "hermes-mcp-config-transaction.py");
     const langfuseCredentialPatcherPath = path.join(
       localLib,
@@ -1128,6 +1129,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "hermes-runtime-config-guard.py"),
       path.join(localLib, "finalize-tirith-marker.py"),
       buildMcpDigestPath,
+      restoreCronGuardPath,
       mcpConfigTransactionPath,
       mcpManifest,
       gatewaySupervisorPath,
@@ -1156,13 +1158,14 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${mcpManifest}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${restoreCronGuardPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(langfuseCredentialPatcherPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(restoreCronGuardPath).mode & 0o777).toString(8)).toBe("555");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");

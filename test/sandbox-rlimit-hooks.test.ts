@@ -564,6 +564,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
     const tirithMarkerFinalizer = path.join(localLib, "finalize-tirith-marker.py");
     const buildMcpDigest = path.join(localLib, "build-hermes-mcp-digest.py");
+    const restoreCronGuard = path.join(localLib, "hermes-restore-cron-guard.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
@@ -594,6 +595,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
       fs.writeFileSync(tirithMarkerFinalizer, "# Tirith marker finalizer fixture\n");
       fs.writeFileSync(buildMcpDigest, "# build MCP digest fixture\n");
+      fs.writeFileSync(restoreCronGuard, "# restore cron guard fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
       fs.mkdirSync(preloadDir, { mode: 0o777 });
@@ -639,6 +641,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
         .replaceAll("/usr/local/lib/nemoclaw/finalize-tirith-marker.py", tirithMarkerFinalizer)
         .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
+        .replaceAll("/usr/local/lib/nemoclaw/hermes-restore-cron-guard.py", restoreCronGuard)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
           "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
@@ -675,6 +678,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(restoreCronGuard).mode & 0o777).toBe(0o555);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);
