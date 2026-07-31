@@ -811,6 +811,7 @@ jobs:
               DOCKER_CONFIG="$anonymous_config" docker pull \
                 --platform "$platform" \
                 "$cohort_reference"
+              docker image rm "$cohort_reference" >/dev/null
             done
           done < <(jq -c '.[]' "$cohort_manifests")
 

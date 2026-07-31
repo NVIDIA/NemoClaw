@@ -748,6 +748,28 @@ describe("e2e workflow boundary", () => {
         matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
       },
     ]);
+    expect(
+      focusedE2eJobsForChangedFiles(
+        ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts"],
+        inventory,
+      ),
+    ).toEqual([
+      {
+        id: "openclaw-plugin-runtime-exdev",
+        matchedFiles: ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts"],
+      },
+    ]);
+    expect(
+      focusedE2eJobsForChangedFiles(
+        ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
+        inventory,
+      ),
+    ).toEqual([
+      {
+        id: "openshell-gateway-upgrade",
+        matchedFiles: ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
+      },
+    ]);
   });
 
   it("rejects malformed free-standing workflow metadata before matrix generation", {
