@@ -361,6 +361,32 @@ describe("listBackups computes virtual versions", () => {
   });
 });
 
+describe("snapshot restore content authority", () => {
+  it("binds the selected manifest and payload bytes to one digest", () => {
+    const manifest = writeBackup("alpha", "2026-04-21T14-00-00-000Z", {
+      backedUpDirs: ["workspace"],
+      stateDirs: ["workspace"],
+    });
+    const backupPath = String(manifest.backupPath);
+    fs.mkdirSync(path.join(backupPath, "workspace"));
+    fs.writeFileSync(path.join(backupPath, "workspace", "state.txt"), "before\n");
+    const selected = sandboxState.getLatestBackup("alpha");
+    expect(selected).not.toBeNull();
+
+    const authority = sandboxState.captureSnapshotRestoreAuthority(backupPath, selected!);
+    expect(authority).toMatchObject({
+      schemaVersion: 1,
+      backupPath,
+      contentSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+
+    fs.writeFileSync(path.join(backupPath, "workspace", "state.txt"), "after\n");
+    expect(sandboxState.captureSnapshotRestoreAuthority(backupPath)?.contentSha256).not.toBe(
+      authority?.contentSha256,
+    );
+  });
+});
+
 describe("findBackup", () => {
   it("matches v<N> against the computed version", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z"); // v1 (oldest)
@@ -603,6 +629,25 @@ process.exit(0);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
       expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
+      expect(fs.readdirSync(stagingRoot)).toEqual([]);
+
+      const rejected = sandboxState.backupSandboxState("alpha", {
+        validateBeforePublish: () => {
+          throw new Error("runtime generation changed");
+        },
+      });
+      expect(rejected).toMatchObject({
+        success: false,
+        error: expect.stringContaining(
+          "Snapshot authority changed during backup: runtime generation changed",
+        ),
+      });
+      const published = fs
+        .readdirSync(path.join(BACKUPS_ROOT, "alpha"))
+        .filter((entry) =>
+          fs.existsSync(path.join(BACKUPS_ROOT, "alpha", entry, "rebuild-manifest.json")),
+        );
+      expect(published).toHaveLength(1);
       expect(fs.readdirSync(stagingRoot)).toEqual([]);
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);

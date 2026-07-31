@@ -49,6 +49,7 @@ import {
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
+import * as snapshotBackup from "./snapshot/backup-authority";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -446,7 +447,13 @@ export function backupSandboxStateForRebuild(
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  const backup = sandboxState.backupSandboxState(sandboxName);
+  const backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
+    sandboxName,
+    {},
+    {
+      getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
+    },
+  );
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );

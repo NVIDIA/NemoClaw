@@ -4,6 +4,7 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
@@ -312,6 +313,11 @@ function validateSupportedSurfaceSchemas(
     requireFunction(surfaces.bootstrap, "prepare", "bootstrap");
   }
   if (surfaces.snapshot.supported === true) {
+    if (surfaces.snapshot.contractVersion !== RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION) {
+      throw new RuntimeProviderRegistrationError(
+        `snapshot for '${providerId}' has an unsupported contract version`,
+      );
+    }
     const capabilities = requireOwnRecord(surfaces.snapshot, "capabilities");
     for (const capability of ["backup", "restore", "managedProfileRestore"] as const) {
       requireBoolean(capabilities, capability, "snapshot capabilities");
@@ -320,6 +326,11 @@ function validateSupportedSurfaceSchemas(
     requireFunction(surfaces.snapshot, "capture", "snapshot");
     requireFunction(surfaces.snapshot, "validateRestore", "snapshot");
     requireFunction(surfaces.snapshot, "restore", "snapshot");
+    if (capabilities.managedProfileRestore === true && capabilities.restore !== true) {
+      throw new RuntimeProviderRegistrationError(
+        `snapshot for '${providerId}' cannot restore managed profiles without restore support`,
+      );
+    }
   }
   if (surfaces.recovery.supported === true) {
     requireFunction(surfaces.recovery, "recover", "recovery");
@@ -561,7 +572,8 @@ export function normalizeRuntimeProviderSnapshotPreflightReceipt(
     !isPlainRecord(value) ||
     value.schemaVersion !== RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION ||
     !validProviderId(value.providerId) ||
-    !SNAPSHOT_OPERATIONS.has(String(value.operation)) ||
+    typeof value.operation !== "string" ||
+    !SNAPSHOT_OPERATIONS.has(value.operation) ||
     !boundedString(value.sandboxName, 512) ||
     !boundedString(value.providerHandle, MAX_RECEIPT_HANDLE_BYTES) ||
     !SNAPSHOT_LIFECYCLE_STATES.has(value.lifecycleState as RuntimeProviderSnapshotLifecycleState) ||

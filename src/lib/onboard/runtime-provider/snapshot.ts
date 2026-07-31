@@ -13,6 +13,7 @@ import {
 } from "../openshell-docker-sandbox-containers";
 import {
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+  RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   type RuntimeProviderCommandCapture,
   type RuntimeProviderManagedProfileRestoreAuthority,
   type RuntimeProviderRuntimeReceipt,
@@ -238,6 +239,16 @@ function dockerGpuSelectors(
   }
 
   const selectors: string[] = [];
+  if (snapshot.runtime.trim().toLowerCase() === "nvidia") {
+    const visibleDevices = snapshot.nvidiaVisibleDevices;
+    if (visibleDevices === "all") {
+      selectors.push("docker-nvidia-visible-devices:all");
+    } else if (visibleDevices && !["none", "void"].includes(visibleDevices)) {
+      for (const device of visibleDevices.split(",")) {
+        selectors.push(`docker-nvidia-visible-device:${device}`);
+      }
+    }
+  }
   for (const request of snapshot.deviceRequests ?? []) {
     if (!dockerRequestUsesGpu(request)) continue;
     if (request.DeviceIDs && request.DeviceIDs.length > 0) {
@@ -582,6 +593,7 @@ export function createRuntimeProviderSnapshotSurface(
   return {
     providerId,
     supported: true,
+    contractVersion: RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
     capabilities,
     preflight(operation, sandbox) {
       const observed = observeAndNormalize(driver.observe, sandbox, providerId);
