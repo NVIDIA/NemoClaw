@@ -5,7 +5,7 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
-import { applyHermesManagedRoute, hermesApiMode } from "../hermes-managed-route";
+import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,

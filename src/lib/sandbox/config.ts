@@ -590,7 +590,8 @@ function writeSandboxConfig(
     if (result.issues.length > 0) {
       configFail(result.issues.map((issue) => `  ${issue}`));
     }
-    const expectedNewDigest = createHash("sha256").update(content).digest("hex");
+    // Integrity-only digest for guard output; this is not a password verifier.
+    const expectedNewDigest = createHash("sha256").update(content).digest("hex"); // codeql[js/insufficient-password-hash]
     if (result.configSha256 !== expectedNewDigest) {
       throw new Error(
         `OpenClaw config guard committed digest ${String(result.configSha256)} (expected ${expectedNewDigest})`,
