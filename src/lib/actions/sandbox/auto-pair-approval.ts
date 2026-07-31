@@ -342,6 +342,13 @@ PENDING_READ_POLL_S = 0.1
 class CloneStateEntryRotated(OSError):
     pass
 
+def validate_clone_json_descriptor(fd):
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1:
+        raise OSError('clone state entry is not a single regular file')
+    if metadata.st_nlink == 0:
+        raise CloneStateEntryRotated('clone state entry was replaced after open')
+
 def open_clone_state_root():
     root_fd = os.open(os.sep, clone_directory_flags)
     try:
@@ -416,13 +423,10 @@ def open_clone_json_descriptor(directory_fd, directory_name, entry_name):
         raise OSError('unsafe clone state entry')
     fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
     try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1:
-            raise OSError('clone state entry is not a single regular file')
-        if metadata.st_nlink == 0:
-            raise CloneStateEntryRotated('clone state entry was replaced after open')
+        validate_clone_json_descriptor(fd)
         with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
             parsed = json.load(handle)
+        validate_clone_json_descriptor(fd)
         os.lseek(fd, 0, os.SEEK_SET)
         if not clone_directory_is_current(directory_name, directory_fd):
             raise OSError('clone state directory changed')

@@ -410,7 +410,7 @@ ${persistentRaceNeedle}`,
       );
       const transientPendingPublicationNeedle = `    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
     try:
-        metadata = os.fstat(fd)`;
+        validate_clone_json_descriptor(fd)`;
       const transientPendingPublicationScript = script.replace(
         transientPendingPublicationNeedle,
         `    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
@@ -420,9 +420,25 @@ ${persistentRaceNeedle}`,
             with open(${JSON.stringify(path.join(devicesDir, "pending.json"))}, 'w', encoding='utf-8') as handle:
                 handle.write(serialized_pending)
             raise json.JSONDecodeError('transient pending publication', '', 0)
-        metadata = os.fstat(fd)`,
+        validate_clone_json_descriptor(fd)`,
       );
       expect(transientPendingPublicationScript).toContain("transient pending publication");
+      const rotatedPendingPublicationNeedle = `        with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
+            parsed = json.load(handle)
+        validate_clone_json_descriptor(fd)`;
+      const rotatedPendingPublicationScript = script.replace(
+        rotatedPendingPublicationNeedle,
+        `        with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
+            parsed = json.load(handle)
+        serialized_pending = os.environ.pop('NEMOCLAW_TEST_ROTATED_PENDING_JSON', '')
+        if serialized_pending and directory_name == 'devices' and entry_name == 'pending.json':
+            replacement_path = ${JSON.stringify(path.join(devicesDir, "pending-replacement.json"))}
+            with open(replacement_path, 'w', encoding='utf-8') as handle:
+                handle.write(serialized_pending)
+            os.replace(replacement_path, ${JSON.stringify(path.join(devicesDir, "pending.json"))})
+        validate_clone_json_descriptor(fd)`,
+      );
+      expect(rotatedPendingPublicationScript).toContain("NEMOCLAW_TEST_ROTATED_PENDING_JSON");
       const execute = (
         failApproval = false,
         gatewayToken = "secret-token",
@@ -432,22 +448,32 @@ ${persistentRaceNeedle}`,
         timeoutAfterCommit = false,
         devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
         transientPendingJson = "",
+        rotatedPendingJson = "",
+        hardLinkPending = false,
       ) => {
         const approvalEnv = { ...process.env };
         delete approvalEnv.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
         delete approvalEnv.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
-        const approvalScript = transientPendingJson
-          ? transientPendingPublicationScript
-          : timeoutAfterCommit
-            ? timeoutScript
-            : devicesRace === "child-entry"
-              ? childEntryRaceScript
-              : devicesRace === "persistent"
-                ? persistentDevicesRaceScript
-                : devicesRace === "transient"
-                  ? transientDevicesRaceScript
-                  : script;
-        return spawnSync("sh", {
+        const approvalScript = rotatedPendingJson
+          ? rotatedPendingPublicationScript
+          : transientPendingJson
+            ? transientPendingPublicationScript
+            : timeoutAfterCommit
+              ? timeoutScript
+              : devicesRace === "child-entry"
+                ? childEntryRaceScript
+                : devicesRace === "persistent"
+                  ? persistentDevicesRaceScript
+                  : devicesRace === "transient"
+                    ? transientDevicesRaceScript
+                    : script;
+        const pendingHardLinkPath = path.join(tmpDir, "pending-hard-link.json");
+        fs.rmSync(pendingHardLinkPath, { force: true });
+        const preparePendingHardLink = hardLinkPending
+          ? () => fs.linkSync(path.join(devicesDir, "pending.json"), pendingHardLinkPath)
+          : () => undefined;
+        preparePendingHardLink();
+        const result = spawnSync("sh", {
           encoding: "utf-8",
           input: approvalScript,
           env: {
@@ -461,6 +487,7 @@ ${persistentRaceNeedle}`,
             NEMOCLAW_TEST_TRANSIENT_DEVICES_RACE: devicesRace === "transient" ? "1" : "0",
             NEMOCLAW_TEST_CHILD_ENTRY_RACE: devicesRace === "child-entry" ? "1" : "0",
             NEMOCLAW_TEST_TRANSIENT_PENDING_JSON: transientPendingJson,
+            NEMOCLAW_TEST_ROTATED_PENDING_JSON: rotatedPendingJson,
             NEMOCLAW_TEST_CLONE_STATE_DIR: stateDir,
             NEMOCLAW_TEST_CLONE_STATE_BACKUP: stateRaceBackup,
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
@@ -472,6 +499,8 @@ ${persistentRaceNeedle}`,
           },
           timeout: 10_000,
         });
+        fs.rmSync(pendingHardLinkPath, { force: true });
+        return result;
       };
       const run = (
         pending: unknown[],
@@ -486,6 +515,8 @@ ${persistentRaceNeedle}`,
           pairedById?: Record<string, unknown>;
           clientAuth?: "matching" | "missing" | "primary-symlink" | "stale";
           devicesRace?: "child-entry" | "persistent" | "transient";
+          hardLinkPending?: boolean;
+          rotatedPendingPublication?: boolean;
           transientPendingPublication?: boolean;
         } = {},
       ) => {
@@ -548,6 +579,8 @@ ${persistentRaceNeedle}`,
           options.timeoutAfterCommit,
           options.devicesRace,
           options.transientPendingPublication ? JSON.stringify(pendingById) : "",
+          options.rotatedPendingPublication ? JSON.stringify(pendingById) : "",
+          options.hardLinkPending,
         );
       };
       const readApprovals = () =>
@@ -1040,6 +1073,18 @@ ${persistentRaceNeedle}`,
       expect(`${stabilized.stdout}${stabilized.stderr}`).not.toContain(
         "transient pending publication",
       );
+
+      resetLogs();
+      const stabilizedRotation = run([foreignRequest, repairRequest], {
+        rotatedPendingPublication: true,
+      });
+      expect(parseAutoPairApprovalReceipt(stabilizedRotation.stdout)).toBe("approved-one");
+      expect(readApprovals()).toEqual([repairRequest.requestId]);
+
+      resetLogs();
+      const hardLinked = run([foreignRequest, repairRequest], { hardLinkPending: true });
+      expect(parseAutoPairApprovalReceipt(hardLinked.stdout)).toBe("list-failed");
+      expect(readApprovals()).toEqual([]);
 
       resetLogs();
       const noMatch = run([foreignRequest]);
