@@ -471,32 +471,32 @@ async function autoCreateSandboxFromSource(
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
 function deleteSandboxForRestore(name: string): void {
-  const sbMeta = registry.getSandbox(name);
-  if (!sbMeta) {
-    console.error(
-      `  Cannot delete destination '${name}': its durable runtime ownership entry disappeared.`,
-    );
-    snapshotExit(1);
-  }
-  try {
-    requireSandboxDestructiveCleanupAuthority(name, sbMeta);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error(
-      `  Cannot delete destination '${name}' because runtime cleanup authority is unproven: ${detail}`,
-    );
-    console.error(
-      `  Run '${CLI_NAME} ${name} doctor --json' and resolve the recorded ownership conflict before retrying.`,
-    );
-    snapshotExit(1);
-  }
-  if (sbMeta.nimContainer) {
-    nim.stopNimContainerByName(sbMeta.nimContainer);
-  } else {
-    nim.stopNimContainer(name, { silent: true });
-  }
-  console.log(`  Deleting existing destination '${name}' before restore...`);
   withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
+    const sbMeta = registry.getSandbox(name);
+    if (!sbMeta) {
+      console.error(
+        `  Cannot delete destination '${name}': its durable runtime ownership entry disappeared.`,
+      );
+      snapshotExit(1);
+    }
+    try {
+      requireSandboxDestructiveCleanupAuthority(name, sbMeta);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(
+        `  Cannot delete destination '${name}' because runtime cleanup authority is unproven: ${detail}`,
+      );
+      console.error(
+        `  Run '${CLI_NAME} ${name} doctor --json' and resolve the recorded ownership conflict before retrying.`,
+      );
+      snapshotExit(1);
+    }
+    if (sbMeta.nimContainer) {
+      nim.stopNimContainerByName(sbMeta.nimContainer);
+    } else {
+      nim.stopNimContainer(name, { silent: true });
+    }
+    console.log(`  Deleting existing destination '${name}' before restore...`);
     if (readTimerMarker(name)) {
       shields.shieldsUp(name, {
         throwOnError: true,
