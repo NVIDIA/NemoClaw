@@ -102,9 +102,11 @@ export function selectEnabledPostAgentInstallBuildFiles<
     const channelId = normalizeMessagingChannelId(step.channelId);
     if (!active.has(channelId) || step.kind !== "build-file") return false;
     if (!step.hookId) return true;
-    const hookPhase = channels
-      .find((channel) => normalizeMessagingChannelId(channel.channelId) === channelId)
-      ?.hooks?.find((hook) => hook.id === step.hookId)?.phase;
+    const matchingChannels = channels.filter(
+      (channel) => normalizeMessagingChannelId(channel.channelId) === channelId,
+    );
+    if (matchingChannels.length !== 1) return false;
+    const hookPhase = matchingChannels[0]?.hooks?.find((hook) => hook.id === step.hookId)?.phase;
     return hookPhase === undefined || hookPhase === "post-agent-install";
   });
 }

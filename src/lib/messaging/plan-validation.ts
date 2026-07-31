@@ -13,6 +13,7 @@ import {
   type MaybeCompactMessagingPlan,
   normalizePersistedSandboxMessagingPlanShape,
 } from "./persistence";
+import { normalizeMessagingChannelId } from "./post-agent-install-selection";
 
 export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
@@ -49,7 +50,8 @@ export function parseSandboxMessagingPlan(
   const supported = Array.isArray(options.supportedChannelIds)
     ? new Set(options.supportedChannelIds)
     : null;
-  for (const [index, channel] of value.channels.entries()) {
+  const normalizedChannelIds = new Set<string>();
+  for (const channel of value.channels) {
     if (!isObjectRecord(channel) || typeof channel.channelId !== "string") return null;
     if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {
       return null;
@@ -69,13 +71,9 @@ export function parseSandboxMessagingPlan(
       return null;
     }
     if (supported && !supported.has(channel.channelId)) return null;
-    if (
-      value.channels.findIndex(
-        (candidate) => isObjectRecord(candidate) && candidate.channelId === channel.channelId,
-      ) !== index
-    ) {
-      return null;
-    }
+    const normalizedChannelId = normalizeMessagingChannelId(channel.channelId);
+    if (!normalizedChannelId || normalizedChannelIds.has(normalizedChannelId)) return null;
+    normalizedChannelIds.add(normalizedChannelId);
   }
   if (!value.disabledChannels.every((channelId) => typeof channelId === "string")) return null;
 

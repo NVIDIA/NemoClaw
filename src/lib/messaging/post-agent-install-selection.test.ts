@@ -144,4 +144,30 @@ describe("post-agent-install messaging selection", () => {
       selectEnabledPostAgentInstallBuildFiles(selection).map(({ outputId }) => outputId),
     ).toEqual(["post-install-file"]);
   });
+
+  it("fails closed instead of selecting a hook phase from ambiguous normalized ids", () => {
+    const selection = plan({
+      channels: [
+        channel("telegram", [
+          {
+            channelId: "telegram",
+            id: "shared-hook",
+            phase: "post-agent-install",
+            handler: "telegram.post-install",
+          },
+        ]),
+        channel(" TELEGRAM ", [
+          {
+            channelId: " TELEGRAM ",
+            id: "shared-hook",
+            phase: "render",
+            handler: "telegram.render",
+          },
+        ]),
+      ],
+      buildSteps: [buildFile("TELEGRAM", "ambiguous-file", "shared-hook")],
+    });
+
+    expect(selectEnabledPostAgentInstallBuildFiles(selection)).toEqual([]);
+  });
 });

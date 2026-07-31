@@ -237,6 +237,16 @@ describe("parseSandboxMessagingPlan", () => {
         makePlan({ channels: [makePlan().channels[0], makePlan().channels[0]] }),
       ),
     ).toBeNull();
+    expect(
+      parseSandboxMessagingPlan(
+        makePlan({
+          channels: [
+            makePlan().channels[0],
+            { ...makePlan().channels[0], channelId: " TELEGRAM " },
+          ],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("rejects any persisted channel when supportedChannelIds: [] is passed (deny-all)", () => {
