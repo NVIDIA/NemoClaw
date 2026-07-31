@@ -216,13 +216,15 @@ describe("MCP lifecycle lock acquisition", () => {
     const containmentPath = `${lockPath}.containment`;
     const realLstatSync = fs.lstatSync.bind(fs);
     let denyContainmentInspection = false;
+    const rejectContainmentInspection = (): never => {
+      const error = new Error("containment inspection denied") as NodeJS.ErrnoException;
+      error.code = "EACCES";
+      throw error;
+    };
     vi.spyOn(fs, "lstatSync").mockImplementation((target, options) => {
-      if (denyContainmentInspection && String(target) === containmentPath) {
-        const error = new Error("containment inspection denied") as NodeJS.ErrnoException;
-        error.code = "EACCES";
-        throw error;
-      }
-      return realLstatSync(target, options as never);
+      return denyContainmentInspection && String(target) === containmentPath
+        ? rejectContainmentInspection()
+        : realLstatSync(target, options as never);
     });
     writeTimerMarker(processToken);
 
@@ -407,11 +409,14 @@ describe("MCP lifecycle lock acquisition", () => {
 
     const realProcessKill = process.kill.bind(process);
     vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
-      if (pid === process.pid && signal === 0) {
+      const failRetainedOwnerProbe = () => {
         const error = new Error("retained owner exited") as NodeJS.ErrnoException;
         error.code = "ESRCH";
         throw error;
-      }
+      };
+      const retainedOwnerProbe =
+        pid === process.pid && signal === 0 ? failRetainedOwnerProbe : undefined;
+      retainedOwnerProbe?.();
       return realProcessKill(pid, signal as never);
     });
     const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");

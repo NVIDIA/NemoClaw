@@ -125,11 +125,11 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   const lifecycleLock = requireDist(
     "../state/mcp-lifecycle-lock.js",
   ) as typeof import("../state/mcp-lifecycle-lock.js");
-  if (options.beginContainment) {
-    vi.spyOn(lifecycleLock, "beginCommittedMcpLifecycleContainmentSync").mockImplementation(
-      options.beginContainment,
-    );
-  }
+  const beginContainment =
+    options.beginContainment ?? lifecycleLock.beginCommittedMcpLifecycleContainmentSync;
+  vi.spyOn(lifecycleLock, "beginCommittedMcpLifecycleContainmentSync").mockImplementation(
+    beginContainment,
+  );
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -1368,11 +1368,13 @@ describe("shields command flow", () => {
       "dead",
     );
     vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
-      if (`${pid}:${signal}` === "4242:0") {
+      const failDeadTimerProbe = () => {
         const error = new Error("timer is gone") as NodeJS.ErrnoException;
         error.code = "ESRCH";
         throw error;
-      }
+      };
+      const deadTimerProbe = `${pid}:${signal}` === "4242:0" ? failDeadTimerProbe : undefined;
+      deadTimerProbe?.();
       return true;
     });
     const harness = createHarness({
