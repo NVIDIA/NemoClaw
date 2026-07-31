@@ -334,6 +334,32 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
+  it("keeps ordinary forced pairing on the default identity path", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-ordinary-identity-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "call-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        setForceDevicePairing(value: boolean): void;
+        resolveDeviceIdentityForGatewayCall(): { deviceId: string };
+        getDeviceIdentityLoadCount(): number;
+      }>(
+        source,
+        "({ setForceDevicePairing, resolveDeviceIdentityForGatewayCall, getDeviceIdentityLoadCount })",
+      );
+
+      runtime.setForceDevicePairing(true);
+
+      expect(runtime.resolveDeviceIdentityForGatewayCall()).toEqual({ deviceId: "device-1" });
+      expect(runtime.getDeviceIdentityLoadCount()).toBe(1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("reads the forced identity descriptor from position zero without creating or migrating", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-identity-fd-"));
     const dist = path.join(tmp, "dist");
