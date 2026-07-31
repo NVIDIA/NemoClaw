@@ -11,12 +11,6 @@ from pathlib import Path
 
 sys.path.insert(0, "/usr/local/lib/nemoclaw")
 
-from managed_policy import (  # noqa: E402
-    load_managed_policy,
-    policy_value,
-    profile_default_values,
-)
-
 
 def verify_profile_policy() -> None:
     from types import SimpleNamespace
@@ -26,6 +20,7 @@ def verify_profile_policy() -> None:
     from hermes_cli import config as hermes_config
     from hermes_cli.config import load_config_readonly
     from hermes_cli.main import _resolve_pre_update_backup_mode
+    from managed_policy import load_managed_policy, policy_value, profile_default_values
     from tools.browser_tool import (
         _allow_unsafe_browser_evaluate,
         _restrict_browser_evaluate,
@@ -227,6 +222,7 @@ def verify_wrapper_session_boundaries() -> None:
 
 def verify_dashboard_policy(path: Path) -> None:
     import yaml
+    from managed_policy import load_managed_policy, policy_value
 
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     policy = load_managed_policy()
