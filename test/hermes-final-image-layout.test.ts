@@ -387,13 +387,15 @@ describe("Hermes final image layout", () => {
   // source-shape-contract: security -- Adapter bytes must pass their committed integrity gate before the image build executes validator code
   it("verifies CLI adapter integrity before executing its validator", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-    const adapterIntegrityGate = dockerfile.indexOf("ERROR: Hermes CLI adapter integrity mismatch");
+    const adapterIntegrityGate = dockerfile.match(
+      /RUN printf '%s  %s\\n' \\\n\s+"\$NEMOCLAW_HERMES_WRAPPER_SHA256"[^]*?\| sha256sum -c - \\\n\s+\|\| \{ echo "ERROR: Hermes CLI adapter integrity mismatch" >&2; exit 1; \}/u,
+    );
     const adapterValidation = dockerfile.indexOf(
       "RUN /opt/hermes/.venv/bin/python -I \\\n        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \\",
     );
 
-    expect(adapterIntegrityGate).toBeGreaterThan(-1);
-    expect(adapterValidation).toBeGreaterThan(adapterIntegrityGate);
+    expect(adapterIntegrityGate).not.toBeNull();
+    expect(adapterValidation).toBeGreaterThan(adapterIntegrityGate?.index ?? -1);
   });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
