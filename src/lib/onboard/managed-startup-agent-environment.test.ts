@@ -432,8 +432,8 @@ describe("managed startup agent environment", () => {
         unsetEnvironment: [],
       });
     } finally {
-      if (previous === undefined) delete process.env[name];
-      else process.env[name] = previous;
+      delete process.env[name];
+      Object.assign(process.env, previous === undefined ? {} : { [name]: previous });
     }
   });
 

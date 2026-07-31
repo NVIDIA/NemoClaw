@@ -334,16 +334,18 @@ describe("managed startup image runtime", () => {
         nlink: 1,
         uid: 0,
       }) as fs.Stats;
-    const missing = () => Object.assign(new Error("missing"), { code: "ENOENT" });
+    const missing = (): never => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    };
 
     vi.spyOn(process, "geteuid").mockReturnValue(0);
     vi.spyOn(fs, "lstatSync").mockImplementation(((target: fs.PathLike) => {
       const resolved = String(target);
-      if (directories.has(resolved)) return stat("directory", 0o755);
-      if (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE && runtimeFileWritten) {
-        return stat("file", 0o400);
-      }
-      throw missing();
+      return directories.has(resolved)
+        ? stat("directory", 0o755)
+        : resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE && runtimeFileWritten
+          ? stat("file", 0o400)
+          : missing();
     }) as typeof fs.lstatSync);
     vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "chownSync").mockImplementation(() => undefined);
@@ -352,17 +354,15 @@ describe("managed startup image runtime", () => {
     vi.spyOn(fs, "openSync").mockReturnValue(91);
     vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "writeFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, value) => {
-      if (target === 91) runtimeWrites.push(String(value));
+      runtimeWrites.push(...(target === 91 ? [String(value)] : []));
     }) as typeof fs.writeFileSync);
     vi.spyOn(fs, "fchmodSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "fsyncSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "closeSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "renameSync").mockImplementation((_source, target) => {
-      if (String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE) runtimeFileWritten = true;
+      runtimeFileWritten ||= String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE;
     });
-    vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
-      throw missing();
-    });
+    vi.spyOn(fs, "unlinkSync").mockImplementation(missing);
   }
 
   it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {
