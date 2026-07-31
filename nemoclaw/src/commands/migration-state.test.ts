@@ -7,7 +7,7 @@ import { setConfigValue } from "./migration-state.js";
 
 // fs mock — thin in-memory store keyed by absolute path
 type FsEntry = { type: "file" | "dir" | "symlink"; content?: string };
-const store = new Map<string, FsEntry>();
+const { store } = vi.hoisted(() => ({ store: new Map<string, FsEntry>() }));
 const descriptors = new Map<number, string>();
 const addDir = (p: string): void => void store.set(p, { type: "dir" });
 const addFile = (p: string, content: string): void => void store.set(p, { type: "file", content });
@@ -93,6 +93,12 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+vi.mock("../security/snapshot-sanitizer.js", async () =>
+  (await import("./migration-state-sanitizer-test-fixture.js")).buildMigrationStateSanitizerMock(
+    store,
+  ),
+);
+
 // Mock tar to avoid real archive creation
 vi.mock("tar", () => ({
   create: vi.fn(async () => {}),
@@ -125,9 +131,7 @@ describe("commands/migration-state", () => {
     vi.clearAllMocks();
   });
 
-  // -------------------------------------------------------------------------
   // detectHostOpenClaw
-  // -------------------------------------------------------------------------
 
   describe("detectHostOpenClaw", () => {
     it("returns exists=false when no state dir or config", () => {
@@ -445,9 +449,7 @@ describe("commands/migration-state", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // createSnapshotBundle
-  // -------------------------------------------------------------------------
 
   describe("createSnapshotBundle", () => {
     it("returns null when stateDir is missing", () => {
@@ -863,9 +865,7 @@ describe("commands/migration-state", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // cleanupSnapshotBundle
-  // -------------------------------------------------------------------------
 
   describe("cleanupSnapshotBundle", () => {
     it("removes temporary snapshot directory", async () => {
@@ -897,9 +897,7 @@ describe("commands/migration-state", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // createArchiveFromDirectory
-  // -------------------------------------------------------------------------
 
   describe("createArchiveFromDirectory", () => {
     it("calls tar.create with correct options", async () => {

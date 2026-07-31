@@ -1,57 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-const fsControl = vi.hoisted(() => ({
-  failOpenNames: [] as string[],
-  failWriteNames: [] as string[],
-  noFollowUnavailable: false,
-  preventRemoval: false,
-}));
-
-vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...original,
-    constants: {
-      ...original.constants,
-      get O_NOFOLLOW(): number | undefined {
-        return fsControl.noFollowUnavailable ? undefined : original.constants.O_NOFOLLOW;
-      },
-    },
-    openSync: (target: Parameters<typeof original.openSync>[0], flags: number) => {
-      switch (fsControl.failOpenNames.some((name) => String(target).endsWith(name))) {
-        case true:
-          throw new Error(`simulated open failure: ${String(target)}`);
-        default:
-          return original.openSync(target, flags);
-      }
-    },
-    rmSync: (...args: Parameters<typeof original.rmSync>) => {
-      const [target] = args;
-      switch (fsControl.preventRemoval && String(target).endsWith("auth.json")) {
-        case true:
-          return;
-        default:
-          return original.rmSync(...args);
-      }
-    },
-    writeFileSync: (...args: Parameters<typeof original.writeFileSync>) => {
-      const [target] = args;
-      switch (fsControl.failWriteNames.some((name) => String(target).includes(name))) {
-        case true:
-          throw new Error(`simulated write failure: ${String(target)}`);
-        default:
-          return original.writeFileSync(...args);
-      }
-    },
-  };
-});
-
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
 const roots: string[] = [];
@@ -62,72 +16,106 @@ function makeRoot(): string {
   return root;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function writePythonWrapper(lines: readonly string[]): string {
+  const wrapperRoot = makeRoot();
+  const wrapper = path.join(wrapperRoot, "python3");
+  writeFileSync(wrapper, ["#!/bin/sh", ...lines].join("\n"));
+  chmodSync(wrapper, 0o755);
+  vi.stubEnv("PATH", `${wrapperRoot}:${process.env.PATH ?? ""}`);
+  return wrapper;
+}
+
 afterEach(() => {
-  fsControl.failOpenNames = [];
-  fsControl.failWriteNames = [];
-  fsControl.noFollowUnavailable = false;
-  fsControl.preventRemoval = false;
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
 describe("migration snapshot sanitizer fallbacks", () => {
-  it("fails closed for a regular file when O_NOFOLLOW is unavailable", () => {
+  it("fails closed when the descriptor helper is unavailable", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
-    writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    fsControl.noFollowUnavailable = true;
+    const original = JSON.stringify({ apiKey: "sk-secret-value" });
+    writeFileSync(configPath, original);
+    vi.stubEnv("PATH", makeRoot());
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
-    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual({
-      apiKey: "sk-secret-value",
-    });
+    expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it.runIf(process.platform !== "win32")("rejects a symlink when O_NOFOLLOW is unavailable", () => {
-    const root = makeRoot();
-    const targetPath = path.join(root, "target.json");
-    const configPath = path.join(root, "openclaw.json");
-    writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    symlinkSync(targetPath, configPath);
-    fsControl.noFollowUnavailable = true;
-
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
-    expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({
-      apiKey: "sk-secret-value",
-    });
-  });
-
-  it("fails closed when a required sanitized file cannot be written", () => {
+  it("rejects invalid output from the descriptor helper", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
-    writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
-    fsControl.failWriteNames = ["openclaw.json"];
+    const original = JSON.stringify({ apiKey: "sk-secret-value" });
+    writeFileSync(configPath, original);
+    writePythonWrapper(["printf '%s\\n' '{}'", "exit 0"]);
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
-    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual({
-      apiKey: "sk-secret-value",
-    });
+    expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("fails closed when a sensitive artifact cannot be removed", () => {
+  it("fails closed when sanitized output cannot be installed", () => {
+    const configPath = path.join(makeRoot(), "openclaw.json");
+    const original = JSON.stringify({ apiKey: "sk-secret-value" });
+    writeFileSync(configPath, original);
+    const python = spawnSync(
+      "python3",
+      ["-I", "-c", "import os, sys; print(os.path.realpath(sys.executable))"],
+      { encoding: "utf-8" },
+    );
+    expect(python.status, python.stderr).toBe(0);
+    writePythonWrapper([
+      'if [ "${4-}" = apply ]; then exit 1; fi',
+      `exec ${shellQuote(python.stdout.trim())} "$@"`,
+    ]);
+
+    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+    expect(readFileSync(configPath, "utf-8")).toBe(original);
+  });
+
+  it("aborts optional-artifact sanitization when inspection fails", () => {
     const root = makeRoot();
-    writeFileSync(path.join(root, "auth.json"), JSON.stringify({ token: "raw" }));
-    fsControl.preventRemoval = true;
+    writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
+    writePythonWrapper(["exit 1"]);
 
     expect(() => sanitizeMigrationDirectory(root)).toThrow(
-      /Unable to remove unsanitizable migration artifact/u,
+      /Failed to inspect migration artifacts safely/u,
     );
   });
 
-  it("omits YAML and env artifacts that cannot be opened safely", () => {
+  it("removes optional artifacts that are not valid UTF-8", () => {
     const root = makeRoot();
-    const yamlPath = path.join(root, "blocked.yaml");
-    const envPath = path.join(root, "blocked.env");
-    writeFileSync(yamlPath, "model: keep-me\n");
-    writeFileSync(envPath, "MODEL=keep-me\n");
-    fsControl.failOpenNames = ["blocked.yaml", "blocked.env"];
+    const artifact = path.join(root, "config.json");
+    writeFileSync(artifact, Buffer.from([0xff, 0xfe, 0xfd]));
 
     sanitizeMigrationDirectory(root);
 
-    expect(() => readFileSync(yamlPath)).toThrow();
-    expect(() => readFileSync(envPath)).toThrow();
+    expect(() => readFileSync(artifact)).toThrow();
   });
+
+  it.runIf(process.platform !== "win32")(
+    "fails closed when the snapshot root disappears after identity validation",
+    () => {
+      const root = makeRoot();
+      const movedRoot = `${root}-moved`;
+      roots.push(movedRoot);
+      writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
+      const python = spawnSync(
+        "python3",
+        ["-I", "-c", "import os, sys; print(os.path.realpath(sys.executable))"],
+        { encoding: "utf-8" },
+      );
+      expect(python.status, python.stderr).toBe(0);
+      writePythonWrapper([
+        `if [ "\${4-}" = scan-tree ]; then mv ${shellQuote(root)} ${shellQuote(movedRoot)}; fi`,
+        `exec ${shellQuote(python.stdout.trim())} "$@"`,
+      ]);
+
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(
+        /Failed to inspect migration artifacts safely/u,
+      );
+      expect(readFileSync(path.join(movedRoot, "config.json"), "utf-8")).toContain("raw");
+    },
+  );
 });

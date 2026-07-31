@@ -1,10 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
 const temporaryRoots: string[] = [];
@@ -16,8 +25,13 @@ function makeRoot(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
 
 describe("migration snapshot sanitizer", () => {
   it("sanitizes credential-shaped values in every supported external artifact", () => {
@@ -130,4 +144,55 @@ describe("migration snapshot sanitizer", () => {
     expect(readFileSync(path.join(root, "empty.yaml"), "utf-8")).toBe("");
     expect(readFileSync(path.join(root, "comments.yaml"), "utf-8")).toBe("# retained context\n");
   });
+
+  it.runIf(process.platform !== "win32")(
+    "fails closed when a parent directory is swapped after the secure read",
+    () => {
+      const root = makeRoot();
+      const outside = makeRoot();
+      const wrapperRoot = makeRoot();
+      const nested = path.join(root, "nested");
+      const movedNested = path.join(root, "nested-before-swap");
+      const marker = path.join(wrapperRoot, "swapped");
+      const wrapper = path.join(wrapperRoot, "python3");
+      const outsideConfig = path.join(outside, "config.json");
+      mkdirSync(nested);
+      writeFileSync(
+        path.join(nested, "config.json"),
+        JSON.stringify({ apiKey: "sk-secret-value" }),
+      );
+      writeFileSync(outsideConfig, JSON.stringify({ apiKey: "outside-must-not-change" }));
+
+      const python = spawnSync(
+        "python3",
+        ["-I", "-c", "import os, sys; print(os.path.realpath(sys.executable))"],
+        { encoding: "utf-8" },
+      );
+      expect(python.status, python.stderr).toBe(0);
+      writeFileSync(
+        wrapper,
+        [
+          "#!/bin/sh",
+          `if [ \"\${4-}\" = apply ] && [ ! -e ${shellQuote(marker)} ]; then`,
+          `  mv ${shellQuote(nested)} ${shellQuote(movedNested)}`,
+          `  ln -s ${shellQuote(outside)} ${shellQuote(nested)}`,
+          `  : > ${shellQuote(marker)}`,
+          "fi",
+          `exec ${shellQuote(python.stdout.trim())} \"$@\"`,
+        ].join("\n"),
+      );
+      chmodSync(wrapper, 0o755);
+      vi.stubEnv("PATH", `${wrapperRoot}:${process.env.PATH ?? ""}`);
+
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(
+        /Failed to sanitize migration artifacts safely/u,
+      );
+      expect(readFileSync(outsideConfig, "utf-8")).toBe(
+        JSON.stringify({ apiKey: "outside-must-not-change" }),
+      );
+      expect(readFileSync(path.join(movedNested, "config.json"), "utf-8")).toContain(
+        "sk-secret-value",
+      );
+    },
+  );
 });
