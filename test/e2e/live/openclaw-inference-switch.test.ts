@@ -136,17 +136,53 @@ interface MockAnthropicProvider {
   close(): Promise<void>;
 }
 
-function expectMockBaselineAuthentication(
+async function proveMockBaselineAuthentication(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
-): void {
+  sandbox: SandboxClient,
+  home: string,
+  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
+): Promise<void> {
+  if (!baseline) {
+    expect(baseline).toBeUndefined();
+    return;
+  }
+  // Ignore incidental onboarding traffic. The fixture appends its ledger row
+  // before responding, so this awaited POST is the publication barrier for the
+  // requests sliced from this offset.
+  const requestOffset = baseline.requests().length;
+  const payload = {
+    model: MOCK_BASELINE_MODEL,
+    messages: [{ role: "user", content: "reply with OK" }],
+    max_tokens: 8,
+  };
+  const probe = await sandboxShell(
+    sandbox,
+    home,
+    `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(JSON.stringify(payload))} >/dev/null`,
+    {
+      artifactName: "baseline-explicit-authenticated-inference-post",
+      timeoutMs: 90_000,
+    },
+  );
+  const requests = baseline.requests().slice(requestOffset);
+  await artifacts.writeJson("baseline-explicit-authenticated-inference-requests.json", {
+    phase: "install and onboard baseline OpenClaw",
+    requests,
+  });
+  expect(
+    probe.exitCode,
+    `explicit baseline inference failed during the install verification phase; observed requests=${JSON.stringify(requests)}; ${resultText(probe)}`,
+  ).toBe(0);
   const expectedRequest = expect.objectContaining({
     auth: "ok",
+    method: "POST",
     model: MOCK_BASELINE_MODEL,
     path: "/v1/chat/completions",
   });
-  baseline
-    ? expect(baseline.requests()).toContainEqual(expectedRequest)
-    : expect(baseline).toBeUndefined();
+  expect(
+    requests,
+    `the explicit baseline verification probe did not reach the authenticated fixture; observed requests=${JSON.stringify(requests)}`,
+  ).toContainEqual(expectedRequest);
 }
 
 function stripAnsi(value: string): string {
@@ -895,6 +931,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     contracts: [
       "Docker is running and an authenticated compatible baseline endpoint is staged",
       "install.sh --non-interactive onboards an OpenClaw sandbox",
+      "when selected, the mock baseline route completes one explicit authenticated fixture request",
       "nemoclaw inference set switches the running sandbox route",
       "OpenClaw gateway is supervisor-restarted only when the inference API family changes",
       "OpenShell route points at the switched provider/model",
@@ -1008,7 +1045,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
   }
   expect(install.exitCode, installText).toBe(0);
-  expectMockBaselineAuthentication(baselineProvider);
+  await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
   progress.phase("prepare the switched provider and endpoint");
   const publicProvider = publicApiKey
