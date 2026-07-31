@@ -19,10 +19,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import type { HermesBuildSettings } from "../agents/hermes/config/build-env.ts";
-import {
-  buildHermesManagedPolicy,
-  type HermesManagedPolicyV1,
-} from "../agents/hermes/config/managed-policy.ts";
+import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
@@ -46,7 +43,7 @@ const POLICY_SETTINGS: HermesBuildSettings = {
   baseUrl: "https://inference.local/v1",
   providerKey: "nvidia-router",
   upstreamProvider: "nvidia-router",
-  inferenceApi: "openai-completions",
+  inferenceApi: "anthropic-messages",
   contextWindow: null,
   toolDisclosure: "progressive",
   webSearchProvider: "tavily",
@@ -54,32 +51,26 @@ const POLICY_SETTINGS: HermesBuildSettings = {
   managedToolGateways: { brokerEnabled: false, presets: [] },
 };
 const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
-const REVIEWED_POLICY = projectManagedPolicy(MANAGED_POLICY);
+const EXPECTED_DASHBOARD_POLICY = {
+  approvals: { mode: "manual" },
+  browser: { allow_unsafe_evaluate: false, restrict_evaluate: true },
+  session_reset: {
+    mode: "both",
+    at_hour: 4,
+    idle_minutes: 1440,
+    notify: true,
+    notify_exclude_platforms: ["api_server", "webhook"],
+    bg_process_max_age_hours: 24,
+  },
+  display: { show_reasoning: false, show_commentary: false },
+  updates: { pre_update_backup: false, refresh_cua_driver: false },
+};
 const GATEWAY_POLICY = Object.fromEntries(
   Array.from(
     new Set(MANAGED_POLICY.managed_paths.map((path) => path.split(".", 1)[0])),
     (section) => [section, MANAGED_POLICY.config[section]],
   ),
 );
-
-function projectManagedPolicy(
-  policy: HermesManagedPolicyV1,
-): Record<string, Record<string, unknown>> {
-  const leaves = policy.managed_paths.map((dottedPath) => {
-    const [section, key] = dottedPath.split(".");
-    const source = policy.config[section] as Record<string, unknown>;
-    return { section, key, value: structuredClone(source[key]) };
-  });
-  const sections = new Set(leaves.map(({ section }) => section));
-  return Object.fromEntries(
-    Array.from(sections, (section) => [
-      section,
-      Object.fromEntries(
-        leaves.filter((leaf) => leaf.section === section).map(({ key, value }) => [key, value]),
-      ),
-    ]),
-  );
-}
 
 const GATEWAY_CONFIG = {
   _config_version: 12,
@@ -90,9 +81,10 @@ const GATEWAY_CONFIG = {
   },
   model: {
     default: "nvidia-routed",
-    provider: "nvidia-router",
+    provider: "custom",
     base_url: "https://inference.local/v1",
     api_key: "sk-OPENSHELL-PROXY-REWRITE",
+    api_mode: "anthropic_messages",
   },
   providers: {
     "nvidia-router": {
@@ -101,6 +93,7 @@ const GATEWAY_CONFIG = {
       api_key: "sk-OPENSHELL-PROXY-REWRITE",
       default_model: "nvidia-routed",
       discover_models: true,
+      transport: "anthropic_messages",
     },
   },
   custom_providers: [
@@ -109,6 +102,7 @@ const GATEWAY_CONFIG = {
       base_url: "https://inference.local/v1",
       api_key: "sk-OPENSHELL-PROXY-REWRITE",
       discover_models: true,
+      api_mode: "anthropic_messages",
     },
   ],
   // Intentionally present to assert it is NOT mirrored (would collide with the
@@ -171,15 +165,15 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(res.status).toBe(0);
 
     const dash = readYaml(dst);
-    expect(dash.model).toEqual(GATEWAY_CONFIG.model);
+    expect(dash.model).toEqual({ ...GATEWAY_CONFIG.model, provider: "nvidia-router" });
     expect(dash.providers).toEqual(GATEWAY_CONFIG.providers);
     expect(dash.custom_providers).toEqual(GATEWAY_CONFIG.custom_providers);
     expect(dash._nemoclaw_upstream).toEqual(GATEWAY_CONFIG._nemoclaw_upstream);
-    expect(dash.approvals).toEqual(REVIEWED_POLICY.approvals);
-    expect(dash.browser).toEqual(REVIEWED_POLICY.browser);
-    expect(dash.session_reset).toEqual(REVIEWED_POLICY.session_reset);
-    expect(dash.display).toEqual(REVIEWED_POLICY.display);
-    expect(dash.updates).toEqual(REVIEWED_POLICY.updates);
+    expect(dash.approvals).toEqual(EXPECTED_DASHBOARD_POLICY.approvals);
+    expect(dash.browser).toEqual(EXPECTED_DASHBOARD_POLICY.browser);
+    expect(dash.session_reset).toEqual(EXPECTED_DASHBOARD_POLICY.session_reset);
+    expect(dash.display).toEqual(EXPECTED_DASHBOARD_POLICY.display);
+    expect(dash.updates).toEqual(EXPECTED_DASHBOARD_POLICY.updates);
   });
 
   it("mirrors only the exact native Tavily backend into dashboard config", () => {
@@ -226,7 +220,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
         },
       ],
       web: { backend: "tavily" },
-      ...REVIEWED_POLICY,
+      ...GATEWAY_POLICY,
     };
     const src = writeYaml("gw.yaml", legacy);
     const dst = path.join(tmpDir, "dash.yaml");
@@ -421,7 +415,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
 
     const dash = readYaml(dst);
     // Routing overwritten...
-    expect(dash.model).toEqual(GATEWAY_CONFIG.model);
+    expect(dash.model).toEqual({ ...GATEWAY_CONFIG.model, provider: "nvidia-router" });
     expect(dash.providers).toEqual(GATEWAY_CONFIG.providers);
     expect(dash.custom_providers).toEqual(GATEWAY_CONFIG.custom_providers);
     // ...dashboard-local keys preserved.
@@ -436,7 +430,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
       headed: true,
     });
     expect(dash.session_reset).toEqual({
-      ...REVIEWED_POLICY.session_reset,
+      ...EXPECTED_DASHBOARD_POLICY.session_reset,
       dashboard_scope: "keep",
     });
     expect(dash.display).toEqual({
@@ -459,7 +453,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
       "unexpected session policy field",
       {
         session_reset: {
-          ...REVIEWED_POLICY.session_reset,
+          ...EXPECTED_DASHBOARD_POLICY.session_reset,
           dashboard_only: true,
         },
       },

@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from managed_policy import (  # noqa: E402
     MANAGED_POLICY_PATH,
+    ManagedPolicyError,
     load_managed_policy,
     profile_default_values,
 )
@@ -342,7 +343,10 @@ def main() -> int:
         help="Pinned Hermes main/update module",
     )
     args = parser.parse_args()
-    values = profile_default_values(load_managed_policy(args.policy))
+    try:
+        values = profile_default_values(load_managed_policy(args.policy))
+    except ManagedPolicyError as exc:
+        raise SystemExit(f"ERROR: {args.policy}: {exc}") from exc
 
     patch_file(Path(args.config), "config", values)
     patch_file(Path(args.browser), "browser", values)

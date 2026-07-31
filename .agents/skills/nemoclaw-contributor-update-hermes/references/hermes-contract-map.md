@@ -34,7 +34,7 @@ The complete Hermes range is the union of the generic evidence and every adjacen
 
 Audit these surfaces:
 
-- `agents/hermes/config/hermes-config.ts`;
+- `agents/hermes/config/managed-policy.ts`;
 - `test/generate-hermes-config.test.ts`;
 - config generation and `hermes doctor --fix` order in `agents/hermes/Dockerfile`;
 - upstream `DEFAULT_CONFIG`, migrations, validation, and config-loading precedence.

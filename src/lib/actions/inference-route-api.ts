@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { hermesApiMode } from "../hermes-managed-route";
 import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../inference/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
-
-export { hermesApiMode };
 
 export type InferenceApi = "openai-completions" | "anthropic-messages" | "openai-responses";
 

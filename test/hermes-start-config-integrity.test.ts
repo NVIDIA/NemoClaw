@@ -204,7 +204,9 @@ describe("agents/hermes/start.sh config integrity", () => {
     expect(result.stdout).toContain("cmd=rm stepped=1");
     expect(result.stdout).toContain("cmd=python stepped=1");
     expect(result.stdout).not.toContain("cmd=chown");
-    expect(result.stdout).toContain("/config.yaml");
+    expect(result.stdout).toMatch(
+      /seed-dashboard-config[.]py\s+[^\s]*managed-policy[.]json\s+[^\s]*config[.]yaml/u,
+    );
     expect(result.stdout).toContain("/.env");
   });
 

@@ -78,7 +78,7 @@ describe("Hermes upgrade skill", () => {
 
   it("maps semantic, state, packaging, and historical contracts", () => {
     for (const expected of [
-      "agents/hermes/config/hermes-config.ts",
+      "agents/hermes/config/managed-policy.ts",
       "agents/hermes/hermes-wrapper.py",
       "agents/hermes/patch-session-list-preview.py",
       "agents/hermes/patch-langfuse-credentials.mts",

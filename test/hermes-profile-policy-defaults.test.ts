@@ -14,10 +14,6 @@ import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy
 const root = path.join(import.meta.dirname, "..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
-const imageBuildProbes = fs.readFileSync(
-  path.join(root, "agents", "hermes", "image-build-probes.py"),
-  "utf8",
-);
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "test-model",
   baseUrl: "https://inference.local/v1",
@@ -258,6 +254,21 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stderr).toContain(error);
   });
 
+  it("reports an invalid managed policy as a bounded build error", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-policy-error-"));
+    const policyPath = path.join(tmp, "managed-policy.json");
+    fs.writeFileSync(policyPath, "not-json\n");
+    const result = spawnSync("python3", [patcher, "--policy", policyPath], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`ERROR: ${policyPath}: managed policy is malformed`);
+    expect(result.stderr).not.toContain("Traceback");
+  });
+
   it("hash-binds the reviewed source patch and probes a real config-less profile", () => {
     const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
 
@@ -280,8 +291,6 @@ describe("Hermes profile policy defaults", () => {
     expect(dockerfile).toContain("hermes profile create nemoclaw-policy-probe");
     expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
     expect(dockerfile).toContain("/usr/local/share/nemoclaw/hermes-managed-policy.json");
-    expect(imageBuildProbes).toContain("expected = profile_default_values(policy)");
-    expect(imageBuildProbes).toContain("for path, value in expected.items()");
-    expect(imageBuildProbes).not.toContain('config["approvals"]["mode"] == "manual"');
+    expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
   });
 });

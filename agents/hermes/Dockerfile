@@ -356,7 +356,7 @@ RUN node --experimental-strip-types \
 # silent supply-chain tampering of the build context (an attacker rewriting a
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=b0343b46fe3898975885dc9bbd4e689f2e2d3e8f4f0b6ff69c45036a710bf891
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=5ec091796bc02be4a2bba2c76315b499b513229480e8db038cc4b31ea81aa764
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
@@ -537,7 +537,7 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=c1e0f66eb6a1a499904cd7b6dbc82913df39133e2b6dc328995c004e8f340933
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=c4e9fb99d3fcf432cec829a126c15188fc799091c57a14834f3bd9a3edb63e6f
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \

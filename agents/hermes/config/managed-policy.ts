@@ -264,8 +264,7 @@ function buildHermesRemotePlatformToolsets(settings: HermesBuildSettings): strin
   const remotePlatformToolsets = [...REMOTE_PLATFORM_TOOLSETS];
   if (
     settings.managedToolGateways.brokerEnabled &&
-    settings.managedToolGateways.presets.includes("nous-audio") &&
-    !remotePlatformToolsets.includes("tts")
+    settings.managedToolGateways.presets.includes("nous-audio")
   ) {
     remotePlatformToolsets.push("tts");
   }

@@ -5,7 +5,7 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
-import { applyHermesManagedRoute } from "../hermes-managed-route";
+import { applyHermesManagedRoute, hermesApiMode } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
@@ -56,7 +56,7 @@ import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
-import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
   InferenceSetError,
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,

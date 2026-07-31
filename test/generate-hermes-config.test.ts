@@ -12,9 +12,9 @@ import {
   readHermesBuildSettings,
 } from "../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
-import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
+import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
+import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-managed-route";
 import {
   applyCompatibleEndpointContextWindow,
   resetCompatibleEndpointContextWindowAutoState,
@@ -560,7 +560,7 @@ describe("agents/hermes/generate-config.ts", () => {
     const settings = readHermesBuildSettings(
       buildHermesTestEnv({ NEMOCLAW_CONTEXT_WINDOW: String(MIN_HERMES_CONTEXT_WINDOW) }),
     );
-    const config = buildHermesConfig(settings);
+    const config = buildHermesManagedPolicy(settings).config;
 
     expect((config.model as Record<string, unknown>).context_length).toBe(
       MIN_HERMES_CONTEXT_WINDOW,

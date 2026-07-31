@@ -88,8 +88,8 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         "managed policy managed_paths",
     )
     config = document["config"]
-    for path in managed_paths:
-        policy_value(config, path)
+    for managed_path in managed_paths:
+        policy_value(config, managed_path)
     for key in dashboard["routing_keys"]:
         if key not in config:
             raise ManagedPolicyError(f"managed policy config is missing {key}")

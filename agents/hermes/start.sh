@@ -227,9 +227,6 @@ if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
   _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
 fi
 _HERMES_MANAGED_POLICY="/usr/local/share/nemoclaw/hermes-managed-policy.json"
-if [ ! -f "$_HERMES_MANAGED_POLICY" ]; then
-  _HERMES_MANAGED_POLICY="${HERMES_DIR}/managed-policy.json"
-fi
 
 # Descriptor-safe updater for runtime-mutable Hermes config/env/hash files.
 _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
