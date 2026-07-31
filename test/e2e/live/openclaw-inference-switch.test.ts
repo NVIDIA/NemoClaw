@@ -136,16 +136,23 @@ interface MockAnthropicProvider {
   close(): Promise<void>;
 }
 
-async function proveMockBaselineAuthentication(
+function proveMockBaselineAuthentication(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
   sandbox: SandboxClient,
   home: string,
   artifacts: { writeJson(path: string, value: unknown): Promise<string> },
 ): Promise<void> {
-  if (!baseline) {
-    expect(baseline).toBeUndefined();
-    return;
-  }
+  return baseline
+    ? proveSelectedMockBaselineAuthentication(baseline, sandbox, home, artifacts)
+    : Promise.resolve(expect(baseline).toBeUndefined());
+}
+
+async function proveSelectedMockBaselineAuthentication(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests">,
+  sandbox: SandboxClient,
+  home: string,
+  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
+): Promise<void> {
   // Ignore incidental onboarding traffic. The fixture appends its ledger row
   // before responding, so this awaited POST is the publication barrier for the
   // requests sliced from this offset.
