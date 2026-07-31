@@ -131,12 +131,16 @@ exit 0
 // A restored clone must publish its write-scope request before the strict
 // local-state approval pass from #7834. Use a direct gateway call here: unlike
 // `openclaw agent`, this command cannot silently continue in embedded mode.
+// The runtime env carries shared gateway auth for owned admin RPCs; remove it
+// before this ordinary CLI call so OpenClaw uses the clone's stored device
+// credential and publishes the exact write-scope upgrade request.
 // When the clone is already fully paired, the call creates only a tagged empty
 // warm-up session, matching the existing user-facing session filter contract.
 export const RESTORED_CLONE_WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
+unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD || exit 0
 session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
 params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
