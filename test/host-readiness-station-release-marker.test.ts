@@ -11,6 +11,7 @@ import { assessHost } from "../src/lib/onboard/preflight";
 import { createHostReadinessReport } from "../src/lib/readiness/host";
 
 const NOW = new Date("2026-07-30T12:00:00Z");
+const SOURCE_REVISION = "21e60ae287e8c2a184f71406ac8b418f046330d1";
 const DOCKER_INFO = JSON.stringify({
   CgroupVersion: "2",
   Driver: "overlay2",
@@ -71,7 +72,7 @@ function createStationFixture(marker: "regular-file" | "symbolic-link"): string 
 
 function reportForStationHost(root: string) {
   return createHostReadinessReport(
-    { nemoclawVersion: "0.0.0-test", now: () => NOW },
+    { nemoclawVersion: "0.0.0-test", sourceRevision: SOURCE_REVISION, now: () => NOW },
     {
       architecture: "arm64",
       assess: () =>
