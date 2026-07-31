@@ -239,6 +239,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "..", "src", "lib", "tool-disclosure.ts"),
     path.join(fixtureRoot, "src", "lib", "tool-disclosure.ts"),
   );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "..", "src", "lib", "hermes-managed-route.ts"),
+    path.join(fixtureRoot, "src", "lib", "hermes-managed-route.ts"),
+  );
   return fixtureScriptPath;
 }
 
@@ -402,7 +406,10 @@ describe("agents/hermes/generate-config.ts", () => {
       notify_exclude_platforms: ["api_server", "webhook"],
       bg_process_max_age_hours: 24,
     });
-    expect(config.browser).toEqual({ restrict_evaluate: true });
+    expect(config.browser).toEqual({
+      allow_unsafe_evaluate: false,
+      restrict_evaluate: true,
+    });
     expect(config.display).toMatchObject({
       compact: false,
       tool_progress: "all",
@@ -505,6 +512,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config._nemoclaw_upstream).toEqual({
       provider: "nvidia-prod",
+      provider_key: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
     });
   });
@@ -695,6 +703,7 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(config._nemoclaw_upstream).toEqual({
       provider: "compatible-anthropic-endpoint",
+      provider_key: "compatible-anthropic-endpoint",
       model: "nvidia/nvidia/nemotron-3-super-v3",
     });
     expect(config.custom_providers[0].api_mode).toBeUndefined();
@@ -772,6 +781,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
     expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
     expect(config.browser).toEqual({
+      allow_unsafe_evaluate: false,
       restrict_evaluate: true,
       cloud_provider: "browser-use",
       use_gateway: true,

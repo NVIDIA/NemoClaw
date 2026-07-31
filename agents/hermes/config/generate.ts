@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type HermesBuildSettings, readHermesBuildSettings } from "./build-env.ts";
-import { buildHermesConfig, finalizeHermesPlatformToolsets } from "./hermes-config.ts";
-import { buildHermesEnvLines } from "./hermes-env.ts";
+import {
+  buildHermesManagedPolicy,
+  finalizeHermesPlatformToolsets,
+  type HermesManagedPolicyV1,
+} from "./managed-policy.ts";
 import { discoverModelSpecificSetups } from "./model-specific-setup.ts";
 import { type WrittenHermesConfig, writeHermesConfigFiles } from "./write-config.ts";
 
@@ -18,6 +21,7 @@ export type GeneratedHermesConfig = {
   settings: HermesBuildSettings;
   config: Record<string, unknown>;
   envLines: string[];
+  policy: HermesManagedPolicyV1;
   written: WrittenHermesConfig;
 };
 
@@ -40,13 +44,15 @@ export function generateHermesConfig({
     { env, scriptDir },
   );
 
-  const config = buildHermesConfig(settings, env);
-  const envLines = buildHermesEnvLines(settings, env);
+  const policy = buildHermesManagedPolicy(settings, env);
+  const config = policy.config;
+  const envLines = policy.env_lines;
   finalizeHermesPlatformToolsets(config, settings);
-  const written = writeHermesConfigFiles(config, envLines, homeDir);
+  const written = writeHermesConfigFiles(config, envLines, policy, homeDir);
 
   log(`[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`);
   log(`[config] Wrote ${written.envPath} (${written.envEntryCount} entries)`);
+  log(`[config] Wrote ${written.policyPath} (schema=${policy.schema_version})`);
 
-  return { settings, config, envLines, written };
+  return { settings, config, envLines, policy, written };
 }

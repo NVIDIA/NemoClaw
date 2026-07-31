@@ -34,10 +34,8 @@
 #     `providers`, and `custom_providers` `api_key` fields; the user's real
 #     provider credential is never serialised into the rendered config
 #     (requests are rewritten at the OpenShell egress boundary). The masker
-#     also unconditionally redacts any `api_key`-shaped field — including a
-#     real value supplied via the seed-routing fallback in
-#     `agents/hermes/seed-dashboard-config.py:_route_api_key` — so the
-#     post-mask user-visible stream is safe in every case.
+#     also unconditionally redacts any `api_key`-shaped field, so no
+#     `api_key` field value reaches the post-mask user-visible stream.
 #   - Source-fix constraint: removing the inline `api_key` would require
 #     either Hermes CLI native env-var reference support (an upstream
 #     change) or a redesigned dashboard/runtime contract that no longer

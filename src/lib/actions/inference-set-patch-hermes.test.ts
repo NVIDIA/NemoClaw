@@ -7,7 +7,7 @@ import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
 describe("patchHermesInferenceConfig", () => {
-  it("updates only the Hermes model block for the selected route", () => {
+  it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {
         default: "moonshotai/kimi-k2.6",
@@ -33,8 +33,29 @@ describe("patchHermesInferenceConfig", () => {
       provider: "custom",
       base_url: "https://inference.local/v1",
       api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-      temperature: 0.2,
     });
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "hermes-provider",
+      provider_key: "hermes-provider",
+      model: "openai/gpt-5.4-mini",
+    });
+    expect(config.providers).toEqual({
+      "hermes-provider": {
+        name: "hermes-provider",
+        api: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        default_model: "openai/gpt-5.4-mini",
+        discover_models: true,
+      },
+    });
+    expect(config.custom_providers).toEqual([
+      {
+        name: "hermes-provider",
+        base_url: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        discover_models: true,
+      },
+    ]);
     expect(config.models).toEqual({
       providers: {
         inference: {

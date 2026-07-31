@@ -57,13 +57,31 @@ describe("runInferenceSet Hermes routing", () => {
     expect(config).toEqual({
       _nemoclaw_upstream: {
         provider: "hermes-provider",
+        provider_key: "hermes-provider",
         model: "openai/gpt-5.4-mini",
       },
+      custom_providers: [
+        {
+          name: "hermes-provider",
+          base_url: "https://inference.local/v1",
+          api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+          discover_models: true,
+        },
+      ],
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
         base_url: "https://inference.local/v1",
         api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      },
+      providers: {
+        "hermes-provider": {
+          name: "hermes-provider",
+          api: "https://inference.local/v1",
+          api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+          default_model: "openai/gpt-5.4-mini",
+          discover_models: true,
+        },
       },
       terminal: { backend: "local" },
     });
@@ -364,6 +382,7 @@ describe("runInferenceSet Hermes routing", () => {
     // the API-family field, so the two cannot drift apart on later switches.
     expect(config._nemoclaw_upstream).toEqual({
       provider: "compatible-anthropic-endpoint",
+      provider_key: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
     });
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([

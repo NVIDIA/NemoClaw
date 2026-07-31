@@ -5,7 +5,7 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
-import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
@@ -541,20 +541,12 @@ export function patchHermesInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const upstream = ensureObject(config, "_nemoclaw_upstream");
-  upstream.provider = provider;
-  upstream.model = model;
-  const modelConfig = ensureObject(config, "model");
-  modelConfig.default = model;
-  modelConfig.base_url = route.inferenceBaseUrl;
-  modelConfig.provider = "custom";
-  modelConfig.api_key = HERMES_PROXY_API_KEY_PLACEHOLDER;
-  const apiMode = hermesApiMode(route.inferenceApi);
-  if (apiMode) {
-    modelConfig.api_mode = apiMode;
-  } else {
-    delete modelConfig.api_mode;
-  }
+  applyHermesManagedRoute(config, {
+    model,
+    baseUrl: route.inferenceBaseUrl,
+    upstreamProvider: provider,
+    inferenceApi: route.inferenceApi,
+  });
 
   return { changed: before !== JSON.stringify(config), route };
 }

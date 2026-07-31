@@ -226,6 +226,10 @@ _HERMES_DASHBOARD_CONFIG_SEEDER="/usr/local/lib/nemoclaw/seed-hermes-dashboard-c
 if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
   _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
 fi
+_HERMES_MANAGED_POLICY="/usr/local/share/nemoclaw/hermes-managed-policy.json"
+if [ ! -f "$_HERMES_MANAGED_POLICY" ]; then
+  _HERMES_MANAGED_POLICY="${HERMES_DIR}/managed-policy.json"
+fi
 
 # Descriptor-safe updater for runtime-mutable Hermes config/env/hash files.
 _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
@@ -1472,6 +1476,7 @@ prepare_hermes_dashboard_home() {
       HERMES_DASHBOARD_HOME="$HERMES_DASHBOARD_HOME" \
       _HERMES_PYTHON="$_HERMES_PYTHON" \
       _HERMES_DASHBOARD_CONFIG_SEEDER="$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+      _HERMES_MANAGED_POLICY="$_HERMES_MANAGED_POLICY" \
       "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
         if [ -L "$HERMES_DASHBOARD_HOME" ]; then
           echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
@@ -1489,6 +1494,7 @@ prepare_hermes_dashboard_home() {
         # state that poisons /api/status even while the real gateway is healthy.
         rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
         exec "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+          "$_HERMES_MANAGED_POLICY" \
           "${HERMES_DIR}/config.yaml" "${HERMES_DASHBOARD_HOME}/config.yaml" \
           "${HERMES_DIR}/.env" "${HERMES_DASHBOARD_HOME}/.env"
       ' || rc=$?
@@ -1529,6 +1535,7 @@ seed_hermes_dashboard_config() {
   # prepare_hermes_dashboard_home after stepping down to the sandbox identity.
   rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
   env "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+    "$_HERMES_MANAGED_POLICY" \
     "${HERMES_DIR}/config.yaml" "$dst" \
     "${HERMES_DIR}/.env" "$env_dst" || rc=$?
 

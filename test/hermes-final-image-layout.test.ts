@@ -216,6 +216,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
           "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
+          "COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
           "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
@@ -236,6 +237,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
           "COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
           "COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+          "COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py",
           "COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
           "COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
@@ -334,6 +336,8 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/managed_policy.py 'root:root 444'",
+      "/usr/local/share/nemoclaw/hermes-managed-policy.json 'root:root 444'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
@@ -352,6 +356,7 @@ describe("Hermes final image layout", () => {
       "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",
     );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
+    expect(finalStage).toContain("&& check_absent /sandbox/.hermes/managed-policy.json \\");
   });
 
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image
@@ -395,7 +400,7 @@ describe("Hermes final image layout", () => {
   it("migrates legacy data into the current state directory", () => {
     const run = runFinalLayout({ legacyData: "content" });
     try {
-      expect(run.result.status).toBe(0);
+      expect(run.result.status, run.result.stderr).toBe(0);
       expect(
         fs.lstatSync(path.join(run.sandboxRoot, ".hermes-data"), {
           throwIfNoEntry: false,

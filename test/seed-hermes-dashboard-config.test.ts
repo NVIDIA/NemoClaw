@@ -18,6 +18,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
+import type { HermesBuildSettings } from "../agents/hermes/config/build-env.ts";
+import {
+  buildHermesManagedPolicy,
+  type HermesManagedPolicyV1,
+} from "../agents/hermes/config/managed-policy.ts";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
@@ -36,30 +41,61 @@ const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
 ).join("");
 const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
 
-const REVIEWED_POLICY = {
-  approvals: { mode: "manual" },
-  browser: { restrict_evaluate: true },
-  session_reset: {
-    mode: "both",
-    at_hour: 4,
-    idle_minutes: 1440,
-    notify: true,
-    notify_exclude_platforms: ["api_server", "webhook"],
-    bg_process_max_age_hours: 24,
-  },
-  display: {
-    show_reasoning: false,
-    show_commentary: false,
-  },
-  updates: {
-    pre_update_backup: false,
-    refresh_cua_driver: false,
-  },
+const POLICY_SETTINGS: HermesBuildSettings = {
+  model: "nvidia-routed",
+  baseUrl: "https://inference.local/v1",
+  providerKey: "nvidia-router",
+  upstreamProvider: "nvidia-router",
+  inferenceApi: "openai-completions",
+  contextWindow: null,
+  toolDisclosure: "progressive",
+  webSearchProvider: "tavily",
+  messagingCredentialPlaceholders: [],
+  managedToolGateways: { brokerEnabled: false, presets: [] },
 };
+const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
+const REVIEWED_POLICY = projectManagedPolicy(MANAGED_POLICY);
+const GATEWAY_POLICY = Object.fromEntries(
+  Array.from(
+    new Set(MANAGED_POLICY.managed_paths.map((path) => path.split(".", 1)[0])),
+    (section) => [section, MANAGED_POLICY.config[section]],
+  ),
+);
+
+function projectManagedPolicy(
+  policy: HermesManagedPolicyV1,
+): Record<string, Record<string, unknown>> {
+  const projected: Record<string, Record<string, unknown>> = {};
+  for (const dottedPath of policy.managed_paths) {
+    const segments = dottedPath.split(".");
+    let source: unknown = policy.config;
+    let target: Record<string, unknown> = projected;
+    for (const [index, segment] of segments.entries()) {
+      if (typeof source !== "object" || source === null || Array.isArray(source)) {
+        throw new Error(`Invalid managed policy path: ${dottedPath}`);
+      }
+      source = (source as Record<string, unknown>)[segment];
+      if (index === segments.length - 1) {
+        target[segment] = structuredClone(source);
+      } else {
+        const child = target[segment];
+        if (typeof child !== "object" || child === null || Array.isArray(child)) {
+          target[segment] = {};
+        }
+        target = target[segment] as Record<string, unknown>;
+      }
+    }
+  }
+  return projected;
+}
 
 const GATEWAY_CONFIG = {
   _config_version: 12,
-  _nemoclaw_upstream: { provider: "nvidia-router", model: "nvidia-routed" },
+  _nemoclaw_upstream: {
+    provider: "nvidia-router",
+    provider_key: "nvidia-router",
+    model: "nvidia-routed",
+  },
   model: {
     default: "nvidia-routed",
     provider: "nvidia-router",
@@ -86,10 +122,12 @@ const GATEWAY_CONFIG = {
   // Intentionally present to assert it is NOT mirrored (would collide with the
   // gateway's api_server bind).
   platforms: { api_server: { enabled: true, extra: { port: 18642 } } },
-  ...REVIEWED_POLICY,
+  web: { backend: "tavily" },
+  ...GATEWAY_POLICY,
 };
 
 let tmpDir: string;
+let policyPath: string;
 
 function runSeed(
   srcPath: string,
@@ -99,7 +137,7 @@ function runSeed(
   env: Record<string, string | undefined> = {},
 ) {
   const envArgs = envSrcPath && envDstPath ? [envSrcPath, envDstPath] : [];
-  const args = [SCRIPT_PATH, srcPath, dstPath, ...envArgs];
+  const args = [SCRIPT_PATH, policyPath, srcPath, dstPath, ...envArgs];
   return spawnSync("python3", args, {
     encoding: "utf-8",
     env: { ...process.env, ...env },
@@ -125,6 +163,8 @@ function readYaml(p: string): Record<string, unknown> {
 describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seed-dash-"));
+    policyPath = path.join(tmpDir, "managed-policy.json");
+    fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
   });
 
   afterEach(() => {
@@ -163,21 +203,19 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(readYaml(dst).web).toEqual({ max_results: 3, backend: "tavily" });
   });
 
-  it("removes the managed Tavily backend after the gateway disables it", () => {
-    const enabledSrc = writeYaml("gw-enabled.yaml", {
-      ...GATEWAY_CONFIG,
-      web: { backend: "tavily" },
-    });
-    const disabledSrc = writeYaml("gw-disabled.yaml", GATEWAY_CONFIG);
-    const dst = writeYaml("dash.yaml", { web: { max_results: 3 } });
+  it("rejects Tavily policy drift without changing the dashboard config", () => {
+    const src = writeYaml("gw.yaml", { ...GATEWAY_CONFIG, web: undefined });
+    const dst = writeYaml("dash.yaml", { web: { max_results: 3, backend: "tavily" } });
+    const before = fs.readFileSync(dst, "utf8");
 
-    expect(runSeed(enabledSrc, dst).status).toBe(0);
-    expect(readYaml(dst).web).toEqual({ max_results: 3, backend: "tavily" });
-    expect(runSeed(disabledSrc, dst).status).toBe(0);
-    expect(readYaml(dst).web).toEqual({ max_results: 3 });
+    const result = runSeed(src, dst);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gateway policy is invalid");
+    expect(fs.readFileSync(dst, "utf8")).toBe(before);
   });
 
-  it("synthesizes Hermes v16 providers from legacy gateway routing", () => {
+  it("rejects legacy routing that has no canonical provider key", () => {
     const legacy = {
       _config_version: 12,
       _nemoclaw_upstream: { provider: "NVIDIA Router", model: "nvidia-routed" },
@@ -195,30 +233,16 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
           discover_models: true,
         },
       ],
+      web: { backend: "tavily" },
       ...REVIEWED_POLICY,
     };
     const src = writeYaml("gw.yaml", legacy);
     const dst = path.join(tmpDir, "dash.yaml");
 
     const res = runSeed(src, dst);
-    expect(res.status).toBe(0);
-
-    const dash = readYaml(dst);
-    expect(dash.model).toEqual({
-      default: "nvidia-routed",
-      provider: "nvidia-router",
-      base_url: "https://inference.local/v1",
-      api_key: "sk-OPENSHELL-PROXY-REWRITE",
-    });
-    expect(dash.providers).toEqual({
-      "nvidia-router": {
-        name: "NVIDIA Router",
-        api: "https://inference.local/v1",
-        api_key: "sk-OPENSHELL-PROXY-REWRITE",
-        default_model: "nvidia-routed",
-        discover_models: true,
-      },
-    });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("no model routing");
+    expect(fs.existsSync(dst)).toBe(false);
   });
 
   it("mirrors only dashboard-needed gateway .env keys for Hermes 0.16 chat setup", () => {
@@ -415,6 +439,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
       dashboard_note: "keep",
     });
     expect(dash.browser).toEqual({
+      allow_unsafe_evaluate: false,
       restrict_evaluate: true,
       headed: true,
     });

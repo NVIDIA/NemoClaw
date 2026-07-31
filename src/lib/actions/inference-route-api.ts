@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hermesApiMode } from "../hermes-managed-route";
 import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../inference/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
+
+export { hermesApiMode };
 
 export type InferenceApi = "openai-completions" | "anthropic-messages" | "openai-responses";
 
@@ -124,18 +127,4 @@ export function resolveRuntimeInferenceApi(options: {
 
   if (provider === "compatible-anthropic-endpoint") return "anthropic-messages";
   return null;
-}
-
-export function hermesApiMode(inferenceApi: string): string | null {
-  switch (inferenceApi) {
-    case "":
-    case "openai-completions":
-      return null;
-    case "anthropic-messages":
-      return "anthropic_messages";
-    case "openai-responses":
-      return "codex_responses";
-    default:
-      return null;
-  }
 }

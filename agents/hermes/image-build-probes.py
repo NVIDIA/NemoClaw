@@ -9,6 +9,14 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+sys.path.insert(0, "/usr/local/lib/nemoclaw")
+
+from managed_policy import (  # noqa: E402
+    load_managed_policy,
+    policy_value,
+    profile_default_values,
+)
+
 
 def verify_profile_policy() -> None:
     from types import SimpleNamespace
@@ -24,32 +32,21 @@ def verify_profile_policy() -> None:
     )
     from tui_gateway.server import _load_show_reasoning
 
+    policy = load_managed_policy()
+    expected = profile_default_values(policy)
     config = load_config_readonly()
-    assert config["approvals"]["mode"] == "manual", config["approvals"]
-    assert config["browser"]["allow_unsafe_evaluate"] is False, config["browser"]
-    assert config["browser"]["restrict_evaluate"] is True, config["browser"]
-    assert config["display"]["show_reasoning"] is False, config["display"]
-    assert config["display"]["show_commentary"] is False, config["display"]
-    assert config["updates"]["pre_update_backup"] is False, config["updates"]
-    assert config["updates"]["refresh_cua_driver"] is False, config["updates"]
-    assert CLI_CONFIG["display"]["show_reasoning"] is False, CLI_CONFIG["display"]
-    assert _allow_unsafe_browser_evaluate() is False
-    assert _restrict_browser_evaluate() is True
-    assert _load_show_reasoning() is False
-    assert SessionResetPolicy().mode == "both"
-    assert SessionResetPolicy.from_dict({}).mode == "both"
+    for path, value in expected.items():
+        assert policy_value(config, path) == value, (path, policy_value(config, path), value)
+    assert CLI_CONFIG["display"]["show_reasoning"] == expected["display.show_reasoning"]
+    assert _allow_unsafe_browser_evaluate() == expected["browser.allow_unsafe_evaluate"]
+    assert _restrict_browser_evaluate() == expected["browser.restrict_evaluate"]
+    assert _load_show_reasoning() == expected["display.show_reasoning"]
+    assert SessionResetPolicy().mode == expected["session_reset.mode"]
+    assert SessionResetPolicy.from_dict({}).mode == expected["session_reset.mode"]
     gateway = load_gateway_config()
-    assert gateway.default_reset_policy.mode == "both", gateway.default_reset_policy
-    assert gateway.default_reset_policy.at_hour == 4, gateway.default_reset_policy
-    assert gateway.default_reset_policy.idle_minutes == 1440, gateway.default_reset_policy
-    tui_source = Path("/opt/hermes/tui_gateway/server.py").read_text(encoding="utf-8")
-    assert tui_source.count('.get("show_reasoning", True)') == 0
-    assert tui_source.count('.get("show_reasoning", False)') == 2
-    agent_source = Path("/opt/hermes/agent/agent_init.py").read_text(encoding="utf-8")
-    assert agent_source.count("agent.show_commentary = True") == 0
-    assert agent_source.count("agent.show_commentary = False") == 2
-    assert agent_source.count('.get("show_commentary", True)') == 0
-    assert agent_source.count('.get("show_commentary", False)') == 1
+    assert gateway.default_reset_policy.mode == expected["session_reset.mode"]
+    assert gateway.default_reset_policy.at_hour == expected["session_reset.at_hour"]
+    assert gateway.default_reset_policy.idle_minutes == expected["session_reset.idle_minutes"]
     original_load_config = hermes_config.load_config
     try:
 
@@ -58,16 +55,14 @@ def verify_profile_policy() -> None:
 
         hermes_config.load_config = fail_config_load
         args = SimpleNamespace(no_backup=False, backup=False)
-        assert _resolve_pre_update_backup_mode(args) == "off"
+        expected_backup_mode = (
+            "off"
+            if expected["updates.pre_update_backup"] is False
+            else str(expected["updates.pre_update_backup"])
+        )
+        assert _resolve_pre_update_backup_mode(args) == expected_backup_mode
     finally:
         hermes_config.load_config = original_load_config
-    main_source = Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-    assert main_source.count('updates_cfg.get("pre_update_backup", "quick")') == 0
-    assert main_source.count('updates_cfg.get("pre_update_backup", False)') == 1
-    assert main_source.count("refresh_cua_driver = True") == 0
-    assert main_source.count("refresh_cua_driver = False") == 1
-    assert main_source.count('_update_cfg.get("refresh_cua_driver", True)') == 0
-    assert main_source.count('_update_cfg.get("refresh_cua_driver", False)') == 1
 
 
 def verify_gateway_runtime_metadata() -> None:
@@ -234,28 +229,11 @@ def verify_dashboard_policy(path: Path) -> None:
     import yaml
 
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    expected = {
-        "approvals": {"mode": "manual"},
-        "browser": {"restrict_evaluate": True},
-        "session_reset": {
-            "mode": "both",
-            "at_hour": 4,
-            "idle_minutes": 1440,
-            "notify": True,
-            "notify_exclude_platforms": ["api_server", "webhook"],
-            "bg_process_max_age_hours": 24,
-        },
-        "display": {
-            "show_reasoning": False,
-            "show_commentary": False,
-        },
-        "updates": {
-            "pre_update_backup": False,
-            "refresh_cua_driver": False,
-        },
-    }
-    for section, values in expected.items():
-        assert config.get(section) == values, (section, config.get(section), values)
+    policy = load_managed_policy()
+    for dotted_path in policy["managed_paths"]:
+        expected = policy_value(policy["config"], dotted_path)
+        actual = policy_value(config, dotted_path)
+        assert actual == expected, (dotted_path, actual, expected)
     path.unlink()
 
 

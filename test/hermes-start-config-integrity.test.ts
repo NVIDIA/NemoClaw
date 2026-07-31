@@ -115,6 +115,7 @@ function runHermesDashboardHomePrepAsRoot() {
       `HERMES_DASHBOARD_HOME=${shellQuote(dashboardHome)}`,
       `_HERMES_PYTHON=${shellQuote(fakePython)}`,
       `_HERMES_DASHBOARD_CONFIG_SEEDER=${shellQuote(path.join(tmpDir, "seed-dashboard-config.py"))}`,
+      `_HERMES_MANAGED_POLICY=${shellQuote(path.join(tmpDir, "managed-policy.json"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
       "prepare_hermes_dashboard_home sandbox:sandbox",
       `if [ -e ${shellQuote(path.join(dashboardHome, "gateway_state.json"))} ]; then echo gateway_state_exists=1; else echo gateway_state_exists=0; fi`,

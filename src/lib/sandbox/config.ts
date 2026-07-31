@@ -648,6 +648,7 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
 // (installed by the agents/hermes image build). The python resolution order
 // mirrors start.sh's trusted `_HERMES_PYTHON` list.
 const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const HERMES_MANAGED_POLICY_PATH = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const HERMES_TRUSTED_PYTHON3 = [
   "/opt/hermes/.venv/bin/python3",
   "/usr/local/bin/python3",
@@ -784,6 +785,7 @@ function seedHermesDashboardConfig(
   const seed = capture([
     python,
     HERMES_DASHBOARD_SEEDER_PATH,
+    HERMES_MANAGED_POLICY_PATH,
     target.configPath,
     dashboardConfigPath,
     `${target.configDir}/.env`,
@@ -1514,11 +1516,11 @@ export {
   buildConfigSetRestartGuidance,
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
-  configSetAllowsOpenShellBridge,
   composeSandboxConfigBody,
   configGet,
   configRotateToken,
   configSet,
+  configSetAllowsOpenShellBridge,
   DEFAULT_AGENT_CONFIG,
   extractDotpath,
   findClobberingAncestor,

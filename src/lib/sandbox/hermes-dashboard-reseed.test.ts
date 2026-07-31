@@ -23,6 +23,7 @@ const TARGET: AgentConfigTarget = {
 };
 const PYTHON = "/opt/hermes/.venv/bin/python3";
 const SEEDER = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const POLICY = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const DASHBOARD_CONFIG = "/sandbox/.hermes/dashboard-home/config.yaml";
 const capture = vi.fn<(binary: string, args: string[], options: unknown) => CaptureResult>();
 const reportFailure = vi.fn<(stage: "python" | "inspection" | "seed", detail: string) => void>();
@@ -106,6 +107,7 @@ describe("seedHermesDashboardConfig", () => {
     expect(sandboxCommand(capture.mock.calls[2][1])).toEqual([
       PYTHON,
       SEEDER,
+      POLICY,
       "/sandbox/Hermes config;$(touch source-pwned)/config'quote.yaml",
       "/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/config.yaml",
       "/sandbox/Hermes home;$(touch dir-pwned)/.env",
