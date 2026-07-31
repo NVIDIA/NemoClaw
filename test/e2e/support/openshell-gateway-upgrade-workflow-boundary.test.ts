@@ -23,6 +23,84 @@ import {
   validateLegacyGatewayUpgradeFixture,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
+type GatewayTierScenario = {
+  checkoutSha?: string;
+  eventName: string;
+  executionTier: string;
+  includeStagingBrevLaunchable?: "0" | "1";
+  jobs?: string;
+  matrixId?: string;
+  targets?: string;
+  uniqueBoundary?: string;
+  weekday: string;
+};
+
+function runGatewayTierClassifier(scenario: GatewayTierScenario): Record<string, string> {
+  const workflow = readOpenShellGatewayUpgradeWorkflow();
+  const job = (workflow.jobs as Record<string, Record<string, unknown>>)[
+    "openshell-gateway-upgrade"
+  ];
+  const steps = job.steps as Array<Record<string, unknown>>;
+  const classify = steps.find(
+    (step) => step.name === "Classify OpenShell gateway upgrade coverage tier",
+  );
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-tier-"));
+  const fakeDate = path.join(tempDir, "date");
+  const outputPath = path.join(tempDir, "github-output");
+  const summaryPath = path.join(tempDir, "summary.md");
+  fs.writeFileSync(
+    fakeDate,
+    [
+      "#!/usr/bin/env bash",
+      'if [[ "${1:-}" == "-u" && "${2:-}" == "+%u" ]]; then',
+      '  printf "%s\\n" "${FAKE_DAY_OF_WEEK}"',
+      "else",
+      '  /bin/date "$@"',
+      "fi",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  try {
+    const result = spawnSync("bash", ["-c", String(classify?.run)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CHECKOUT_SHA: scenario.checkoutSha ?? "",
+        EVENT_NAME: scenario.eventName,
+        EXECUTION_TIER: scenario.executionTier,
+        FAKE_DAY_OF_WEEK: scenario.weekday,
+        GATEWAY_UPGRADE_NIGHTLY_ROWS: "1",
+        GATEWAY_UPGRADE_RETAINED_ROWS: "5",
+        GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES: "70",
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_STEP_SUMMARY: summaryPath,
+        INCLUDE_STAGING_BREV_LAUNCHABLE: scenario.includeStagingBrevLaunchable ?? "0",
+        JOBS: scenario.jobs ?? "",
+        MATRIX_ID: scenario.matrixId ?? "v0.0.55-x86_64",
+        PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+        TARGETS: scenario.targets ?? "",
+        UNIQUE_BOUNDARY: scenario.uniqueBoundary ?? "OpenShell 0.0.44 gateway migration on x86_64",
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const outputs = Object.fromEntries(
+      fs
+        .readFileSync(outputPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const [key, ...value] = line.split("=");
+          return [key, value.join("=")];
+        }),
+    );
+    outputs.summary = fs.readFileSync(summaryPath, "utf8");
+    return outputs;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe("OpenShell gateway upgrade workflow boundary", () => {
   it("pins architecture and immediate-predecessor fixtures to the canonical live test (#6114)", () => {
     const workflow = readOpenShellGatewayUpgradeWorkflow();
@@ -113,6 +191,9 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
         CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
         EVENT_NAME: "${{ github.event_name }}",
         EXECUTION_TIER: "${{ matrix.execution_tier }}",
+        GATEWAY_UPGRADE_NIGHTLY_ROWS: "1",
+        GATEWAY_UPGRADE_RETAINED_ROWS: "5",
+        GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES: "70",
         INCLUDE_STAGING_BREV_LAUNCHABLE:
           "${{ inputs.include_staging_brev_launchable && '1' || '0' }}",
         JOBS: "${{ inputs.jobs }}",
@@ -128,6 +209,10 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(classifyRun).toContain("weekly-retained");
     expect(classifyRun).toContain("release-qualification");
     expect(classifyRun).toContain("skipped-by-tier");
+    expect(classifyRun).toContain("expected_nightly_runner_minute_reduction");
+    expect(classifyRun).toContain("observed_nightly_runner_minute_reduction");
+    expect(classifyRun).toContain("Expected nightly runner-minute reduction");
+    expect(classifyRun).toContain("Observed nightly runner-minute reduction");
     expect(classifyRun).toContain("GITHUB_STEP_SUMMARY");
 
     expect(steps.find((step) => step.name === "Prepare E2E workspace")?.if).toBe(
@@ -144,6 +229,72 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     );
     expect(skipped?.if).toBe("${{ steps.gateway_upgrade_tier.outputs.run != '1' }}");
     expect(String(skipped?.run)).toContain("skipped-by-tier");
+  });
+
+  it.each([
+    {
+      expected: { observed: "0", reason: "explicit-selection", run: "1" },
+      name: "explicit jobs selection",
+      scenario: {
+        eventName: "workflow_dispatch",
+        executionTier: "weekly-release",
+        includeStagingBrevLaunchable: "1",
+        jobs: "openshell-gateway-upgrade",
+        weekday: "7",
+      },
+    },
+    {
+      expected: { observed: "0", reason: "explicit-selection", run: "1" },
+      name: "explicit targets selection",
+      scenario: {
+        eventName: "workflow_dispatch",
+        executionTier: "weekly-release",
+        targets: "openshell-gateway-upgrade",
+        weekday: "1",
+      },
+    },
+    {
+      expected: { observed: "0", reason: "nightly-canonical", run: "1" },
+      name: "nightly canonical row",
+      scenario: { eventName: "schedule", executionTier: "nightly", weekday: "1" },
+    },
+    {
+      expected: { observed: "0", reason: "weekly-retained", run: "1" },
+      name: "Sunday retained row",
+      scenario: { eventName: "schedule", executionTier: "weekly-release", weekday: "7" },
+    },
+    {
+      expected: { observed: "70", reason: "skipped-by-tier", run: "0" },
+      name: "non-Sunday retained row",
+      scenario: { eventName: "schedule", executionTier: "weekly-release", weekday: "1" },
+    },
+    {
+      expected: { observed: "0", reason: "release-qualification", run: "1" },
+      name: "release qualification",
+      scenario: {
+        eventName: "workflow_dispatch",
+        executionTier: "weekly-release",
+        includeStagingBrevLaunchable: "1",
+        weekday: "1",
+      },
+    },
+  ])("classifies $name gateway upgrade tier decisions (#7920)", ({ expected, scenario }) => {
+    const outputs = runGatewayTierClassifier(scenario as GatewayTierScenario);
+
+    expect(outputs).toMatchObject({
+      baseline_nightly_runner_minutes: "350",
+      expected_nightly_runner_minute_reduction: "280",
+      observed_nightly_runner_minute_reduction: expected.observed,
+      reason: expected.reason,
+      run: expected.run,
+      tiered_nightly_runner_minutes: "70",
+    });
+    expect(outputs.summary).toContain(
+      "Expected nightly runner-minute reduction: `280` max runner-minutes (80%)",
+    );
+    expect(outputs.summary).toContain(
+      `Observed nightly runner-minute reduction for this row: \`${expected.observed}\` max runner-minutes`,
+    );
   });
 
   it("freshens only the retryable old fixture install", () => {

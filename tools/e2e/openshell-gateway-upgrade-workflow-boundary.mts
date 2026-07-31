@@ -229,6 +229,9 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EVENT_NAME: "${{ github.event_name }}",
     EXECUTION_TIER: "${{ matrix.execution_tier }}",
+    GATEWAY_UPGRADE_NIGHTLY_ROWS: "1",
+    GATEWAY_UPGRADE_RETAINED_ROWS: "5",
+    GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES: "70",
     INCLUDE_STAGING_BREV_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && '1' || '0' }}",
     JOBS: "${{ inputs.jobs }}",
     MATRIX_ID: "${{ matrix.id }}",
@@ -248,6 +251,10 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
     "weekly-retained",
     "release-qualification",
     "skipped-by-tier",
+    "expected_nightly_runner_minute_reduction",
+    "observed_nightly_runner_minute_reduction",
+    "Expected nightly runner-minute reduction",
+    "Observed nightly runner-minute reduction",
     "GITHUB_STEP_SUMMARY",
   ]) {
     requireRunContains(errors, classify, CLASSIFY_STEP_NAME, fragment);

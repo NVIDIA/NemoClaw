@@ -4407,6 +4407,9 @@ jobs:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
           EXECUTION_TIER: ${{ matrix.execution_tier }}
+          GATEWAY_UPGRADE_NIGHTLY_ROWS: "1"
+          GATEWAY_UPGRADE_RETAINED_ROWS: "5"
+          GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES: "70"
           INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && '1' || '0' }}
           JOBS: ${{ inputs.jobs }}
           MATRIX_ID: ${{ matrix.id }}
@@ -4440,6 +4443,19 @@ jobs:
             reason="release-qualification"
           fi
 
+          baseline_nightly_runner_minutes=$((GATEWAY_UPGRADE_RETAINED_ROWS * GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES))
+          tiered_nightly_runner_minutes=$((GATEWAY_UPGRADE_NIGHTLY_ROWS * GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES))
+          expected_nightly_runner_minute_reduction=$((baseline_nightly_runner_minutes - tiered_nightly_runner_minutes))
+          expected_nightly_runner_minute_reduction_percent=$((expected_nightly_runner_minute_reduction * 100 / baseline_nightly_runner_minutes))
+          observed_nightly_runner_minute_reduction=0
+          if [[ "${EVENT_NAME}" == "schedule" && "${day_of_week}" != "7" && "${run}" != "1" ]]; then
+            observed_nightly_runner_minute_reduction="${GATEWAY_UPGRADE_ROW_TIMEOUT_MINUTES}"
+          fi
+
+          printf 'baseline_nightly_runner_minutes=%s\n' "${baseline_nightly_runner_minutes}" >> "${GITHUB_OUTPUT}"
+          printf 'tiered_nightly_runner_minutes=%s\n' "${tiered_nightly_runner_minutes}" >> "${GITHUB_OUTPUT}"
+          printf 'expected_nightly_runner_minute_reduction=%s\n' "${expected_nightly_runner_minute_reduction}" >> "${GITHUB_OUTPUT}"
+          printf 'observed_nightly_runner_minute_reduction=%s\n' "${observed_nightly_runner_minute_reduction}" >> "${GITHUB_OUTPUT}"
           printf 'run=%s\n' "${run}" >> "${GITHUB_OUTPUT}"
           printf 'reason=%s\n' "${reason}" >> "${GITHUB_OUTPUT}"
           {
@@ -4449,6 +4465,10 @@ jobs:
             echo "- Tier: \`${EXECUTION_TIER}\`"
             echo "- Boundary: ${UNIQUE_BOUNDARY}"
             echo "- Decision: \`${reason}\`"
+            echo "- Baseline nightly runner budget: \`${baseline_nightly_runner_minutes}\` max runner-minutes"
+            echo "- Tiered nightly runner budget: \`${tiered_nightly_runner_minutes}\` max runner-minutes"
+            echo "- Expected nightly runner-minute reduction: \`${expected_nightly_runner_minute_reduction}\` max runner-minutes (${expected_nightly_runner_minute_reduction_percent}%)"
+            echo "- Observed nightly runner-minute reduction for this row: \`${observed_nightly_runner_minute_reduction}\` max runner-minutes"
           } >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${run}" != "1" ]]; then
             echo "skipped-by-tier: ${MATRIX_ID} is retained for ${EXECUTION_TIER} coverage and not selected for this run"
