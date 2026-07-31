@@ -14,9 +14,14 @@ describe("managed snapshot clone handoff activation boundary", () => {
     const productionAction = readFileSync(new URL("./snapshot.ts", import.meta.url), "utf8");
 
     expect(dependencies).toContain("prepareManagedWorkloadCloneHandoff");
+    expect(dependencies).toContain("prepareManagedCloneProviderTransaction");
+    expect(dependencies).toContain("revalidateManagedCloneMutationAuthority");
     expect(productionAction).toContain("rejectManagedSnapshotCloneUntilRebind");
     expect(productionAction).not.toContain("prepareManagedWorkloadCloneHandoff");
     expect(productionAction).not.toContain("ManagedWorkloadCloneHandoff");
+    expect(productionAction).not.toContain("prepareManagedCloneProviderTransaction");
+    expect(productionAction).not.toContain("provisionManagedCloneProviderTransaction");
+    expect(productionAction).not.toContain("revalidateManagedCloneMutationAuthority");
     expect(productionAction).not.toContain("prepareManagedCloneProviders");
     expect(productionAction).not.toContain("provisionManagedCloneProviders");
   });

@@ -15,6 +15,24 @@ export {
   ManagedWorkloadCloneError,
   prepareManagedWorkloadCloneHandoff,
 } from "../../../onboard/workload/clone";
+export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
+export type {
+  ManagedCloneProviderBinding,
+  ManagedCloneProviderCleanupResult,
+  ManagedCloneProviderCommandResult,
+  ManagedCloneProviderOwnershipReceipt,
+  ManagedCloneProviderRunner,
+  ManagedCloneProviderTransactionReceipt,
+  PreparedManagedCloneProvider,
+  PreparedManagedCloneProviderTransaction,
+} from "./managed-clone-providers";
+export {
+  cleanupManagedCloneProviderTransaction,
+  ManagedCloneProviderTransactionError,
+  prepareManagedCloneProviderTransaction,
+  provisionManagedCloneProviderTransaction,
+  revalidateManagedCloneMutationAuthority,
+} from "./managed-clone-providers";
 export {
   ManagedSnapshotProfileRestoreError,
   prepareManagedSnapshotProfileRestore,
@@ -31,7 +49,6 @@ export {
   prepareSandboxRuntimeRestore,
   SandboxSnapshotProviderError,
 } from "./provider-lifecycle";
-export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 
 /**
  * Resolve the one already-registered provider bundle for a durable sandbox.
