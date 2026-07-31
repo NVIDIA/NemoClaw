@@ -265,6 +265,16 @@ function executeGatewaySupervisorActionPinned(
       expectedContainerId,
     );
   } catch (error) {
+    if (isDirectSandboxFallbackUnavailableError(error)) {
+      // New clones can report Ready before their labeled direct container is
+      // discoverable. Keep only that typed absence retryable and sanitized;
+      // identity, driver, and integrity refusals retain their detailed form.
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      };
+    }
     const detail = error instanceof Error ? error.message : "privileged container unavailable";
     return {
       status: 1,
@@ -394,6 +404,58 @@ function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null):
     .map((line) => line.trim())
     .filter(Boolean);
   return lines.length === 1 && lines[0] === "SUPERVISOR_NOT_RUNNING";
+}
+
+function isExactlyPendingManagedSupervisorControl(result: SandboxCommandResult | null): boolean {
+  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length === 1 && lines[0] === "PRIVILEGED_CONTROL_UNAVAILABLE";
+}
+
+function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | null): boolean {
+  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  // This waiter only performs read-only probes before snapshot state is
+  // applied. A bare health timeout means the proven managed gateway is still
+  // starting; any diagnostic or refusal beside it remains terminal.
+  return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
+}
+
+export function waitForManagedGatewaySupervisor(
+  sandboxName: string,
+  options: {
+    intervalSeconds?: number;
+    maxAttempts?: number;
+    requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
+    sleepImpl?: (seconds: number) => void;
+  } = {},
+): boolean {
+  const requestGatewaySupervisorAction =
+    options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
+  const sleep = options.sleepImpl ?? sleepSeconds;
+  const intervalSeconds = options.intervalSeconds ?? 3;
+  const maxAttempts = options.maxAttempts ?? 11;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
+    if (hasGatewayRecoveryMarker(result)) return true;
+    if (
+      !isExactlyMissingManagedSupervisor(result) &&
+      !isExactlyRetryableManagedRecoveryFailure(result) &&
+      !isExactlyPendingManagedSupervisorControl(result) &&
+      !isExactlyPendingManagedGatewayHealth(result)
+    ) {
+      return false;
+    }
+    if (attempt < maxAttempts) sleep(intervalSeconds);
+  }
+  return false;
 }
 
 export function confirmRecoveredSandboxGatewayManaged(
@@ -707,6 +769,7 @@ type RecreatedSandboxOpenShellReadyOptions = {
 function recreatedSandboxOpenShellReadinessFailureDetail(
   failure: RecreatedSandboxOpenShellReadinessFailure,
   openshellError?: string,
+  managedHealthFailureDetail?: string,
 ): string {
   const detail = (() => {
     switch (failure) {
@@ -718,7 +781,13 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
         return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
     }
   })();
-  return openshellError ? `${detail} Last OpenShell readiness error: ${openshellError}` : detail;
+  const managedHealthResult = managedHealthFailureDetail
+    ? ` Managed health result: ${managedHealthFailureDetail}`
+    : "";
+  const openshellResult = openshellError
+    ? ` Last OpenShell readiness error: ${openshellError}`
+    : "";
+  return `${detail}${managedHealthResult}${openshellResult}`;
 }
 
 // Default seconds to wait for OpenShell to re-register a recreated sandbox as
@@ -1274,17 +1343,29 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           requestPinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
       : requestGatewaySupervisorAction;
     let relaunchedIdentityRejected = false;
+    let relaunchedManagedHealthFailureDetail: string | null = null;
     const confirmRelaunchedManagedHealth = relaunch
       ? (timeout = OPENSHELL_PROBE_TIMEOUT_MS) => {
+          let probeResult: SandboxCommandResult | null = null;
           try {
             const confirmed = confirmRecoveredSandboxGatewayManaged(sandboxName, {
-              requestGatewaySupervisorActionImpl: (name, action) =>
-                requestManagedProbe(name, action, timeout),
+              requestGatewaySupervisorActionImpl: (name, action) => {
+                probeResult = requestManagedProbe(name, action, timeout);
+                return probeResult;
+              },
             });
-            if (confirmed === false) relaunchedIdentityRejected = true;
+            if (confirmed === false) {
+              relaunchedIdentityRejected = true;
+              const failure = classifyGatewayRestartFailure(probeResult);
+              relaunchedManagedHealthFailureDetail = `${failure.layer}: ${failure.detail}`;
+            } else if (confirmed === true) {
+              relaunchedManagedHealthFailureDetail = null;
+            }
             return confirmed;
           } catch {
             relaunchedIdentityRejected = true;
+            relaunchedManagedHealthFailureDetail =
+              "the pinned replacement sandbox identity changed during the managed probe";
             return false;
           }
         }
@@ -1301,10 +1382,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         initialManagedHealthPassed: recovery.kind === "managed",
         requireManagedProbe: recovery.kind === "relaunched",
         timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
-        managedProbeImpl: (name) =>
-          confirmRecoveredSandboxGatewayManaged(name, {
-            requestGatewaySupervisorActionImpl: requestManagedProbe,
-          }),
+        managedProbeImpl: relaunch
+          ? () => confirmRelaunchedManagedHealth?.(210000) ?? null
+          : (name) =>
+              confirmRecoveredSandboxGatewayManaged(name, {
+                requestGatewaySupervisorActionImpl: requestManagedProbe,
+              }),
       });
     } catch (error) {
       try {
@@ -1340,6 +1423,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         );
       }
       onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+      if (relaunchedManagedHealthFailureDetail) {
+        return {
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+          forwardRecovered: false,
+          forwardRecoveryFailed: true,
+          forwardRecoveryFailureDetail: `the recreated sandbox failed the managed health guard while waiting for its gateway. Managed health result: ${relaunchedManagedHealthFailureDetail}`,
+        };
+      }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
     if (relaunch) {
@@ -1405,6 +1498,9 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
             : recreatedSandboxOpenShellReadinessFailureDetail(
                 readiness.failure,
                 "openshellError" in readiness ? readiness.openshellError : undefined,
+                readiness.failure === "managed-health-definitive-failure"
+                  ? (relaunchedManagedHealthFailureDetail ?? undefined)
+                  : undefined,
               );
         })()
       : null;
