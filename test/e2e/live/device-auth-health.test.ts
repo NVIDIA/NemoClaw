@@ -130,17 +130,24 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     },
   );
   const authenticatedRequests = inference.requests().slice(authenticatedRequestOffset);
-  await artifacts.writeJson("phase-1-explicit-authenticated-inference-requests.json", {
-    phase: "onboard device-auth OpenClaw sandbox",
-    requests: authenticatedRequests,
+  const authenticatedArtifact = "phase-1-explicit-authenticated-inference-requests.json";
+  const authenticatedPhase = "onboard device-auth OpenClaw sandbox";
+  const authenticatedRequestEvidence = authenticatedRequests
+    .slice(0, 20)
+    .map(({ auth, method, model, path }) => ({ auth, method, model, path }));
+  await artifacts.writeJson(authenticatedArtifact, {
+    phase: authenticatedPhase,
+    requestCount: authenticatedRequests.length,
+    requests: authenticatedRequestEvidence,
+    truncated: authenticatedRequests.length > authenticatedRequestEvidence.length,
   });
   expect(
     authenticatedProbe.exitCode,
-    `explicit authenticated inference failed during the onboard verification phase; observed requests=${JSON.stringify(authenticatedRequests)}; ${resultText(authenticatedProbe)}`,
+    `${authenticatedPhase}: explicit authenticated inference failed; see ${authenticatedArtifact}`,
   ).toBe(0);
   expect(
     authenticatedRequests,
-    `the explicit onboard verification probe did not reach the authenticated fixture; observed requests=${JSON.stringify(authenticatedRequests)}`,
+    `${authenticatedPhase}: explicit verification probe did not reach the authenticated fixture; see ${authenticatedArtifact}`,
   ).toContainEqual(
     expect.objectContaining({
       auth: "ok",

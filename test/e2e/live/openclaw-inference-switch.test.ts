@@ -172,14 +172,20 @@ async function proveSelectedMockBaselineAuthentication(
     },
   );
   const requests = baseline.requests().slice(requestOffset);
-  await artifacts.writeJson("baseline-explicit-authenticated-inference-requests.json", {
-    phase: "install and onboard baseline OpenClaw",
-    requests,
+  const artifactName = "baseline-explicit-authenticated-inference-requests.json";
+  const phase = "install and onboard baseline OpenClaw";
+  const requestEvidence = requests
+    .slice(0, 20)
+    .map(({ auth, method, model, path }) => ({ auth, method, model, path }));
+  await artifacts.writeJson(artifactName, {
+    phase,
+    requestCount: requests.length,
+    requests: requestEvidence,
+    truncated: requests.length > requestEvidence.length,
   });
-  expect(
-    probe.exitCode,
-    `explicit baseline inference failed during the install verification phase; observed requests=${JSON.stringify(requests)}; ${resultText(probe)}`,
-  ).toBe(0);
+  expect(probe.exitCode, `${phase}: explicit baseline inference failed; see ${artifactName}`).toBe(
+    0,
+  );
   const expectedRequest = expect.objectContaining({
     auth: "ok",
     method: "POST",
@@ -188,7 +194,7 @@ async function proveSelectedMockBaselineAuthentication(
   });
   expect(
     requests,
-    `the explicit baseline verification probe did not reach the authenticated fixture; observed requests=${JSON.stringify(requests)}`,
+    `${phase}: explicit verification probe did not reach the authenticated fixture; see ${artifactName}`,
   ).toContainEqual(expectedRequest);
 }
 
