@@ -145,35 +145,64 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
-  it("caps only the native streaming Responses request timeout (#7792)", async () => {
+  it("falls back after native streaming stalls without capping the initial request (#7792)", async () => {
+    const paths: string[] = [];
     let responsesCalls = 0;
+    let initialResponse: http.ServerResponse | undefined;
+    let resolveInitialStarted!: () => void;
+    let resolveStreamingStarted!: () => void;
+    const initialStarted = new Promise<void>((resolve) => {
+      resolveInitialStarted = resolve;
+    });
+    const streamingStarted = new Promise<void>((resolve) => {
+      resolveStreamingStarted = resolve;
+    });
     const server = http.createServer((request, response) => {
+      const path = request.url ?? "";
+      paths.push(path);
       request.resume();
-      responsesCalls += 1;
-      response.end(
-        responsesCalls === 1
-          ? '{"output":[{"type":"message"}]}'
-          : "event: response.output_text.delta\ndata: {}\n\n",
-      );
+      if (path.endsWith("/responses")) {
+        responsesCalls += 1;
+        if (responsesCalls === 1) {
+          initialResponse = response;
+          resolveInitialStarted();
+          return;
+        }
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("event: response.created\ndata: {}\n\n");
+        resolveStreamingStarted();
+        return;
+      }
+      response.end('{"choices":[{"message":{"content":"OK"}}]}');
     });
     const port = await listen(server);
     const harness = createOpenAiValidationTestDeps();
     harness.getResponsesTimeoutMs = () => 20_000;
-    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    vi.useFakeTimers();
 
-    const result = await probeOpenAiLikeEndpointWithValidationSession(
-      `http://provider.example.test:${port}/v1`,
-      "test-model",
-      "test-key",
-      { probeStreaming: true },
-      harness,
-    );
+    try {
+      const resultPromise = probeOpenAiLikeEndpointWithValidationSession(
+        `http://provider.example.test:${port}/v1`,
+        "test-model",
+        "test-key",
+        { probeStreaming: true },
+        harness,
+      );
 
-    const responsesTimeouts = timeoutSpy.mock.calls
-      .map(([, timeoutMs]) => timeoutMs)
-      .filter((timeoutMs) => timeoutMs === 20_000 || timeoutMs === 12_000);
-    timeoutSpy.mockRestore();
-    expect(result).toMatchObject({ ok: true, api: "openai-responses" });
-    expect(responsesTimeouts).toEqual([20_000, 12_000]);
+      await initialStarted;
+      await vi.advanceTimersByTimeAsync(12_001);
+      expect(initialResponse).toBeDefined();
+      initialResponse!.end('{"output":[{"type":"message"}]}');
+      await streamingStarted;
+      await vi.advanceTimersByTimeAsync(12_000);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true,
+        api: "openai-completions",
+      });
+      expect(paths).toEqual(["/v1/responses", "/v1/responses", "/v1/chat/completions"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
