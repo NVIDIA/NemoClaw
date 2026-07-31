@@ -263,6 +263,18 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       },
     };
     let lockedDestination = destination;
+    const destinationAtLock = new Map<string, typeof destination>([
+      [
+        "delete snapshot restore destination",
+        {
+          ...destination,
+          workload: {
+            ...destination.workload,
+            reference: "nemoclaw-beta:changed-owner",
+          },
+        },
+      ],
+    ]);
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -279,15 +291,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
     f.lifecycleMock.withTimerBoundMock.mockImplementation((_sandboxName, command, fn) => {
       f.lifecycleMock.events.push(`lock:${command}`);
-      if (command === "delete snapshot restore destination") {
-        lockedDestination = {
-          ...destination,
-          workload: {
-            ...destination.workload,
-            reference: "nemoclaw-beta:changed-owner",
-          },
-        };
-      }
+      lockedDestination = destinationAtLock.get(command) ?? lockedDestination;
       return fn();
     });
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
