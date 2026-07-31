@@ -643,6 +643,26 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
       shouldRecordProviderSelection = true;
+      // A recovered selection that reuses the registered gateway credential
+      // skips the custom-endpoint validation, and that validation is where a
+      // compatible endpoint configures its reasoning mode and effort. Replay
+      // the recorded configuration for the same route — including the process
+      // env the sandbox image patch reads — so a rebuild recreate cannot
+      // silently replace it with no reasoning configuration (#7940).
+      if (
+        reuseGatewayCredentialWithoutLocalKey &&
+        provider === "compatible-endpoint" &&
+        initial.provider === "compatible-endpoint"
+      ) {
+        compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
+          compatibleEndpointReasoning ?? initial.compatibleEndpointReasoning,
+        );
+        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
+          compatibleEndpointReasoningEffort ?? initial.compatibleEndpointReasoningEffort,
+          env,
+          false,
+        );
+      }
     }
 
     // Persist a repaired API family only together with a successful inference
