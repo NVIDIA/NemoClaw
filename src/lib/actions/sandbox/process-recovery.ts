@@ -410,6 +410,18 @@ function isExactlyPendingManagedSupervisorControl(result: SandboxCommandResult |
   return lines.length === 1 && lines[0] === "PRIVILEGED_CONTROL_UNAVAILABLE";
 }
 
+function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | null): boolean {
+  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  // This waiter only performs read-only probes before snapshot state is
+  // applied. A bare health timeout means the proven managed gateway is still
+  // starting; any diagnostic or refusal beside it remains terminal.
+  return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
+}
+
 export function waitForManagedGatewaySupervisor(
   sandboxName: string,
   options: {
@@ -431,7 +443,8 @@ export function waitForManagedGatewaySupervisor(
     if (
       !isExactlyMissingManagedSupervisor(result) &&
       !isExactlyRetryableManagedRecoveryFailure(result) &&
-      !isExactlyPendingManagedSupervisorControl(result)
+      !isExactlyPendingManagedSupervisorControl(result) &&
+      !isExactlyPendingManagedGatewayHealth(result)
     ) {
       return false;
     }
