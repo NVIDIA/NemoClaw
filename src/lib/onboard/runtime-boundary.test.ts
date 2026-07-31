@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   createSession,
@@ -12,7 +12,6 @@ import {
 } from "../state/onboard-session";
 import type { StepMutationOptions } from "../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./machine/events";
-import { markOnboardInterrupted, resetOnboardInterruptForTests } from "./machine/interrupt-state";
 import {
   advanceTo,
   branchTo,
@@ -606,14 +605,6 @@ describe("OnboardRuntimeBoundary", () => {
 });
 
 describe("onboarding interrupted while a step is in flight (#7982)", () => {
-  beforeEach(() => {
-    resetOnboardInterruptForTests();
-  });
-
-  afterEach(() => {
-    resetOnboardInterruptForTests();
-  });
-
   function failedAtSandbox(interrupted: boolean) {
     const harness = createRuntimeHarness({
       status: "failed",
@@ -646,7 +637,6 @@ describe("onboarding interrupted while a step is in flight (#7982)", () => {
   }
 
   it("reports the sandbox branch as interrupted rather than an invalid transition", async () => {
-    markOnboardInterrupted("sandbox");
     const { boundary, harness } = interruptedAtSandbox();
 
     const applied = boundary.recordStateResult(
@@ -693,7 +683,6 @@ describe("onboarding interrupted while a step is in flight (#7982)", () => {
   });
 
   it("reports an interrupted finalization rather than an invalid completion", async () => {
-    markOnboardInterrupted("policies");
     const { boundary } = interruptedAtSandbox();
 
     await expect(boundary.recordStateResult(completeOnboardMachine())).rejects.toThrow(

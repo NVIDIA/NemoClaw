@@ -10,15 +10,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamSandboxCreate } from "./create-stream";
 import { dockerEnv, FakeChild, makePollingOptions } from "./create-stream-test-fixtures";
 
-const startedPids: number[] = [];
+const startedProcessGroups: number[] = [];
 const startedDirs: string[] = [];
 
 function cleanUpStartedProcesses(): void {
-  for (const pid of startedPids.splice(0)) {
+  for (const processGroup of startedProcessGroups.splice(0)) {
     try {
-      process.kill(pid, "SIGKILL");
+      process.kill(-processGroup, "SIGKILL");
     } catch {
-      // Best effort only — the process under test should already be gone.
+      // Best effort only — the owned process group may already be gone.
     }
   }
   for (const dir of startedDirs.splice(0)) {
@@ -66,8 +66,13 @@ function readStartedPids(markerPath: string): { child: number; grandchild: numbe
     child: number;
     grandchild: number;
   };
-  startedPids.push(pids.child, pids.grandchild);
+  startedProcessGroups.push(pids.child);
   return pids;
+}
+
+function releaseStartedProcessGroup(processGroup: number): void {
+  const index = startedProcessGroups.indexOf(processGroup);
+  if (index !== -1) startedProcessGroups.splice(index, 1);
 }
 
 describe("sandbox create stream process group (#7982)", () => {
@@ -93,6 +98,7 @@ describe("sandbox create stream process group (#7982)", () => {
       expect(result).toMatchObject({ status: 0, forcedReady: true });
       expect(await waitForExit(pids.child)).toBe(true);
       expect(await waitForExit(pids.grandchild)).toBe(true);
+      releaseStartedProcessGroup(pids.child);
     },
     30_000,
   );
@@ -141,8 +147,8 @@ describe("sandbox create stream process group (#7982)", () => {
 
   it("stops listening for host signals once the create stream settles", async () => {
     const child = new FakeChild();
-    const sigintBefore = process.listenerCount("SIGINT");
-    const sigtermBefore = process.listenerCount("SIGTERM");
+    const sigintBefore = process.listeners("SIGINT");
+    const sigtermBefore = process.listeners("SIGTERM");
 
     await streamSandboxCreate(
       "openshell",
@@ -151,8 +157,8 @@ describe("sandbox create stream process group (#7982)", () => {
       makePollingOptions(child, { readyCheck: () => true }),
     );
 
-    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
-    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
+    expect(process.listeners("SIGINT")).toEqual(sigintBefore);
+    expect(process.listeners("SIGTERM")).toEqual(sigtermBefore);
   });
 
   it("stops listening for host exit once the create stream settles", async () => {

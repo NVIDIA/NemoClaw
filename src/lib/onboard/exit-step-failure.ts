@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
-import { markOnboardInterrupted } from "./machine/interrupt-state";
 import { printOnboardResumeHint } from "./resume-hint";
 
 export interface ExitStepFailureSessionDeps {
@@ -55,7 +54,6 @@ export function registerIncompleteOnboardExitFailureHandler(
     // printOnboardResumeHint also self-dedupes against tailored hints.
     const interrupted = markLastStartedStepFailed(deps, message, true);
     if (!interrupted) return;
-    markOnboardInterrupted(interrupted.lastStepStarted);
     printOnboardResumeHint();
   };
 

@@ -14,11 +14,6 @@ import {
   markLastStartedStepFailed,
   registerIncompleteOnboardExitFailureHandler,
 } from "./exit-step-failure";
-import {
-  isOnboardInterrupted,
-  onboardInterruptedStep,
-  resetOnboardInterruptForTests,
-} from "./machine/interrupt-state";
 import { noteOnboardResumeHintShown, resetOnboardResumeHintForTests } from "./resume-hint";
 
 const originalHome = process.env.HOME;
@@ -43,12 +38,10 @@ beforeEach(async () => {
   machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   resetOnboardResumeHintForTests();
-  resetOnboardInterruptForTests();
 });
 
 afterEach(() => {
   machineEvents.clearOnboardMachineEventListeners();
-  resetOnboardInterruptForTests();
   session.clearSession();
   fs.rmSync(tmpDir, { recursive: true, force: true });
   restoreOriginalHome();
@@ -141,8 +134,6 @@ describe("terminal step failure helper", () => {
     const loaded = requireLoadedSession();
     expect(loaded.machine.state).toBe("failed");
     expect(loaded.failure).toMatchObject({ step: "sandbox", interrupted: true });
-    expect(isOnboardInterrupted()).toBe(true);
-    expect(onboardInterruptedStep()).toBe("sandbox");
   });
 
   it("records rebuild recreate cleanup as a failure without an onboard interrupt (#7982)", () => {
@@ -153,8 +144,6 @@ describe("terminal step failure helper", () => {
     const loaded = requireLoadedSession();
     expect(loaded.machine.state).toBe("failed");
     expect(loaded.failure).toMatchObject({ step: "sandbox", interrupted: false });
-    expect(isOnboardInterrupted()).toBe(false);
-    expect(onboardInterruptedStep()).toBeNull();
   });
 
   it("marks rebuild recreate cleanup failures as terminal machine failures", () => {

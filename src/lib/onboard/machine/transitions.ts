@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isOnboardInterrupted, onboardInterruptedStep } from "./interrupt-state";
 import type { OnboardMachineState, OnboardMachineTransition } from "./types";
 import {
   ONBOARD_MACHINE_STATES,
@@ -144,8 +143,8 @@ export function assertOnboardNotInterrupted(
   failure: OnboardInterruptionMarker | null = null,
 ): void {
   if (from !== "failed") return;
-  if (!failure?.interrupted && !isOnboardInterrupted()) return;
-  throw new OnboardInterruptedError(from, failure?.step ?? onboardInterruptedStep(), next);
+  if (!failure?.interrupted) return;
+  throw new OnboardInterruptedError(from, failure.step, next);
 }
 
 export function assertValidOnboardMachineTransition(
