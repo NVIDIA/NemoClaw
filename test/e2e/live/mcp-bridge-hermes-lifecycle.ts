@@ -89,7 +89,7 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
       [
         "set -eu",
         "test \"$(stat -c '%a %U:%G' /sandbox)\" = '1775 root:sandbox'",
-        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes)\" = '755 root:root'",
+        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes)\" = '3770 root:sandbox'",
         "for path in /sandbox/.hermes/gateway /sandbox/.hermes/runtime; do",
         "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '2770 gateway:sandbox'",
         "done",

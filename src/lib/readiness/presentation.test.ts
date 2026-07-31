@@ -24,11 +24,12 @@ function report(
   outcome: ReadinessOutcome = { status: "supported", exitCode: 0 },
 ): SystemReadinessReport {
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "1.1.0",
     ...outcome,
     mutated: false,
     provenance: {
       nemoclawVersion: "0.1.0",
+      sourceRevision: "21e60ae287e8c2a184f71406ac8b418f046330d1",
       observedAt: "2026-06-01T12:00:00.000Z",
     },
     observations: [],
@@ -55,22 +56,69 @@ describe("public readiness presentation (#7412)", () => {
     expect(publicReport).toMatchObject({ ...outcome, mutated: false });
   });
 
-  it.each([
-    [`nvapi-${"a".repeat(24)}`, undefined],
-    ["not-a-source-revision", undefined],
-    ["a".repeat(40), "a".repeat(40)],
-  ])("publishes only immutable source revisions", (sourceRevision, expected) => {
+  it("preserves valid immutable build provenance (#7777)", () => {
+    const sourceRevision = `8bfff4526${"a".repeat(31)}`;
     const publicReport = createPublicReadinessReport(
       report({
         provenance: {
-          nemoclawVersion: "0.1.0",
-          observedAt: "2026-06-01T12:00:00.000Z",
+          nemoclawVersion: "0.0.96-35-g8bfff4526",
           sourceRevision,
+          observedAt: "2026-06-01T12:00:00.000Z",
         },
       }),
     );
 
-    expect(publicReport.provenance.sourceRevision).toBe(expected);
+    expect(publicReport.provenance).toMatchObject({
+      nemoclawVersion: "0.0.96-35-g8bfff4526",
+      sourceRevision,
+    });
+  });
+
+  it.each([
+    `nvapi-${"a".repeat(24)}`,
+    "not-a-source-revision",
+  ])("rejects the invalid source revision %s (#7777)", (sourceRevision) => {
+    expect(() =>
+      createPublicReadinessReport(
+        report({
+          provenance: {
+            nemoclawVersion: "0.1.0",
+            observedAt: "2026-06-01T12:00:00.000Z",
+            sourceRevision,
+          },
+        }),
+      ),
+    ).toThrow("NemoClaw build identity has an invalid source revision.");
+  });
+
+  it("rejects a described version that names a different source revision (#7777)", () => {
+    expect(() =>
+      createPublicReadinessReport(
+        report({
+          provenance: {
+            nemoclawVersion: "0.0.96-35-g8bfff4526",
+            sourceRevision: "9".repeat(40),
+            observedAt: "2026-06-01T12:00:00.000Z",
+          },
+        }),
+      ),
+    ).toThrow("NemoClaw build identity version and source revision do not match.");
+  });
+
+  it("rejects token-like public build versions (#7777)", () => {
+    const token = `nvapi-${"a".repeat(24)}`;
+
+    expect(() =>
+      createPublicReadinessReport(
+        report({
+          provenance: {
+            nemoclawVersion: token,
+            sourceRevision: "21e60ae287e8c2a184f71406ac8b418f046330d1",
+            observedAt: "2026-06-01T12:00:00.000Z",
+          },
+        }),
+      ),
+    ).toThrow("NemoClaw build identity has an invalid version.");
   });
 
   it("renders human output from the same public report used for JSON", () => {
@@ -99,6 +147,11 @@ describe("public readiness presentation (#7412)", () => {
     const token = `nvapi-${"a".repeat(24)}`;
     const publicReport = createPublicReadinessReport(
       report({
+        provenance: {
+          nemoclawVersion: "0.1.0",
+          sourceRevision: "21e60ae287e8c2a184f71406ac8b418f046330d1",
+          observedAt: "2026-06-01T12:00:00.000Z",
+        },
         findings: [
           {
             id: "host.probe.failure",
