@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamSandboxCreate } from "./create-stream";
 import { dockerEnv, FakeChild, makePollingOptions } from "./create-stream-test-fixtures";
 
-const startedProcessGroups: number[] = [];
+let startedProcessGroups: number[] = [];
 const startedDirs: string[] = [];
 
 function cleanUpStartedProcesses(): void {
@@ -71,8 +71,7 @@ function readStartedPids(markerPath: string): { child: number; grandchild: numbe
 }
 
 function releaseStartedProcessGroup(processGroup: number): void {
-  const index = startedProcessGroups.indexOf(processGroup);
-  if (index !== -1) startedProcessGroups.splice(index, 1);
+  startedProcessGroups = startedProcessGroups.filter((candidate) => candidate !== processGroup);
 }
 
 describe("sandbox create stream process group (#7982)", () => {
