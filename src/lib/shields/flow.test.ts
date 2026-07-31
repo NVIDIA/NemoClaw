@@ -882,19 +882,27 @@ describe("shields command flow", () => {
     const permissiveRuntimeDirs = () =>
       fs.readdirSync(tempRoot).filter((name) => name.startsWith("nemoclaw-permissive-runtime-"));
     const before = permissiveRuntimeDirs();
+    // shieldsDown builds the temp policy before it forks the auto-restore timer,
+    // so the fork mock observes the runtime-policy directory mid-transition. That
+    // proves the test exercises real temp-policy creation, not only the absence
+    // of a leak.
+    let runtimeDirsDuringFork: string[] = [];
     // A real `openshell policy get --base` carries filesystem_policy paths, so the
     // permissive merge writes a temp policy file instead of returning the static
     // base path. That is the state that makes the leak reachable.
     const harness = createHarness({
       livePolicyYaml:
         "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\n",
-      fork: () => ({
-        pid: 0,
-        disconnect: vi.fn(),
-        unref: vi.fn(),
-        send: vi.fn(() => true),
-        kill: vi.fn(() => true),
-      }),
+      fork: () => {
+        runtimeDirsDuringFork = permissiveRuntimeDirs();
+        return {
+          pid: 0,
+          disconnect: vi.fn(),
+          unref: vi.fn(),
+          send: vi.fn(() => true),
+          kill: vi.fn(() => true),
+        };
+      },
     });
 
     expect(() =>
@@ -904,6 +912,9 @@ describe("shields command flow", () => {
         throwOnError: true,
       }),
     ).toThrow("Cannot start auto-restore timer");
+    // One runtime-policy directory existed during the transition, and none
+    // remains after the failed shields down.
+    expect(runtimeDirsDuringFork.length).toBe(before.length + 1);
     expect(permissiveRuntimeDirs()).toEqual(before);
   });
 
