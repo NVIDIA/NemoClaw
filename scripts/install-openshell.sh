@@ -889,9 +889,7 @@ download_with_curl() {
     curl_progress=(-sS)
   fi
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
-    curl -fL "${curl_progress[@]}" \
-      --retry 3 --retry-delay 1 --retry-all-errors \
-      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
+    curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
       -o "$tmpdir/$name"
   done
 }
