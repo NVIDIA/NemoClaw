@@ -1423,6 +1423,7 @@ mcpBridgeShardTest("deepagents")(
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-initial",
     });
+    await exactMainProof.assertSnapshotResidue("after-initial-tool-call");
     await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, deepAgentsResult], "fake_echo");
     await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
@@ -1431,6 +1432,7 @@ mcpBridgeShardTest("deepagents")(
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-after-restart",
     });
+    await exactMainProof.assertSnapshotResidue("after-restart-tool-call");
     fakeMcp.setSecret(ROTATED_HOST_SECRET);
     await rotateBridgeCredential(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
@@ -1440,6 +1442,7 @@ mcpBridgeShardTest("deepagents")(
       artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
       expectedSecret: ROTATED_HOST_SECRET,
     });
+    await exactMainProof.assertSnapshotResidue("after-credential-rotation-tool-call");
     await assertSecretAbsentFromSandbox(
       sandbox,
       DEEPAGENTS_SANDBOX_NAME,
@@ -1469,6 +1472,7 @@ mcpBridgeShardTest("deepagents")(
       artifactName: "deepagents-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
     });
+    await exactMainProof.assertSnapshotResidue("after-rebuild-tool-call");
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "langchain-deepagents-code",
       adapter: "deepagents-config",
