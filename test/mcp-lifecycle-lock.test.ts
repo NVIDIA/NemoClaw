@@ -10,13 +10,16 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as lifecycleLock from "../src/lib/state/mcp-lifecycle-lock";
 import "./helpers/mcp-lifecycle-lock-properties";
-
-type LifecycleLockModule = typeof import("../src/lib/state/mcp-lifecycle-lock");
 
 const requireDist = createRequire(import.meta.url);
 const lockModulePath = requireDist.resolve("../src/lib/state/mcp-lifecycle-lock.js");
-const lifecycleLock = requireDist(lockModulePath) as LifecycleLockModule;
+// Keep one CommonJS instance for the macOS probe spy. Behavior tests use the
+// static source import so Vitest attributes their coverage to the split modules.
+const requiredLifecycleLock = requireDist(
+  lockModulePath,
+) as typeof import("../src/lib/state/mcp-lifecycle-lock");
 const currentProcessIdentity = lifecycleLock.readMcpLockProcessIdentity(process.pid);
 const currentHostIdentity = lifecycleLock.readMcpLockHostIdentity();
 const currentPidNamespaceIdentity = lifecycleLock.readMcpLockPidNamespaceIdentity();
@@ -107,7 +110,7 @@ describe("MCP lifecycle lock", () => {
     process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
 
     try {
-      expect(lifecycleLock.readMcpLockProcessIdentity(4242, true)).toBe(
+      expect(requiredLifecycleLock.readMcpLockProcessIdentity(4242, true)).toBe(
         "darwin:Mon Jun 30 12:00:00 2026",
       );
       const options = spawnSync.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
