@@ -50,6 +50,7 @@ type DestroyHarnessOptions = {
   liveListOutput?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
+  openshellDriver?: string;
   promptResponses?: string[];
   registeredSandboxCount?: number;
   restoreMcpError?: string;
@@ -137,6 +138,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     ...sandboxEntry,
     agent: options.agent ?? sandboxEntry.agent,
+    ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
     ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
     ...(options.mcpServers?.length
       ? {
