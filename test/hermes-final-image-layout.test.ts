@@ -382,11 +382,16 @@ describe("Hermes final image layout", () => {
       expect(dockerfile).toContain(`COPY ${entry.source} ${entry.target}`);
       expect(declaredDigest, `${entry.arg} must match ${entry.source}`).toBe(digest);
     }
+  });
 
+  // source-shape-contract: security -- Adapter bytes must pass their committed integrity gate before the image build executes validator code
+  it("verifies CLI adapter integrity before executing its validator", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const adapterIntegrityGate = dockerfile.indexOf("ERROR: Hermes CLI adapter integrity mismatch");
     const adapterValidation = dockerfile.indexOf(
       "RUN /opt/hermes/.venv/bin/python -I \\\n        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \\",
     );
+
     expect(adapterIntegrityGate).toBeGreaterThan(-1);
     expect(adapterValidation).toBeGreaterThan(adapterIntegrityGate);
   });

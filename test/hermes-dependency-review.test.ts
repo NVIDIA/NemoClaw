@@ -98,7 +98,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");
   });
 
-  it("binds the CLI adapter to the target Hermes version", () => {
+  it("binds the CLI adapter version and source-fix constraints to target Hermes", () => {
     expect(cliAdapter.adapter_version).toBe(1);
     expect(cliAdapter.upstream_cli_version).toBe("0.19.0");
     expect(cliAdapter.managed_commands).toEqual(["chat"]);
