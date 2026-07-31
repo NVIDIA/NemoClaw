@@ -10,6 +10,7 @@ import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
+import * as gatewayTeardownAuthority from "../../onboard/gateway-teardown-authority";
 import * as sessionRecovery from "../../onboard/session-recovery";
 import * as sandboxList from "../../openshell-sandbox-list";
 import * as sandboxVersion from "../../sandbox/version";
@@ -91,6 +92,18 @@ describe("rebuild resume snapshot repair", () => {
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
+      vi
+        .spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority")
+        .mockImplementation(({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        })),
       vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
         recovered: true,
         before: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },

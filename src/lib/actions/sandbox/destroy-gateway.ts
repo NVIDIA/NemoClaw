@@ -7,6 +7,7 @@ import path from "node:path";
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
+import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
@@ -28,6 +29,7 @@ const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 export interface CleanupGatewayDeps {
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+  stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -105,6 +107,16 @@ export function cleanupGatewayAfterLastSandbox(
   // ports the live openshell tracks; this catches orphans whose openshell
   // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
+  if (!externallySupervised && owner.source === "packaged-service") {
+    const stopService = deps.stopOpenShellGatewayUserService ?? stopOpenShellGatewayUserService;
+    const serviceStop = stopService();
+    if (serviceStop.attempted && !serviceStop.stopped) {
+      throw new Error(
+        `Failed to stop the packaged OpenShell gateway service '${serviceStop.serviceName}' that owns gateway '${gatewayName}': ${serviceStop.reason}. ` +
+          `Check: ${serviceStop.statusCommand}. Stop the service, then rerun destroy.`,
+      );
+    }
+  }
   if (!externallySupervised && (process.platform === "linux" || process.platform === "darwin")) {
     // Sandbox destroy is conservative: only stop the host gateway whose PID
     // file we wrote during onboard. Disable the pgrep sweep so a stray

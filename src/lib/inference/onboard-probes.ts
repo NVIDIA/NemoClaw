@@ -57,6 +57,7 @@ const {
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
   getExtendedNvidiaEndpointValidationProbeCurlArgs,
+  getStreamingEventProbeCurlArgs,
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
 } = require("./probe-http-helpers");
@@ -849,7 +850,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             [
               "-sS",
               ...buildResolvePinArgs(`${baseUrl}/responses`, pinnedAddresses),
-              ...getValidationProbeCurlArgs(getProbeTimingOptions(options)),
+              // Short dedicated deadline: a stalled /responses stream must not hang onboard. See #7792.
+              ...getStreamingEventProbeCurlArgs(getProbeTimingOptions(options)),
               "-H",
               "Content-Type: application/json",
               ...authConfig.args,
