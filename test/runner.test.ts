@@ -782,6 +782,7 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(result.status, out).toBe(0);
         expect(out).toContain("CURL_DIRECT");
+        expect(out).toContain("--retry 3 --retry-delay 1 --retry-all-errors");
         expect(out).not.toContain("gh CLI download failed");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
@@ -884,6 +885,7 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
+        expect(out).toContain("--retry 3 --retry-delay 1 --retry-all-errors");
         expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
