@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { test as e2eFixtureTest } from "../fixtures/e2e-test.ts";
 import {
@@ -9,13 +9,25 @@ import {
   LifecyclePhaseFixture,
   StateValidationPhaseFixture,
 } from "../fixtures/phases/index.ts";
+import type {
+  RuntimeLifecycleEvidence,
+  RuntimeProviderLifecycle,
+} from "../fixtures/runtime-provider.ts";
 import { defineExecutionProfile, executionProviderId } from "../registry/execution-profile.ts";
-import { defineRuntimeScenario } from "../registry/scenario.ts";
+import type {
+  ExecutionEvidenceInput,
+  NonEmptyProviderReceipts,
+} from "../registry/parity-evidence.ts";
+import { hasRegisteredRuntimeProfile } from "../registry/registry.ts";
+import { buildLiveTargetMatrix } from "../registry/run.ts";
+import { defineRuntimeScenario, type RuntimeNeutralScenario } from "../registry/scenario.ts";
 import { foundationProfiles, foundationScenarios } from "./cross-runtime-foundation-fixtures.ts";
 
 describe("cross-runtime foundation types", () => {
   it("models Docker and socket-free fake MXC profiles without registering either", () => {
-    const [docker, mxc] = foundationProfiles();
+    const liveMatrixBefore = buildLiveTargetMatrix();
+    const profiles = foundationProfiles();
+    const [docker, mxc] = profiles;
 
     expect(docker).toMatchObject({
       provider: "docker",
@@ -32,6 +44,10 @@ describe("cross-runtime foundation types", () => {
     });
     expect(mxc?.capabilities).toContain("transport.socket-free");
     expect(mxc?.capabilities).not.toContain("transport.docker-socket");
+    expect(buildLiveTargetMatrix()).toEqual(liveMatrixBefore);
+    for (const profile of profiles) {
+      expect(hasRegisteredRuntimeProfile(profile.id)).toBe(false);
+    }
   });
 
   it("keeps OpenClaw, Hermes, and DCode scenarios provider-neutral and obligation-explicit", () => {
@@ -57,6 +73,39 @@ describe("cross-runtime foundation types", () => {
         "observe",
       ]);
     }
+  });
+
+  it("omits undeclared provider fields from normalized scenarios", () => {
+    const base = foundationScenarios()[0]!;
+    const input = {
+      ...base,
+      provider: "docker",
+      journey: base.journey.map((step) => ({ ...step, provider: "docker" })),
+      assertions: { ...base.assertions, provider: "docker" },
+      supportObligations: base.supportObligations.map((obligation) => ({
+        ...obligation,
+        provider: "docker",
+      })),
+    } as unknown as RuntimeNeutralScenario;
+
+    const scenario = defineRuntimeScenario(input);
+
+    expect(scenario).not.toHaveProperty("provider");
+    expect(scenario.journey[0]).not.toHaveProperty("provider");
+    expect(scenario.assertions).not.toHaveProperty("provider");
+    expect(scenario.supportObligations[0]).not.toHaveProperty("provider");
+  });
+
+  it("requires provider receipt evidence from lifecycle and cleanup contracts", () => {
+    expectTypeOf<
+      RuntimeLifecycleEvidence["providerReceipts"]
+    >().toEqualTypeOf<NonEmptyProviderReceipts>();
+    expectTypeOf<
+      Awaited<ReturnType<RuntimeProviderLifecycle["cleanup"]>>
+    >().toEqualTypeOf<NonEmptyProviderReceipts>();
+    expectTypeOf<
+      ExecutionEvidenceInput["providerReceipts"]
+    >().toEqualTypeOf<NonEmptyProviderReceipts>();
   });
 
   it("keeps provider ids open while rejecting invalid profiles", () => {

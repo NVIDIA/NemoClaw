@@ -37,6 +37,13 @@ export interface ProviderReceipt {
   value: JsonValue;
 }
 
+export type NonEmptyProviderReceipts = readonly [ProviderReceipt, ...ProviderReceipt[]];
+
+type NormalizedProviderReceipts = readonly [
+  Readonly<ProviderReceipt>,
+  ...Readonly<ProviderReceipt>[],
+];
+
 export interface NormalizedParityEvidence {
   desiredStateFingerprint: string;
   fsmTrace: readonly Readonly<FsmTransition>[];
@@ -71,7 +78,7 @@ export interface ExecutionEvidence {
     managedImages: readonly Readonly<ManagedImageEvidence>[];
   }>;
   parity: Readonly<NormalizedParityEvidence>;
-  providerReceipts: readonly Readonly<ProviderReceipt>[];
+  providerReceipts: NormalizedProviderReceipts;
 }
 
 export interface ExecutionEvidenceInput {
@@ -95,7 +102,7 @@ export interface ExecutionEvidenceInput {
     terminalOutcome: TerminalOutcome;
     userVisibleState: JsonValue;
   };
-  providerReceipts: readonly ProviderReceipt[];
+  providerReceipts: NonEmptyProviderReceipts;
 }
 
 export interface ParityMismatch {
@@ -162,33 +169,37 @@ function normalizeManagedImages(
   );
 }
 
-function normalizeProviderReceipts(
-  receipts: readonly ProviderReceipt[],
-): readonly Readonly<ProviderReceipt>[] {
+function normalizeProviderReceipts(receipts: NonEmptyProviderReceipts): NormalizedProviderReceipts {
   if (receipts.length === 0) {
     throw new Error("providerReceipts must contain at least one provider receipt");
   }
   const operationIds = new Set<string>();
-  return Object.freeze(
-    receipts.map((receipt) => {
-      if (!RECEIPT_ID_PATTERN.test(receipt.kind)) {
-        throw new Error(`provider receipt kind '${receipt.kind}' is invalid`);
-      }
-      if (!RECEIPT_ID_PATTERN.test(receipt.operationId)) {
-        throw new Error(`provider receipt operationId '${receipt.operationId}' is invalid`);
-      }
-      if (operationIds.has(receipt.operationId)) {
-        throw new Error(`provider receipt operationId '${receipt.operationId}' is duplicated`);
-      }
-      operationIds.add(receipt.operationId);
-      return Object.freeze({
-        ...receipt,
-        value: freezeJsonValue(
-          normalizeJsonValue(receipt.value, `providerReceipts.${receipt.operationId}.value`),
-        ),
-      });
-    }),
-  );
+  const normalizeReceipt = (receipt: ProviderReceipt): Readonly<ProviderReceipt> => {
+    if (typeof receipt.kind !== "string") {
+      throw new Error("provider receipt kind must be a string");
+    }
+    if (typeof receipt.operationId !== "string") {
+      throw new Error("provider receipt operationId must be a string");
+    }
+    if (!RECEIPT_ID_PATTERN.test(receipt.kind)) {
+      throw new Error(`provider receipt kind '${receipt.kind}' is invalid`);
+    }
+    if (!RECEIPT_ID_PATTERN.test(receipt.operationId)) {
+      throw new Error(`provider receipt operationId '${receipt.operationId}' is invalid`);
+    }
+    if (operationIds.has(receipt.operationId)) {
+      throw new Error(`provider receipt operationId '${receipt.operationId}' is duplicated`);
+    }
+    operationIds.add(receipt.operationId);
+    return Object.freeze({
+      kind: receipt.kind,
+      operationId: receipt.operationId,
+      value: freezeJsonValue(
+        normalizeJsonValue(receipt.value, `providerReceipts.${receipt.operationId}.value`),
+      ),
+    });
+  };
+  return Object.freeze([normalizeReceipt(receipts[0]), ...receipts.slice(1).map(normalizeReceipt)]);
 }
 
 export function buildExecutionEvidence(input: ExecutionEvidenceInput): ExecutionEvidence {
