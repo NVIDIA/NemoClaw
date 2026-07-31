@@ -39,8 +39,8 @@ function writePythonWrapper(lines: readonly string[]): string {
 
 function requireTrustedPython(): string {
   const python = resolveTrustedSnapshotSanitizerPythonPath();
-  if (python === null) throw new Error("A trusted Python 3 interpreter is required for this test");
-  return python;
+  expect(python).toEqual(expect.any(String));
+  return python as string;
 }
 
 afterEach(() => {

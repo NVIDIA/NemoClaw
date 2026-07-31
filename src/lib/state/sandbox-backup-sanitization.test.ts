@@ -130,12 +130,12 @@ describe("rebuild backup credential sanitization", () => {
     writeFileSync(outsideConfigPath, outsideContents);
 
     const realPython = resolveTrustedSnapshotSanitizerPythonPath();
-    if (realPython === null) throw new Error("A trusted Python 3 interpreter is required");
+    expect(realPython).toEqual(expect.any(String));
     const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
     const pythonWrapper = join(wrapperPath, "python3");
     writeFileSync(
       pythonWrapper,
-      `#!/bin/sh\nif [ "$4" = "apply" ]; then\n  mv ${shellQuote(nestedPath)} ${shellQuote(movedPath)}\n  ln -s ${shellQuote(outsidePath)} ${shellQuote(nestedPath)}\nfi\nexec ${shellQuote(realPython)} "$@"\n`,
+      `#!/bin/sh\nif [ "$4" = "apply" ]; then\n  mv ${shellQuote(nestedPath)} ${shellQuote(movedPath)}\n  ln -s ${shellQuote(outsidePath)} ${shellQuote(nestedPath)}\nfi\nexec ${shellQuote(realPython as string)} "$@"\n`,
     );
     chmodSync(pythonWrapper, 0o755);
     setSnapshotSanitizerPythonPathForTest(pythonWrapper);

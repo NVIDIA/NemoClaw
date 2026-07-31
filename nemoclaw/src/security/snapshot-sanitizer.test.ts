@@ -187,7 +187,7 @@ describe("migration snapshot sanitizer", () => {
       writeFileSync(outsideConfig, JSON.stringify({ apiKey: "outside-must-not-change" }));
 
       const python = resolveTrustedSnapshotSanitizerPythonPath();
-      if (python === null) throw new Error("A trusted Python 3 interpreter is required");
+      expect(python).toEqual(expect.any(String));
       writeFileSync(
         wrapper,
         [
@@ -197,7 +197,7 @@ describe("migration snapshot sanitizer", () => {
           `  ln -s ${shellQuote(outside)} ${shellQuote(nested)}`,
           `  : > ${shellQuote(marker)}`,
           "fi",
-          `exec ${shellQuote(python)} \"$@\"`,
+          `exec ${shellQuote(python as string)} \"$@\"`,
         ].join("\n"),
       );
       chmodSync(wrapper, 0o755);
