@@ -1034,6 +1034,8 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       '[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ] || exit 97',
       '[ -z "${OPENCLAW_GATEWAY_PASSWORD:-}" ] || exit 97',
       '[ -z "${OPENCLAW_GATEWAY_PORT:-}" ] || exit 97',
+      '[ -z "${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING:-}" ] || exit 97',
+      '[ "$NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING" = "1" ] || exit 97',
       '[ "$OPENCLAW_GATEWAY_URL" = "ws://127.0.0.1:$NEMOCLAW_PROOF_GATEWAY_PORT" ] || exit 97',
       'case "${OPENCLAW_STATE_DIR:-}" in /proc/self/fd/*) state_descriptor=${OPENCLAW_STATE_DIR##*/} ;; *) exit 97 ;; esac',
       'case "$state_descriptor" in ""|*[!0-9]*) exit 97 ;; esac',
