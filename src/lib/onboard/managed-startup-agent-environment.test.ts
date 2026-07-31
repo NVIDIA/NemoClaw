@@ -372,6 +372,7 @@ describe("managed startup agent environment", () => {
       HTTPS_PROXY: "http://proxy.example.test:3128",
       NO_PROXY: "127.0.0.1,localhost",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
+      NEMOCLAW_DASHBOARD_PORT: "19189",
       NEMOCLAW_HERMES_DASHBOARD: "1",
       NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "29189",
       NEMOCLAW_HERMES_DASHBOARD_PORT: "19189",
@@ -669,6 +670,7 @@ describe("managed startup agent environment", () => {
     const hermesResult = mapManagedStartupProfileToAgentEnvironment(hermes);
     expect(hermesResult.configurationEnvironment.NEMOCLAW_CONTEXT_WINDOW).toBe("");
     expect(hermesResult.runtimeEnvironment).toMatchObject({
+      NEMOCLAW_DASHBOARD_PORT: "",
       NEMOCLAW_HERMES_DASHBOARD: "0",
       NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "",
       NEMOCLAW_HERMES_DASHBOARD_PORT: "",

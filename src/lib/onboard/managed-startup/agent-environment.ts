@@ -355,6 +355,8 @@ function mapHermesProfile(profile: ManagedStartupProfile): ManagedStartupAgentEn
 
   const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
+  runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
+    profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =
     profile.dashboard.mode === "loopback-forwarded" ? "1" : "0";
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT =
