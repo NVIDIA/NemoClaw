@@ -6,6 +6,16 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provi
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 
+export type {
+  ManagedWorkloadCloneSnapshot,
+  PreparedManagedWorkloadCloneHandoff,
+  PrepareManagedWorkloadCloneHandoffInput,
+} from "../../../onboard/workload/clone";
+export {
+  ManagedWorkloadCloneError,
+  prepareManagedWorkloadCloneHandoff,
+} from "../../../onboard/workload/clone";
+export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export {
   ManagedSnapshotProfileRestoreError,
   prepareManagedSnapshotProfileRestore,
@@ -22,7 +32,6 @@ export {
   prepareSandboxRuntimeRestore,
   SandboxSnapshotProviderError,
 } from "./provider-lifecycle";
-export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 
 /**
  * Resolve the one already-registered provider bundle for a durable sandbox.

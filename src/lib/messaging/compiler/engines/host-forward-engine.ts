@@ -17,10 +17,11 @@ export function planHostForward(
   inputs: readonly SandboxMessagingInputReference[],
   active: boolean,
   referenceResolver?: RenderTemplateReferenceResolver,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): SandboxMessagingHostForwardPlan | undefined {
   if (!active || !manifest.hostForward) return undefined;
 
-  const context = { inputs, env: process.env, referenceResolver };
+  const context = { inputs, env: environment, referenceResolver };
   if (!isTruthyRenderTemplate(manifest.hostForward.when, context)) return undefined;
 
   const portValue = resolveRenderTemplatesInValue(manifest.hostForward.port, context);
