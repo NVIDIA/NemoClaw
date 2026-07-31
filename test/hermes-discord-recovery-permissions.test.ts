@@ -188,8 +188,13 @@ describe("Hermes cross-UID ledger permissions", () => {
       "gosu sandbox /opt/hermes/.venv/bin/python -I \\\n" +
         "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup",
     );
-    expect(imageBuildProbes).toContain("source.backup(target)");
-    expect(imageBuildProbes).toContain("os.replace(staged, path)");
+    const discordBackup = imageBuildProbes.slice(
+      imageBuildProbes.indexOf("def verify_discord_backup("),
+      imageBuildProbes.indexOf("def verify_discord_reopen("),
+    );
+    expect(discordBackup).toContain(".nemoclaw-discord-recovery-staged");
+    expect(discordBackup).toContain("source.backup(target)");
+    expect(discordBackup).toContain("os.replace(staged, path)");
     expect(imageBuildProbes).toContain("gateway-reopened");
     expect(dockerfile).toContain(`discord_message_recovery.db)" = "sandbox:sandbox 660"`);
   });
