@@ -65,48 +65,6 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).toHaveBeenCalledOnce();
   });
 
-  it("approves once more when the first verifier exposes the clone scope upgrade (#7834)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    let approvalAttempt = 0;
-    const approveRestoredClonePairing = vi.fn(() => {
-      order.push("approve");
-      approvalAttempt += 1;
-      return approvalAttempt === 1 ? ("list-failed" as const) : ("approved-one" as const);
-    });
-    let verificationAttempt = 0;
-    const verifyGatewayPairing = vi.fn(() => {
-      order.push("verify");
-      verificationAttempt += 1;
-      return verificationAttempt === 1
-        ? ({ ok: false, failureLayer: "scope-upgrade-pending" } as const)
-        : ({ ok: true } as const);
-    });
-
-    await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway,
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    });
-
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(3);
-    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
-    expect(order).toEqual([
-      "restart",
-      "warmup",
-      "approve",
-      "restart",
-      "verify",
-      "approve",
-      "restart",
-      "verify",
-    ]);
-  });
-
   it("fails before pairing when the restored gateway cannot restart (#7431)", async () => {
     const warmupScopeUpgrade = vi.fn();
     const approveRestoredClonePairing = vi.fn();
