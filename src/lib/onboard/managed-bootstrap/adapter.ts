@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes as defaultRandomBytes } from "node:crypto";
+import { createHash, randomBytes as defaultRandomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../managed-startup/hold";
 import type { ManagedStartupAgent } from "../managed-startup/profile";
-import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import {
+  type ManagedStartupRootApplyRequest,
+  parseManagedStartupRootApplyRequest,
+  serializeManagedStartupRootApplyRequest,
+} from "../managed-startup/root-apply";
 
 export const MANAGED_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
@@ -132,6 +136,64 @@ export interface ManagedBootstrapReplacementOptions {
   readonly values: Readonly<Record<string, string | number | boolean | readonly string[]>>;
 }
 
+/**
+ * Exact stopped replacement authority returned before the owning provider may
+ * quiesce, rename, or otherwise mutate the Ready held workload.
+ */
+export interface ManagedBootstrapPreparedReplacementHandle {
+  readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly bootstrapIdentity: string;
+  readonly originalRuntimeId: string;
+  readonly preparedRuntimeId: string;
+  readonly image: ManagedBootstrapImageIdentity;
+  readonly runtimeImageContentId: string;
+  readonly originalSpecHash: string;
+  readonly preparedSpecHash: string;
+  readonly preparedSpecCanonicalJson: string;
+  readonly expectedActivatedSpecHash: string;
+  readonly expectedActivatedSpecCanonicalJson: string;
+  readonly profileFingerprint: string;
+  /** Provider-opaque, bounded authority needed to clean up or restore exactly this transaction. */
+  readonly rollbackAuthority: string;
+}
+
+export interface ManagedBootstrapPreparedAuthority {
+  readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
+  readonly phase: "prepared";
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly bootstrapIdentity: string;
+  readonly authorityFingerprint: string;
+  readonly planFingerprint: string;
+  readonly image: ManagedBootstrapImageIdentity;
+  readonly runtimeImageContentId: string;
+  readonly profileFingerprint: string;
+  readonly originalRuntimeId: string;
+  readonly preparedRuntimeId: string;
+  readonly originalSpecHash: string;
+  readonly preparedSpecHash: string;
+  readonly expectedActivatedSpecHash: string;
+  readonly rollbackTargetRuntimeId: string;
+  readonly rollbackTargetSpecHash: string;
+  readonly rollbackAuthority: string;
+}
+
+export interface ManagedBootstrapDurablePreparationReceipt {
+  readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly bootstrapIdentity: string;
+  readonly authorityFingerprint: string;
+  readonly recordId: string;
+  readonly recordedAt: string;
+}
+
+export interface ManagedBootstrapAuthorityStore {
+  /** Return only after the complete prepared authority is durably recoverable. */
+  recordPreparedAuthority(
+    authority: ManagedBootstrapPreparedAuthority,
+  ): Promise<ManagedBootstrapDurablePreparationReceipt>;
+}
+
 export interface ManagedBootstrapReplacementHandle {
   readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
@@ -142,6 +204,7 @@ export interface ManagedBootstrapReplacementHandle {
   readonly runtimeImageContentId: string;
   readonly originalSpecHash: string;
   readonly replacementSpecHash: string;
+  readonly replacementSpecCanonicalJson: string;
   readonly profileFingerprint: string;
 }
 
@@ -208,10 +271,7 @@ export class ManagedBootstrapCommitStateIndeterminateError extends Error {
   }
 }
 
-/**
- * OpenShell deletion is currently name-only. A provider that cannot enforce an
- * exact immutable owner precondition must retain the bounded held workload.
- */
+/** A provider without exact-ID deletion retains the bounded held workload. */
 export class ManagedBootstrapOwnerCleanupRequiredError extends Error {
   readonly sandboxName: string;
   readonly sandboxId: string;
@@ -271,14 +331,25 @@ export interface ManagedBootstrapAdapter {
   }): Promise<ManagedBootstrapObservedSnapshot>;
 
   /**
-   * Replace the held runtime with the image-owned root trampoline, restore the
-   * intended workload command, and retain the captured runtime for rollback.
+   * Create and fully inspect a stopped replacement without changing the held
+   * workload. The returned authority must be sufficient for exact cleanup.
    */
-  replaceForBootstrap(input: {
+  prepareBootstrapReplacement(input: {
     readonly handle: ManagedBootstrapHeldWorkloadHandle;
     readonly snapshot: ManagedBootstrapObservedSnapshot;
     readonly request: ManagedStartupRootApplyRequest;
     readonly replacementOptions: ManagedBootstrapReplacementOptions;
+  }): Promise<ManagedBootstrapPreparedReplacementHandle>;
+
+  /**
+   * Perform the destructive cutover only after the coordinator supplies the
+   * exact receipt proving that prepared authority was durably recorded.
+   */
+  activateBootstrapReplacement(input: {
+    readonly handle: ManagedBootstrapHeldWorkloadHandle;
+    readonly snapshot: ManagedBootstrapObservedSnapshot;
+    readonly prepared: ManagedBootstrapPreparedReplacementHandle;
+    readonly durablePreparation: ManagedBootstrapDurablePreparationReceipt;
   }): Promise<ManagedBootstrapReplacementHandle>;
 
   /** Return an identity-bound completion receipt, never an unqualified boolean. */
@@ -294,21 +365,33 @@ export interface ManagedBootstrapAdapter {
     readonly outcome: "commit" | "rollback";
     readonly handle: ManagedBootstrapHeldWorkloadHandle;
     readonly snapshot: ManagedBootstrapObservedSnapshot | null;
+    readonly prepared: ManagedBootstrapPreparedReplacementHandle | null;
+    readonly durablePreparation: ManagedBootstrapDurablePreparationReceipt | null;
     readonly replacement: ManagedBootstrapReplacementHandle | null;
     readonly completion: ManagedBootstrapCompletionReceipt | null;
   }): Promise<ManagedBootstrapFinalizationReceipt>;
 }
 
-export interface ManagedBootstrapSequenceInput {
+export interface ManagedBootstrapPreparationInput {
   readonly create: ManagedBootstrapCreateInput;
   readonly request: ManagedStartupRootApplyRequest;
   readonly replacementOptions: ManagedBootstrapReplacementOptions;
+}
+
+export interface ManagedBootstrapActivationInput {
+  readonly transaction: ManagedBootstrapPreparedTransaction;
+  readonly authorityStore: ManagedBootstrapAuthorityStore;
   readonly timeoutSecs: number;
 }
 
-export interface ManagedBootstrapSequenceResult {
+export interface ManagedBootstrapPreparedTransaction {
   readonly handle: ManagedBootstrapHeldWorkloadHandle;
   readonly snapshot: ManagedBootstrapObservedSnapshot;
+  readonly prepared: ManagedBootstrapPreparedReplacementHandle;
+}
+
+export interface ManagedBootstrapActivatedTransaction extends ManagedBootstrapPreparedTransaction {
+  readonly durablePreparation: ManagedBootstrapDurablePreparationReceipt;
   readonly replacement: ManagedBootstrapReplacementHandle;
   readonly completion: ManagedBootstrapCompletionReceipt;
 }
@@ -336,7 +419,8 @@ function assertExact(actual: unknown, expected: unknown, label: string): void {
 
 function assertTimestamp(value: unknown, label: string): void {
   assertOpaqueString(value, label);
-  if (new Date(value).toISOString() !== value) {
+  const timestamp = new Date(value);
+  if (!Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== value) {
     protocolFail(`${label} must be a canonical ISO timestamp`);
   }
 }
@@ -345,6 +429,9 @@ function assertSandboxIdentity(
   sandbox: ManagedBootstrapSandboxIdentity,
   expected?: Pick<ManagedBootstrapSandboxIdentity, "sandboxName" | "driverId">,
 ): void {
+  if (typeof sandbox !== "object" || sandbox === null || Array.isArray(sandbox)) {
+    protocolFail("sandbox identity must be an object");
+  }
   assertOpaqueString(sandbox.sandboxName, "sandbox name");
   assertOpaqueString(sandbox.sandboxId, "sandbox ID");
   assertOpaqueString(sandbox.driverId, "driver ID");
@@ -357,6 +444,9 @@ function assertSandboxIdentity(
 }
 
 function assertImageIdentity(image: ManagedBootstrapImageIdentity): void {
+  if (typeof image !== "object" || image === null || Array.isArray(image)) {
+    protocolFail("image identity must be an object");
+  }
   assertOpaqueString(image.repository, "image repository");
   if (!MANIFEST_DIGEST_RE.test(image.manifestDigest)) {
     protocolFail("image manifest digest must be canonical sha256");
@@ -364,6 +454,9 @@ function assertImageIdentity(image: ManagedBootstrapImageIdentity): void {
 }
 
 function assertAgentIdentity(identity: ManagedBootstrapAgentIdentity): void {
+  if (typeof identity !== "object" || identity === null || Array.isArray(identity)) {
+    protocolFail("agent identity must be an object");
+  }
   if (
     !Number.isSafeInteger(identity.uid) ||
     identity.uid < 0 ||
@@ -381,6 +474,10 @@ function assertAgentIdentity(identity: ManagedBootstrapAgentIdentity): void {
 function assertMetadata(metadata: Readonly<Record<string, string>>): void {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
     protocolFail("metadata must be a string record");
+  }
+  const prototype = Object.getPrototypeOf(metadata);
+  if (prototype !== Object.prototype && prototype !== null) {
+    protocolFail("metadata must be a plain string record");
   }
   for (const [key, value] of Object.entries(metadata)) {
     assertOpaqueString(key, "metadata key");
@@ -409,13 +506,21 @@ function assertExpectedPlan(
   plan: ManagedBootstrapExpectedPlan,
   request: ManagedStartupRootApplyRequest,
 ): void {
-  if (plan.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION) {
+  if (
+    typeof plan !== "object" ||
+    plan === null ||
+    Array.isArray(plan) ||
+    plan.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
+  ) {
     protocolFail("expected plan schema version is unsupported");
   }
   assertOpaqueString(plan.sandboxName, "planned sandbox name");
   assertOpaqueString(plan.driverId, "planned driver ID");
   assertImageIdentity(plan.image);
   if (
+    typeof plan.profile !== "object" ||
+    plan.profile === null ||
+    Array.isArray(plan.profile) ||
     plan.profile.agent !== request.agent ||
     plan.profile.fingerprint !== request.profileFingerprint ||
     !SHA256_RE.test(plan.profile.fingerprint)
@@ -426,6 +531,139 @@ function assertExpectedPlan(
   assertArgv(plan.intendedWorkloadArgv, "intended workload");
   assertArgv(plan.expectedSupervisorArgv, "expected supervisor");
   assertMetadata(plan.metadata);
+}
+
+function freezeArgv(argv: readonly string[], label: string): readonly string[] {
+  assertArgv(argv, label);
+  return Object.freeze([...argv]);
+}
+
+function freezeMetadata(
+  metadata: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  assertMetadata(metadata);
+  const copy: Record<string, string> = {};
+  for (const key of Object.keys(metadata).sort()) {
+    Object.defineProperty(copy, key, {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: metadata[key] as string,
+    });
+  }
+  return Object.freeze(copy);
+}
+
+function normalizeRootApplyRequest(
+  request: ManagedStartupRootApplyRequest,
+): ManagedStartupRootApplyRequest {
+  return parseManagedStartupRootApplyRequest(serializeManagedStartupRootApplyRequest(request));
+}
+
+function normalizeExpectedPlan(
+  plan: ManagedBootstrapExpectedPlan,
+  request: ManagedStartupRootApplyRequest,
+): ManagedBootstrapExpectedPlan {
+  assertExpectedPlan(plan, request);
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandboxName: plan.sandboxName,
+    driverId: plan.driverId,
+    image: Object.freeze({
+      repository: plan.image.repository,
+      manifestDigest: plan.image.manifestDigest,
+    }),
+    profile: Object.freeze({
+      agent: plan.profile.agent,
+      fingerprint: plan.profile.fingerprint,
+    }),
+    agentIdentity: Object.freeze({
+      uid: plan.agentIdentity.uid,
+      gid: plan.agentIdentity.gid,
+      workdir: plan.agentIdentity.workdir,
+    }),
+    intendedWorkloadArgv: freezeArgv(plan.intendedWorkloadArgv, "intended workload"),
+    expectedSupervisorArgv: freezeArgv(plan.expectedSupervisorArgv, "expected supervisor"),
+    metadata: freezeMetadata(plan.metadata),
+  });
+}
+
+function normalizeReplacementOptions(
+  options: ManagedBootstrapReplacementOptions,
+): ManagedBootstrapReplacementOptions {
+  if (
+    typeof options !== "object" ||
+    options === null ||
+    Array.isArray(options) ||
+    typeof options.values !== "object" ||
+    options.values === null ||
+    Array.isArray(options.values)
+  ) {
+    protocolFail("replacement options must be a plain value record");
+  }
+  const prototype = Object.getPrototypeOf(options.values);
+  if (prototype !== Object.prototype && prototype !== null) {
+    protocolFail("replacement options must be a plain value record");
+  }
+  const values: Record<string, string | number | boolean | readonly string[]> = Object.create(
+    null,
+  ) as Record<string, string | number | boolean | readonly string[]>;
+  for (const key of Object.keys(options.values).sort()) {
+    assertOpaqueString(key, "replacement option key");
+    const value = options.values[key];
+    if (Array.isArray(value)) {
+      if (value.length > 1024) protocolFail(`replacement option '${key}' has too many values`);
+      const entries = value.map((entry) => {
+        if (
+          typeof entry !== "string" ||
+          entry.includes("\0") ||
+          Buffer.byteLength(entry, "utf8") > 64 * 1024
+        ) {
+          protocolFail(`replacement option '${key}' has an invalid list value`);
+        }
+        return entry;
+      });
+      values[key] = Object.freeze(entries);
+      continue;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) protocolFail(`replacement option '${key}' must be finite`);
+      values[key] = value;
+      continue;
+    }
+    if (typeof value === "boolean") {
+      values[key] = value;
+      continue;
+    }
+    if (
+      typeof value !== "string" ||
+      value.includes("\0") ||
+      Buffer.byteLength(value, "utf8") > 64 * 1024
+    ) {
+      protocolFail(`replacement option '${key}' has an invalid value`);
+    }
+    values[key] = value;
+  }
+  return Object.freeze({ values: Object.freeze(values) });
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) protocolFail("authority contains a non-finite number");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+  }
+  if (typeof value !== "object") protocolFail("authority contains an unsupported value");
+  const record = value as Readonly<Record<string, unknown>>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
 }
 
 export function assertManagedBootstrapIdentity(value: string): void {
@@ -487,235 +725,720 @@ export function renderManagedBootstrapHeldCommand(
   ]);
 }
 
-function assertHeldHandle(
-  handle: ManagedBootstrapHeldWorkloadHandle,
+function freezeSandboxIdentity(
+  sandbox: ManagedBootstrapSandboxIdentity,
+  expected?: Pick<ManagedBootstrapSandboxIdentity, "sandboxName" | "driverId">,
+): ManagedBootstrapSandboxIdentity {
+  assertSandboxIdentity(sandbox, expected);
+  return Object.freeze({
+    sandboxName: sandbox.sandboxName,
+    sandboxId: sandbox.sandboxId,
+    driverId: sandbox.driverId,
+  });
+}
+
+function normalizeCreateReceipt(
+  receipt: ManagedBootstrapCreateReceipt,
+  plan: ManagedBootstrapExpectedPlan,
+): ManagedBootstrapCreateReceipt {
+  if (typeof receipt !== "object" || receipt === null || Array.isArray(receipt)) {
+    protocolFail("create receipt must be an object");
+  }
+  if (receipt.ready !== true) protocolFail("create receipt is not Ready");
+  const sandbox = freezeSandboxIdentity(receipt.sandbox, plan);
+  assertTimestamp(receipt.readyAt, "create receipt timestamp");
+  return Object.freeze({ sandbox, ready: true, readyAt: receipt.readyAt });
+}
+
+function normalizeHeldHandle(
+  candidate: ManagedBootstrapHeldWorkloadHandle,
   input: ManagedBootstrapCreateInput,
-): void {
-  if (handle.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION) {
+  launchReceipt: ManagedBootstrapCreateReceipt,
+): ManagedBootstrapHeldWorkloadHandle {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
+  ) {
     protocolFail("held workload schema version is unsupported");
   }
-  assertManagedBootstrapIdentity(handle.bootstrapIdentity);
-  if (
-    input.bootstrapIdentity !== undefined &&
-    handle.bootstrapIdentity !== input.bootstrapIdentity
-  ) {
+  assertManagedBootstrapIdentity(candidate.bootstrapIdentity);
+  if (candidate.bootstrapIdentity !== input.bootstrapIdentity) {
     protocolFail("held workload changed the caller-supplied bootstrap identity");
   }
-  assertExact(handle.plan, input.plan, "held workload plan");
-  assertSandboxIdentity(handle.sandbox, input.plan);
+  assertExact(candidate.plan, input.plan, "held workload plan");
+  assertExact(candidate.sandbox, launchReceipt.sandbox, "held workload sandbox");
+  assertExact(candidate.createReceipt, launchReceipt, "held workload create receipt");
   assertExact(
-    handle.intendedWorkloadArgv,
+    candidate.intendedWorkloadArgv,
     input.plan.intendedWorkloadArgv,
     "intended workload argv",
   );
-  assertExact(
-    handle.heldWorkloadArgv,
-    renderManagedBootstrapHeldCommand(
-      input.request,
-      handle.bootstrapIdentity,
-      input.plan.intendedWorkloadArgv,
-    ),
-    "held workload argv",
+  const heldWorkloadArgv = renderManagedBootstrapHeldCommand(
+    input.request,
+    candidate.bootstrapIdentity,
+    input.plan.intendedWorkloadArgv,
   );
-  if (handle.createReceipt.ready !== true) {
-    protocolFail("create receipt is not Ready");
-  }
-  assertExact(handle.createReceipt.sandbox, handle.sandbox, "create receipt sandbox");
-  assertTimestamp(handle.createReceipt.readyAt, "create receipt timestamp");
+  assertExact(candidate.heldWorkloadArgv, heldWorkloadArgv, "held workload argv");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: launchReceipt.sandbox,
+    bootstrapIdentity: candidate.bootstrapIdentity,
+    heldWorkloadArgv,
+    intendedWorkloadArgv: input.plan.intendedWorkloadArgv,
+    plan: input.plan,
+    createReceipt: launchReceipt,
+  });
 }
 
-function assertDiscoveredWorkload(
-  discovered: ManagedBootstrapDiscoveredWorkload,
+function normalizeDiscoveredWorkload(
+  candidate: ManagedBootstrapDiscoveredWorkload,
   handle: ManagedBootstrapHeldWorkloadHandle,
-): void {
-  assertExact(discovered.sandbox, handle.sandbox, "discovered sandbox");
-  if (discovered.bootstrapIdentity !== handle.bootstrapIdentity) {
+): ManagedBootstrapDiscoveredWorkload {
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+    protocolFail("discovered workload must be an object");
+  }
+  assertExact(candidate.sandbox, handle.sandbox, "discovered sandbox");
+  if (candidate.bootstrapIdentity !== handle.bootstrapIdentity) {
     protocolFail("discovered workload bootstrap identity changed");
   }
-  assertOpaqueString(discovered.runtimeId, "discovered runtime ID");
+  assertOpaqueString(candidate.runtimeId, "discovered runtime ID");
+  return Object.freeze({
+    sandbox: handle.sandbox,
+    runtimeId: candidate.runtimeId,
+    bootstrapIdentity: handle.bootstrapIdentity,
+  });
 }
 
-function assertObservedSnapshot(
-  snapshot: ManagedBootstrapObservedSnapshot,
+function normalizeObservedSnapshot(
+  candidate: ManagedBootstrapObservedSnapshot,
   handle: ManagedBootstrapHeldWorkloadHandle,
   discovered: ManagedBootstrapDiscoveredWorkload,
-): void {
-  if (snapshot.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION) {
+): ManagedBootstrapObservedSnapshot {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
+  ) {
     protocolFail("observed snapshot schema version is unsupported");
   }
-  assertExact(snapshot.sandbox, handle.sandbox, "observed sandbox");
-  assertExact(snapshot.image, handle.plan.image, "observed image");
-  assertExact(snapshot.agentIdentity, handle.plan.agentIdentity, "observed agent identity");
-  assertExact(snapshot.supervisorArgv, handle.plan.expectedSupervisorArgv, "supervisor argv");
-  assertExact(snapshot.heldWorkloadArgv, handle.heldWorkloadArgv, "observed held workload argv");
-  assertExact(snapshot.metadata, handle.plan.metadata, "observed metadata");
+  assertExact(candidate.sandbox, handle.sandbox, "observed sandbox");
+  assertExact(candidate.image, handle.plan.image, "observed image");
+  assertExact(candidate.agentIdentity, handle.plan.agentIdentity, "observed agent identity");
+  assertExact(candidate.supervisorArgv, handle.plan.expectedSupervisorArgv, "supervisor argv");
+  assertExact(candidate.heldWorkloadArgv, handle.heldWorkloadArgv, "observed held workload argv");
+  assertExact(candidate.metadata, handle.plan.metadata, "observed metadata");
   if (
-    snapshot.runtimeId !== discovered.runtimeId ||
-    snapshot.bootstrapIdentity !== handle.bootstrapIdentity
+    candidate.runtimeId !== discovered.runtimeId ||
+    candidate.bootstrapIdentity !== handle.bootstrapIdentity
   ) {
     protocolFail("observed runtime identity changed after discovery");
   }
-  assertOpaqueString(snapshot.runtimeImageContentId, "runtime image content ID");
-  if (!SHA256_RE.test(snapshot.specHash)) {
+  assertOpaqueString(candidate.runtimeImageContentId, "runtime image content ID");
+  if (!SHA256_RE.test(candidate.specHash)) {
     protocolFail("observed spec hash must be canonical sha256");
   }
-  assertOpaqueString(snapshot.specCanonicalJson, "canonical runtime spec");
+  assertOpaqueString(candidate.specCanonicalJson, "canonical runtime spec");
+  if (
+    createHash("sha256").update(candidate.specCanonicalJson, "utf8").digest("hex") !==
+    candidate.specHash
+  ) {
+    protocolFail("observed spec hash does not match its canonical runtime spec");
+  }
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: handle.sandbox,
+    runtimeId: candidate.runtimeId,
+    bootstrapIdentity: handle.bootstrapIdentity,
+    image: handle.plan.image,
+    runtimeImageContentId: candidate.runtimeImageContentId,
+    specHash: candidate.specHash,
+    specCanonicalJson: candidate.specCanonicalJson,
+    agentIdentity: handle.plan.agentIdentity,
+    supervisorArgv: handle.plan.expectedSupervisorArgv,
+    heldWorkloadArgv: handle.heldWorkloadArgv,
+    metadata: handle.plan.metadata,
+  });
 }
 
-function assertReplacementHandle(
-  replacement: ManagedBootstrapReplacementHandle,
+function normalizePreparedReplacement(
+  candidate: ManagedBootstrapPreparedReplacementHandle,
   handle: ManagedBootstrapHeldWorkloadHandle,
   snapshot: ManagedBootstrapObservedSnapshot,
-): void {
-  if (replacement.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION) {
-    protocolFail("replacement schema version is unsupported");
-  }
-  assertExact(replacement.sandbox, handle.sandbox, "replacement sandbox");
-  assertExact(replacement.image, snapshot.image, "replacement image");
+): ManagedBootstrapPreparedReplacementHandle {
   if (
-    replacement.bootstrapIdentity !== handle.bootstrapIdentity ||
-    replacement.originalRuntimeId !== snapshot.runtimeId ||
-    replacement.runtimeImageContentId !== snapshot.runtimeImageContentId ||
-    replacement.originalSpecHash !== snapshot.specHash ||
-    replacement.profileFingerprint !== handle.plan.profile.fingerprint
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
   ) {
-    protocolFail("replacement receipt changed immutable transaction authority");
+    protocolFail("prepared replacement schema version is unsupported");
   }
-  assertOpaqueString(replacement.replacementRuntimeId, "replacement runtime ID");
-  if (replacement.replacementRuntimeId === replacement.originalRuntimeId) {
-    protocolFail("replacement runtime ID must differ from the captured runtime");
+  assertExact(candidate.sandbox, handle.sandbox, "prepared replacement sandbox");
+  assertExact(candidate.image, snapshot.image, "prepared replacement image");
+  if (
+    candidate.bootstrapIdentity !== handle.bootstrapIdentity ||
+    candidate.originalRuntimeId !== snapshot.runtimeId ||
+    candidate.runtimeImageContentId !== snapshot.runtimeImageContentId ||
+    candidate.originalSpecHash !== snapshot.specHash ||
+    candidate.profileFingerprint !== handle.plan.profile.fingerprint
+  ) {
+    protocolFail("prepared replacement changed immutable transaction authority");
   }
-  if (!SHA256_RE.test(replacement.replacementSpecHash)) {
-    protocolFail("replacement spec hash must be canonical sha256");
+  assertOpaqueString(candidate.preparedRuntimeId, "prepared runtime ID");
+  if (candidate.preparedRuntimeId === candidate.originalRuntimeId) {
+    protocolFail("prepared runtime ID must differ from the captured runtime");
   }
+  for (const [label, hash] of [
+    ["prepared spec hash", candidate.preparedSpecHash],
+    ["expected activated spec hash", candidate.expectedActivatedSpecHash],
+  ] as const) {
+    if (!SHA256_RE.test(hash)) protocolFail(`${label} must be canonical sha256`);
+  }
+  for (const [label, text, hash] of [
+    ["prepared spec", candidate.preparedSpecCanonicalJson, candidate.preparedSpecHash],
+    [
+      "expected activated spec",
+      candidate.expectedActivatedSpecCanonicalJson,
+      candidate.expectedActivatedSpecHash,
+    ],
+  ] as const) {
+    assertOpaqueString(text, `${label} canonical JSON`);
+    if (createHash("sha256").update(text, "utf8").digest("hex") !== hash) {
+      protocolFail(`${label} hash does not match its canonical runtime spec`);
+    }
+  }
+  assertOpaqueString(candidate.rollbackAuthority, "prepared rollback authority");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: handle.sandbox,
+    bootstrapIdentity: handle.bootstrapIdentity,
+    originalRuntimeId: snapshot.runtimeId,
+    preparedRuntimeId: candidate.preparedRuntimeId,
+    image: snapshot.image,
+    runtimeImageContentId: snapshot.runtimeImageContentId,
+    originalSpecHash: snapshot.specHash,
+    preparedSpecHash: candidate.preparedSpecHash,
+    preparedSpecCanonicalJson: candidate.preparedSpecCanonicalJson,
+    expectedActivatedSpecHash: candidate.expectedActivatedSpecHash,
+    expectedActivatedSpecCanonicalJson: candidate.expectedActivatedSpecCanonicalJson,
+    profileFingerprint: handle.plan.profile.fingerprint,
+    rollbackAuthority: candidate.rollbackAuthority,
+  });
 }
 
-function assertCompletionReceipt(
-  completion: ManagedBootstrapCompletionReceipt,
+function createPreparedAuthority(
+  transaction: ManagedBootstrapPreparedTransaction,
+): ManagedBootstrapPreparedAuthority {
+  const { handle, snapshot, prepared } = transaction;
+  const planFingerprint = createHash("sha256")
+    .update(canonicalJson(handle.plan), "utf8")
+    .digest("hex");
+  const bound = Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    phase: "prepared" as const,
+    sandbox: handle.sandbox,
+    bootstrapIdentity: handle.bootstrapIdentity,
+    planFingerprint,
+    image: handle.plan.image,
+    runtimeImageContentId: snapshot.runtimeImageContentId,
+    profileFingerprint: handle.plan.profile.fingerprint,
+    originalRuntimeId: snapshot.runtimeId,
+    preparedRuntimeId: prepared.preparedRuntimeId,
+    originalSpecHash: snapshot.specHash,
+    preparedSpecHash: prepared.preparedSpecHash,
+    expectedActivatedSpecHash: prepared.expectedActivatedSpecHash,
+    rollbackTargetRuntimeId: snapshot.runtimeId,
+    rollbackTargetSpecHash: snapshot.specHash,
+    rollbackAuthority: prepared.rollbackAuthority,
+  });
+  const authorityFingerprint = createHash("sha256")
+    .update(canonicalJson(bound), "utf8")
+    .digest("hex");
+  return Object.freeze({ ...bound, authorityFingerprint });
+}
+
+function normalizeDurablePreparationReceipt(
+  candidate: ManagedBootstrapDurablePreparationReceipt,
+  authority: ManagedBootstrapPreparedAuthority,
+): ManagedBootstrapDurablePreparationReceipt {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
+  ) {
+    protocolFail("durable preparation receipt schema version is unsupported");
+  }
+  assertExact(candidate.sandbox, authority.sandbox, "durable preparation sandbox");
+  if (
+    candidate.bootstrapIdentity !== authority.bootstrapIdentity ||
+    candidate.authorityFingerprint !== authority.authorityFingerprint
+  ) {
+    protocolFail("durable preparation receipt changed prepared authority");
+  }
+  assertOpaqueString(candidate.recordId, "durable preparation record ID");
+  assertTimestamp(candidate.recordedAt, "durable preparation timestamp");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: authority.sandbox,
+    bootstrapIdentity: authority.bootstrapIdentity,
+    authorityFingerprint: authority.authorityFingerprint,
+    recordId: candidate.recordId,
+    recordedAt: candidate.recordedAt,
+  });
+}
+
+function normalizeReplacementHandle(
+  candidate: ManagedBootstrapReplacementHandle,
+  transaction: ManagedBootstrapPreparedTransaction,
+): ManagedBootstrapReplacementHandle {
+  const { handle, snapshot, prepared } = transaction;
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
+  ) {
+    protocolFail("replacement schema version is unsupported");
+  }
+  assertExact(candidate.sandbox, handle.sandbox, "replacement sandbox");
+  assertExact(candidate.image, snapshot.image, "replacement image");
+  if (
+    candidate.bootstrapIdentity !== handle.bootstrapIdentity ||
+    candidate.originalRuntimeId !== snapshot.runtimeId ||
+    candidate.replacementRuntimeId !== prepared.preparedRuntimeId ||
+    candidate.runtimeImageContentId !== snapshot.runtimeImageContentId ||
+    candidate.originalSpecHash !== snapshot.specHash ||
+    candidate.replacementSpecHash !== prepared.expectedActivatedSpecHash ||
+    candidate.replacementSpecCanonicalJson !== prepared.expectedActivatedSpecCanonicalJson ||
+    candidate.profileFingerprint !== handle.plan.profile.fingerprint
+  ) {
+    protocolFail("replacement receipt changed immutable prepared authority");
+  }
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: handle.sandbox,
+    bootstrapIdentity: handle.bootstrapIdentity,
+    originalRuntimeId: snapshot.runtimeId,
+    replacementRuntimeId: prepared.preparedRuntimeId,
+    image: snapshot.image,
+    runtimeImageContentId: snapshot.runtimeImageContentId,
+    originalSpecHash: snapshot.specHash,
+    replacementSpecHash: prepared.expectedActivatedSpecHash,
+    replacementSpecCanonicalJson: prepared.expectedActivatedSpecCanonicalJson,
+    profileFingerprint: handle.plan.profile.fingerprint,
+  });
+}
+
+function normalizeCompletionReceipt(
+  candidate: ManagedBootstrapCompletionReceipt,
   handle: ManagedBootstrapHeldWorkloadHandle,
   replacement: ManagedBootstrapReplacementHandle,
-): void {
-  if (completion.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION) {
+): ManagedBootstrapCompletionReceipt {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
+  ) {
     protocolFail("completion schema version is unsupported");
   }
-  assertExact(completion.sandbox, handle.sandbox, "completion sandbox");
-  assertExact(completion.image, replacement.image, "completion image");
+  assertExact(candidate.sandbox, handle.sandbox, "completion sandbox");
+  assertExact(candidate.image, replacement.image, "completion image");
   if (
-    completion.bootstrapIdentity !== replacement.bootstrapIdentity ||
-    completion.runtimeId !== replacement.replacementRuntimeId ||
-    completion.runtimeImageContentId !== replacement.runtimeImageContentId ||
-    completion.originalSpecHash !== replacement.originalSpecHash ||
-    completion.replacementSpecHash !== replacement.replacementSpecHash ||
-    completion.profileFingerprint !== replacement.profileFingerprint
+    candidate.bootstrapIdentity !== replacement.bootstrapIdentity ||
+    candidate.runtimeId !== replacement.replacementRuntimeId ||
+    candidate.runtimeImageContentId !== replacement.runtimeImageContentId ||
+    candidate.originalSpecHash !== replacement.originalSpecHash ||
+    candidate.replacementSpecHash !== replacement.replacementSpecHash ||
+    candidate.profileFingerprint !== replacement.profileFingerprint
   ) {
     protocolFail("completion receipt changed immutable transaction authority");
   }
-  if (typeof completion.transactionPending !== "boolean") {
+  if (typeof candidate.transactionPending !== "boolean") {
     protocolFail("completion receipt transaction state is invalid");
   }
-  assertTimestamp(completion.completedAt, "completion timestamp");
+  assertTimestamp(candidate.completedAt, "completion timestamp");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: handle.sandbox,
+    runtimeId: replacement.replacementRuntimeId,
+    image: replacement.image,
+    runtimeImageContentId: replacement.runtimeImageContentId,
+    originalSpecHash: replacement.originalSpecHash,
+    replacementSpecHash: replacement.replacementSpecHash,
+    profileFingerprint: replacement.profileFingerprint,
+    bootstrapIdentity: replacement.bootstrapIdentity,
+    transactionPending: candidate.transactionPending,
+    completedAt: candidate.completedAt,
+  });
 }
 
-function assertRollbackReceipt(
-  receipt: ManagedBootstrapFinalizationReceipt,
-  handle: ManagedBootstrapHeldWorkloadHandle,
-): void {
+function normalizeFinalizationReceipt(
+  candidate: ManagedBootstrapFinalizationReceipt,
+  input: {
+    readonly outcome: "commit" | "rollback";
+    readonly handle: ManagedBootstrapHeldWorkloadHandle;
+    readonly snapshot: ManagedBootstrapObservedSnapshot | null;
+  },
+): ManagedBootstrapFinalizationReceipt {
   if (
-    receipt.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
-    receipt.outcome !== "rolled-back"
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    candidate.outcome !== (input.outcome === "commit" ? "committed" : "rolled-back")
   ) {
-    protocolFail("rollback receipt has an invalid schema or outcome");
+    protocolFail("finalization receipt has an invalid schema or outcome");
   }
-  assertExact(receipt.sandbox, handle.sandbox, "rollback sandbox");
-  if (receipt.bootstrapIdentity !== handle.bootstrapIdentity) {
-    protocolFail("rollback receipt bootstrap identity changed");
-  }
-  if (receipt.restoredRuntimeId !== null) {
-    assertOpaqueString(receipt.restoredRuntimeId, "restored runtime ID");
-  }
-  if (receipt.restoredSpecHash !== null && !SHA256_RE.test(receipt.restoredSpecHash)) {
-    protocolFail("restored spec hash must be canonical sha256");
+  assertExact(candidate.sandbox, input.handle.sandbox, "finalization sandbox");
+  if (candidate.bootstrapIdentity !== input.handle.bootstrapIdentity) {
+    protocolFail("finalization receipt bootstrap identity changed");
   }
   if (
-    typeof receipt.heldWorkloadRemoved !== "boolean" ||
-    typeof receipt.alreadyRolledBack !== "boolean"
+    typeof candidate.heldWorkloadRemoved !== "boolean" ||
+    typeof candidate.alreadyRolledBack !== "boolean"
   ) {
-    protocolFail("rollback receipt state is invalid");
+    protocolFail("finalization receipt state is invalid");
   }
-  assertTimestamp(receipt.finalizedAt, "rollback timestamp");
+  if (input.outcome === "commit") {
+    if (
+      candidate.restoredRuntimeId !== null ||
+      candidate.restoredSpecHash !== null ||
+      candidate.alreadyRolledBack
+    ) {
+      protocolFail("commit receipt cannot report rollback state");
+    }
+  } else if (candidate.heldWorkloadRemoved) {
+    if (candidate.restoredRuntimeId !== null || candidate.restoredSpecHash !== null) {
+      protocolFail("removed workload receipt cannot also report a restored runtime");
+    }
+  } else if (
+    input.snapshot === null ||
+    candidate.restoredRuntimeId !== input.snapshot.runtimeId ||
+    candidate.restoredSpecHash !== input.snapshot.specHash
+  ) {
+    protocolFail("rollback receipt does not restore the exact captured runtime and spec");
+  }
+  assertTimestamp(candidate.finalizedAt, "finalization timestamp");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox: input.handle.sandbox,
+    bootstrapIdentity: input.handle.bootstrapIdentity,
+    outcome: candidate.outcome,
+    restoredRuntimeId: candidate.restoredRuntimeId,
+    restoredSpecHash: candidate.restoredSpecHash,
+    heldWorkloadRemoved: candidate.heldWorkloadRemoved,
+    alreadyRolledBack: candidate.alreadyRolledBack,
+    finalizedAt: candidate.finalizedAt,
+  });
+}
+
+function normalizeIncompleteCreateCleanupReceipt(
+  candidate: ManagedBootstrapFinalizationReceipt,
+  plan: ManagedBootstrapExpectedPlan,
+  bootstrapIdentity: string,
+): ManagedBootstrapFinalizationReceipt {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    candidate.outcome !== "rolled-back" ||
+    candidate.bootstrapIdentity !== bootstrapIdentity ||
+    candidate.heldWorkloadRemoved !== true ||
+    candidate.restoredRuntimeId !== null ||
+    candidate.restoredSpecHash !== null ||
+    typeof candidate.alreadyRolledBack !== "boolean"
+  ) {
+    protocolFail("incomplete-create cleanup receipt does not prove exact absence");
+  }
+  const sandbox = freezeSandboxIdentity(candidate.sandbox, plan);
+  assertTimestamp(candidate.finalizedAt, "incomplete-create cleanup timestamp");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandbox,
+    bootstrapIdentity,
+    outcome: "rolled-back",
+    restoredRuntimeId: null,
+    restoredSpecHash: null,
+    heldWorkloadRemoved: true,
+    alreadyRolledBack: candidate.alreadyRolledBack,
+    finalizedAt: candidate.finalizedAt,
+  });
 }
 
 function discoveryInput(
   handle: ManagedBootstrapHeldWorkloadHandle,
 ): ManagedBootstrapDiscoveryInput {
-  return {
+  return Object.freeze({
     sandbox: handle.sandbox,
     bootstrapIdentity: handle.bootstrapIdentity,
     expectedImage: handle.plan.image,
     metadata: handle.plan.metadata,
-  };
+  });
 }
 
-/**
- * Own the driver-neutral bootstrap transaction. No discovery or replacement
- * begins until create returns an exact Ready receipt. Production wiring is
- * intentionally outside this module.
- */
-export async function runManagedBootstrapSequence(
+async function rollbackAfterFailure(
   adapter: ManagedBootstrapAdapter,
-  input: ManagedBootstrapSequenceInput,
-): Promise<ManagedBootstrapSequenceResult> {
-  assertExpectedPlan(input.create.plan, input.request);
-  assertExact(input.create.request, input.request, "create root application request");
+  error: unknown,
+  input: {
+    readonly handle: ManagedBootstrapHeldWorkloadHandle;
+    readonly snapshot: ManagedBootstrapObservedSnapshot | null;
+    readonly prepared: ManagedBootstrapPreparedReplacementHandle | null;
+    readonly durablePreparation: ManagedBootstrapDurablePreparationReceipt | null;
+    readonly replacement: ManagedBootstrapReplacementHandle | null;
+  },
+): Promise<never> {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  try {
+    const rollback = normalizeFinalizationReceipt(
+      await adapter.finalizeBootstrap({
+        outcome: "rollback",
+        ...input,
+        completion: null,
+      }),
+      { outcome: "rollback", handle: input.handle, snapshot: input.snapshot },
+    );
+    (
+      failure as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }
+    ).managedBootstrapRollback = rollback;
+  } catch (rollbackError) {
+    attachManagedBootstrapRollbackError(failure, rollbackError);
+  }
+  throw failure;
+}
+
+type ManagedBootstrapCoordinatorState =
+  | "prepared"
+  | "activating"
+  | "activation-consumed"
+  | "activated"
+  | "finalizing"
+  | "finalized"
+  | "rollback-attempted"
+  | "finalization-indeterminate";
+
+const TRANSACTION_STATES = new WeakMap<object, ManagedBootstrapCoordinatorState>();
+
+/**
+ * Create the held workload and stopped replacement without a destructive
+ * cutover. Production wiring is intentionally outside this dormant module.
+ */
+export async function prepareManagedBootstrapSequence(
+  adapter: ManagedBootstrapAdapter,
+  input: ManagedBootstrapPreparationInput,
+): Promise<ManagedBootstrapPreparedTransaction> {
+  const request = normalizeRootApplyRequest(input.request);
+  const createRequest = normalizeRootApplyRequest(input.create.request);
+  assertExact(createRequest, request, "create root application request");
+  const plan = normalizeExpectedPlan(input.create.plan, request);
+  const replacementOptions = normalizeReplacementOptions(input.replacementOptions);
+  const bootstrapIdentity = input.create.bootstrapIdentity ?? createManagedBootstrapIdentity();
+  assertManagedBootstrapIdentity(bootstrapIdentity);
+  const heldWorkloadArgv = renderManagedBootstrapHeldCommand(
+    request,
+    bootstrapIdentity,
+    plan.intendedWorkloadArgv,
+  );
+
+  let launchCalls = 0;
+  let launchProtocolViolation = false;
+  let launchReceipt: ManagedBootstrapCreateReceipt | null = null;
+  const create: ManagedBootstrapCreateInput = Object.freeze({
+    plan,
+    request,
+    bootstrapIdentity,
+    launch: async (candidate: Parameters<ManagedBootstrapCreateInput["launch"]>[0]) => {
+      launchCalls += 1;
+      if (launchCalls !== 1) {
+        launchProtocolViolation = true;
+        protocolFail("provider attempted more than one held workload launch");
+      }
+      if (
+        candidate.bootstrapIdentity !== bootstrapIdentity ||
+        !isDeepStrictEqual(candidate.heldWorkloadArgv, heldWorkloadArgv)
+      ) {
+        launchProtocolViolation = true;
+        protocolFail("provider changed the identity-bound held workload launch");
+      }
+      launchReceipt = normalizeCreateReceipt(
+        await input.create.launch({ heldWorkloadArgv, bootstrapIdentity }),
+        plan,
+      );
+      return launchReceipt;
+    },
+  });
+
+  let handle: ManagedBootstrapHeldWorkloadHandle;
+  try {
+    const candidate = await adapter.createHeldWorkload(create);
+    if (launchProtocolViolation || launchCalls !== 1 || !launchReceipt) {
+      protocolFail("provider returned a held workload without one exact authorized launch");
+    }
+    handle = normalizeHeldHandle(candidate, create, launchReceipt);
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      const rollback = normalizeIncompleteCreateCleanupReceipt(
+        await adapter.cleanupIncompleteCreate({ plan, bootstrapIdentity, heldWorkloadArgv }),
+        plan,
+        bootstrapIdentity,
+      );
+      (
+        failure as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }
+      ).managedBootstrapRollback = rollback;
+    } catch (cleanupError) {
+      attachManagedBootstrapRollbackError(failure, cleanupError);
+    }
+    throw failure;
+  }
+
+  let snapshot: ManagedBootstrapObservedSnapshot | null = null;
+  let prepared: ManagedBootstrapPreparedReplacementHandle | null = null;
+  try {
+    const discovered = normalizeDiscoveredWorkload(
+      await adapter.discoverHeldWorkload(discoveryInput(handle)),
+      handle,
+    );
+    snapshot = normalizeObservedSnapshot(
+      await adapter.inspectHeldWorkload({ handle, discovered }),
+      handle,
+      discovered,
+    );
+    prepared = normalizePreparedReplacement(
+      await adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions,
+      }),
+      handle,
+      snapshot,
+    );
+    const transaction = Object.freeze({ handle, snapshot, prepared });
+    TRANSACTION_STATES.set(transaction, "prepared");
+    return transaction;
+  } catch (error) {
+    return rollbackAfterFailure(adapter, error, {
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: null,
+      replacement: null,
+    });
+  }
+}
+
+/** Durably record prepared authority before allowing provider cutover. */
+export async function activateManagedBootstrapSequence(
+  adapter: ManagedBootstrapAdapter,
+  input: ManagedBootstrapActivationInput,
+): Promise<ManagedBootstrapActivatedTransaction> {
+  if (TRANSACTION_STATES.get(input.transaction) !== "prepared") {
+    protocolFail("activation requires the exact prepared transaction returned by this coordinator");
+  }
   if (!Number.isFinite(input.timeoutSecs) || input.timeoutSecs <= 0) {
     protocolFail("bootstrap timeout must be positive and finite");
   }
-
-  let handle: ManagedBootstrapHeldWorkloadHandle | null = null;
-  let snapshot: ManagedBootstrapObservedSnapshot | null = null;
+  const { handle, snapshot, prepared } = input.transaction;
+  TRANSACTION_STATES.set(input.transaction, "activating");
+  let durablePreparation: ManagedBootstrapDurablePreparationReceipt | null = null;
   let replacement: ManagedBootstrapReplacementHandle | null = null;
   try {
-    handle = await adapter.createHeldWorkload(input.create);
-    assertHeldHandle(handle, input.create);
-    const discovered = await adapter.discoverHeldWorkload(discoveryInput(handle));
-    assertDiscoveredWorkload(discovered, handle);
-    snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
-    assertObservedSnapshot(snapshot, handle, discovered);
-    replacement = await adapter.replaceForBootstrap({
+    const authority = createPreparedAuthority(input.transaction);
+    durablePreparation = normalizeDurablePreparationReceipt(
+      await input.authorityStore.recordPreparedAuthority(authority),
+      authority,
+    );
+    replacement = normalizeReplacementHandle(
+      await adapter.activateBootstrapReplacement({
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation,
+      }),
+      input.transaction,
+    );
+    const completion = normalizeCompletionReceipt(
+      await adapter.awaitBootstrap({
+        handle,
+        snapshot,
+        replacement,
+        timeoutSecs: input.timeoutSecs,
+      }),
       handle,
-      snapshot,
-      request: input.request,
-      replacementOptions: input.replacementOptions,
-    });
-    assertReplacementHandle(replacement, handle, snapshot);
-    const completion = await adapter.awaitBootstrap({
-      handle,
-      snapshot,
       replacement,
-      timeoutSecs: input.timeoutSecs,
+    );
+    const transaction = Object.freeze({
+      ...input.transaction,
+      durablePreparation,
+      replacement,
+      completion,
     });
-    assertCompletionReceipt(completion, handle, replacement);
-    return Object.freeze({ handle, snapshot, replacement, completion });
+    TRANSACTION_STATES.set(input.transaction, "activation-consumed");
+    TRANSACTION_STATES.set(transaction, "activated");
+    return transaction;
   } catch (error) {
-    if (handle) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      try {
-        const rollback = await adapter.finalizeBootstrap({
-          outcome: "rollback",
-          handle,
-          snapshot,
-          replacement,
-          completion: null,
-        });
-        assertRollbackReceipt(rollback, handle);
-        (
-          failure as Error & { managedBootstrapRollback?: ManagedBootstrapFinalizationReceipt }
-        ).managedBootstrapRollback = rollback;
-      } catch (rollbackError) {
-        attachManagedBootstrapRollbackError(failure, rollbackError);
-      }
-      throw failure;
-    }
+    TRANSACTION_STATES.set(input.transaction, "rollback-attempted");
+    return rollbackAfterFailure(adapter, error, {
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation,
+      replacement,
+    });
+  }
+}
+
+/** Validate provider finalization against the exact prepared or activated authority. */
+export async function finalizeManagedBootstrapSequence(
+  adapter: ManagedBootstrapAdapter,
+  input: {
+    readonly outcome: "commit" | "rollback";
+    readonly transaction:
+      | ManagedBootstrapPreparedTransaction
+      | ManagedBootstrapActivatedTransaction;
+  },
+): Promise<ManagedBootstrapFinalizationReceipt> {
+  const state = TRANSACTION_STATES.get(input.transaction);
+  const activated = state === "activated";
+  if (!activated && state !== "prepared") {
+    protocolFail("finalization requires an exact coordinator-owned transaction");
+  }
+  if (input.outcome === "commit" && !activated) {
+    protocolFail("commit requires a completed activated transaction");
+  }
+  const transaction = input.transaction;
+  const replacement = activated
+    ? (transaction as ManagedBootstrapActivatedTransaction).replacement
+    : null;
+  const completion = activated
+    ? (transaction as ManagedBootstrapActivatedTransaction).completion
+    : null;
+  TRANSACTION_STATES.set(transaction, "finalizing");
+  try {
+    const receipt = normalizeFinalizationReceipt(
+      await adapter.finalizeBootstrap({
+        outcome: input.outcome,
+        handle: transaction.handle,
+        snapshot: transaction.snapshot,
+        prepared: transaction.prepared,
+        durablePreparation: activated
+          ? (transaction as ManagedBootstrapActivatedTransaction).durablePreparation
+          : null,
+        replacement,
+        completion,
+      }),
+      { outcome: input.outcome, handle: transaction.handle, snapshot: transaction.snapshot },
+    );
+    TRANSACTION_STATES.set(transaction, "finalized");
+    return receipt;
+  } catch (error) {
+    TRANSACTION_STATES.set(transaction, "finalization-indeterminate");
     throw error;
   }
 }

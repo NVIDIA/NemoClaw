@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { MANAGED_STARTUP_AGENTS } from "../src/lib/onboard/managed-startup/profile";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TRAMPOLINE = path.join(ROOT, "scripts", "managed-bootstrap-trampoline.sh");
 
@@ -38,7 +40,9 @@ describe("managed bootstrap image trampoline", () => {
     }
   });
 
-  it("consumes the protected request before exact supervisor exec and drops bootstrap variables", () => {
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("consumes the protected %s request before exact supervisor exec and drops bootstrap variables", (agent) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-trampoline-"));
     try {
       const request = path.join(directory, "request.json");
@@ -73,10 +77,10 @@ printf 'node:%s:home=%s:path=%s:lang=%s:capability=%s\\n' "$*" "$HOME" "$PATH" "
 case "$*" in
   *--apply-bootstrap-file*)
     /bin/rm -f ${JSON.stringify(request)}
-    printf '%s\\n' 'hermes:${"a".repeat(64)}:${"b".repeat(64)}' >${JSON.stringify(completion)}
+    printf '%s\\n' '${agent}:${"a".repeat(64)}:${"b".repeat(64)}' >${JSON.stringify(completion)}
     ;;
   *--verify-bootstrap-completion*)
-    test "$(/bin/cat ${JSON.stringify(completion)})" = 'hermes:${"a".repeat(64)}:${"b".repeat(64)}'
+    test "$(/bin/cat ${JSON.stringify(completion)})" = '${agent}:${"a".repeat(64)}:${"b".repeat(64)}'
     ;;
 esac
 `,
@@ -111,7 +115,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       const identity = "b".repeat(64);
       const argv = [
         "--agent",
-        "hermes",
+        agent,
         "--profile-fingerprint",
         fingerprint,
         "--bootstrap-identity",
@@ -144,8 +148,8 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(fs.existsSync(request)).toBe(false);
       expect(fs.existsSync(injection)).toBe(false);
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
-        `node:${runtime} --apply-bootstrap-file --agent hermes --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
-        `node:${runtime} --verify-bootstrap-completion --agent hermes --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
+        `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
+        `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `supervisor:supervise|two words|$(touch ${injection}):identity=unset:request=unset:home=/preserved-home:path=/preserved-path:lang=zz_TEST:capability=preserved-capability`,
       ]);
 
@@ -154,7 +158,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(1);
       expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(2);
 
-      fs.writeFileSync(completion, `hermes:${fingerprint}:${"c".repeat(64)}\n`);
+      fs.writeFileSync(completion, `${agent}:${fingerprint}:${"c".repeat(64)}\n`);
       const tamperedRestart = spawnSync(script, argv, {
         encoding: "utf8",
         env: environment,

@@ -75,6 +75,7 @@ describe("runtime provider central source boundary", () => {
     expect(bootstrapProtocol.join("\n")).not.toMatch(
       /(?:driverId|providerId)\s*(?:===|!==)\s*["'](?:docker|podman)["']/iu,
     );
+    expect(bootstrapProtocol.join("\n")).not.toMatch(/\b(?:docker|podman|openshell|mxc)\b/iu);
     expect(activationSources.join("\n")).not.toMatch(
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
     );

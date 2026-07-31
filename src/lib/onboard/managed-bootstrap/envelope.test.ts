@@ -4,7 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { encodeManagedStartupProfile } from "../managed-startup/profile";
+import {
+  encodeManagedStartupProfile,
+  MANAGED_STARTUP_AGENTS,
+  type ManagedStartupAgent,
+} from "../managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
@@ -14,15 +18,18 @@ import {
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
 
-const request = createManagedStartupRootApplyRequest({
-  agent: "langchain-deepagents-code",
-  encodedProfile: encodeManagedStartupProfile(
-    managedStartupE2eProfile("langchain-deepagents-code", false, false),
-  ),
-});
+function requestFor(agent: ManagedStartupAgent) {
+  return createManagedStartupRootApplyRequest({
+    agent,
+    encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent, false, false)),
+  });
+}
 
 describe("managed bootstrap envelope", () => {
-  it("round-trips one canonical identity-bound root request", () => {
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("round-trips one canonical identity-bound %s root request", (agent) => {
+    const request = requestFor(agent);
     const identity = "a".repeat(64);
     const serialized = serializeManagedBootstrapEnvelope({
       bootstrapIdentity: identity,
@@ -37,8 +44,16 @@ describe("managed bootstrap envelope", () => {
   });
 
   it("rejects malformed identities and non-canonical transport", () => {
+    const request = requestFor("openclaw");
+    const identity = "a".repeat(64);
     const serialized = serializeManagedBootstrapEnvelope({
-      bootstrapIdentity: "a".repeat(64),
+      bootstrapIdentity: identity,
+      rootApplyRequest: request,
+    });
+
+    expect(parseManagedBootstrapEnvelope(serialized)).toEqual({
+      schemaVersion: 1,
+      bootstrapIdentity: identity,
       rootApplyRequest: request,
     });
     expect(() => parseManagedBootstrapEnvelope(` ${serialized}`)).toThrow(/canonical/u);
@@ -51,6 +66,7 @@ describe("managed bootstrap envelope", () => {
   });
 
   it("round-trips a canonical identity-bound image completion receipt", () => {
+    const request = requestFor("hermes");
     const completion = {
       agent: request.agent,
       bootstrapIdentity: "b".repeat(64),

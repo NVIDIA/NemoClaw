@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  activateManagedBootstrapSequence,
+  finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  type ManagedBootstrapActivatedTransaction,
   type ManagedBootstrapAdapter,
+  type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapExpectedPlan,
-  type ManagedBootstrapSequenceResult,
-  runManagedBootstrapSequence,
+  type ManagedBootstrapPreparedTransaction,
+  prepareManagedBootstrapSequence,
 } from "./adapter";
 export {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
