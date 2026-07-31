@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import type { SandboxRemovalReceipt } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
@@ -20,7 +21,7 @@ const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
   prepareMcpForRebuild: vi.fn(),
   reattachMcpAfterDeleteFailure: vi.fn(),
-  removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
+  removeSandboxRegistryEntryWithReceipt: vi.fn<() => SandboxRemovalReceipt | null>(() => null),
   waitUntil: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
