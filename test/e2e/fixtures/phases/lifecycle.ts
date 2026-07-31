@@ -36,6 +36,7 @@ const STATUS_TIMEOUT_MS = 5 * 60_000;
 const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
+const STOPPED_SANDBOX_STATUS = "Failure layer: sandbox_container_stopped";
 const USER_SERVICE_UNAVAILABLE_EXIT = 75;
 const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
   "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
@@ -442,19 +443,43 @@ export class LifecyclePhaseFixture {
     // We invoke status through the host CLI client so artifacts are
     // captured and the command goes through the same
     // shellProbe/redaction layer the rest of the fixture code uses.
-    // Status must exit zero to prove the restored delivery path is ready;
-    // state-validation still verifies registry and container preservation.
-    const statusResult = await this.host.expectStatus(instance.sandboxName, {
-      artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: STATUS_TIMEOUT_MS,
-    });
+    // OpenShell can report the gateway as connected before it starts the
+    // preserved sandbox container. Retry only that observed transition.
+    // Other status failures remain terminal.
+    const statusResult = await this.waitForPostRebootSandboxStatus(instance.sandboxName);
     steps.push({
       id: `nemoclaw-status:${instance.sandboxName}`,
       results: [statusResult],
     });
 
     return { profile: "post-reboot-recovery", steps };
+  }
+
+  private async waitForPostRebootSandboxStatus(sandboxName: string): Promise<ShellProbeResult> {
+    let last: ShellProbeResult | undefined;
+    const deadlineMs = Date.now() + STATUS_TIMEOUT_MS;
+    for (let attempt = 1; attempt <= SANDBOX_READY_ATTEMPTS; attempt += 1) {
+      const remainingMs = deadlineMs - Date.now();
+      if (remainingMs <= 0) break;
+      last = await this.host.nemoclaw([sandboxName, "status"], {
+        artifactName:
+          `lifecycle-post-reboot-nemoclaw-status-${sandboxName}-` +
+          `attempt-${String(attempt).padStart(2, "0")}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: Math.min(60_000, remainingMs),
+      });
+      if (last.exitCode === 0) return last;
+      const detail = `${last.stdout}\n${last.stderr}`;
+      if (!detail.includes(STOPPED_SANDBOX_STATUS)) {
+        assertExitZero(last, `nemoclaw ${sandboxName} status`);
+      }
+      if (attempt < SANDBOX_READY_ATTEMPTS && Date.now() < deadlineMs) {
+        await sleep(Math.min(SANDBOX_READY_DELAY_MS, deadlineMs - Date.now()));
+      }
+    }
+    if (!last) throw new Error(`nemoclaw ${sandboxName} status did not run before its deadline`);
+    assertExitZero(last, `nemoclaw ${sandboxName} status`);
+    return last;
   }
 
   private async ensureOpenShellGatewayUserService(): Promise<UserServiceStageResult> {
