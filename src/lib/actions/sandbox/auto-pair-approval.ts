@@ -298,13 +298,14 @@ def exit_with_receipt(receipt):
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
 # Invalid state: after snapshot restore restarts the clone gateway, the bounded
-# warm-up asks for operator.write while the clone's paired baseline still has
-# only operator.pairing. OpenClaw creates the pending transition, and that same
-# transition gates the devices list this one-shot approval pass would need.
-# Creation point: establishRestoredSandboxGatewayPairing runs
-# runSandboxScopeWarmupRun immediately before this approval. Restore preserves
-# the clone-owned identity and pairing-only server record, while its client-auth
-# store cannot converge on the rotated token until canonical approval finishes.
+# warm-up asks for operator.write. When the clone's paired baseline lacks that
+# scope, OpenClaw creates the pending transition, and that same transition gates
+# the devices list this one-shot approval pass would need.
+# Creation point: establishRestoredSandboxGatewayPairing runs the direct
+# restored-clone gateway warm-up immediately before this approval. Restore
+# preserves the clone-owned identity and server pairing record, while its client
+# auth store cannot converge on a rotated token until canonical approval
+# finishes.
 # Source boundary: read only the clone-local pending map, validate one exact
 # request below, and delegate the write to OpenClaw's canonical devices approve
 # command. OpenClaw 2026.7.1 has no authenticated bootstrap/list API that can

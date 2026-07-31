@@ -4,8 +4,11 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { WARMUP_SCRIPT, WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
+import { RESTORED_CLONE_WARMUP_SCRIPT, WARMUP_SCRIPT, WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
+
+const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
+const itWithSh = shAvailable ? it : it.skip;
 
 // NOTE on coverage shape (#4504-v2): `runSandboxScopeWarmupRun` is not exercised
 // in-process here. Like its sibling `runSandboxAutoPairApprovalPass`, the leaf
@@ -49,9 +52,6 @@ describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", (
     expect(WARMUP_SCRIPT).not.toContain("mktemp");
   });
 
-  const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
-  const itWithSh = shAvailable ? it : it.skip;
-
   itWithSh("runs a multiline warm-up-shaped payload and preserves its exit-0 status", () => {
     // Mirror the real warm-up: the provoke command itself may "fail" (the agent
     // falls back to embedded mode), but `|| true` + trailing `exit 0` mean the
@@ -68,6 +68,26 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
   it("tags the provoke session with the shared warm-up prefix", () => {
     expect(WARMUP_SESSION_ID_PREFIX).toBe("nemoclaw-onboard-warmup-");
     expect(WARMUP_SCRIPT).toContain(`--session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`);
+  });
+
+  it("uses a direct write-scope gateway call for restored clones (#7834)", () => {
+    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(
+      'openclaw gateway call sessions.create --params "$params" --json',
+    );
+    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(
+      `session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`,
+    );
+    expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1");
+    expect(RESTORED_CLONE_WARMUP_SCRIPT).not.toContain("openclaw agent");
+  });
+
+  itWithSh("keeps the restored-clone warm-up valid POSIX shell (#7834)", () => {
+    const result = spawnSync("sh", ["-n"], {
+      encoding: "utf-8",
+      input: RESTORED_CLONE_WARMUP_SCRIPT,
+      timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it("forces device pairing only for the provoke command on OpenClaw 2026.7.1", () => {
