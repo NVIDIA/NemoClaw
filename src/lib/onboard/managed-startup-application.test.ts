@@ -462,20 +462,19 @@ describe("managed startup application", () => {
     let interleaved = false;
     vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
       originalRenameSync(source, destination);
-      if (
-        !interleaved &&
-        path.dirname(destination.toString()) === stateDirectory &&
-        path.basename(destination.toString()).startsWith("generation-")
-      ) {
-        interleaved = true;
-        race.active = prepare("openclaw");
-      }
+      void (!interleaved &&
+      path.dirname(destination.toString()) === stateDirectory &&
+      path.basename(destination.toString()).startsWith("generation-")
+        ? (() => {
+            interleaved = true;
+            race.active = prepare("openclaw");
+          })()
+        : undefined);
     });
 
     expect(() => prepareProfile(changed)).toThrow(/won the pending-state transaction/u);
     expect(race.active).not.toBeNull();
-    if (race.active === null) throw new Error("interleaved winner was not prepared");
-    const winner = race.active;
+    const winner = race.active as ReturnType<typeof prepare>;
     expect(
       JSON.parse(fs.readFileSync(path.join(stateDirectory, "pending.json"), "utf8")),
     ).toMatchObject({ fingerprint: winner.fingerprint });
@@ -501,15 +500,15 @@ describe("managed startup application", () => {
     const race: { committed: ReturnType<typeof prepare> | null } = { committed: null };
     let interleaved = false;
     vi.spyOn(fs, "openSync").mockImplementation((target, flags, mode) => {
-      if (
-        !interleaved &&
-        path.dirname(target.toString()) === stateDirectory &&
-        /^\.pending\.json-[a-f0-9]{24}\.tmp$/u.test(path.basename(target.toString()))
-      ) {
-        interleaved = true;
-        race.committed = prepare("openclaw");
-        commitManagedStartupApplication(race.committed, runtime);
-      }
+      void (!interleaved &&
+      path.dirname(target.toString()) === stateDirectory &&
+      /^\.pending\.json-[a-f0-9]{24}\.tmp$/u.test(path.basename(target.toString()))
+        ? (() => {
+            interleaved = true;
+            race.committed = prepare("openclaw");
+            commitManagedStartupApplication(race.committed, runtime);
+          })()
+        : undefined);
       return originalOpenSync(target, flags, mode);
     });
 
@@ -517,8 +516,7 @@ describe("managed startup application", () => {
       /different startup profile committed during pending-state publication/u,
     );
     expect(race.committed).not.toBeNull();
-    if (race.committed === null) throw new Error("interleaved winner was not committed");
-    const winner = race.committed;
+    const winner = race.committed as ReturnType<typeof prepare>;
     expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(false);
     expect(
       JSON.parse(fs.readFileSync(path.join(stateDirectory, "committed.json"), "utf8")),
@@ -560,11 +558,12 @@ describe("managed startup application", () => {
     const originalLstatSync = fs.lstatSync.bind(fs);
     let hidInitialCommittedRead = false;
     vi.spyOn(fs, "lstatSync").mockImplementation((target) => {
-      if (!hidInitialCommittedRead && target.toString() === committedPath) {
-        hidInitialCommittedRead = true;
-        throw Object.assign(new Error("simulated pre-commit read"), { code: "ENOENT" });
-      }
-      return originalLstatSync(target);
+      return !hidInitialCommittedRead && target.toString() === committedPath
+        ? (() => {
+            hidInitialCommittedRead = true;
+            throw Object.assign(new Error("simulated pre-commit read"), { code: "ENOENT" });
+          })()
+        : originalLstatSync(target);
     });
 
     expect(() => prepareProfile(changed)).toThrow(
