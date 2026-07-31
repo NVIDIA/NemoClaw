@@ -5,14 +5,28 @@ import fs from "node:fs";
 import YAML from "yaml";
 
 export {
+  type ExactManagedMcpPolicy,
   hasManagedMcpPolicyClaims,
   inspectExactManagedMcpPolicies,
-  type ExactManagedMcpPolicy,
+  inspectProvableManagedMcpPoliciesForDeadline,
+  type ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
-import type { ExactManagedMcpPolicy } from "../actions/sandbox/mcp-bridge-policy";
+
+import type {
+  ExactManagedMcpPolicy,
+  ManagedMcpPolicyOmission,
+} from "../actions/sandbox/mcp-bridge-policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
-export { isManagedMcpPolicyKey } from "./mcp-policy-transition";
-import { composeManagedMcpPolicies } from "./mcp-policy-transition";
+
+export {
+  assertLegacyMcpPolicyRestoreSafe,
+  isManagedMcpPolicyKey,
+} from "./mcp-policy-transition";
+
+import {
+  composeDeadlineManagedMcpPolicies,
+  composeManagedMcpPolicies,
+} from "./mcp-policy-transition";
 
 const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
 
@@ -175,17 +189,14 @@ export interface ManagedMcpRuntimePolicyDeps {
  * Reconcile current generated MCP policies into a custom Shields-down policy
  * or a saved restrictive snapshot. Unlike the legacy filesystem-only fallback,
  * this path must fail closed: returning the unmodified base could silently
- * discard a managed entry or resurrect one that was removed while Shields were
- * down.
+ * discard a managed entry or restore one that was removed during the
+ * shields-down window.
  */
 export function buildRuntimeManagedMcpPolicy(
   basePolicyPath: string,
   deps: ManagedMcpRuntimePolicyDeps,
 ): string {
   const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
-  if (deps.managedMcpPolicies.length === 0 && snapshotManagedPolicyKeys.length === 0) {
-    return basePolicyPath;
-  }
 
   let baseYaml: string;
   try {
@@ -218,6 +229,40 @@ export function buildRuntimeManagedMcpPolicy(
   } catch (error) {
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
     throw new Error("Cannot stage the Shields policy for managed MCP reconciliation", {
+      cause: error,
+    });
+  }
+}
+
+export interface DeadlineManagedMcpRuntimePolicy {
+  path: string;
+  omissions: ManagedMcpPolicyOmission[];
+}
+
+export function buildDeadlineRuntimeManagedMcpPolicy(
+  basePolicyPath: string,
+  deps: ManagedMcpRuntimePolicyDeps,
+): DeadlineManagedMcpRuntimePolicy {
+  const baseYaml = deps.readBasePolicy();
+  const composition = composeDeadlineManagedMcpPolicies(
+    baseYaml,
+    deps.managedMcpPolicies,
+    deps.snapshotManagedPolicyKeys ?? [],
+  );
+  let runtimePath: string | null = null;
+  try {
+    runtimePath = deps.writeTempPolicy
+      ? deps.writeTempPolicy(composition.yaml)
+      : secureTempFile(TEMP_FILE_PREFIX, ".yaml");
+    if (!deps.writeTempPolicy) {
+      fs.writeFileSync(runtimePath, composition.yaml, { mode: 0o600 });
+    }
+    return { path: runtimePath, omissions: composition.omissions };
+  } catch (error) {
+    if (runtimePath && !deps.writeTempPolicy) {
+      cleanupTempDir(runtimePath, TEMP_FILE_PREFIX);
+    }
+    throw new Error("Cannot stage the deadline Shields policy for managed MCP reconciliation", {
       cause: error,
     });
   }

@@ -483,6 +483,73 @@ describe("shields — unit logic", () => {
       expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });
 
+    it("deadline composition removes an unproven MCP add from the restrictive policy", async () => {
+      const snapshot =
+        "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n  mcp_bridge_beta: {}\n";
+      const { composeDeadlineManagedMcpPolicies } = await import("./mcp-policy-transition");
+      const composition = composeDeadlineManagedMcpPolicies(snapshot, [], ["mcp_bridge_beta"]);
+
+      expect(composition.yaml).toContain("restrictive_baseline");
+      expect(composition.yaml).not.toContain("mcp_bridge_beta");
+    });
+
+    it("deadline restore removes saved MCP keys when the registry cannot be read", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "b".repeat(32);
+      const snapshotPath = path.join(stateDir(), "policy-snapshot-unreadable-registry.yaml");
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(
+        snapshotPath,
+        "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n  mcp_bridge_alpha: {}\n",
+      );
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: ["mcp_bridge_alpha"],
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 1_000).toISOString(),
+        processToken,
+      });
+      const originalReadFileSync = fs.readFileSync.bind(fs);
+      vi.spyOn(fs, "readFileSync").mockImplementation(
+        (file: fs.PathOrFileDescriptor, options?: unknown) => {
+          if (String(file).endsWith(`${path.sep}sandboxes.json`)) {
+            throw Object.assign(new Error("registry permission denied"), { code: "EACCES" });
+          }
+          return originalReadFileSync(file, options as never) as never;
+        },
+      );
+      vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
+        if (pid === 2_147_483_647 && signal === 0) {
+          throw Object.assign(new Error("not running"), { code: "ESRCH" });
+        }
+        return true;
+      });
+      const { applyShieldsPolicySnapshot } = await loadShieldsModule();
+
+      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+        transitionProcessToken: processToken,
+        deadlineAuthoritative: true,
+        expiredTimerRecovery: true,
+      });
+
+      expect(result.managedMcpOmissions).toEqual([
+        expect.objectContaining({ reason: expect.stringMatching(/Cannot read config file:/) }),
+      ]);
+      const { composeDeadlineManagedMcpPolicies } = await import("./mcp-policy-transition");
+      const composition = composeDeadlineManagedMcpPolicies(
+        fs.readFileSync(snapshotPath, "utf-8"),
+        [],
+        ["mcp_bridge_alpha"],
+      );
+      expect(composition.yaml).toContain("restrictive_baseline");
+      expect(composition.yaml).not.toContain("mcp_bridge_alpha");
+    });
+
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
       const sandboxName = "openclaw";
       const missingSnapshotPath = path.join(stateDir(), "missing-snapshot.yaml");
@@ -958,7 +1025,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     expect(readTimerMarker("openclaw")).toBeNull();
   });
 
-  it("killTimer terminates verified live timer process and clears marker", async () => {
+  it("killTimer cooperatively revokes a verified live timer without signaling it", async () => {
     const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
     const { killTimer } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -1004,11 +1071,11 @@ describe("NC-2227-05: shields timer marker behavior", () => {
       markerFound: true,
       markerPid: 7331,
       wasAlive: true,
-      terminated: true,
+      terminated: false,
       warnings: [],
     });
     expect(processKillSpy).toHaveBeenCalledWith(7331, 0);
-    expect(processKillSpy).toHaveBeenCalledWith(7331, "SIGTERM");
+    expect(processKillSpy).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(false);
   });
 

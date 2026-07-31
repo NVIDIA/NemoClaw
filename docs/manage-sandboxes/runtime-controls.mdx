@@ -108,10 +108,18 @@ Run `$$nemoclaw <name> shields down` before the change, then restore lockdown wi
 NemoClaw serializes host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions for each sandbox.
 When `shields down --timeout` is active, each mutation binds to that exact timer generation so a replaced or expired timer cannot race a later command or a new sandbox that reuses the same name.
 
-If the timeout expires while a mutation is still changing sandbox state, auto-restore can stop that exact process tree, reclaim the transition, and restore the restrictive policy and config posture.
+If the timeout expires while a mutation is still changing sandbox state, auto-restore closes the per-sandbox lifecycle deadline gate.
+The gate blocks new mutations and lets the recorded live owner finish without sending it a signal.
+After that owner releases its exact lock generation, auto-restore restores the restrictive policy and config posture.
 The ownership check includes both the process ID and process start identity so PID reuse does not grant control over an unrelated process.
 
-Retry a command that the auto-restore deadline interrupts after you open a new shields-down window.
+During restoration, NemoClaw reconciles the current exact managed MCP entries into the saved policy.
+A removed MCP server stays removed, while an unrelated surviving server keeps its recorded endpoint and address pins.
+
+If the recorded owner exits before releasing its lock generation, NemoClaw leaves Shields down and records permanent containment.
+New mutations remain blocked so an untracked descendant cannot change the sandbox after restoration.
+Stop all NemoClaw processes for that sandbox, then follow the exact lock-generation recovery guidance in the reported error or audit entry.
+Do not remove a recorded lifecycle lock while any NemoClaw process for that sandbox is running.
 
 ## Related Topics
 

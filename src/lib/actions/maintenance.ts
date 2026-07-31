@@ -22,6 +22,7 @@ import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../runtime-recovery";
+import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
@@ -79,7 +80,9 @@ async function backupSandboxWithinShieldsWindow(
   backup: () => sandboxState.BackupResult | Promise<sandboxState.BackupResult>,
 ): Promise<BackupAllSandboxAttempt> {
   const shieldsWindowOptions = backupAllShieldsWindowOptions(sandboxName);
-  const window = openBackupShieldsWindow(sandboxName, shieldsWindowOptions);
+  const window = await withSandboxMutationLock(sandboxName, () =>
+    openBackupShieldsWindow(sandboxName, shieldsWindowOptions),
+  );
   if (!window) {
     return {
       result: null,
@@ -107,9 +110,21 @@ async function backupSandboxWithinShieldsWindow(
       hasBackupError = true;
     }
   } finally {
-    if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
+    try {
+      const relocked = await withSandboxMutationLock(
+        sandboxName,
+        () => relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions),
+        { timeoutMs: 30_000 },
+      );
+      if (!relocked) {
+        relockError = new Error(
+          `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
+        );
+      }
+    } catch (error) {
       relockError = new Error(
         `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
+        { cause: error },
       );
     }
   }

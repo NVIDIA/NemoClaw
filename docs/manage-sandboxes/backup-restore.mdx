@@ -83,8 +83,10 @@ NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `
 `snapshot create` requires shields to be down.
 Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
 
-If a timed shields-down window expires during snapshot work, auto-restore can interrupt the operation and restore lockdown instead of allowing state or policy changes to continue past the deadline.
-Retry the snapshot in a new shields-down window if the deadline interrupts it.
+If a timed shields-down window expires during snapshot work, auto-restore closes the per-sandbox lifecycle deadline gate and waits for the recorded live owner to finish.
+New mutations remain blocked until the snapshot owner releases its exact lock generation and auto-restore restores lockdown.
+If the owner exits before releasing that generation, NemoClaw leaves Shields down, records permanent containment, and reports operator recovery guidance.
+Stop all NemoClaw processes for that sandbox, then follow the exact lock-generation guidance before retrying the snapshot.
 
 Tag a snapshot with a human-readable label:
 

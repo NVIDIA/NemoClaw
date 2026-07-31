@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import YAML from "yaml";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
+  hasManagedMcpPolicyClaims,
+  inspectProvableManagedMcpPoliciesForDeadline,
   inspectExactManagedMcpPolicies as inspectRegisteredManagedMcpPolicies,
   MCP_BRIDGE_POLICY_SOURCE,
 } from "../actions/sandbox/mcp-bridge-policy";
@@ -14,7 +16,11 @@ import {
   buildMcpBridgePolicyYaml,
 } from "../actions/sandbox/mcp-bridge-policy-render";
 import type { SandboxEntry } from "../state/registry";
-import { composeManagedMcpPolicies } from "./mcp-policy-transition";
+import {
+  assertLegacyMcpPolicyRestoreSafe,
+  composeDeadlineManagedMcpPolicies,
+  composeManagedMcpPolicies,
+} from "./mcp-policy-transition";
 
 const ADAPTER = "hermes-config";
 
@@ -61,6 +67,18 @@ function sandboxWithPolicies(
 
 function networkEntry(content: string, server: string): unknown {
   return YAML.parse(content).network_policies[buildMcpBridgePolicyKey(server)];
+}
+
+function mutateRegisteredNetworkPolicy(
+  policy: ReturnType<typeof registeredPolicy>,
+  server: string,
+  mutate: (entry: Record<string, unknown>) => void,
+): void {
+  const document = YAML.parse(policy.content) as {
+    network_policies: Record<string, Record<string, unknown>>;
+  };
+  mutate(document.network_policies[buildMcpBridgePolicyKey(server)]!);
+  policy.content = YAML.stringify(document);
 }
 
 function livePolicy(
@@ -160,6 +178,129 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     ).toThrow(/drifted from its ownership record/);
   });
 
+  it("rejects matching registry and live documents with weakened generated semantics", () => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    mutateRegisteredNetworkPolicy(alpha, "alpha", (entry) => {
+      const endpoint = (entry.endpoints as Array<Record<string, unknown>>)[0]!;
+      endpoint.enforcement = "observe";
+    });
+    const sandbox = sandboxWithPolicies([alpha]);
+    const live = livePolicy([{ content: alpha.content, server: "alpha" }]);
+
+    expect(() => inspectExactManagedMcpPolicies(sandbox, live)).toThrow(
+      /non-canonical generated content/,
+    );
+    expect(
+      inspectProvableManagedMcpPoliciesForDeadline("alpha", live, {
+        getSandbox: () => sandbox,
+      }),
+    ).toEqual({
+      policies: [],
+      omissions: [
+        expect.objectContaining({
+          server: "alpha",
+          reason: expect.stringMatching(/non-canonical generated content/),
+        }),
+      ],
+    });
+  });
+
+  it.each([
+    {
+      label: "a private literal",
+      pins: ["127.0.0.1"],
+      expected: /invalid public address pins/,
+    },
+    {
+      label: "a scoped public IPv6 literal",
+      pins: ["2001:4860:4860::8888%lo0"],
+      expected: /invalid public address pins/,
+    },
+    {
+      label: "duplicate literals",
+      pins: ["8.8.8.8", "8.8.8.8"],
+      expected: /non-canonical public address pins/,
+    },
+    {
+      label: "unsorted literals",
+      pins: ["8.8.8.8", "1.1.1.1"],
+      expected: /non-canonical public address pins/,
+    },
+  ])("rejects matching registry and live documents with $label", ({ pins, expected }) => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    mutateRegisteredNetworkPolicy(alpha, "alpha", (entry) => {
+      const endpoint = (entry.endpoints as Array<Record<string, unknown>>)[0]!;
+      endpoint.allowed_ips = pins;
+    });
+
+    expect(() =>
+      inspectExactManagedMcpPolicies(
+        sandboxWithPolicies([alpha]),
+        livePolicy([{ content: alpha.content, server: "alpha" }]),
+      ),
+    ).toThrow(expected);
+  });
+
+  it("fails closed on a generated policy record without managed MCP state", () => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    const sandbox: SandboxEntry = {
+      name: "alpha",
+      agent: "hermes",
+      customPolicies: [alpha],
+    };
+    const deps = { getSandbox: () => sandbox };
+
+    expect(hasManagedMcpPolicyClaims("alpha", deps)).toBe(true);
+    expect(() =>
+      inspectRegisteredManagedMcpPolicies(
+        "alpha",
+        livePolicy([{ content: alpha.content, server: "alpha" }]),
+        deps,
+      ),
+    ).toThrow(/no committed managed bridge ownership/);
+  });
+
+  it("treats residual managed server history as an ownership claim", () => {
+    const sandbox: SandboxEntry = {
+      name: "alpha",
+      agent: "hermes",
+      mcp: { bridges: {}, managedServerNames: ["retired"] },
+    };
+    const deps = { getSandbox: () => sandbox };
+
+    expect(hasManagedMcpPolicyClaims("alpha", deps)).toBe(true);
+    expect(
+      inspectRegisteredManagedMcpPolicies(
+        "alpha",
+        livePolicy([], { unrelated_live_entry: {} }),
+        deps,
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    {
+      label: "no sandbox registry entry",
+      sandbox: undefined,
+    },
+    {
+      label: "only residual ownership history",
+      sandbox: {
+        name: "alpha",
+        agent: "hermes",
+        mcp: { bridges: {}, managedServerNames: ["retired"] },
+      } satisfies SandboxEntry,
+    },
+  ])("rejects an unclassified reserved live key with $label", ({ sandbox }) => {
+    expect(() =>
+      inspectRegisteredManagedMcpPolicies("alpha", livePolicy([], { mcp_bridge_retired: {} }), {
+        getSandbox: () => sandbox ?? null,
+      }),
+    ).toThrow(
+      /Reserved MCP policy key 'mcp_bridge_retired'.*no committed managed bridge ownership/,
+    );
+  });
+
   it("retains additions while restoring the restrictive snapshot", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");
     const beta = registeredPolicy("beta", "1.1.1.1");
@@ -187,7 +328,7 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     ]);
   });
 
-  it("does not resurrect a managed MCP policy removed while Shields are down", () => {
+  it("does not restore a managed MCP policy removed during the shields-down window", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");
     const snapshot = YAML.stringify({
       version: 1,
@@ -223,5 +364,268 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     expect(restored.network_policies.mcp_bridge_alpha).toEqual(
       networkEntry(currentAlpha.content, "alpha"),
     );
+  });
+
+  it("rejects an unclassified reserved key in the restrictive snapshot", () => {
+    const currentAlpha = registeredPolicy("alpha", "1.1.1.1");
+    const current = inspectExactManagedMcpPolicies(
+      sandboxWithPolicies([currentAlpha]),
+      livePolicy([{ content: currentAlpha.content, server: "alpha" }]),
+    );
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: {
+        mcp_bridge_alpha: {
+          name: "operator-owned-alpha",
+          endpoints: [{ host: "operator.example.com" }],
+        },
+      },
+    });
+
+    expect(() => composeManagedMcpPolicies(snapshot, current, [])).toThrow(
+      /Reserved MCP policy key 'mcp_bridge_alpha'.*absent from the saved ownership manifest/,
+    );
+  });
+
+  it("accepts an empty ownership manifest when the snapshot has no reserved keys", () => {
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: { restrictive_baseline: {} },
+    });
+
+    expect(YAML.parse(composeManagedMcpPolicies(snapshot, [], [])).network_policies).toEqual({
+      restrictive_baseline: {},
+    });
+  });
+
+  it("rejects a saved managed key that is absent from its policy snapshot", () => {
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: {
+        restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
+      },
+    });
+
+    expect(() => composeManagedMcpPolicies(snapshot, [], ["mcp_bridge_alpha"])).toThrow(
+      /absent from its policy snapshot/,
+    );
+  });
+
+  it.each([
+    {
+      label: "current managed MCP ownership",
+      hasCurrentManagedClaims: true,
+      networkPolicies: { restrictive_baseline: {} },
+    },
+    {
+      label: "a managed-shaped key in the snapshot",
+      hasCurrentManagedClaims: false,
+      networkPolicies: { mcp_bridge_alpha: {} },
+    },
+  ])("refuses legacy restore with $label", ({ hasCurrentManagedClaims, networkPolicies }) => {
+    expect(() =>
+      assertLegacyMcpPolicyRestoreSafe(
+        YAML.stringify({ version: 1, network_policies: networkPolicies }),
+        hasCurrentManagedClaims,
+      ),
+    ).toThrow(/no managed MCP ownership manifest/);
+  });
+
+  it("allows a legacy restore with no current or snapshot MCP ownership", () => {
+    expect(() =>
+      assertLegacyMcpPolicyRestoreSafe(
+        YAML.stringify({
+          version: 1,
+          network_policies: { restrictive_baseline: {} },
+        }),
+        false,
+      ),
+    ).not.toThrow();
+  });
+
+  it("proves committed bridges independently while omitting an incomplete add at the deadline", () => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    const beta = registeredPolicy("beta", "1.1.1.1");
+    const sandbox = sandboxWithPolicies([alpha, beta]);
+    sandbox.mcp!.bridges.beta!.addState = "prepared";
+
+    const result = inspectProvableManagedMcpPoliciesForDeadline(
+      "alpha",
+      livePolicy([
+        { content: alpha.content, server: "alpha" },
+        { content: beta.content, server: "beta" },
+      ]),
+      { getSandbox: () => sandbox },
+    );
+
+    expect(result.policies.map((policy) => policy.server)).toEqual(["alpha"]);
+    expect(result.omissions).toEqual([
+      expect.objectContaining({ server: "beta", reason: expect.stringMatching(/incomplete/) }),
+    ]);
+  });
+
+  it("omits every deadline claimant whose canonical policy identity collides", () => {
+    const collidingPolicy = registeredPolicy("foo-bar", "8.8.8.8");
+    const sandbox = sandboxWithPolicies([collidingPolicy], ["foo-bar", "foo_bar"]);
+
+    const result = inspectProvableManagedMcpPoliciesForDeadline(
+      "alpha",
+      livePolicy([{ content: collidingPolicy.content, server: "foo-bar" }]),
+      { getSandbox: () => sandbox },
+    );
+
+    expect(result.policies).toEqual([]);
+    expect(result.omissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          server: "foo-bar",
+          reason: expect.stringMatching(/ambiguous bridge ownership/),
+        }),
+        expect.objectContaining({
+          server: "foo_bar",
+          reason: expect.stringMatching(/ambiguous bridge ownership/),
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    "destroyPreparedAt",
+    "destroyPendingAt",
+  ] as const)("omits every generated policy while %s is present", (marker) => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    const sandbox = sandboxWithPolicies([alpha]);
+    sandbox.mcp![marker] = "2026-07-30T01:00:00.000Z";
+
+    const result = inspectProvableManagedMcpPoliciesForDeadline(
+      "alpha",
+      livePolicy([{ content: alpha.content, server: "alpha" }]),
+      { getSandbox: () => sandbox },
+    );
+
+    expect(result.policies).toEqual([]);
+    expect(result.omissions).toEqual([
+      expect.objectContaining({ server: "alpha", reason: expect.stringMatching(/destruction/) }),
+    ]);
+  });
+
+  it("omits drift and orphan claims without discarding another exact bridge", () => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    const beta = registeredPolicy("beta", "1.1.1.1");
+    const driftedBeta = registeredPolicy("beta", "9.9.9.9");
+    const orphan = registeredPolicy("orphan", "4.4.4.4");
+    const sandbox = sandboxWithPolicies([alpha, beta, orphan], ["alpha", "beta"]);
+
+    const result = inspectProvableManagedMcpPoliciesForDeadline(
+      "alpha",
+      livePolicy([
+        { content: alpha.content, server: "alpha" },
+        { content: driftedBeta.content, server: "beta" },
+        { content: orphan.content, server: "orphan" },
+      ]),
+      { getSandbox: () => sandbox },
+    );
+
+    expect(result.policies.map((policy) => policy.server)).toEqual(["alpha"]);
+    expect(result.omissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ server: "beta", reason: expect.stringMatching(/drifted/) }),
+        expect.objectContaining({
+          policyName: "mcp-bridge-orphan",
+          reason: expect.stringMatching(/no committed managed bridge ownership/),
+        }),
+      ]),
+    );
+  });
+
+  it("deadline inspection reports an unclassified reserved live key", () => {
+    const result = inspectProvableManagedMcpPoliciesForDeadline(
+      "alpha",
+      livePolicy([], { mcp_bridge_residual: {} }),
+      { getSandbox: () => null },
+    );
+
+    expect(result).toEqual({
+      policies: [],
+      omissions: [
+        expect.objectContaining({
+          key: "mcp_bridge_residual",
+          reason: expect.stringMatching(/no committed managed bridge ownership/),
+        }),
+      ],
+    });
+  });
+
+  it("deadline composition strips unclassified reserved keys before overlaying proven entries", () => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+    const beta = registeredPolicy("beta", "1.1.1.1");
+    const current = inspectExactManagedMcpPolicies(
+      sandboxWithPolicies([alpha, beta]),
+      livePolicy([
+        { content: alpha.content, server: "alpha" },
+        { content: beta.content, server: "beta" },
+      ]),
+    );
+    const operatorEntry = { endpoints: [{ host: "operator.example.com" }] };
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: {
+        mcp_bridge_alpha: networkEntry(alpha.content, "alpha"),
+        mcp_bridge_beta: operatorEntry,
+        restrictive_baseline: {},
+      },
+    });
+
+    const result = composeDeadlineManagedMcpPolicies(snapshot, current, ["mcp_bridge_alpha"]);
+    const restored = YAML.parse(result.yaml);
+
+    expect(restored.network_policies.mcp_bridge_alpha).toEqual(
+      networkEntry(alpha.content, "alpha"),
+    );
+    expect(restored.network_policies.mcp_bridge_beta).toEqual(networkEntry(beta.content, "beta"));
+    expect(result.omissions).toEqual([
+      expect.objectContaining({
+        key: "mcp_bridge_beta",
+        reason: expect.stringMatching(/absent from the saved ownership manifest/),
+      }),
+    ]);
+  });
+
+  it("deadline composition strips every reserved shape with an empty manifest", () => {
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: {
+        mcp_bridge_: {},
+        mcp_bridge_legacy_invalid_name: {},
+        restrictive_baseline: {},
+      },
+    });
+
+    const result = composeDeadlineManagedMcpPolicies(snapshot, [], []);
+
+    expect(YAML.parse(result.yaml).network_policies).toEqual({ restrictive_baseline: {} });
+    expect(result.omissions.map((entry) => entry.key)).toEqual([
+      "mcp_bridge_",
+      "mcp_bridge_legacy_invalid_name",
+    ]);
+  });
+
+  it("deadline composition restores the restrictive baseline when a saved key is absent", () => {
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: {
+        restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
+      },
+    });
+
+    const result = composeDeadlineManagedMcpPolicies(snapshot, [], ["mcp_bridge_alpha"]);
+    const restored = YAML.parse(result.yaml);
+
+    expect(restored.network_policies).toEqual({
+      restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
+    });
+    expect(result.omissions).toEqual([
+      expect.objectContaining({ reason: expect.stringMatching(/already absent/) }),
+    ]);
   });
 });

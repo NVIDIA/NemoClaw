@@ -4,14 +4,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import YAML from "yaml";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -33,7 +31,10 @@ import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-brid
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
 import {
+  assertManagedMcpPolicySurvivedRemoval,
   buildMcpDnsRebindingProbeScript,
+  captureManagedMcpPolicy,
+  expectExitNonZero,
   hostAddressForSandbox,
   hostPrivateAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
@@ -90,18 +91,6 @@ const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
 };
 const MCP_BRIDGE_ALREADY_ABSENT =
   /No MCP servers are registered|No MCP server '.+' is registered|MCP server '.+' not found/iu;
-
-function expectExitNonZero(result: ShellProbeResult, label: string, pattern: RegExp): void {
-  expect(
-    result.exitCode,
-    `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-  ).not.toBe(0);
-  expect(resultText(result)).toMatch(pattern);
-}
-
-function parseCurrentPolicy(raw: string): string {
-  return parseOpenShellPolicy(raw).yamlBody;
-}
 
 async function cleanupMcpBridge(
   host: HostCliClient,
@@ -189,6 +178,7 @@ async function assertAdapterDnsRebindingDenied(
     artifactPrefix: string;
     sandboxName: string;
     secretPaths: string[];
+    survivingMcpUrl: string;
   },
 ): Promise<void> {
   const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
@@ -207,6 +197,14 @@ async function assertAdapterDnsRebindingDenied(
   cleanup.add(`restore ${options.artifactPrefix} DNS rebinding hosts fixture`, () =>
     restoreDnsRebindingHostsFixture(host, options.sandboxName, hostsFixture),
   );
+  const survivingPolicyBeforeAddResult = await captureManagedMcpPolicy(sandbox, {
+    artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-surviving-policy-before-add`,
+    label: `${options.artifactPrefix} captures the surviving MCP policy before adding the rebinding route`,
+    policyKey: SERVER_POLICY_KEY,
+    sandboxName: options.sandboxName,
+    url: options.survivingMcpUrl,
+  });
+  const survivingPolicyBeforeAdd = survivingPolicyBeforeAddResult.policy;
   await remapDnsRebindingHostname(
     host,
     options.sandboxName,
@@ -261,19 +259,14 @@ async function assertAdapterDnsRebindingDenied(
     policy: { gatewayPresent: true },
     adapter: { registered: true },
   });
-  const policy = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
+  const rebindingPolicy = await captureManagedMcpPolicy(sandbox, {
     artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-policy-pinned-public-ip`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
+    label: `${options.artifactPrefix} validates the add-time DNS pin`,
+    policyKey: REBIND_POLICY_KEY,
+    sandboxName: options.sandboxName,
+    url: rebindMcpUrl,
   });
-  expectExitZero(policy, `${options.artifactPrefix} inspects add-time DNS pin`);
-  const policyJson = YAML.parse(parseCurrentPolicy(resultText(policy))) as {
-    network_policies?: Record<
-      string,
-      { endpoints?: Array<{ host?: string; allowed_ips?: string[] }> }
-    >;
-  };
-  expect(policyJson.network_policies?.[REBIND_POLICY_KEY]?.endpoints?.[0]).toMatchObject({
+  expect(rebindingPolicy.policy.endpoints?.[0]).toMatchObject({
     host: REBIND_HOSTNAME,
     allowed_ips: [REBIND_PUBLIC_IP],
   });
@@ -322,6 +315,18 @@ async function assertAdapterDnsRebindingDenied(
     timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.adapter],
   });
   expectExitZero(remove, `${options.artifactPrefix} removes DNS rebinding route after proof`);
+  const survivingPolicyAfterRemoveResult = await captureManagedMcpPolicy(sandbox, {
+    artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-surviving-policy-after-remove`,
+    label: `${options.artifactPrefix} inspects MCP policy after removing the rebinding route`,
+    policyKey: SERVER_POLICY_KEY,
+    sandboxName: options.sandboxName,
+    url: options.survivingMcpUrl,
+  });
+  assertManagedMcpPolicySurvivedRemoval(
+    survivingPolicyBeforeAdd,
+    survivingPolicyAfterRemoveResult,
+    REBIND_POLICY_KEY,
+  );
 }
 async function addBridgeAndReadStatus(
   host: HostCliClient,
@@ -980,6 +985,7 @@ test("mcp-bridge", {
     artifactPrefix: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     secretPaths: ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
+    survivingMcpUrl: mcpUrl,
   });
 
   const requestCountBeforeAllowedNodeProof = fakeMcp.requests.length;
@@ -1257,6 +1263,7 @@ mcpBridgeShardTest("hermes")(
       artifactPrefix: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
+      survivingMcpUrl: mcpUrl,
     });
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-dns-rebinding-remove");
     const survivingDiscoveryOffset = fakeMcp.requests.length;
@@ -1419,6 +1426,7 @@ mcpBridgeShardTest("deepagents")(
       artifactPrefix: "deepagents",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       secretPaths: ["/sandbox/.deepagents"],
+      survivingMcpUrl: mcpUrl,
     });
     progress.phase("exercise lifecycle and confirm Deep Agents bridge removal");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {

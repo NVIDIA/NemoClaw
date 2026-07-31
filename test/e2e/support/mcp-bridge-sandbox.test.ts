@@ -302,10 +302,19 @@ network_policies:
     expect(contractSource).not.toContain("assertAdapterDnsRebindingDenied");
   });
 
-  it("runs the zero-upstream rebinding proof for all three adapters", () => {
+  it("runs the zero-upstream rebinding proof and preserves the surviving policy for all three adapters", () => {
     const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
+    const helper = source.indexOf("async function assertAdapterDnsRebindingDenied");
+    const survivingPolicyBeforeAdd = source.indexOf("const survivingPolicyBeforeAddResult", helper);
+    const add = source.indexOf("const add = await host.nemoclaw", survivingPolicyBeforeAdd);
+    const remove = source.indexOf("const remove = await host.nemoclaw", add);
+    const survivingPolicyAfterRemove = source.indexOf(
+      "const survivingPolicyAfterRemoveResult",
+      remove,
+    );
 
     expect(source.match(/await assertAdapterDnsRebindingDenied/g)).toHaveLength(3);
+    expect(source.match(/survivingMcpUrl: mcpUrl/g)).toHaveLength(3);
     for (const adapter of [
       'adapter: "mcporter"',
       'adapter: "hermes-config"',
@@ -315,9 +324,16 @@ network_policies:
     }
     expect(source).toContain("rebound request must not reach the upstream MCP server");
     expect(source).toContain(").toHaveLength(0);");
+    expect(survivingPolicyBeforeAdd).toBeGreaterThan(helper);
+    expect(add).toBeGreaterThan(survivingPolicyBeforeAdd);
+    expect(remove).toBeGreaterThan(add);
+    expect(survivingPolicyAfterRemove).toBeGreaterThan(remove);
+    expect(source).toContain(
+      "assertManagedMcpPolicySurvivedRemoval(\n    survivingPolicyBeforeAdd,\n    survivingPolicyAfterRemoveResult,\n    REBIND_POLICY_KEY,",
+    );
   });
 
-  it("proves the surviving Hermes route before and after the unrelated route lifecycle", () => {
+  it("requires the Hermes E2E journey to call the surviving route before and after the unrelated route lifecycle", () => {
     const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
     const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);

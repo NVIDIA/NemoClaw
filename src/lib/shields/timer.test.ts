@@ -6,10 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock";
+import { getMcpLifecycleLockPath, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
   applyShieldsPolicySnapshot: vi.fn(() => ({ status: 0 })),
+  completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
 }));
@@ -26,6 +27,7 @@ vi.mock("../sandbox/config", () => ({
 
 vi.mock("./index", () => ({
   applyShieldsPolicySnapshot: shieldsIndexMock.applyShieldsPolicySnapshot,
+  completeAutoRestoreTransition: shieldsIndexMock.completeAutoRestoreTransition,
   get lockAgentConfig() {
     return shieldsIndexMock.lockAgentConfig;
   },
@@ -50,7 +52,7 @@ describe("shields timer authorization", () => {
   });
 
   async function invokeTimerAndCaptureExit(
-    runRestoreTimer: (args: any) => Promise<void>,
+    runRestoreTimer: (args: any, options?: { retryDelayMs?: number }) => Promise<void>,
     args: unknown,
   ): Promise<number> {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: any) => {
@@ -58,7 +60,7 @@ describe("shields timer authorization", () => {
     });
 
     try {
-      await runRestoreTimer(args);
+      await runRestoreTimer(args, { retryDelayMs: 1 });
       throw new Error("Expected runRestoreTimer to exit");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -71,20 +73,45 @@ describe("shields timer authorization", () => {
   }
 
   async function invokeTimerAndExpectRetry(
-    runRestoreTimer: (args: any) => Promise<void>,
+    runRestoreTimer: (args: any, options?: { retryDelayMs?: number }) => Promise<void>,
     args: unknown,
   ): Promise<void> {
-    vi.useFakeTimers();
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
+    const markerPath = (args as { markerPath?: string }).markerPath;
+    const markerContents =
+      markerPath && fs.existsSync(markerPath) ? fs.readFileSync(markerPath) : null;
     try {
-      await runRestoreTimer(args);
+      const pending = runRestoreTimer(args, { retryDelayMs: 50 });
+      const sandboxName = (args as { sandboxName?: string }).sandboxName;
+      const deadlinePath = sandboxName
+        ? `${getMcpLifecycleLockPath(
+            sandboxName,
+            path.join(tmpHome, ".nemoclaw", "state"),
+          )}.deadline`
+        : null;
+      const auditPath = markerPath
+        ? path.join(path.dirname(markerPath), "shields-audit.jsonl")
+        : null;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (
+          (!deadlinePath || fs.existsSync(deadlinePath)) &&
+          (!auditPath || fs.existsSync(auditPath))
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
       expect(exitSpy).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(1);
+      if (deadlinePath) expect(fs.existsSync(deadlinePath)).toBe(true);
+      if (markerPath) fs.rmSync(markerPath, { force: true });
+      await pending;
     } finally {
+      if (markerPath && markerContents) {
+        fs.writeFileSync(markerPath, markerContents);
+      }
       exitSpy.mockRestore();
-      vi.useRealTimers();
     }
   }
 
@@ -258,60 +285,51 @@ describe("shields timer authorization", () => {
   });
 
   it("retains a dead rebuild owner's timer and retries a transient restore failure", async () => {
-    vi.useFakeTimers();
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation((() => undefined) as typeof process.exit);
-    try {
-      const timer = await import("./timer");
-      const stateDir = path.join(tmpHome, ".nemoclaw", "state");
-      fs.mkdirSync(stateDir, { recursive: true });
-      const sandboxName = "rebuild-dead";
-      const snapshotPath = path.join(stateDir, "snapshot.yaml");
-      const restoreAtIso = new Date().toISOString();
-      const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-      const sandboxMutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-      fs.writeFileSync(
-        markerPath,
-        JSON.stringify({
-          pid: process.pid,
-          sandboxName,
-          snapshotPath,
-          restoreAt: restoreAtIso,
-          processToken: PROCESS_TOKEN,
-          leaseOwnerPid: 2_147_483_000,
-          leaseOwnerStartIdentity: "proc:dead-owner",
-        }),
-      );
-      shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
-        expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
-        return { status: 17 };
-      });
-      const args = timer.parseTimerArgs([
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "rebuild-dead";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const sandboxMutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
         sandboxName,
         snapshotPath,
-        restoreAtIso,
-        "",
-        "",
-        PROCESS_TOKEN,
-        "0",
-        "2147483000",
-        "proc:dead-owner",
-      ]);
-      expect(args).not.toBeNull();
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+        leaseOwnerPid: 2_147_483_000,
+        leaseOwnerStartIdentity: "proc:dead-owner",
+      }),
+    );
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
+      expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
+      expect(fs.existsSync(`${sandboxMutationLockPath}.deadline`)).toBe(true);
+      return { status: 17 };
+    });
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+      "0",
+      "2147483000",
+      "proc:dead-owner",
+    ]);
+    expect(args).not.toBeNull();
 
-      await timer.runRestoreTimer(args!);
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
 
-      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
-      expect(exitSpy).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(1);
-      expect(fs.existsSync(markerPath)).toBe(true);
-      expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
-    } finally {
-      exitSpy.mockRestore();
-      vi.useRealTimers();
-    }
+    expect(exitCode).toBe(0);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
   });
 
   it("does not restore or rewrite state when marker pid mismatches", async () => {
@@ -403,6 +421,54 @@ describe("shields timer authorization", () => {
     expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toEqual(replacementMarker);
   });
 
+  it("does not preempt a transition owner after timer authority is revoked", async () => {
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "revoked-takeover";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const deadlinePath = `${getMcpLifecycleLockPath(sandboxName, stateDir)}.deadline`;
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+      }),
+    );
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+    ]);
+    expect(args).not.toBeNull();
+    shieldsIndexMock.prepareAutoRestoreTransitionTakeover.mockImplementationOnce(
+      (_sandboxName, _processToken, _snapshotPath, assertTakeoverAuthority) => {
+        expect(fs.existsSync(deadlinePath)).toBe(true);
+        fs.rmSync(markerPath);
+        expect(assertTakeoverAuthority).toBeTypeOf("function");
+        assertTakeoverAuthority();
+      },
+    );
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+
+    expect(exitCode).toBe(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    const mutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(fs.existsSync(`${mutationLockPath}.containment`)).toBe(false);
+  });
+
   it("restores and updates state when marker matches current timer invocation", async () => {
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
@@ -439,12 +505,16 @@ describe("shields timer authorization", () => {
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
       expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
+      expect(fs.existsSync(`${sandboxMutationLockPath}.deadline`)).toBe(true);
       expect(JSON.parse(fs.readFileSync(lockPath, "utf-8"))).toMatchObject({
         sandboxName,
         command: "shields auto-restore",
         takeoverToken: PROCESS_TOKEN,
       });
-      return { status: 0 };
+      return {
+        status: 0,
+        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
+      };
     });
 
     const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
@@ -457,6 +527,86 @@ describe("shields timer authorization", () => {
     expect(updatedState.shieldsDownAt).toBeNull();
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
+    expect(
+      fs
+        .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+    ).toContainEqual(
+      expect.objectContaining({
+        action: "shields_auto_restore",
+        warning: "Auto-restore omitted 1 unproven managed MCP policy entries",
+      }),
+    );
+  });
+
+  it("keeps the deadline gate closed while a failed restore retries", async () => {
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "retry-gate";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const mutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+      }),
+    );
+    shieldsIndexMock.applyShieldsPolicySnapshot
+      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValue({ status: 0 });
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+    ]);
+    expect(args).not.toBeNull();
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as typeof process.exit);
+    let contenderEntered = false;
+
+    try {
+      const restore = timer.runRestoreTimer(args!, { retryDelayMs: 100 });
+      for (
+        let attempt = 0;
+        attempt < 200 && shieldsIndexMock.applyShieldsPolicySnapshot.mock.calls.length === 0;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(`${mutationLockPath}.deadline`)).toBe(true);
+
+      const contender = withMcpLifecycleLock(
+        sandboxName,
+        () => {
+          contenderEntered = true;
+        },
+        { stateDir, pollIntervalMs: 5, timeoutMs: 2_000 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(contenderEntered).toBe(false);
+      expect(fs.existsSync(`${mutationLockPath}.deadline`)).toBe(true);
+
+      await Promise.all([restore, contender]);
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(2);
+      expect(contenderEntered).toBe(true);
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 
   it("retains recovery authority when the locked-state commit cannot be persisted", async () => {
@@ -572,6 +722,11 @@ describe("shields timer authorization", () => {
 
     expect(exitCode).toBe(0);
     expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledWith(
+      sandboxName,
+      snapshotPath,
+      { deadlineAuthoritative: true, transitionProcessToken: PROCESS_TOKEN },
+    );
     // #4663: relockAndReconfirm applies then re-confirms after the settle
     // window (0ms under test), so lockAgentConfig is invoked twice for a clean
     // lock.

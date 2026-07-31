@@ -1149,8 +1149,14 @@ If `shields up` reports that the config remains unlocked or drifted, confirm tha
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
-When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
-Retry an interrupted command in a new shields-down window.
+When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
+The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
+NemoClaw does not signal that process because portable process inspection cannot prove that all descendants are contained.
+If the owner exits before releasing the generation, NemoClaw leaves Shields down, records permanent containment, and reports operator recovery guidance.
+Stop all NemoClaw processes for that sandbox, then follow the exact lock-generation guidance before retrying.
+
+Policy restoration reconciles the current exact managed MCP entries into the saved restrictive policy.
+An MCP server removed during the shields-down window stays removed, while an unrelated surviving server keeps its recorded endpoint and address pins.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -2890,7 +2896,8 @@ A skipped sandbox's uncommitted state is not included in its last successful bac
 Create a timestamped snapshot of sandbox state.
 Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 The command requires shields to be down and keeps the shields check and backup under one per-sandbox transition.
-An expired auto-restore timer can interrupt a long-running backup and restore lockdown.
+When the timer expires during a long-running backup, the lifecycle deadline gate blocks new mutations and waits for the recorded backup owner to release its exact lock generation before restoring lockdown.
+If the owner exits first, NemoClaw leaves Shields down and reports the permanent-containment recovery guidance.
 When the sandbox has active baseline exclusions, successful output lists their keys and repeats that excluded egress leaves dependent agent features unsupported for that sandbox.
 
 ```bash
@@ -2924,7 +2931,8 @@ If no selector is provided, the latest snapshot is used.
 Restore removes files added after the snapshot only from state directories selected for cleanup.
 It preserves directories that exist only in the target manifest or whose backup failed.
 The state replacement, mutable-config permission repair, and policy reconciliation run under the same per-sandbox transition.
-An expired auto-restore timer can interrupt that work and restore lockdown.
+When the timer expires during that work, the lifecycle deadline gate blocks new mutations and waits for the recorded restore owner to release its exact lock generation before restoring lockdown.
+If the owner exits first, NemoClaw leaves Shields down and reports the permanent-containment recovery guidance.
 
 The selector accepts any of:
 

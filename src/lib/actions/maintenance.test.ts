@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
   openBackupShieldsWindow: vi.fn(),
   relockBackupShieldsWindow: vi.fn(),
+  withSandboxMutationLock: vi.fn(
+    async (_sandboxName: string, action: () => unknown, _options?: { timeoutMs?: number }) =>
+      action(),
+  ),
 }));
 
 vi.mock("../state/registry", () => ({
@@ -28,6 +32,9 @@ vi.mock("../state/registry", () => ({
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
   BackupResult: {},
+}));
+vi.mock("../state/mcp-lifecycle-lock", () => ({
+  withSandboxMutationLock: mocks.withSandboxMutationLock,
 }));
 vi.mock("../openshell-sandbox-list", () => ({
   captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
@@ -82,6 +89,10 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
+    mocks.withSandboxMutationLock.mockImplementation(
+      async (_sandboxName: string, action: () => unknown, _options?: { timeoutMs?: number }) =>
+        action(),
+    );
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
       status: 0,
@@ -275,13 +286,23 @@ describe("backupAll", () => {
     logSpy.mockRestore();
   });
 
-  it("closes each shields window before backing up the next sandbox (#6455)", async () => {
+  it("serializes each Shields transition without holding the lock during backup (#7952)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "alpha" }, { name: "beta" }],
       defaultSandbox: "alpha",
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
     const events: string[] = [];
+    mocks.withSandboxMutationLock.mockImplementation(
+      async (name: string, action: () => unknown) => {
+        events.push(`lock:start:${name}`);
+        try {
+          return await action();
+        } finally {
+          events.push(`lock:end:${name}`);
+        }
+      },
+    );
     mocks.openBackupShieldsWindow.mockImplementation(
       (
         name: string,
@@ -321,13 +342,27 @@ describe("backupAll", () => {
     await backupAll();
 
     expect(events).toEqual([
+      "lock:start:alpha",
       "open:alpha",
+      "lock:end:alpha",
       "backup:alpha",
+      "lock:start:alpha",
       "relock:alpha",
+      "lock:end:alpha",
+      "lock:start:beta",
       "open:beta",
+      "lock:end:beta",
       "backup:beta",
+      "lock:start:beta",
       "relock:beta",
+      "lock:end:beta",
     ]);
+    expect(mocks.withSandboxMutationLock).toHaveBeenNthCalledWith(
+      2,
+      "alpha",
+      expect.any(Function),
+      { timeoutMs: 30_000 },
+    );
   });
 
   it("relocks shields after a credential permission failure and keeps the failure hard (#6455)", async () => {
@@ -431,7 +466,18 @@ describe("backupAll", () => {
     mocks.backupSandboxState.mockImplementation(() => {
       throw backupError;
     });
-    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    const relockLockError = new Error("mutation lock timed out");
+    let lockAttempt = 0;
+    mocks.withSandboxMutationLock.mockImplementation(
+      async (_sandboxName: string, action: () => unknown, options?: { timeoutMs?: number }) => {
+        lockAttempt += 1;
+        if (lockAttempt === 2) {
+          expect(options).toEqual({ timeoutMs: 30_000 });
+          throw relockLockError;
+        }
+        return action();
+      },
+    );
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     const failure = await backupAll().catch((error: unknown) => error);
@@ -443,11 +489,13 @@ describe("backupAll", () => {
     expect((failure as AggregateError).errors).toEqual([
       backupError,
       expect.objectContaining({
+        cause: relockLockError,
         message: expect.stringContaining(
           "Shields lockdown could not be restored for 'alpha' after backup-all",
         ),
       }),
     ]);
+    expect(mocks.relockBackupShieldsWindow).not.toHaveBeenCalled();
   });
 
   it("preserves an orphan-manifest error when shields restoration also fails (#6455)", async () => {

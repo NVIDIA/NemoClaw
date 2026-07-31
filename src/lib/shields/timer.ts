@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { resolveAgentConfig } from "../sandbox/config";
-import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
+import { withMcpLifecycleDeadlineFence } from "../state/mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
@@ -46,7 +46,12 @@ interface TimerArgs {
   leaseOwnerStartIdentity?: string;
 }
 
+interface TimerRuntimeOptions {
+  retryDelayMs?: number;
+}
+
 type LockAgentConfig = typeof shields.lockAgentConfig;
+type RestoreAttemptOutcome = "complete" | "retry" | "revoked";
 
 const STATE_DIR = resolveNemoclawStateDir();
 const AUTO_RESTORE_RETRY_MS = 5_000;
@@ -225,16 +230,24 @@ function rebuildLeaseOwnerIsCurrent(args: TimerArgs): boolean {
   );
 }
 
-async function runRestoreTimer(args: TimerArgs): Promise<void> {
+async function runRestoreTimer(
+  args: TimerArgs,
+  runtimeOptions: TimerRuntimeOptions = {},
+): Promise<void> {
   const now = new Date().toISOString();
+  const retryDelayMs =
+    Number.isFinite(runtimeOptions.retryDelayMs) && (runtimeOptions.retryDelayMs ?? 0) >= 0
+      ? Math.floor(runtimeOptions.retryDelayMs!)
+      : AUTO_RESTORE_RETRY_MS;
   let exitCode = 0;
   let retryScheduled = false;
+  let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
     setTimeout(() => {
-      void runRestoreTimer(args);
-    }, AUTO_RESTORE_RETRY_MS);
+      void runRestoreTimer(args, runtimeOptions);
+    }, retryDelayMs);
     return true;
   };
 
@@ -259,13 +272,12 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
     if (!args.processToken || !/^[0-9a-f]{32}$/.test(args.processToken)) {
       throw new Error("Auto-restore timer has no valid transition takeover token");
     }
-    shields.prepareAutoRestoreTransitionTakeover(
-      args.sandboxName,
-      args.processToken,
-      args.snapshotPath,
-    );
-
-    await withSandboxMutationLock(args.sandboxName, () =>
+    const assertTakeoverAuthority = (): void => {
+      if (!markerMatchesCurrentTimer(args)) {
+        throw new Error("Auto-restore authority changed before Shields transition takeover");
+      }
+    };
+    const restoreUnderDeadlineFence = (): RestoreAttemptOutcome =>
       withShieldsTransitionLock(
         args.sandboxName,
         "shields auto-restore",
@@ -273,7 +285,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
           // A manual hardening command may have completed while this timer waited
           // for the host mutation lock. The marker is the timer's authority, so
           // re-check it only after serialization is established.
-          if (!markerMatchesCurrentTimer(args)) return;
+          if (!markerMatchesCurrentTimer(args)) return "revoked";
 
           if (!fs.existsSync(args.snapshotPath)) {
             appendAudit({
@@ -284,13 +296,20 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
               error: "Policy snapshot file missing",
             });
             exitCode = 1;
-            scheduleRetry();
-            return;
+            return "retry";
           }
 
           // Restore policy (slow — openshell policy set --wait blocks)
-          const result = shields.applyShieldsPolicySnapshot(args.sandboxName, args.snapshotPath);
+          const result = shields.applyShieldsPolicySnapshot(args.sandboxName, args.snapshotPath, {
+            transitionProcessToken: args.processToken,
+            deadlineAuthoritative: true,
+          });
           const status = typeof result.status === "number" ? result.status : 1;
+          if (result.managedMcpOmissions?.length) {
+            managedMcpWarning = `Auto-restore omitted ${String(
+              result.managedMcpOmissions.length,
+            )} unproven managed MCP policy entries`;
+          }
 
           if (status !== 0) {
             appendAudit({
@@ -301,14 +320,13 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
               error: `Policy restore exited with status ${String(status)}`,
             });
             exitCode = 1;
-            scheduleRetry();
-            return;
+            return "retry";
           }
 
           // Destroy and force-restore can revoke this marker while a slow
           // policy restore is already in flight. Stop before the next sandbox
           // mutation if this timer generation no longer owns recovery.
-          if (!markerMatchesCurrentTimer(args)) return;
+          if (!markerMatchesCurrentTimer(args)) return "revoked";
 
           // Re-lock config file using the shared lockAgentConfig from shields.ts.
           // lockAgentConfig runs each operation independently and verifies the
@@ -359,7 +377,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
             }
             if (lockTarget) {
               try {
-                if (!markerMatchesCurrentTimer(args)) return;
+                if (!markerMatchesCurrentTimer(args)) return "revoked";
                 const lockAgentConfig = resolveLockAgentConfig();
                 // #4663: a single instantaneous lock+verify cannot prove an
                 // in-sandbox reconciler didn't re-permission .config-hash after the
@@ -406,7 +424,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
 
           // Re-lock verification includes a settle window. Do not rewrite state
           // or remove a replacement marker if authority changed while it ran.
-          if (!markerMatchesCurrentTimer(args)) return;
+          if (!markerMatchesCurrentTimer(args)) return "revoked";
 
           // Only mark shields as UP if the lock was verified (or no config path).
           if (lockVerified) {
@@ -420,6 +438,15 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
             if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
             if (lockedHashes !== null) patch.fileHashes = lockedHashes;
             updateState(args.stateFile, patch);
+            if (
+              !shields.completeAutoRestoreTransition(
+                args.sandboxName,
+                args.processToken!,
+                args.snapshotPath,
+              )
+            ) {
+              return "revoked";
+            }
 
             appendAudit({
               action: "shields_auto_restore",
@@ -428,9 +455,11 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
+              ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
             cleanupOwnedTimerMarker(args);
-            return;
+            exitCode = 0;
+            return "complete";
           }
 
           // Explicitly ensure state reflects shields are still DOWN.
@@ -445,10 +474,62 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
             error: "Config re-lock verification failed — shields remain DOWN",
           });
           exitCode = 1;
-          scheduleRetry();
+          return "retry";
         },
-        { takeoverToken: args.processToken },
-      ),
+        {
+          takeoverToken: args.processToken,
+          recoverStaleOwner: false,
+          waitTimeoutMs: 0,
+        },
+      );
+    const restoreWhileDeadlineOwned = async (): Promise<void> => {
+      for (;;) {
+        let outcome: RestoreAttemptOutcome;
+        try {
+          shields.prepareAutoRestoreTransitionTakeover(
+            args.sandboxName,
+            args.processToken!,
+            args.snapshotPath,
+            assertTakeoverAuthority,
+          );
+          outcome = restoreUnderDeadlineFence();
+        } catch (error) {
+          appendAudit({
+            action: "shields_up_failed",
+            sandbox: args.sandboxName,
+            timestamp: new Date().toISOString(),
+            restored_by: "auto_timer",
+            policy_snapshot: args.snapshotPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          exitCode = 1;
+          outcome = "retry";
+        }
+        if (outcome !== "retry") return;
+        if (!markerMatchesCurrentTimer(args)) return;
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        if (!markerMatchesCurrentTimer(args)) return;
+      }
+    };
+    await withMcpLifecycleDeadlineFence(
+      args.sandboxName,
+      args.processToken,
+      restoreWhileDeadlineOwned,
+      {
+        stateDir: STATE_DIR,
+        pollIntervalMs: 50,
+        timeoutMs: 5_000,
+        onContainment: ({ ownerPid, reason }) => {
+          appendAudit({
+            action: "shields_up_failed",
+            sandbox: args.sandboxName,
+            timestamp: new Date().toISOString(),
+            restored_by: "auto_timer",
+            policy_snapshot: args.snapshotPath,
+            error: `${reason}${ownerPid ? ` Contained owner PID: ${String(ownerPid)}.` : ""}`,
+          });
+        },
+      },
     );
   } catch (error: unknown) {
     appendAudit({
