@@ -244,8 +244,8 @@ vi.mock("./restore-gateway-pairing", () => ({
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
   removeSandboxRegistryEntry: vi.fn(),
+  requireSandboxDestructiveCleanupAuthority: vi.fn(),
 }));
-
 describe("runSandboxSnapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
