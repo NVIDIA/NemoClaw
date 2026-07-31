@@ -4,11 +4,16 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  type AddSandboxChannelDependencies,
-  addSandboxChannel,
-} from "../../../src/lib/actions/sandbox/policy-channel.ts";
+import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/sandbox/policy-channel.ts";
+import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
+
+type PolicyChannelModule = typeof import("../../../src/lib/actions/sandbox/policy-channel.ts");
+
+const policyChannel = (
+  "default" in policyChannelModule ? policyChannelModule.default : policyChannelModule
+) as PolicyChannelModule;
+const { addSandboxChannel } = policyChannel;
 
 interface GooglechatLiveE2eComposition {
   readonly sandboxName: string;
