@@ -355,6 +355,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test ! -L /usr/local/lib/nemoclaw/dcode-managed-exec",
       `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-managed-exec)" = "0:0:755"`,
       "cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec",
+      "unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
       "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
       "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
@@ -363,6 +364,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(dockerfile).toContain(s);
     }
+    expect(dockerfile.indexOf("unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")).toBeLessThan(
+      dockerfile.indexOf('/usr/local/bin/dcode -n ""'),
+    );
     expect(
       dockerfile
         .split("\n")
@@ -1023,10 +1027,21 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
-    expect(review).toContain("Targeted audit result: `Pillow 12.3.0 has no known vulnerabilities`");
-    expect(review).toContain("Complete-lock audit result: `6 records in 3 unrelated packages`");
+    expect(review).toContain(
+      "Targeted audit result: `uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
+    );
+    expect(review).toContain(
+      "Complete-lock audit result: `2 duplicate records in 1 unrelated package`",
+    );
+    expect(review).toContain("Deep Agents Code `0.1.45` and later");
+    expect(review).toContain("semantic migration to `>=0.1.45`");
+    expect(requirementsLock).toContain("uv==0.11.33");
+    expect(requirementsLock).toContain("mcp==1.28.1");
     expect(requirementsLock).toContain("pillow==12.3.0");
-    expect(readAgentFile("Dockerfile.base")).toContain("assert version('pillow') == '12.3.0'");
+    expect(requirementsLock).toContain("pyasn1==0.6.4");
+    expect(readAgentFile("Dockerfile.base")).toContain(
+      "'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'",
+    );
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");

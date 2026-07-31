@@ -590,7 +590,14 @@ hermes_config_root_is_locked() {
   owner="$(stat -c '%U:%G' "$HERMES_DIR" 2>/dev/null || stat -f '%Su:%Sg' "$HERMES_DIR" 2>/dev/null || true)"
   mode="$(stat -c '%a' "$HERMES_DIR" 2>/dev/null || stat -f '%Lp' "$HERMES_DIR" 2>/dev/null || true)"
 
+  # The locked root is root-owned in the sandbox group and keeps the set-id and
+  # sticky bits so the gateway can still write its top-level runtime state while
+  # the sticky bit protects the sealed entries (#7865) — the same shape
+  # hermes_locked_parent_is_protected expects one level up. `root:root 755` is
+  # the pre-#7865 posture; keep detecting it so an existing shields-up sandbox
+  # still takes the locked branches until `shields up` repairs the root.
   case "${owner} ${mode}" in
+    "root:sandbox 3770" | "root:sandbox 03770") ;;
     "root:root 755" | "root:root 0755") ;;
     *) return 1 ;;
   esac
@@ -1970,6 +1977,17 @@ refresh_hermes_provider_placeholders() {
 
 refresh_hermes_runtime_config_hashes() {
   local mode="${1:-strict}"
+  # A locked root seals config.yaml, .env, and .config-hash as root-owned, and
+  # the lock transaction already wrote a coherent hash for them. The compat
+  # refresh runs as the sandbox identity, which by design cannot replace a
+  # sealed hash: the sticky config root refuses the rename, so every launch
+  # under shields failed here and the supervisor stopped respawning (#7865).
+  # There is also nothing to refresh, because the sealed inputs cannot drift.
+  # The MCP integrity inspection that follows still validates the sealed hash,
+  # so a genuinely incoherent locked tree keeps failing closed.
+  if [ "$mode" = "compat" ] && hermes_config_root_is_locked; then
+    return 0
+  fi
   local cmd=(
     "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" refresh-hashes
     --hermes-dir "$HERMES_DIR"

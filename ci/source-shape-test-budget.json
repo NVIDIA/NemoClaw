@@ -17,6 +17,16 @@
       "category": "security"
     },
     {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every stock Docker ARG as startup-affordance or deliberate exclusion",
+      "category": "compatibility"
+    },
+    {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every centralized runtime input as profile intent or an explicit deferral",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -264,6 +274,11 @@
     {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"
     },
     {

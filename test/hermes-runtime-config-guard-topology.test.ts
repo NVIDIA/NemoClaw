@@ -16,6 +16,9 @@ const RUNTIME_CONFIG_GUARD = path.join(
   "hermes",
   "runtime-config-guard.py",
 );
+const SANDBOX_GID_EXPECTED = 12345;
+const EACCES = 13;
+const EPERM = 1;
 const ROOT_RUNTIME_IMAGE =
   "python:3.12-slim@sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464";
 function dockerAvailable(): boolean {
@@ -657,8 +660,13 @@ with tempfile.TemporaryDirectory() as tmp:
           "config.yaml": "0o444",
         },
         finish_error: "simulated later validation failure",
-        hermes_gid: 0,
-        hermes_mode: "0o755",
+        // Rolling back to locked re-derives the locked target rather than
+        // replaying the captured original, so a tree that was locked before
+        // #7865 comes back on the group-writable + sticky root the gateway
+        // needs. Root ownership plus the sticky bit keeps the sealed files
+        // unlinkable only by root.
+        hermes_gid: 12345,
+        hermes_mode: "0o3770",
         hermes_uid: 0,
         lifecycle_marker: {
           content: "root-separated\n",
@@ -674,6 +682,137 @@ with tempfile.TemporaryDirectory() as tmp:
         parent_uid: 0,
         repaired_mode: "0o3770",
         state_exists: false,
+      });
+    },
+  );
+
+  // source-shape-contract: security -- Executes the shipped guard as root so a real sandbox identity proves the locked-root capability split
+  it.skipIf(!shouldAttemptRootContainerContract)(
+    "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
+    () => {
+      // Exercise the real kernel capabilities of a distinct sandbox identity
+      // against a genuinely locked tree instead of asserting modes: Hermes must
+      // be able to create the top-level runtime state it writes on every
+      // launch, and must not be able to modify, unlink, or rename the sealed
+      // config out from under the lock.
+      const result = runRootContainerHarness(`${loadGuardModule}
+import json
+import os
+import stat
+import tempfile
+
+SANDBOX_UID = 12345
+SANDBOX_GID = 12345
+
+def as_sandbox(action):
+    """Run action() under the sandbox identity; return its errno or 0."""
+    child = os.fork()
+    if child == 0:
+        os.setgid(SANDBOX_GID)
+        os.setuid(SANDBOX_UID)
+        try:
+            action()
+        except OSError as exc:
+            os._exit(exc.errno)
+        except Exception:
+            os._exit(255)
+        os._exit(0)
+    _pid, status = os.waitpid(child, 0)
+    return os.waitstatus_to_exitcode(status)
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.chmod(tmp, 0o755)
+    sandbox = os.path.join(tmp, "sandbox")
+    hermes = os.path.join(sandbox, ".hermes")
+    os.makedirs(hermes)
+    config = os.path.join(hermes, "config.yaml")
+    env = os.path.join(hermes, ".env")
+    strict = os.path.join(tmp, "hermes.config-hash")
+    state = os.path.join(tmp, "restart-state.json")
+
+    with open(config, "wb") as handle:
+        handle.write(b"model: test\\n")
+    with open(env, "wb") as handle:
+        handle.write(b"SAFE=1\\n")
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+    guard._write_hash(strict, initial_hash)
+    guard.refresh_hashes(hermes, strict, "both")
+
+    os.chown(hermes, SANDBOX_UID, SANDBOX_GID)
+    os.chmod(hermes, 0o3770)
+    os.chmod(sandbox, 0o755)
+
+    guard._get_inode_flags = lambda _fd: 0
+    guard._set_inode_flags = lambda _fd, _flags: None
+    guard._sandbox_identity = lambda: (SANDBOX_UID, SANDBOX_GID)
+    guard._claim_transition_worker = (
+        lambda state_path, _token, _purpose: guard._load_restart_state(state_path)
+    )
+
+    token, _original_locked = guard.begin_shields_transition(
+        hermes, strict, state, "locked", "mutable"
+    )
+    # begin clamps the root to 0500 until the host finishes its recursive lock
+    # pass; apply refuses while that clamp is still in place. Emulate the
+    # completed pass so this test covers the committed locked posture.
+    os.chmod(hermes, 0o755)
+    guard.apply_shields_transition(hermes, state, token)
+    guard.finish_shields_transition(hermes, strict, state, token)
+
+    hermes_st = os.stat(hermes)
+    probe = os.path.join(hermes, ".gateway_state_probe.tmp")
+
+    def create_runtime_state():
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+
+    create_errno = as_sandbox(create_runtime_state)
+    unlink_own_errno = as_sandbox(lambda: os.unlink(probe))
+    modify_errno = as_sandbox(lambda: os.close(os.open(config, os.O_WRONLY)))
+    unlink_sealed_errno = as_sandbox(lambda: os.unlink(config))
+    rename_sealed_errno = as_sandbox(
+        lambda: os.rename(config, os.path.join(hermes, "stolen.yaml"))
+    )
+
+    print(json.dumps({
+        "hermes_uid": hermes_st.st_uid,
+        "hermes_gid": hermes_st.st_gid,
+        "hermes_mode": oct(stat.S_IMODE(hermes_st.st_mode)),
+        "sticky": bool(hermes_st.st_mode & stat.S_ISVTX),
+        "config_mode": oct(stat.S_IMODE(os.stat(config).st_mode)),
+        "config_uid": os.stat(config).st_uid,
+        "create_runtime_state": create_errno,
+        "unlink_own_runtime_state": unlink_own_errno,
+        "modify_sealed_config": modify_errno,
+        "unlink_sealed_config": unlink_sealed_errno,
+        "rename_sealed_config": rename_sealed_errno,
+        "config_still_present": os.path.exists(config),
+    }))
+`);
+
+      const failureDetails = [
+        `status: ${String(result.status)}`,
+        `stderr: ${String(result.stderr)}`,
+      ].join("\n");
+      expect(result.status, failureDetails).toBe(0);
+      expect(JSON.parse(String(result.stdout))).toEqual({
+        // Root-owned in the sandbox group, set-id + sticky.
+        hermes_uid: 0,
+        hermes_gid: SANDBOX_GID_EXPECTED,
+        hermes_mode: "0o3770",
+        sticky: true,
+        // The seal itself is unchanged by this fix.
+        config_mode: "0o444",
+        config_uid: 0,
+        // Hermes can manage its own top-level runtime state...
+        create_runtime_state: 0,
+        unlink_own_runtime_state: 0,
+        // ...but cannot touch the sealed config: EACCES on write, EPERM from
+        // the sticky bit on unlink and rename.
+        modify_sealed_config: EACCES,
+        unlink_sealed_config: EPERM,
+        rename_sealed_config: EPERM,
+        config_still_present: true,
       });
     },
   );
