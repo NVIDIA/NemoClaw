@@ -520,9 +520,14 @@ network_policies:
     });
 
     it("pins compatible-endpoint reasoning for an MCP-bearing rebuild", async () => {
-      const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY", "NEMOCLAW_REASONING"]);
+      const restoreEnv = snapshotEnv([
+        "COMPATIBLE_API_KEY",
+        "NEMOCLAW_REASONING",
+        "NEMOCLAW_REASONING_EFFORT",
+      ]);
       process.env.COMPATIBLE_API_KEY = "compat-key";
       process.env.NEMOCLAW_REASONING = "false";
+      process.env.NEMOCLAW_REASONING_EFFORT = "low";
       const mcpEntry = {
         server: "github",
         agent: "openclaw",
@@ -534,6 +539,7 @@ network_policies:
         addedAt: "2026-06-01T00:00:00.000Z",
       };
       let reasoningSeenInsideOnboard: string | undefined;
+      let effortSeenInsideOnboard: string | undefined;
       try {
         const harness = createRebuildFlowHarness({
           applyPreset: () => true,
@@ -542,6 +548,7 @@ network_policies:
             model: "reasoning-model",
             endpointUrl: "https://compatible.example.test/v1",
             compatibleEndpointReasoning: "true",
+            compatibleEndpointReasoningEffort: "high",
             mcp: { bridges: { github: mcpEntry } },
           },
           sessionSandboxName: "other",
@@ -550,8 +557,12 @@ network_policies:
             detachedProviderEntries: [mcpEntry],
           },
           onboard: (session) => {
+            // The recreate reapplies the recorded configuration, never the
+            // ambient one an unrelated onboard left behind (#5735, #7940).
             reasoningSeenInsideOnboard = process.env.NEMOCLAW_REASONING;
+            effortSeenInsideOnboard = process.env.NEMOCLAW_REASONING_EFFORT;
             expect(session.compatibleEndpointReasoning).toBe("true");
+            expect(session.compatibleEndpointReasoningEffort).toBe("high");
           },
         });
         harness.session.compatibleEndpointReasoning = "false";
@@ -560,9 +571,12 @@ network_policies:
           harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
         ).resolves.toBeUndefined();
 
-        expect(reasoningSeenInsideOnboard).toBeUndefined();
+        expect(reasoningSeenInsideOnboard).toBe("true");
+        expect(effortSeenInsideOnboard).toBe("high");
         expect(harness.session.compatibleEndpointReasoning).toBe("true");
+        expect(harness.session.compatibleEndpointReasoningEffort).toBe("high");
         expect(process.env.NEMOCLAW_REASONING).toBe("false");
+        expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
         expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
       } finally {
         restoreEnv();

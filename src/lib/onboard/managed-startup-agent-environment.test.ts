@@ -16,12 +16,26 @@ import {
   MANAGED_STARTUP_AGENTS,
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+  MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
   type ManagedStartupAgent,
   type ManagedStartupJsonObject,
   type ManagedStartupProfile,
 } from "./managed-startup/profile";
 
 const CA_SHA256 = "a".repeat(64);
+const OPENCLAW_APPLICATION_RUNTIME_NAMES = [
+  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+] as const;
+const UNSUPPORTED_AGENT_RUNTIME_UNSETS = [
+  ...OPENCLAW_APPLICATION_RUNTIME_NAMES,
+  "NEMOCLAW_DASHBOARD_BIND",
+  "NEMOCLAW_MINIMAL_BOOTSTRAP",
+] as const;
 
 function messagingPlan(agent: "openclaw" | "hermes"): ManagedStartupJsonObject {
   return {
@@ -205,7 +219,7 @@ function dcodeProfile(): ManagedStartupProfile {
       contextWindow: null,
       maxTokens: null,
       reasoning: null,
-      reasoningEffort: null,
+      reasoningEffort: "high",
     },
     corporateCa: { bundleSha256: CA_SHA256 },
   };
@@ -233,7 +247,14 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
 
 describe("managed startup agent environment", () => {
   it("maps every OpenClaw profile field to the existing generator and entrypoint contracts", () => {
-    const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile());
+    const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile(), {
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
+      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3e0",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "03",
+      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10.0",
+      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "6e2",
+    });
 
     expect(result.schemaVersion).toBe(1);
     expect(result.agent).toBe("openclaw");
@@ -283,6 +304,20 @@ describe("managed startup agent environment", () => {
       no_proxy: "127.0.0.1,inference.local,localhost",
     });
     expect(Object.hasOwn(result.runtimeEnvironment, "NEMOCLAW_MESSAGING_PLAN_B64")).toBe(false);
+    expect(result.applicationRuntime).toEqual({
+      exportEnvironment: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+      },
+      unsetEnvironment: [],
+    });
+    expect(Object.isFrozen(result.applicationRuntime)).toBe(true);
+    expect(Object.isFrozen(result.applicationRuntime.exportEnvironment)).toBe(true);
+    expect(Object.isFrozen(result.applicationRuntime.unsetEnvironment)).toBe(true);
 
     expect(
       decodeBase64Json(result.configurationEnvironment.NEMOCLAW_INFERENCE_COMPAT_B64 ?? ""),
@@ -343,8 +378,69 @@ describe("managed startup agent environment", () => {
     ]);
   });
 
+  it.each([
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "0", /positive safe integer/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "1.5", /positive safe integer/u],
+    [
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+      String(Number.MAX_SAFE_INTEGER + 1),
+      /positive safe integer/u,
+    ],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "Infinity", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "NaN", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "not-a-number", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1\n", /single-line text/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "\r1", /single-line text/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1\0", /single-line text/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "-0.1", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", " ", /finite positive seconds/u],
+  ] as const)("rejects invalid application runtime input %s=%s", (name, value, message) => {
+    expect(() =>
+      mapManagedStartupProfileToAgentEnvironment(openClawProfile(), { [name]: value }),
+    ).toThrow(message);
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("derives every unsupported $0 runtime unset from the closed contract", (agent) => {
+    const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent](), {
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+    });
+    const unsets = new Set(result.applicationRuntime.unsetEnvironment);
+    for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
+      expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
+    }
+    for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
+      expect(unsets.has(name)).toBe(agent !== "openclaw");
+    }
+  });
+
+  it("keeps the profile mapper independent from mutable process-global runtime input", () => {
+    const name = "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS";
+    const previous = process.env[name];
+    process.env[name] = "not-a-number";
+    try {
+      expect(
+        mapManagedStartupProfileToAgentEnvironment(openClawProfile()).applicationRuntime,
+      ).toEqual({
+        exportEnvironment: {},
+        unsetEnvironment: [],
+      });
+    } finally {
+      delete process.env[name];
+      Object.assign(process.env, previous === undefined ? {} : { [name]: previous });
+    }
+  });
+
   it("maps every Hermes profile field, including gateway presets and dashboard forwarding", () => {
-    const result = mapManagedStartupProfileToAgentEnvironment(hermesProfile());
+    const result = mapManagedStartupProfileToAgentEnvironment(hermesProfile(), {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "not-a-number",
+    });
 
     expect(result.configurationEnvironment).toEqual({
       CHAT_UI_URL: "http://127.0.0.1:19189",
@@ -394,6 +490,10 @@ describe("managed startup agent environment", () => {
       https_proxy: "http://proxy.example.test:3128",
       no_proxy: "127.0.0.1,localhost",
     });
+    expect(result.applicationRuntime).toEqual({
+      exportEnvironment: {},
+      unsetEnvironment: UNSUPPORTED_AGENT_RUNTIME_UNSETS,
+    });
     expect(result.actions).toContainEqual({
       kind: "apply-messaging-plan",
       agent: "hermes",
@@ -415,7 +515,9 @@ describe("managed startup agent environment", () => {
   });
 
   it("keeps DCode routing and auto-approval in root-owned files instead of ambient runtime env", () => {
-    const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile());
+    const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile(), {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "not-a-number",
+    });
 
     expect(result.configurationEnvironment).toEqual({
       HTTP_PROXY: "",
@@ -424,6 +526,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
       NEMOCLAW_MODEL: "openai/gpt-5.4",
+      NEMOCLAW_REASONING_EFFORT: "high",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://openrouter.ai/api/v1",
       NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
@@ -434,6 +537,7 @@ describe("managed startup agent environment", () => {
     });
     const expectedDcodeRuntime = { ...result.configurationEnvironment };
     delete expectedDcodeRuntime.NEMOCLAW_INFERENCE_BASE_URL;
+    delete expectedDcodeRuntime.NEMOCLAW_REASONING_EFFORT;
     for (const name of [
       "HTTP_PROXY",
       "HTTPS_PROXY",
@@ -448,6 +552,10 @@ describe("managed startup agent environment", () => {
       ...expectedDcodeRuntime,
       NEMOCLAW_OBSERVABILITY: "1",
     });
+    expect(result.applicationRuntime).toEqual({
+      exportEnvironment: {},
+      unsetEnvironment: UNSUPPORTED_AGENT_RUNTIME_UNSETS,
+    });
     for (const environment of [result.configurationEnvironment, result.runtimeEnvironment]) {
       expect(environment).not.toHaveProperty("NEMOCLAW_DCODE_AUTO_APPROVAL");
       expect(environment).not.toHaveProperty("NEMOCLAW_MESSAGING_PLAN_B64");
@@ -457,6 +565,7 @@ describe("managed startup agent environment", () => {
     expect(result.runtimeEnvironment).not.toHaveProperty("HTTP_PROXY");
     expect(result.runtimeEnvironment).not.toHaveProperty("HTTPS_PROXY");
     expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_INFERENCE_BASE_URL");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING_EFFORT");
 
     expect(result.materials).toEqual([
       {
@@ -496,6 +605,15 @@ describe("managed startup agent environment", () => {
         legacyInput: "NEMOCLAW_PROXY_PORT",
         path: "/usr/local/share/nemoclaw/dcode-proxy-port",
         contents: "3128\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_REASONING_EFFORT",
+        path: "/usr/local/share/nemoclaw/dcode-reasoning-effort",
+        contents: "high\n",
         owner: "root",
         group: "root",
         mode: 0o444,
