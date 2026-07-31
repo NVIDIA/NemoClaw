@@ -125,6 +125,7 @@ export function createInMemoryRuntimeProviderBundle({
         "stop",
         "inference-set",
         "rebuild",
+        "clone",
         "provider-cleanup",
         "destroy",
         "workload-cleanup",
