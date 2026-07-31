@@ -162,12 +162,22 @@ describe("managed startup application", () => {
       ? undefined
       : Buffer.from(corporateCa, "utf8").toString("base64"),
   ) {
+    return prepareProfile(profileFor(agent, corporateCa), corporateCaB64);
+  }
+
+  function prepareProfile(
+    profile: ManagedStartupProfile,
+    corporateCaB64: string | undefined = profile.corporateCa.bundleSha256 === null
+      ? undefined
+      : Buffer.from(PEM, "utf8").toString("base64"),
+    targetStateDirectory: string = stateDirectory,
+  ) {
     return prepareManagedStartupApplication(
       {
-        encodedProfile: encodeManagedStartupProfile(profileFor(agent, corporateCa)),
-        expectedAgent: agent,
+        encodedProfile: encodeManagedStartupProfile(profile),
+        expectedAgent: profile.agent,
         corporateCaB64,
-        stateDirectory,
+        stateDirectory: targetStateDirectory,
       },
       runtime,
     );
@@ -394,6 +404,177 @@ describe("managed startup application", () => {
 
     commitManagedStartupApplication(recovered, runtime);
     expect(fs.existsSync(path.join(stateDirectory, "committed.json"))).toBe(true);
+  });
+
+  it("recovers a complete generation left before pending-state publication", () => {
+    const first = prepare("hermes");
+    fs.unlinkSync(path.join(stateDirectory, "pending.json"));
+
+    const recovered = prepare("hermes");
+    expect(recovered.status).toBe("prepared");
+    expect(recovered.generationDirectory).toBe(first.generationDirectory);
+    expect(() => commitManagedStartupApplication(recovered, runtime)).not.toThrow();
+  });
+
+  it("recovers an atomic-control link left after publication", () => {
+    const first = prepare("hermes");
+    const pending = path.join(stateDirectory, "pending.json");
+    const interruptedTemporary = path.join(stateDirectory, `.pending.json-${"a".repeat(24)}.tmp`);
+    fs.linkSync(pending, interruptedTemporary);
+    expect(fs.statSync(pending).nlink).toBe(2);
+
+    const recovered = prepare("hermes");
+    expect(recovered.fingerprint).toBe(first.fingerprint);
+    expect(fs.existsSync(interruptedTemporary)).toBe(false);
+    expect(fs.statSync(pending).nlink).toBe(1);
+    expect(() => commitManagedStartupApplication(recovered, runtime)).not.toThrow();
+  });
+
+  it("does not let a different profile replace an active pending transaction", () => {
+    const active = prepare("openclaw");
+    const pendingBefore = fs.readFileSync(path.join(stateDirectory, "pending.json"), "utf8");
+    const changed = {
+      ...profileFor("openclaw"),
+      inference: {
+        ...profileFor("openclaw").inference,
+        model: "nvidia/a-competing-model",
+        primaryModelRef: "inference/nvidia/a-competing-model",
+      },
+    };
+
+    expect(() => prepareProfile(changed)).toThrow(/different startup profile is already pending/u);
+    expect(fs.readFileSync(path.join(stateDirectory, "pending.json"), "utf8")).toBe(pendingBefore);
+    expect(fs.existsSync(active.generationDirectory)).toBe(true);
+    expect(() => commitManagedStartupApplication(active, runtime)).not.toThrow();
+  });
+
+  it("uses compare-and-swap when two profiles interleave before pending publication", () => {
+    const changed = {
+      ...profileFor("openclaw"),
+      inference: {
+        ...profileFor("openclaw").inference,
+        model: "nvidia/a-competing-model",
+        primaryModelRef: "inference/nvidia/a-competing-model",
+      },
+    };
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const race: { active: ReturnType<typeof prepare> | null } = { active: null };
+    let interleaved = false;
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      originalRenameSync(source, destination);
+      if (
+        !interleaved &&
+        path.dirname(destination.toString()) === stateDirectory &&
+        path.basename(destination.toString()).startsWith("generation-")
+      ) {
+        interleaved = true;
+        race.active = prepare("openclaw");
+      }
+    });
+
+    expect(() => prepareProfile(changed)).toThrow(/won the pending-state transaction/u);
+    expect(race.active).not.toBeNull();
+    if (race.active === null) throw new Error("interleaved winner was not prepared");
+    const winner = race.active;
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDirectory, "pending.json"), "utf8")),
+    ).toMatchObject({ fingerprint: winner.fingerprint });
+    expect(
+      fs
+        .readdirSync(stateDirectory)
+        .filter((entry) => entry.startsWith("generation-"))
+        .sort(),
+    ).toEqual([path.basename(winner.generationDirectory)]);
+    expect(() => commitManagedStartupApplication(winner, runtime)).not.toThrow();
+  });
+
+  it("rejects a delayed contender after the pending owner commits", () => {
+    const changed = {
+      ...profileFor("openclaw"),
+      inference: {
+        ...profileFor("openclaw").inference,
+        model: "nvidia/a-delayed-competing-model",
+        primaryModelRef: "inference/nvidia/a-delayed-competing-model",
+      },
+    };
+    const originalOpenSync = fs.openSync.bind(fs);
+    const race: { committed: ReturnType<typeof prepare> | null } = { committed: null };
+    let interleaved = false;
+    vi.spyOn(fs, "openSync").mockImplementation((target, flags, mode) => {
+      if (
+        !interleaved &&
+        path.dirname(target.toString()) === stateDirectory &&
+        /^\.pending\.json-[a-f0-9]{24}\.tmp$/u.test(path.basename(target.toString()))
+      ) {
+        interleaved = true;
+        race.committed = prepare("openclaw");
+        commitManagedStartupApplication(race.committed, runtime);
+      }
+      return originalOpenSync(target, flags, mode);
+    });
+
+    expect(() => prepareProfile(changed)).toThrow(
+      /different startup profile committed during pending-state publication/u,
+    );
+    expect(race.committed).not.toBeNull();
+    if (race.committed === null) throw new Error("interleaved winner was not committed");
+    const winner = race.committed;
+    expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDirectory, "committed.json"), "utf8")),
+    ).toMatchObject({ fingerprint: winner.fingerprint });
+    expect(
+      fs
+        .readdirSync(stateDirectory)
+        .filter((entry) => entry.startsWith("generation-"))
+        .sort(),
+    ).toEqual([path.basename(winner.generationDirectory)]);
+  });
+
+  it("makes committed state authoritative for a reader straddling pending publication", () => {
+    const winner = prepare("openclaw");
+    commitManagedStartupApplication(winner, runtime);
+    const committedPath = path.join(stateDirectory, "committed.json");
+    const committedBefore = fs.readFileSync(committedPath, "utf8");
+
+    const changed = {
+      ...profileFor("openclaw"),
+      inference: {
+        ...profileFor("openclaw").inference,
+        model: "nvidia/a-straddling-competing-model",
+        primaryModelRef: "inference/nvidia/a-straddling-competing-model",
+      },
+    };
+    const competingStateDirectory = path.join(fixtureRoot, "competing-state");
+    const competing = prepareProfile(changed, undefined, competingStateDirectory);
+    const competingGeneration = path.join(
+      stateDirectory,
+      path.basename(competing.generationDirectory),
+    );
+    fs.renameSync(competing.generationDirectory, competingGeneration);
+    fs.renameSync(
+      path.join(competingStateDirectory, "pending.json"),
+      path.join(stateDirectory, "pending.json"),
+    );
+
+    const originalLstatSync = fs.lstatSync.bind(fs);
+    let hidInitialCommittedRead = false;
+    vi.spyOn(fs, "lstatSync").mockImplementation((target) => {
+      if (!hidInitialCommittedRead && target.toString() === committedPath) {
+        hidInitialCommittedRead = true;
+        throw Object.assign(new Error("simulated pre-commit read"), { code: "ENOENT" });
+      }
+      return originalLstatSync(target);
+    });
+
+    expect(() => prepareProfile(changed)).toThrow(
+      /different startup profile is already committed/u,
+    );
+    expect(hidInitialCommittedRead).toBe(true);
+    expect(fs.readFileSync(committedPath, "utf8")).toBe(committedBefore);
+    expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(false);
+    expect(fs.existsSync(competingGeneration)).toBe(false);
+    expect(fs.existsSync(winner.generationDirectory)).toBe(true);
   });
 
   it("never accepts a partial committed generation", () => {
