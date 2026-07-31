@@ -75,6 +75,33 @@ describe("waitForManagedGatewaySupervisor", () => {
     expect(sleepImpl).toHaveBeenCalledWith(3);
   });
 
+  it("waits through exact pending direct control while a clone container appears", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
   it("does not wait through an unclassified supervisor refusal", () => {
     const sleepImpl = vi.fn();
 
@@ -85,6 +112,23 @@ describe("waitForManagedGatewaySupervisor", () => {
           status: 1,
           stdout: "",
           stderr: "prefix SUPERVISOR_NOT_RUNNING suffix",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not wait through a detailed privileged-control refusal", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
         })),
         sleepImpl,
       }),

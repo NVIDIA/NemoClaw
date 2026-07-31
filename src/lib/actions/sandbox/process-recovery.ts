@@ -262,6 +262,16 @@ function executeGatewaySupervisorActionPinned(
       expectedContainerId,
     );
   } catch (error) {
+    if (isDirectSandboxFallbackUnavailableError(error)) {
+      // New clones can report Ready before their labeled direct container is
+      // discoverable. Keep only that typed absence retryable and sanitized;
+      // identity, driver, and integrity refusals retain their detailed form.
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      };
+    }
     const detail = error instanceof Error ? error.message : "privileged container unavailable";
     return {
       status: 1,
@@ -391,6 +401,15 @@ function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null):
   return lines.length === 1 && lines[0] === "SUPERVISOR_NOT_RUNNING";
 }
 
+function isExactlyPendingManagedSupervisorControl(result: SandboxCommandResult | null): boolean {
+  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length === 1 && lines[0] === "PRIVILEGED_CONTROL_UNAVAILABLE";
+}
+
 export function waitForManagedGatewaySupervisor(
   sandboxName: string,
   options: {
@@ -411,7 +430,8 @@ export function waitForManagedGatewaySupervisor(
     if (hasGatewayRecoveryMarker(result)) return true;
     if (
       !isExactlyMissingManagedSupervisor(result) &&
-      !isExactlyRetryableManagedRecoveryFailure(result)
+      !isExactlyRetryableManagedRecoveryFailure(result) &&
+      !isExactlyPendingManagedSupervisorControl(result)
     ) {
       return false;
     }
