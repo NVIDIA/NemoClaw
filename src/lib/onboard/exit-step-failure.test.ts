@@ -119,23 +119,28 @@ describe("terminal step failure helper", () => {
   it("records the in-flight step as interrupted when the exit backstop fires (#7982)", () => {
     session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const listeners: Array<(code: number) => void> = [];
-    const processLike = {
-      once: (_event: "exit", listener: (code: number) => void) => {
-        listeners.push(listener);
-      },
-    };
+    try {
+      const listeners: Array<(code: number) => void> = [];
+      const processLike = {
+        once: (_event: "exit", listener: (code: number) => void) => {
+          listeners.push(listener);
+        },
+      };
 
-    registerIncompleteOnboardExitFailureHandler(
-      session,
-      () => false,
-      "Onboarding exited before the step completed.",
-      processLike,
-    );
-    listeners[0](1);
-    errorSpy.mockRestore();
+      registerIncompleteOnboardExitFailureHandler(
+        session,
+        () => false,
+        "Onboarding exited before the step completed.",
+        processLike,
+      );
+      listeners[0](1);
+    } finally {
+      errorSpy.mockRestore();
+    }
 
-    expect(requireLoadedSession().machine.state).toBe("failed");
+    const loaded = requireLoadedSession();
+    expect(loaded.machine.state).toBe("failed");
+    expect(loaded.failure).toMatchObject({ step: "sandbox", interrupted: true });
     expect(isOnboardInterrupted()).toBe(true);
     expect(onboardInterruptedStep()).toBe("sandbox");
   });
@@ -145,7 +150,9 @@ describe("terminal step failure helper", () => {
 
     markLastStartedStepFailed(session, "Rebuild recreate failed");
 
-    expect(requireLoadedSession().machine.state).toBe("failed");
+    const loaded = requireLoadedSession();
+    expect(loaded.machine.state).toBe("failed");
+    expect(loaded.failure).toMatchObject({ step: "sandbox", interrupted: false });
     expect(isOnboardInterrupted()).toBe(false);
     expect(onboardInterruptedStep()).toBeNull();
   });

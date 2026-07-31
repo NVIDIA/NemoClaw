@@ -614,14 +614,17 @@ describe("onboarding interrupted while a step is in flight (#7982)", () => {
     resetOnboardInterruptForTests();
   });
 
-  function interruptedAtSandbox() {
+  function failedAtSandbox(interrupted: boolean) {
     const harness = createRuntimeHarness({
       status: "failed",
       lastStepStarted: "sandbox",
       failure: {
         step: "sandbox",
-        message: "Onboarding exited before the step completed.",
+        message: interrupted
+          ? "Onboarding exited before the step completed."
+          : "Rebuild recreate failed",
         recordedAt: "2026-05-27T00:00:00.000Z",
+        interrupted,
       },
       machine: {
         version: 1,
@@ -636,6 +639,10 @@ describe("onboarding interrupted while a step is in flight (#7982)", () => {
       createRuntime: harness.createRuntime,
     });
     return { boundary, harness };
+  }
+
+  function interruptedAtSandbox() {
+    return failedAtSandbox(true);
   }
 
   it("reports the sandbox branch as interrupted rather than an invalid transition", async () => {
@@ -657,9 +664,31 @@ describe("onboarding interrupted while a step is in flight (#7982)", () => {
   it("reports an interrupt recorded by another process without an in-process latch", async () => {
     const { boundary, harness } = interruptedAtSandbox();
 
-    await expect(
-      boundary.recordStateResult(branchTo("openclaw", { metadata: { state: "sandbox" } })),
-    ).rejects.toThrow(OnboardInterruptedError);
+    const applied = boundary.recordStateResult(
+      branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    );
+
+    await expect(applied).rejects.toThrow(OnboardInterruptedError);
+    await expect(applied).rejects.toThrow(/during the sandbox step/);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+  });
+
+  it("reports an ordinary failed session as an invalid transition, not an interrupt", async () => {
+    const { boundary, harness } = failedAtSandbox(false);
+
+    const applied = boundary.recordStateResult(
+      branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    );
+
+    await expect(applied).rejects.toThrow(InvalidOnboardMachineTransitionError);
+    await expect(applied).rejects.not.toThrow(OnboardInterruptedError);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+  });
+
+  it("rejects completing an interrupted session through recordSessionComplete", async () => {
+    const { boundary, harness } = interruptedAtSandbox();
+
+    await expect(boundary.recordSessionComplete()).rejects.toThrow(OnboardInterruptedError);
     expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
   });
 

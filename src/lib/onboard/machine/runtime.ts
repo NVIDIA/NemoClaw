@@ -258,7 +258,7 @@ export class OnboardRuntime {
   ): Promise<Session> {
     const current = this.ensureSession();
     const from = current.machine.state;
-    assertOnboardNotInterrupted(from, "complete");
+    assertOnboardNotInterrupted(from, "complete", current.failure);
     assertValidOnboardMachineTransition(from, "complete");
 
     const safeUpdates = this.deps.filterSafeUpdates(updates);
@@ -316,7 +316,7 @@ export class OnboardRuntime {
     }
 
     const current = this.ensureSession();
-    assertOnboardNotInterrupted(current.machine.state, result.next);
+    assertOnboardNotInterrupted(current.machine.state, result.next, current.failure);
     const transition = assertValidOnboardMachineTransition(current.machine.state, result.next);
     if (result.transitionKind && transition.kind !== result.transitionKind) {
       throw new Error(

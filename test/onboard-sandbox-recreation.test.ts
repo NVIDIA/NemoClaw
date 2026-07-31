@@ -1196,7 +1196,7 @@ const groupKillCalls = [];
 const realProcessKill = process.kill.bind(process);
 process.kill = (pid, signal) => {
   if (pid < 0) {
-    groupKillCalls.push(signal);
+    groupKillCalls.push({ pid, signal });
     return true;
   }
   return realProcessKill(pid, signal);
@@ -1274,7 +1274,7 @@ const { createSandbox } = require(${onboardPath});
     const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(payload.sandboxListCalls >= 2);
-    assert.deepEqual(payload.groupKillCalls, ["SIGTERM"]);
+    assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
     assert.deepEqual(payload.killCalls, []);
     assert.equal(payload.unrefCalls, 1);
     assert.equal(payload.stdoutDestroyCalls, 1);

@@ -348,12 +348,30 @@ export function streamSandboxCreate(
   function terminateChildOnHostExit() {
     if (!settled) terminateChild("SIGKILL");
   }
+
+  function removeHostExitListeners() {
+    process.removeListener("exit", terminateChildOnHostExit);
+    process.removeListener("SIGINT", onHostSigint);
+    process.removeListener("SIGTERM", onHostSigterm);
+  }
+
+  function handleHostSignal(signal: NodeJS.Signals) {
+    terminateChildOnHostExit();
+    removeHostExitListeners();
+    process.kill(process.pid, signal);
+  }
+
+  const onHostSigint = () => handleHostSignal("SIGINT");
+  const onHostSigterm = () => handleHostSignal("SIGTERM");
+
   process.once("exit", terminateChildOnHostExit);
+  process.on("SIGINT", onHostSigint);
+  process.on("SIGTERM", onHostSigterm);
 
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
-    process.removeListener("exit", terminateChildOnHostExit);
+    removeHostExitListeners();
     flushPendingLines();
     if (!buildTimingFinished && buildStartedAtMs !== null) {
       finishBuildTiming(status === 0 ? "completed" : "stopped");

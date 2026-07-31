@@ -89,8 +89,8 @@ describe("sandbox create stream process group (#7982)", () => {
         readyCheck: () => fs.existsSync(markerPath),
       });
 
-      expect(result).toMatchObject({ status: 0, forcedReady: true });
       const pids = readStartedPids(markerPath);
+      expect(result).toMatchObject({ status: 0, forcedReady: true });
       expect(await waitForExit(pids.child)).toBe(true);
       expect(await waitForExit(pids.grandchild)).toBe(true);
     },
@@ -111,6 +111,48 @@ describe("sandbox create stream process group (#7982)", () => {
     await expect(pending).resolves.toMatchObject({ status: 0, forcedReady: true });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("terminates a pending create when the host receives SIGTERM", async () => {
+    const child = new FakeChild();
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const listenersBefore = process.listeners("SIGTERM");
+
+    const pending = streamSandboxCreate(
+      "openshell",
+      ["sandbox", "create"],
+      dockerEnv,
+      makePollingOptions(child, { readyCheck: () => false }),
+    );
+
+    const installed = process
+      .listeners("SIGTERM")
+      .filter((listener) => !listenersBefore.includes(listener));
+    expect(installed).toHaveLength(1);
+    (installed[0] as () => void)();
+
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGTERM");
+    expect(process.listeners("SIGTERM")).toEqual(listenersBefore);
+
+    child.emit("close", 0);
+    await pending;
+  });
+
+  it("stops listening for host signals once the create stream settles", async () => {
+    const child = new FakeChild();
+    const sigintBefore = process.listenerCount("SIGINT");
+    const sigtermBefore = process.listenerCount("SIGTERM");
+
+    await streamSandboxCreate(
+      "openshell",
+      ["sandbox", "create"],
+      dockerEnv,
+      makePollingOptions(child, { readyCheck: () => true }),
+    );
+
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
   });
 
   it("stops listening for host exit once the create stream settles", async () => {

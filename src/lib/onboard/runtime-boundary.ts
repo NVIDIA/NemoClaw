@@ -136,7 +136,7 @@ export class OnboardRuntimeBoundary {
       return;
     }
     if (result.type === "complete") {
-      assertOnboardNotInterrupted(current.machine.state, "complete");
+      assertOnboardNotInterrupted(current.machine.state, "complete", current.failure);
       assertValidOnboardMachineTransition(current.machine.state, "complete");
       return;
     }
@@ -152,7 +152,7 @@ export class OnboardRuntimeBoundary {
       return;
     }
 
-    assertOnboardNotInterrupted(current.machine.state, result.next);
+    assertOnboardNotInterrupted(current.machine.state, result.next, current.failure);
     const sourceState =
       result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
     if (current.machine.state === result.next) {
@@ -278,6 +278,7 @@ export class OnboardRuntimeBoundary {
   async recordSessionComplete(updates: SessionUpdates = {}): Promise<Session> {
     const runtime = this.getRuntime();
     const current = await runtime.session();
+    assertOnboardNotInterrupted(current.machine.state, "complete", current.failure);
     if (current.machine.state === "finalizing") {
       await runtime.transition("post_verify");
       return runtime.complete(updates);

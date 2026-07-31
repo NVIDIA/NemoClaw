@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { onboardInterruptedStep } from "./interrupt-state";
+import { isOnboardInterrupted, onboardInterruptedStep } from "./interrupt-state";
 import type { OnboardMachineState, OnboardMachineTransition } from "./types";
 import {
   ONBOARD_MACHINE_STATES,
@@ -133,12 +133,19 @@ export function getOnboardMachineTransition(
   );
 }
 
+export interface OnboardInterruptionMarker {
+  step: string | null;
+  interrupted?: boolean;
+}
+
 export function assertOnboardNotInterrupted(
   from: OnboardMachineState,
   next: OnboardMachineState,
+  failure: OnboardInterruptionMarker | null = null,
 ): void {
   if (from !== "failed") return;
-  throw new OnboardInterruptedError(from, onboardInterruptedStep(), next);
+  if (!failure?.interrupted && !isOnboardInterrupted()) return;
+  throw new OnboardInterruptedError(from, failure?.step ?? onboardInterruptedStep(), next);
 }
 
 export function assertValidOnboardMachineTransition(
