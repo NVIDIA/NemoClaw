@@ -337,7 +337,7 @@ describe("shields timer authorization", () => {
     }
   });
 
-  it("retains a dead rebuild owner's timer and retries a transient restore failure", async () => {
+  it("audits a successful restore retry without stale MCP warnings or timestamps", async () => {
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
@@ -403,6 +403,15 @@ describe("shields timer authorization", () => {
       }),
     ]);
     expect(successAudits[0]).not.toHaveProperty("warning");
+    const failedAudit = audits.find(
+      (audit) =>
+        audit.action === "shields_up_failed" &&
+        audit.error === "Policy restore exited with status 17",
+    );
+    expect(failedAudit).toEqual(expect.objectContaining({ timestamp: expect.any(String) }));
+    expect(Date.parse(successAudits[0].timestamp)).toBeGreaterThan(
+      Date.parse(failedAudit.timestamp),
+    );
   });
 
   it("does not restore or rewrite state when marker pid mismatches", async () => {

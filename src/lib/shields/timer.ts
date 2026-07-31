@@ -233,7 +233,6 @@ async function runRestoreTimer(
   args: TimerArgs,
   runtimeOptions: TimerRuntimeOptions = {},
 ): Promise<void> {
-  const now = new Date().toISOString();
   const retryDelayMs =
     Number.isFinite(runtimeOptions.retryDelayMs) && (runtimeOptions.retryDelayMs ?? 0) >= 0
       ? Math.floor(runtimeOptions.retryDelayMs!)
@@ -290,7 +289,7 @@ async function runRestoreTimer(
             appendAudit({
               action: "shields_up_failed",
               sandbox: args.sandboxName,
-              timestamp: now,
+              timestamp: new Date().toISOString(),
               restored_by: "auto_timer",
               error: "Policy snapshot file missing",
             });
@@ -314,7 +313,7 @@ async function runRestoreTimer(
             appendAudit({
               action: "shields_up_failed",
               sandbox: args.sandboxName,
-              timestamp: now,
+              timestamp: new Date().toISOString(),
               restored_by: "auto_timer",
               error: `Policy restore exited with status ${String(status)}`,
             });
@@ -367,7 +366,7 @@ async function runRestoreTimer(
                 appendAudit({
                   action: "shields_auto_restore_lock_warning",
                   sandbox: args.sandboxName,
-                  timestamp: now,
+                  timestamp: new Date().toISOString(),
                   restored_by: "auto_timer",
                   warning: "Missing config directory for auto-restore re-lock verification",
                   lock_verified: false,
@@ -400,7 +399,7 @@ async function runRestoreTimer(
                   appendAudit({
                     action: "shields_auto_restore_lock_warning",
                     sandbox: args.sandboxName,
-                    timestamp: now,
+                    timestamp: new Date().toISOString(),
                     restored_by: "auto_timer",
                     warning:
                       relock.error ?? "Config re-lock did not re-confirm after settle window",
@@ -412,7 +411,7 @@ async function runRestoreTimer(
                 appendAudit({
                   action: "shields_auto_restore_lock_warning",
                   sandbox: args.sandboxName,
-                  timestamp: now,
+                  timestamp: new Date().toISOString(),
                   restored_by: "auto_timer",
                   warning: error instanceof Error ? error.message : String(error),
                   lock_verified: false,
@@ -450,7 +449,7 @@ async function runRestoreTimer(
             appendAudit({
               action: "shields_auto_restore",
               sandbox: args.sandboxName,
-              timestamp: now,
+              timestamp: new Date().toISOString(),
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
@@ -468,7 +467,7 @@ async function runRestoreTimer(
           appendAudit({
             action: "shields_up_failed",
             sandbox: args.sandboxName,
-            timestamp: now,
+            timestamp: new Date().toISOString(),
             restored_by: "auto_timer",
             error: "Config re-lock verification failed — shields remain DOWN",
           });
@@ -534,7 +533,7 @@ async function runRestoreTimer(
     appendAudit({
       action: "shields_up_failed",
       sandbox: args.sandboxName,
-      timestamp: now,
+      timestamp: new Date().toISOString(),
       restored_by: "auto_timer",
       error: error instanceof Error ? error.message : String(error),
     });
