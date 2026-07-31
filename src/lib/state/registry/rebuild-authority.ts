@@ -278,24 +278,27 @@ export function swapSandboxRebuildAuthorityInRegistry(
  */
 export function compareAndSwapSandboxRebuildAuthority(
   expected: SandboxRebuildAuthority,
-  replacement: SandboxEntry,
+  replacementInput: SandboxEntry,
 ): SandboxRebuildAuthoritySwapResult {
-  try {
-    return withLock(() => {
-      const swapped = swapSandboxRebuildAuthorityInRegistry(load(), expected, replacement);
-      if (swapped.result.status === "committed") save(swapped.registry);
-      return swapped.result;
-    });
-  } catch (error) {
+  const replacement = validateReplacement(expected, replacementInput);
+  return withLock(() => {
+    const swapped = swapSandboxRebuildAuthorityInRegistry(load(), expected, replacement);
+    if (swapped.result.status === "stale-authority") return swapped.result;
+
     try {
-      const observed = load().sandboxes[expected.sandboxName] ?? null;
-      if (sandboxRebuildReplacementMatchesEntry(replacement, observed)) {
-        return { status: "committed", entry: cloneEntry(observed) };
+      save(swapped.registry);
+    } catch (error) {
+      try {
+        const observed = load().sandboxes[expected.sandboxName] ?? null;
+        if (sandboxRebuildReplacementMatchesEntry(replacement, observed)) {
+          return { status: "committed", entry: cloneEntry(observed) };
+        }
+      } catch {
+        // Preserve the original persistence failure when readback is itself
+        // unavailable.
       }
-    } catch {
-      // Preserve the original CAS/persistence failure when reconciliation is
-      // itself unavailable.
+      throw error;
     }
-    throw error;
-  }
+    return swapped.result;
+  });
 }

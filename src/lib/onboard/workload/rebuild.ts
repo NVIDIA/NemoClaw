@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { getVersion } from "../../core/version";
-import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import {
@@ -431,16 +431,3 @@ export function buildManagedWorkloadRebuildReceipt(
   }
   return cloneAndDeepFreeze(validatedReceipt);
 }
-
-export type ManagedWorkloadRebuildEntry = Pick<
-  SandboxEntry,
-  | "agent"
-  | "fromDockerfile"
-  | "imageTag"
-  | "workload"
-  | "openshellDriver"
-  | "lifecycleGeneration"
-  | "lifecycleLiveIdentityFingerprint"
->;
-
-export type ManagedWorkloadRebuildReceipt = SandboxWorkloadReceipt;

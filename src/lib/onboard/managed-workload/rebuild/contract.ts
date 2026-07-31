@@ -105,6 +105,11 @@ export interface ManagedWorkloadRebuildProviderOperations {
    * to retry after prepare/create ambiguity.
    */
   abortPreparation(plan: ManagedWorkloadRebuildPlan): Promise<void>;
+  /**
+   * The provider owns and enforces the readiness deadline. It must return
+   * `{ state: "not-ready" }` when that deadline expires rather than leaving
+   * the transaction pending indefinitely.
+   */
   waitUntilReady(
     plan: ManagedWorkloadRebuildPlan,
     staged: StagedManagedWorkloadReplacement,

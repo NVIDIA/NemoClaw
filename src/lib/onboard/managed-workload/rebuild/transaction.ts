@@ -85,6 +85,12 @@ export async function runManagedWorkloadRebuildTransaction(
 ): Promise<ManagedWorkloadRebuildTransactionResult> {
   const readSandbox = dependencies.getSandbox ?? readSandboxFromRegistry;
   const plan = createManagedWorkloadRebuildPlan(input);
+  if (input.operations.providerId !== plan.providerId) {
+    throw new ManagedWorkloadRebuildTransactionError(
+      "prepare",
+      `provider operations '${input.operations.providerId}' do not match selected provider '${plan.providerId}'`,
+    );
+  }
   const abortPreparation = createManagedWorkloadPreparationAbort(plan, input.operations);
   const requireOldAuthority = (timing: "before" | "during"): void => {
     let stillAuthoritative: boolean;
@@ -113,7 +119,6 @@ export async function runManagedWorkloadRebuildTransaction(
   try {
     prepared = await prepareManagedWorkloadReplacement(plan, input.operations);
   } catch (error) {
-    if (input.operations.providerId !== plan.providerId) throw error;
     return failAfterCleanup(error, () => abortPreparation.run());
   }
   try {

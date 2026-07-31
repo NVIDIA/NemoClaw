@@ -26,13 +26,14 @@ import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
 } from "./managed-startup/profile";
-import type {
-  ManagedWorkloadRebuildProviderOperations,
-  PreparedManagedWorkloadReplacement,
-  ReadyManagedWorkloadReplacement,
-  ReboundManagedWorkloadReplacement,
-  RestoredManagedWorkloadReplacement,
-  StagedManagedWorkloadReplacement,
+import {
+  type ManagedWorkloadRebuildProviderOperations,
+  ManagedWorkloadRebuildTransactionError,
+  type PreparedManagedWorkloadReplacement,
+  type ReadyManagedWorkloadReplacement,
+  type ReboundManagedWorkloadReplacement,
+  type RestoredManagedWorkloadReplacement,
+  type StagedManagedWorkloadReplacement,
 } from "./managed-workload/rebuild/contract";
 import { createManagedWorkloadReplacementRollback } from "./managed-workload/rebuild/rollback";
 import { runManagedWorkloadRebuildTransaction } from "./managed-workload/rebuild/transaction";
@@ -342,8 +343,15 @@ function transactionHarness(
   const events: string[] = [];
   const oldEntry = previousEntry(agent, providerId, platform);
   let currentEntry = structuredClone(oldEntry);
-  let registryReadCount = 0;
+  let providerPreparationCompleted = false;
+  let ambiguousPersistenceReadback = false;
   const operations = operationsHarness(providerId, events, failAt);
+  const prepare = operations.prepare;
+  operations.prepare = vi.fn(async (plan) => {
+    const prepared = await prepare(plan);
+    providerPreparationCompleted = true;
+    return prepared;
+  });
   const commitAuthority = (
     expected: ReturnType<typeof captureSandboxRebuildAuthority>,
     replacement: SandboxEntry,
@@ -369,6 +377,7 @@ function transactionHarness(
         : swapSandboxRebuildAuthorityInRegistry(currentRegistry, expected, replacement);
     currentEntry =
       swapped.result.status === "committed" ? structuredClone(swapped.result.entry) : currentEntry;
+    ambiguousPersistenceReadback = failAt === "registry-commit-after-persist-read-fails";
     failWhenInjected(
       failAt === "registry-commit-after-persist" ||
         failAt === "registry-commit-after-persist-read-fails",
@@ -393,15 +402,16 @@ function transactionHarness(
         },
         {
           getSandbox: () => {
-            registryReadCount += 1;
             failWhenInjected(
-              failAt === "registry-read-after-prepare" && registryReadCount === 2,
+              failAt === "registry-read-after-prepare" && providerPreparationCompleted,
               "registry read failed after provider preparation",
             );
+            providerPreparationCompleted = false;
             failWhenInjected(
-              failAt === "registry-commit-after-persist-read-fails" && registryReadCount >= 3,
+              failAt === "registry-commit-after-persist-read-fails" && ambiguousPersistenceReadback,
               "registry readback failed after ambiguous persistence",
             );
+            ambiguousPersistenceReadback = false;
             return structuredClone(currentEntry);
           },
           commitAuthority,
@@ -711,7 +721,7 @@ describe("managed workload rebuild transaction", () => {
     }
   });
 
-  it("aborts preparation when non-authority registry metadata drifts", async () => {
+  it("aborts preparation when durable registry metadata drifts during preparation", async () => {
     const events: string[] = [];
     const oldEntry = previousEntry("openclaw", "mxc");
     let currentEntry = structuredClone(oldEntry);
@@ -752,6 +762,35 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.operations.create).not.toHaveBeenCalled();
     expect(harness.operations.rollback).not.toHaveBeenCalled();
     expect(harness.currentEntry()).toEqual(harness.oldEntry);
+  });
+
+  it("preserves the original phase and message when preparation abort also fails", async () => {
+    const harness = transactionHarness("openclaw", "mxc", "abort-preparation");
+    const prepare = harness.operations.prepare;
+    harness.operations.prepare = vi.fn(async (plan) => {
+      await prepare(plan);
+      throw new ManagedWorkloadRebuildTransactionError("prepare", "original prepare failure");
+    });
+
+    let failure: unknown;
+    try {
+      await harness.run();
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const transactionFailure = failure as Error & {
+      readonly phase: string;
+      readonly rollbackError: unknown;
+    };
+    expect(transactionFailure.phase).toBe("prepare");
+    expect(transactionFailure.message).toContain("original prepare failure");
+    expect(transactionFailure.rollbackError).toMatchObject({
+      message: "abort-preparation injected failure",
+    });
+    expect(harness.events).toEqual(["prepare", "abort-preparation:transaction-1"]);
+    expect(harness.operations.create).not.toHaveBeenCalled();
+    expect(harness.operations.rollback).not.toHaveBeenCalled();
   });
 
   it("reports exact-old cleanup as pending without undoing a committed replacement", async () => {
@@ -855,6 +894,7 @@ describe("managed workload rebuild transaction", () => {
     const rollback = createManagedWorkloadReplacementRollback(plan, staged, providerOperations);
 
     await Promise.all([rollback.run(), rollback.run(), rollback.run()]);
+    await rollback.run();
 
     expect(providerOperations.rollback).toHaveBeenCalledOnce();
     expect(events).toEqual(["rollback:runtime-new-staged-exact"]);
@@ -889,7 +929,7 @@ describe("managed workload rebuild transaction", () => {
         },
         { getSandbox: () => structuredClone(oldEntry) },
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ phase: "prepare" });
     expect(operations.prepare).not.toHaveBeenCalled();
   });
 
@@ -1000,6 +1040,8 @@ describe("managed workload rebuild transaction", () => {
         { getSandbox: () => structuredClone(oldEntry) },
       ),
     ).rejects.toMatchObject({ phase: "prepare" });
+    expect(operations.prepare).not.toHaveBeenCalled();
+    expect(operations.abortPreparation).not.toHaveBeenCalled();
     expect(operations.create).not.toHaveBeenCalled();
   });
 });

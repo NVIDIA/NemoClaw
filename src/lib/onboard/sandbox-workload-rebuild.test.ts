@@ -503,10 +503,11 @@ describe("managed workload rebuild preflight", () => {
       environment,
     );
     const reconstructed = managedWorkloadRebuildProfileEnvironment(replayHandoff, environment);
+    const decodedProfile = decodeManagedStartupProfile(staged.replacementProfile.encodedProfile);
 
     expect(reconstructed.HTTPS_PROXY).toBe(environment.HTTPS_PROXY);
     expect(staged.replacementProfile.credentialProxyReplayRequired).toBe(true);
-    expect(staged.replacementProfile.encodedProfile).not.toContain("secret");
+    expect(JSON.stringify(decodedProfile)).not.toContain("secret");
     expect(JSON.stringify(staged.replacementProfile.profile)).not.toContain("operator");
   });
 

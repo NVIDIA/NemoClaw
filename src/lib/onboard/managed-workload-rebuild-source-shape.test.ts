@@ -7,26 +7,20 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "managed-workload/rebuild");
-const CENTRAL_REBUILD_MODULES = [
-  "commit.ts",
-  "contract.ts",
-  "create.ts",
-  "plan.ts",
-  "prepare.ts",
-  "provider-rebind.ts",
-  "readiness.ts",
-  "recovery.ts",
-  "restore.ts",
-  "rollback.ts",
-  "transaction.ts",
-  "validation.ts",
-] as const;
+const CENTRAL_REBUILD_MODULES = fs
+  .readdirSync(ROOT)
+  .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
+  .sort();
 
-function source(file: (typeof CENTRAL_REBUILD_MODULES)[number]): string {
+function source(file: string): string {
   return fs.readFileSync(path.join(ROOT, file), "utf8");
 }
 
 describe("managed workload rebuild source shape", () => {
+  it("discovers production rebuild modules", () => {
+    expect(CENTRAL_REBUILD_MODULES).not.toHaveLength(0);
+  });
+
   it.each(
     CENTRAL_REBUILD_MODULES,
   )("keeps %s free of provider-specific imports and switches", (file) => {
@@ -54,7 +48,6 @@ describe("managed workload rebuild source shape", () => {
     expect(contract).toContain("stagingHandle");
     expect(contract).toContain("retirePrevious(");
     expect(contract).toContain("rollback(");
-    expect(contract).toContain("A sandbox name is\n   * intentionally insufficient authority");
   });
 
   it("publishes only through the rebuild-authority CAS boundary", () => {

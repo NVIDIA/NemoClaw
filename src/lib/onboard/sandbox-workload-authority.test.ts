@@ -62,7 +62,8 @@ describe("managed workload authority", () => {
   it.each(
     AGENTS.flatMap((agent) => PLATFORMS.map((platform) => [agent, platform] as const)),
   )("validates exact %s authority on %s", (agent, platform) => {
-    const authority = readManagedWorkloadAuthority(managedEntry(agent, platform));
+    const row = managedEntry(agent, platform);
+    const authority = readManagedWorkloadAuthority(row);
 
     expect(authority).toMatchObject({
       agent,
@@ -70,7 +71,7 @@ describe("managed workload authority", () => {
       profile: { agent },
       receipt: { kind: "managed-image", platform },
     });
-    expect(authority?.receipt).not.toBe(managedEntry(agent, platform).workload);
+    expect(authority?.receipt).not.toBe(row.workload);
     expect(Object.isFrozen(authority)).toBe(true);
     expect(Object.isFrozen(authority?.receipt)).toBe(true);
     expect(Object.isFrozen(authority?.contract.source)).toBe(true);
@@ -118,7 +119,7 @@ describe("managed workload authority", () => {
     ).toThrow(/does not belong to 'hermes'/u);
   });
 
-  it("rejects cross-agent startup profile authority", () => {
+  it("rejects image reference and startup profile agent mismatch", () => {
     const hermesReceiptWithOpenClawProfile = managedReceipt("hermes", "linux/amd64", "openclaw");
     expect(() =>
       readManagedWorkloadAuthority(

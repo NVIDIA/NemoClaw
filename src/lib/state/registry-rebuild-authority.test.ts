@@ -3,16 +3,29 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { MANAGED_IMAGE_REPOSITORIES } from "../onboard/managed-image/contract";
 import { encodeManagedStartupProfile } from "../onboard/managed-startup/profile";
 import {
   captureSandboxRebuildAuthority,
+  compareAndSwapSandboxRebuildAuthority,
   SandboxRebuildAuthorityError,
   sandboxRebuildAuthorityMatchesEntry,
+  sandboxRebuildReplacementMatchesEntry,
   swapSandboxRebuildAuthorityInRegistry,
 } from "./registry/rebuild-authority";
 import type { SandboxEntry, SandboxRegistry, SandboxWorkloadReceipt } from "./registry/types";
+
+const registryPersistence = vi.hoisted(() => ({
+  load: vi.fn(),
+  save: vi.fn(),
+}));
+
+vi.mock("./registry/persistence", () => registryPersistence);
+vi.mock("./registry/lock", () => ({
+  withLock: <T>(operation: () => T): T => operation(),
+}));
 
 const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
 const PROFILE_SHA256 = createHash("sha256").update(ENCODED_PROFILE, "utf8").digest("hex");
@@ -21,7 +34,7 @@ function receipt(digest: string): Extract<SandboxWorkloadReceipt, { kind: "manag
   return {
     schemaVersion: 1,
     kind: "managed-image",
-    reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${digest.repeat(64)}`,
+    reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${digest.repeat(64)}`,
     platform: "linux/amd64",
     release: "v0.0.100",
     sourceRevision: digest.repeat(40),
@@ -76,6 +89,11 @@ function replacement(): SandboxEntry {
 }
 
 describe("sandbox rebuild authority", () => {
+  beforeEach(() => {
+    registryPersistence.load.mockReset();
+    registryPersistence.save.mockReset();
+  });
+
   it("captures a cloned exact authority unit", () => {
     const source = entry();
     const authority = captureSandboxRebuildAuthority(source, "docker");
@@ -168,6 +186,72 @@ describe("sandbox rebuild authority", () => {
       entry: { model: "concurrently-updated" },
     });
     expect(swapped.registry).toBe(before);
+  });
+
+  it("reconciles an acknowledgement failure to the exact persisted replacement", () => {
+    let persisted = registry();
+    const authority = captureSandboxRebuildAuthority(persisted.sandboxes.alpha!, "docker");
+    registryPersistence.load.mockImplementation(() => structuredClone(persisted));
+    registryPersistence.save.mockImplementation((next: SandboxRegistry) => {
+      persisted = structuredClone(next);
+      throw new Error("registry acknowledgement lost");
+    });
+
+    const result = compareAndSwapSandboxRebuildAuthority(authority, replacement());
+
+    expect(result).toMatchObject({
+      status: "committed",
+      entry: {
+        lifecycleGeneration: "generation-new",
+        lifecycleLiveIdentityFingerprint: "fingerprint-new",
+      },
+    });
+    expect(registryPersistence.load).toHaveBeenCalledTimes(2);
+    expect(registryPersistence.save).toHaveBeenCalledOnce();
+  });
+
+  it("does not reconcile failures that happen before persistence", () => {
+    const authority = captureSandboxRebuildAuthority(entry(), "docker");
+    registryPersistence.load.mockImplementation(() => {
+      throw new Error("registry read failed");
+    });
+
+    expect(() => compareAndSwapSandboxRebuildAuthority(authority, replacement())).toThrow(
+      /registry read failed/u,
+    );
+    expect(registryPersistence.load).toHaveBeenCalledOnce();
+    expect(registryPersistence.save).not.toHaveBeenCalled();
+  });
+
+  it("validates a replacement before acquiring durable registry state", () => {
+    const authority = captureSandboxRebuildAuthority(entry(), "docker");
+
+    expect(() =>
+      compareAndSwapSandboxRebuildAuthority(authority, {
+        ...replacement(),
+        openshellDriver: "mxc",
+      }),
+    ).toThrow(SandboxRebuildAuthorityError);
+    expect(registryPersistence.load).not.toHaveBeenCalled();
+    expect(registryPersistence.save).not.toHaveBeenCalled();
+  });
+
+  it("matches exact replacement authority while ignoring later mutable metadata", () => {
+    const expected = replacement();
+
+    expect(
+      sandboxRebuildReplacementMatchesEntry(expected, {
+        ...expected,
+        model: "updated-after-publication",
+        gatewayPort: 9090,
+      }),
+    ).toBe(true);
+    expect(
+      sandboxRebuildReplacementMatchesEntry(expected, {
+        ...expected,
+        lifecycleLiveIdentityFingerprint: "different-fingerprint",
+      }),
+    ).toBe(false);
   });
 
   it.each([
