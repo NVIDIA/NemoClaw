@@ -103,7 +103,9 @@ function writeFixtureDist(version = "2026.7.1"): { dist: string; runtime: string
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-reliability-"));
   const dist = path.join(tmp, "dist");
   fs.mkdirSync(dist);
-  fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version }));
+  // The reviewed openclaw@2026.7.1 package declares "type": "module"; mirror it
+  // so the fixture carries the same module classification as the real package.
+  fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ type: "module", version }));
   const runtime = path.join(dist, "agent-bundle-mcp-runtime-Fixture.js");
   fs.writeFileSync(runtime, bundleMcpRuntimeFixture());
   fs.writeFileSync(path.join(dist, "unrelated.js"), "export const unrelated = 1;\n");

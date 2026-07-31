@@ -164,7 +164,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain(
       'identifies its target by the `"openclaw-bundle-mcp"` client identity',
     );
-    expect(review).toContain("one retry, and only one, for a server *startup* failure");
+    expect(review).toContain("One retry, and only one, for a server *startup* failure");
     expect(review).toContain("are never retried");
     expect(review).toContain("dropped at the next agent run boundary");
     expect(review).toContain("test/openclaw-mcp-reliability-patch.test.ts");

@@ -142,8 +142,23 @@ export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
     "1",
     "one un-retried attempt per run after an authorization 401",
   );
-  if (unauthorized.run1Diagnostics[0]?.includes("temporary MCP transport failure")) {
+  requireEqual(
+    String(unauthorized.run1Diagnostics.length),
+    "1",
+    "authorization diagnostic count on run 1",
+  );
+  if (unauthorized.run1Diagnostics[0].includes("temporary MCP transport failure")) {
     throw new Error("authorization failure was reported as a temporary transport failure");
+  }
+  // OpenClaw surfaces the server's OAuth rejection payload rather than the
+  // status line, so the preserved diagnostic reads
+  // `Error POSTing to endpoint: {"error":"invalid_token"}`. That `invalid_token`
+  // token is also what the patch's blocked-text pattern keys on, so asserting it
+  // pins both the preserved attribution and the reason the retry was refused.
+  if (!/invalid_token|401|unauthoriz|credential/i.test(unauthorized.run1Diagnostics[0])) {
+    throw new Error(
+      `authorization diagnostic does not attribute the failure to the credential rejection: ${unauthorized.run1Diagnostics[0]}`,
+    );
   }
 }
 
