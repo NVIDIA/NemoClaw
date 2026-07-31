@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { runRealOpenClawDeviceSelfApprovalProof } from "./helpers/openclaw-real-device-self-approval-proof";
+import { runRealOpenClawMcpStartRetryProof } from "./helpers/openclaw-real-mcp-start-retry-proof";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
@@ -23,6 +24,11 @@ const PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS = path.join(
   REPO_ROOT,
   "scripts",
   "patch-openclaw-shared-state-permissions.mts",
+);
+const PATCH_OPENCLAW_MCP_RELIABILITY = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-mcp-reliability.mts",
 );
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";
@@ -695,9 +701,16 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           requireSpawnSuccess(syntax, `validate reviewed OpenClaw dist syntax: ${target}`);
         }
 
-        // This proof installs the reviewed shrinkwrapped runtime dependencies
-        // with lifecycle scripts disabled. Keep it after every shape-only dist
-        // scan so dependency materialization cannot perturb their timing.
+        // These proofs install the reviewed shrinkwrapped runtime dependencies
+        // with lifecycle scripts disabled. Keep them after every shape-only
+        // dist scan so dependency materialization cannot perturb their timing.
+        runRealOpenClawMcpStartRetryProof({
+          dist,
+          nodeExecutable: nodeRuntime.executable,
+          patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
+          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
         await runRealOpenClawDeviceSelfApprovalProof({
           dist,
           nodeExecutable: nodeRuntime.executable,
