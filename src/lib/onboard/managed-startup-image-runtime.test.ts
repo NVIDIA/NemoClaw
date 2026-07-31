@@ -356,14 +356,24 @@ describe("managed startup image runtime", () => {
         size: BigInt(bytes.length),
         uid: 0n,
       }) as fs.BigIntStats;
-    const missing = () => Object.assign(new Error("missing"), { code: "ENOENT" });
+    const missing = (): never => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    };
+    const allocateDescriptor = (resolved: string): number => {
+      const descriptor = nextDescriptor;
+      nextDescriptor += 1;
+      descriptorTargets.set(descriptor, resolved);
+      return descriptor;
+    };
 
     vi.spyOn(process, "geteuid").mockReturnValue(0);
     vi.spyOn(fs, "lstatSync").mockImplementation(((target: fs.PathLike) => {
       const resolved = String(target);
-      if (directories.has(resolved)) return stat("directory", 0o755);
-      if (files.has(resolved)) return stat("file", 0o444);
-      throw missing();
+      return directories.has(resolved)
+        ? stat("directory", 0o755)
+        : files.has(resolved)
+          ? stat("file", 0o444)
+          : missing();
     }) as typeof fs.lstatSync);
     vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "chownSync").mockImplementation(() => undefined);
@@ -371,23 +381,16 @@ describe("managed startup image runtime", () => {
     vi.spyOn(fs, "existsSync").mockReturnValue(false);
     vi.spyOn(fs, "openSync").mockImplementation(((target: fs.PathLike) => {
       const resolved = String(target);
-      if (
-        (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE ||
-          resolved === MANAGED_STARTUP_COMPLETION_FILE) &&
+      return (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE ||
+        resolved === MANAGED_STARTUP_COMPLETION_FILE) &&
         !files.has(resolved)
-      ) {
-        throw missing();
-      }
-      const descriptor = nextDescriptor;
-      nextDescriptor += 1;
-      descriptorTargets.set(descriptor, resolved);
-      return descriptor;
+        ? missing()
+        : allocateDescriptor(resolved);
     }) as typeof fs.openSync);
     vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number) => {
       const target = descriptorTargets.get(descriptor);
       const bytes = target === undefined ? undefined : files.get(target);
-      if (bytes === undefined) throw missing();
-      return bigFileStat(bytes);
+      return bytes === undefined ? missing() : bigFileStat(bytes);
     }) as typeof fs.fstatSync);
     vi.spyOn(fs, "readSync").mockImplementation(((
       descriptor: number,
@@ -397,8 +400,7 @@ describe("managed startup image runtime", () => {
       position: number | null,
     ) => {
       const target = descriptorTargets.get(descriptor);
-      const bytes = target === undefined ? undefined : files.get(target);
-      if (bytes === undefined) throw missing();
+      const bytes = (target === undefined ? undefined : files.get(target)) ?? missing();
       const start = position ?? 0;
       const count = Math.min(length, Math.max(0, bytes.length - start));
       bytes.copy(buffer as Buffer, offset, start, start + count);
@@ -406,9 +408,8 @@ describe("managed startup image runtime", () => {
     }) as typeof fs.readSync);
     vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "writeFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, value) => {
-      if (typeof target !== "number") return;
-      const resolved = descriptorTargets.get(target);
-      if (resolved === undefined) throw missing();
+      const resolved =
+        (typeof target === "number" ? descriptorTargets.get(target) : undefined) ?? missing();
       pendingFiles.set(
         resolved,
         Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(String(value), "utf8"),
@@ -418,17 +419,14 @@ describe("managed startup image runtime", () => {
     vi.spyOn(fs, "fsyncSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "closeSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
-      const pending = pendingFiles.get(String(source));
-      if (pending === undefined) throw missing();
+      const pending = pendingFiles.get(String(source)) ?? missing();
       files.set(String(target), pending);
       pendingFiles.delete(String(source));
-      if (String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE) {
-        runtimeWrites.push(pending.toString("utf8"));
-      }
+      runtimeWrites.push(
+        ...(String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE ? [pending.toString("utf8")] : []),
+      );
     });
-    vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
-      throw missing();
-    });
+    vi.spyOn(fs, "unlinkSync").mockImplementation(missing);
   }
 
   it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {
