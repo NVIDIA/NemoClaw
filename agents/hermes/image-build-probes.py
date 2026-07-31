@@ -288,7 +288,8 @@ def verify_cron_backup() -> None:
     finally:
         target.close()
         source.close()
-    os.chmod(staged, 0o660)
+    # The gateway belongs to the sandbox group and must reopen this replacement ledger for writing.
+    os.chmod(staged, 0o660)  # codeql[py/overly-permissive-file]
     os.replace(staged, path)
     for suffix in ("-wal", "-shm"):
         path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
@@ -346,7 +347,8 @@ def verify_discord_backup() -> None:
     finally:
         target.close()
         source.close()
-    os.chmod(staged, 0o660)
+    # The gateway belongs to the sandbox group and must reopen this replacement ledger for writing.
+    os.chmod(staged, 0o660)  # codeql[py/overly-permissive-file]
     os.replace(staged, path)
 
 
