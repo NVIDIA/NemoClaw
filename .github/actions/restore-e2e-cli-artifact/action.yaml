@@ -136,6 +136,7 @@ runs:
             .toolchain.runnerOs == "Linux" and
             .toolchain.runnerArch == "X64" and
             .build.command == "npm run build:cli" and
+            .build.sourceRevision == $candidateSha and
             .payload.file == "nemoclaw-cli.tar" and
             .payload.sha256 == $payloadSha256
           ' "$manifest" >/dev/null ||
@@ -155,9 +156,19 @@ runs:
         tar -tvf "$payload" |
           awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { exit 1 }' ||
           { echo "::error::CLI artifact contains a link or special file"; exit 1; }
-        [[ ! -e dist ]] ||
+        [[ ! -e "$GITHUB_WORKSPACE/dist" ]] ||
           { echo "::error::consumer unexpectedly built dist before artifact restore"; exit 1; }
-        tar --no-same-owner --no-same-permissions -xf "$payload" -C "$GITHUB_WORKSPACE"
-        test -s dist/nemoclaw.js ||
+        restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
+        trap 'rm -rf -- "$restore_dir"' EXIT
+        tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"
+        test -s "$restore_dir/dist/nemoclaw.js" ||
           { echo "::error::restored CLI artifact is missing dist/nemoclaw.js"; exit 1; }
-        node bin/nemoclaw.js --version >/dev/null
+        jq -e --arg candidateSha "$CANDIDATE_SHA" '
+          type == "object" and
+          (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
+          (.nemoclawVersion | strings | length > 0) and
+          .sourceRevision == $candidateSha
+        ' "$restore_dir/dist/build-identity.json" >/dev/null ||
+          { echo "::error::restored CLI build identity does not match the candidate SHA"; exit 1; }
+        mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"
+        node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version >/dev/null

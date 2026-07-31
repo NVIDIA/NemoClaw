@@ -32,7 +32,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "8e0d07a2521651868f3ab1e29dd1e9a0d1494ffd807dfd1d661a5989c9755c8f";
+  "9b289c07e932bd882d9e3db80a052fc3adf40102f0239da50410b171feda1765";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -152,13 +152,17 @@ export function validateCliArtifactRestoreAction(
     ".workflow.sha == $workflowSha",
     ".workflow.runId == $runId",
     ".workflow.runAttempt == $runAttempt",
+    ".build.sourceRevision == $candidateSha",
     ".payload.sha256 == $payloadSha256",
     '[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
-    "[[ ! -e dist ]]",
-    "tar --no-same-owner --no-same-permissions",
-    "node bin/nemoclaw.js --version",
+    '[[ ! -e "$GITHUB_WORKSPACE/dist" ]]',
+    'restore_dir="$(mktemp -d',
+    'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
+    ".sourceRevision == $candidateSha",
+    'mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"',
+    'node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version',
   ]);
   return errors;
 }
@@ -213,6 +217,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   requireFragments(errors, "CLI artifact package step", packageStep.run, [
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
     "test -s dist/nemoclaw.js",
+    "test -s dist/build-identity.json",
+    ".sourceRevision == $candidateSha",
+    "authoritative CLI build identity does not match the candidate SHA",
     "--sort=name",
     "--mtime=@0",
     "source_tree=\"$(git rev-parse 'HEAD^{tree}')\"",
@@ -221,6 +228,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     'kind: "nemoclaw-e2e-cli-artifact-v1"',
     "sha: $candidateSha",
     "sha: $workflowSha",
+    "sourceRevision: $candidateSha",
     "sha256: $payloadSha256",
   ]);
 

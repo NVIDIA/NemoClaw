@@ -11,6 +11,7 @@ import type { SystemReadinessReport } from "../../lib/readiness/types";
 const mocks = vi.hoisted(() => ({
   createHostReadinessReport: vi.fn(),
   createPublicReadinessReport: vi.fn(),
+  getBuildIdentity: vi.fn(),
   renderReadinessReport: vi.fn(),
 }));
 
@@ -18,6 +19,10 @@ vi.mock("../../lib/readiness/index", () => ({
   createHostReadinessReport: mocks.createHostReadinessReport,
   createPublicReadinessReport: mocks.createPublicReadinessReport,
   renderReadinessReport: mocks.renderReadinessReport,
+}));
+
+vi.mock("../../lib/core/version", () => ({
+  getBuildIdentity: mocks.getBuildIdentity,
 }));
 
 import HostProbeCommand from "./probe";
@@ -46,10 +51,14 @@ function assertSchemaValid(value: unknown): void {
 
 function report(outcome: ReadinessOutcome): SystemReadinessReport {
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "1.1.0",
     ...outcome,
     mutated: false,
-    provenance: { nemoclawVersion: "0.1.0", observedAt: "2026-06-01T12:00:00.000Z" },
+    provenance: {
+      nemoclawVersion: "0.0.96-35-g8bfff4526",
+      sourceRevision: `8bfff4526${"a".repeat(31)}`,
+      observedAt: "2026-06-01T12:00:00.000Z",
+    },
     observations: [],
     capabilities: [],
     qualifications: [],
@@ -61,6 +70,10 @@ function report(outcome: ReadinessOutcome): SystemReadinessReport {
 describe("host probe command (#7412)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getBuildIdentity.mockReturnValue({
+      nemoclawVersion: "0.0.96-35-g8bfff4526",
+      sourceRevision: `8bfff4526${"a".repeat(31)}`,
+    });
     mocks.createHostReadinessReport.mockReturnValue(report(READINESS_OUTCOMES[0]));
     mocks.createPublicReadinessReport.mockImplementation((value) => value);
     mocks.renderReadinessReport.mockReturnValue("System readiness: supported");
@@ -110,7 +123,10 @@ describe("host probe command (#7412)", () => {
 
     await HostProbeCommand.run([], process.cwd());
 
-    expect(mocks.createHostReadinessReport).toHaveBeenCalledWith({ nemoclawVersion: "0.1.0" });
+    expect(mocks.createHostReadinessReport).toHaveBeenCalledWith({
+      nemoclawVersion: "0.0.96-35-g8bfff4526",
+      sourceRevision: `8bfff4526${"a".repeat(31)}`,
+    });
     expect(mocks.createPublicReadinessReport).toHaveBeenCalledWith(
       mocks.createHostReadinessReport.mock.results[0]?.value,
     );

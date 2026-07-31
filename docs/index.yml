@@ -406,6 +406,9 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.openclaw.generated.mdx
                 slug: community-contributions
+              - page: "Engineer Documentation for AI Agents"
+                path: _build/agent-variants/resources/engineer-agentic-documentation.openclaw.generated.mdx
+                slug: engineer-agentic-documentation
               - link: "Discord"
                 href: https://discord.gg/XFpfPv9Uvx
               - link: "Report Vulnerabilities"
@@ -575,6 +578,9 @@ navigation:
                   - page: "Run Sandboxes"
                     path: _build/agent-variants/manage-sandboxes/run-sandboxes.deepagents.generated.mdx
                     slug: run-sandboxes
+                  - page: "Run Deep Agents Code"
+                    path: manage-sandboxes/run-deep-agents-code.mdx
+                    slug: run-deep-agents-code
                   - page: "Recover and Rebuild Sandboxes"
                     path: _build/agent-variants/manage-sandboxes/recover-rebuild-sandboxes.deepagents.generated.mdx
                     slug: recover-and-rebuild-sandboxes
@@ -719,6 +725,9 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.deepagents.generated.mdx
                 slug: community-contributions
+              - page: "Engineer Documentation for AI Agents"
+                path: _build/agent-variants/resources/engineer-agentic-documentation.deepagents.generated.mdx
+                slug: engineer-agentic-documentation
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
@@ -1098,6 +1107,9 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.hermes.generated.mdx
                 slug: community-contributions
+              - page: "Engineer Documentation for AI Agents"
+                path: _build/agent-variants/resources/engineer-agentic-documentation.hermes.generated.mdx
+                slug: engineer-agentic-documentation
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
