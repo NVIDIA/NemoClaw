@@ -120,9 +120,13 @@ export function buildRuntimePermissivePolicy(
   // would be dropped by the whole-document replacement, leaving the
   // registry owning a route the gateway no longer serves (#7952).
   //
-  // The static base wins on a shared key: it is the more permissive of the
-  // two by construction, so the applied document is unchanged for every
-  // key the baseline already declares.
+  // The static base wins on a shared key, so the applied document is
+  // unchanged for every key the baseline already declares. That relies on
+  // the baseline being the more permissive of the two, which nothing here
+  // enforces — it holds today because the dynamic writers namespace their
+  // keys (`mcp_bridge_*`) and so never collide with a baseline key. A
+  // future dynamic policy preset that reuses a baseline key would be
+  // silently ignored here; give it its own namespace.
   if (liveNetworkNames.length > 0) {
     const baseNetwork =
       base.network_policies &&
