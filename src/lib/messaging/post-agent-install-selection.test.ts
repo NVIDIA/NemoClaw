@@ -170,4 +170,22 @@ describe("post-agent-install messaging selection", () => {
 
     expect(selectEnabledPostAgentInstallBuildFiles(selection)).toEqual([]);
   });
+
+  it("fails closed when a build step references a missing hook", () => {
+    const selection = plan({
+      channels: [
+        channel("telegram", [
+          {
+            channelId: "telegram",
+            id: "post-install",
+            phase: "post-agent-install",
+            handler: "telegram.post-install",
+          },
+        ]),
+      ],
+      buildSteps: [buildFile("telegram", "stale-hook-file", "missing-hook")],
+    });
+
+    expect(selectEnabledPostAgentInstallBuildFiles(selection)).toEqual([]);
+  });
 });
