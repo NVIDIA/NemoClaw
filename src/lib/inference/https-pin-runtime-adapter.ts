@@ -1420,11 +1420,13 @@ async function revokeRouteLocked(
   );
   if (authenticatedLiveAdapter && controlToken) {
     await deps.deleteRoute(controlToken, routeId);
-  } else if (deps.isAdapterProcess(pid)) {
+  } else if (controlToken || deps.isAdapterProcess(pid)) {
     // Fail closed. An adapter started before this record existed cannot be
     // authenticated for revocation, and falling back to a re-derived or
     // default policy would authenticate it against a value this process just
-    // made up. Its next route registration records the policy and heals it.
+    // made up. A missing PID record does not prove that the adapter stopped;
+    // preserve the route state while either identity artifact remains. Its
+    // next route registration records the policy and heals it.
     throw new Error(
       allowedSourceCidrs
         ? "Cannot authenticate the live HTTPS Pin Runtime adapter for revocation."

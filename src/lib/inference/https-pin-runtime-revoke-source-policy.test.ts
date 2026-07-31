@@ -45,19 +45,19 @@ describe("HTTPS Pin Runtime revocation source policy", () => {
     expect(deleteRoute).toHaveBeenCalledWith("persisted-control-token", "a".repeat(64));
   });
 
-  it("fails closed for a live adapter whose route-source policy was never recorded (#7878)", async () => {
+  it("preserves route state when policy and PID metadata are missing but a control token remains (#7878)", async () => {
     const deleteRoute = vi.fn(async () => {});
     const removeRouteState = vi.fn();
     const probeHealth = vi.fn(async () => true);
 
     await expect(
       lockModule.__test.revokeRouteLocked("a".repeat(64), {
-        loadPid: () => 4242,
+        loadPid: () => null,
         readControlToken: () => "persisted-control-token",
         readAllowedSourceCidrs: () => null,
         probeHealth,
         deleteRoute,
-        isAdapterProcess: () => true,
+        isAdapterProcess: () => false,
         removeRouteState,
       }),
     ).rejects.toThrow("route-source policy was not recorded");
