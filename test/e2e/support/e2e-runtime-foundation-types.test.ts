@@ -25,7 +25,8 @@ import { foundationProfiles, foundationScenarios } from "./cross-runtime-foundat
 describe("cross-runtime foundation types", () => {
   it("models Docker and socket-free fake MXC profiles without registering either", () => {
     const liveMatrixBefore = buildLiveTargetMatrix();
-    const [docker, mxc] = foundationProfiles();
+    const profiles = foundationProfiles();
+    const [docker, mxc] = profiles;
 
     expect(docker).toMatchObject({
       provider: "docker",
@@ -43,6 +44,9 @@ describe("cross-runtime foundation types", () => {
     expect(mxc?.capabilities).toContain("transport.socket-free");
     expect(mxc?.capabilities).not.toContain("transport.docker-socket");
     expect(buildLiveTargetMatrix()).toEqual(liveMatrixBefore);
+    for (const profile of profiles) {
+      expect(() => buildLiveTargetMatrix([profile.id])).toThrow(`Unknown target '${profile.id}'`);
+    }
   });
 
   it("keeps OpenClaw, Hermes, and DCode scenarios provider-neutral and obligation-explicit", () => {
@@ -81,7 +85,7 @@ describe("cross-runtime foundation types", () => {
         ...obligation,
         provider: "docker",
       })),
-    } satisfies RuntimeNeutralScenario & { provider: string };
+    } as unknown as RuntimeNeutralScenario;
 
     const scenario = defineRuntimeScenario(input);
 
