@@ -10,14 +10,14 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
 
 /**
  * Build a permissive policy YAML whose filesystem path lists
- * (`filesystem_policy.read_only` + `filesystem_policy.read_write`) are a
- * superset of the live sandbox's, so OpenShell never has to remove a path
- * on a live transition.
+ * (`filesystem_policy.read_only` + `filesystem_policy.read_write`) and
+ * `network_policies` keys are a superset of the live sandbox's, so a live
+ * transition never has to remove a path or drop a registered route.
  *
- * Only the two path lists are unioned. Other `filesystem_policy` fields
- * (e.g. `include_workdir`) are preserved verbatim from the static base —
- * the bug class this helper exists for is path removal on a live sandbox,
- * not policy shape changes.
+ * Only those three collections are unioned. Other `filesystem_policy`
+ * fields (e.g. `include_workdir`) are preserved verbatim from the static
+ * base — the bug class this helper exists for is losing live entries on a
+ * live sandbox, not policy shape changes.
  *
  * Background (#3942, #3957, #3168): OpenShell refuses to remove a
  * `filesystem_policy.read_only` or `filesystem_policy.read_write` entry
@@ -39,10 +39,14 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  * - Live `read_only` is merged into base `read_only` only when the same
  *   path is not already granted `read_write` (either by base or by live).
  *
+ * `network_policies` merges by key: a live-only route is copied in, and a
+ * route the base already declares keeps the base's definition. Provider-
+ * composed `_provider_*` entries are never copied.
+ *
  * Returns the path to a freshly created temp YAML file when the live
- * policy carries a filesystem section that needs merging. Falls back to
- * the static base path when the live policy is empty / has no filesystem
- * lists, when the base YAML cannot be parsed, or when temp-file I/O
+ * policy carries filesystem lists or network routes that need merging.
+ * Falls back to the static base path when the live policy is empty / has
+ * neither, when the base YAML cannot be parsed, or when temp-file I/O
  * fails — degrading to the existing static apply path rather than
  * aborting shields-down with an I/O error.
  */
@@ -69,10 +73,12 @@ export function buildRuntimePermissivePolicy(
   const live = deps.livePolicyYaml ? safeYamlObject(deps.livePolicyYaml) : null;
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
+  const liveNetwork = readNetworkPolicies(live);
+  const liveNetworkNames = Object.keys(liveNetwork);
 
-  // No live filesystem section to merge — keep the static path so the
-  // caller's apply path is unchanged.
-  if (liveRw.length === 0 && liveRo.length === 0) {
+  // Nothing live to merge — keep the static path so the caller's apply
+  // path is unchanged.
+  if (liveRw.length === 0 && liveRo.length === 0 && liveNetworkNames.length === 0) {
     return basePermissivePath;
   }
 
@@ -108,6 +114,28 @@ export function buildRuntimePermissivePolicy(
   fsPolicy.read_write = [...baseRw];
   fsPolicy.read_only = [...baseRo];
 
+  // Carry live-only network routes across the swap. The static baseline is
+  // a fixed allowlist, so a route registered at runtime — a generated MCP
+  // bridge entry, a sandbox-scoped custom preset — is absent from it and
+  // would be dropped by the whole-document replacement, leaving the
+  // registry owning a route the gateway no longer serves (#7952).
+  //
+  // The static base wins on a shared key: it is the more permissive of the
+  // two by construction, so the applied document is unchanged for every
+  // key the baseline already declares.
+  if (liveNetworkNames.length > 0) {
+    const baseNetwork =
+      base.network_policies &&
+      typeof base.network_policies === "object" &&
+      !Array.isArray(base.network_policies)
+        ? (base.network_policies as Record<string, unknown>)
+        : ((base.network_policies = {} as Record<string, unknown>),
+          base.network_policies as Record<string, unknown>);
+    for (const name of liveNetworkNames) {
+      if (!(name in baseNetwork)) baseNetwork[name] = liveNetwork[name];
+    }
+  }
+
   const yaml = YAML.stringify(base);
   if (deps.writeTempPolicy) {
     try {
@@ -140,6 +168,25 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
     return null;
   }
   return null;
+}
+
+// `policy get --base` can defensively include provider-composed
+// `_provider_*` entries that `policy set` must never receive. Every other
+// read-modify-write path filters them (see withoutProviderComposedPolicies
+// in nemoclaw/src/shared/openshell-policy-boundary.cts); this one is a
+// write path too, so it filters them as well. Inlined rather than imported
+// because that module is only reachable through a built artifact, and this
+// helper must stay dependency-free.
+const PROVIDER_COMPOSED_PREFIX = "_provider_";
+
+function readNetworkPolicies(root: Record<string, unknown> | null): Record<string, unknown> {
+  const value = root?.network_policies;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      ([name]) => !name.startsWith(PROVIDER_COMPOSED_PREFIX),
+    ),
+  );
 }
 
 function readStringList(

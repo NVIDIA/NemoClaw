@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { buildMcpBridgePolicyYaml } from "../src/lib/actions/sandbox/mcp-bridge-policy-render.js";
 import { buildRuntimePermissivePolicy } from "../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
@@ -17,6 +18,30 @@ const BASE_PERMISSIVE = YAML.stringify({
   },
   landlock: { compatibility: "best_effort" },
 });
+
+// Mirrors the shape of the shipped baseline: a fixed network allowlist that
+// cannot see routes registered at runtime.
+const BASE_PERMISSIVE_WITH_NETWORK = YAML.stringify({
+  filesystem_policy: {
+    include_workdir: true,
+    read_only: ["/proc", "/etc"],
+    read_write: ["/tmp", "/sandbox/.openclaw"],
+  },
+  network_policies: {
+    nvidia: {
+      name: "nvidia",
+      endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+      binaries: [{ path: "/**" }],
+    },
+  },
+});
+
+// The real generated MCP entry, not a hand-written approximation.
+const GENERATED_MCP = YAML.parse(
+  buildMcpBridgePolicyYaml("fake", "https://mcp.example.com/mcp", "hermes-config", ["203.0.113.7"]),
+).network_policies as Record<string, unknown>;
+
+const MCP_KEY = "mcp_bridge_fake";
 
 const tempFilesToClean: string[] = [];
 
@@ -195,5 +220,114 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
     expect(out).toBe(basePath);
     expect(writeAttempts).toBe(1);
+  });
+});
+
+describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
+  it("keeps a registered MCP route that only the live policy knows about", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+      network_policies: { ...GENERATED_MCP },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+    expect(out).not.toBe("/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies[MCP_KEY]).toEqual(GENERATED_MCP[MCP_KEY]);
+    // The baseline's own routes survive untouched.
+    expect(result.network_policies.nvidia.name).toBe("nvidia");
+  });
+
+  it("merges live routes even when the live policy has no filesystem section", () => {
+    const liveYaml = YAML.stringify({ network_policies: { ...GENERATED_MCP } });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+    expect(out).not.toBe("/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies[MCP_KEY]).toEqual(GENERATED_MCP[MCP_KEY]);
+  });
+
+  it("keeps the permissive baseline entry when a route name exists in both", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_write: ["/tmp"] },
+      network_policies: {
+        nvidia: {
+          name: "nvidia",
+          // A narrower live rule must not tighten the permissive posture.
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "read" }],
+        },
+      },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies.nvidia.endpoints[0].access).toBe("full");
+  });
+
+  it("never carries provider-composed entries into the applied policy", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_write: ["/tmp"] },
+      network_policies: {
+        ...GENERATED_MCP,
+        _provider_openai: { name: "_provider_openai", endpoints: [] },
+      },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies[MCP_KEY]).toBeDefined();
+    expect(result.network_policies._provider_openai).toBeUndefined();
+  });
+
+  it("still returns the static base path when the live policy is entirely empty", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({ landlock: { compatibility: "best_effort" } });
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+    });
+    expect(out).toBe(basePath);
+  });
+
+  it("ignores a live network_policies that is not a mapping", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({ network_policies: ["not", "a", "mapping"] });
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+    });
+    expect(out).toBe(basePath);
+  });
+
+  it("replaces a non-mapping base network_policies rather than indexing into it", () => {
+    const liveYaml = YAML.stringify({ network_policies: { ...GENERATED_MCP } });
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => YAML.stringify({ network_policies: ["unexpected"] }),
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies[MCP_KEY]).toEqual(GENERATED_MCP[MCP_KEY]);
   });
 });

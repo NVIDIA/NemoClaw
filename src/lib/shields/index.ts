@@ -2862,11 +2862,12 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   let policyFileIsTemp = false;
   if (policyName === "permissive") {
     const basePath = resolvePermissivePolicyPath(sandboxName);
-    // Union the live sandbox's filesystem_policy.read_only/read_write into
-    // the static permissive baseline. OpenShell rejects removal of those
-    // paths on a live sandbox, and runtime-injected entries (/proc on
-    // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
-    // etc.) are not present in the static YAML. See #3942, #3957, #3168.
+    // Union the live sandbox's filesystem_policy.read_only/read_write and
+    // network_policies into the static permissive baseline. OpenShell
+    // rejects removal of those paths on a live sandbox, and runtime
+    // entries — /proc on GPU, /opt/hermes on Hermes, /home/linuxbrew on
+    // post-#3913 OpenClaw, a generated MCP bridge route — are not present
+    // in the static YAML. See #3942, #3957, #3168, #7952.
     // policyYaml is the pre-parsed body we already captured for the
     // snapshot above — reuse it instead of re-fetching.
     policyFile = buildRuntimePermissivePolicy(basePath, {

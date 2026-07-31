@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
 
 const requireDist = createRequire(import.meta.url);
 const shieldsModulePath = "./index.js";
@@ -26,6 +27,9 @@ setInterval(() => {}, 60000);
 `;
 
 type ShieldsHarness = {
+  // Every document handed to `openshell policy set`, read at call time —
+  // shieldsDown deletes a temp policy file as soon as the run returns.
+  appliedPolicies: string[];
   auditSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
@@ -40,8 +44,10 @@ type ShieldsHarness = {
 let tmpDir: string;
 
 type HarnessOptions = {
+  basePermissiveYaml?: string;
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
+  livePolicyYaml?: string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
   invokedAs?: "nemoclaw" | "nemohermes";
   openClawGuardFailure?: {
@@ -61,12 +67,19 @@ type HarnessOptions = {
     send: () => boolean;
     kill: () => boolean;
   };
-  livePolicyYaml?: string;
   run?: (cmd: unknown) => { status: number };
 };
 
 function throwHarnessError(error: Error): never {
   throw error;
+}
+
+function readIfPresent(file: string): string {
+  try {
+    return fs.readFileSync(file, "utf-8");
+  } catch {
+    return "";
+  }
 }
 
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
@@ -99,12 +112,19 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   });
   options.fork && vi.spyOn(childProcess, "fork").mockImplementation(options.fork);
   vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
-  vi.spyOn(policy, "buildPolicySetCommand").mockReturnValue(["openshell", "policy", "set"]);
+  const appliedPolicies: string[] = [];
+  vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((policyFile: unknown) => {
+    appliedPolicies.push(readIfPresent(String(policyFile)));
+    return ["openshell", "policy", "set"];
+  });
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
   vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(
     path.join(tmpDir, "permissive.yaml"),
   );
-  fs.writeFileSync(path.join(tmpDir, "permissive.yaml"), "version: 1\nnetwork_policies: {}\n");
+  fs.writeFileSync(
+    path.join(tmpDir, "permissive.yaml"),
+    options.basePermissiveYaml ?? "version: 1\nnetwork_policies: {}\n",
+  );
   vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
     agentName: "openclaw",
     configDir: "/sandbox/.openclaw",
@@ -215,6 +235,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   errorSpy.mockClear();
   auditSpy.mockClear();
   return {
+    appliedPolicies,
     auditSpy,
     errorSpy,
     logSpy,
@@ -284,6 +305,38 @@ describe("shields command flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Config unlocked for openclaw (no auto-lockdown timer",
     );
+  });
+
+  it("shieldsDown keeps a registered MCP route in the policy it applies (#7952)", {
+    timeout: 15_000,
+  }, () => {
+    const harness = createHarness({
+      // A sandbox with a registered MCP bridge: the generated route exists
+      // only in the live policy, never in the static permissive baseline.
+      livePolicyYaml: [
+        "version: 1",
+        "network_policies:",
+        "  mcp_bridge_fake:",
+        "    name: mcp_bridge_fake",
+        "    endpoints:",
+        "      - host: mcp.example.com",
+        "        port: 443",
+        "        protocol: mcp",
+        "",
+      ].join("\n"),
+      basePermissiveYaml: "version: 1\nnetwork_policies:\n  nvidia: {}\n",
+    });
+
+    harness.shieldsDown("openclaw", { skipTimer: true, throwOnError: true });
+
+    const applied = YAML.parse(harness.appliedPolicies.at(-1) ?? "");
+    // The live route survives the swap intact, and the baseline's own
+    // routes are still there.
+    expect(applied.network_policies.mcp_bridge_fake).toEqual({
+      name: "mcp_bridge_fake",
+      endpoints: [{ host: "mcp.example.com", port: 443, protocol: "mcp" }],
+    });
+    expect(applied.network_policies.nvidia).toBeDefined();
   });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {
