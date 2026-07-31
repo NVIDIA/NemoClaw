@@ -5,6 +5,7 @@ import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
@@ -245,6 +246,12 @@ export type RuntimeProviderBootstrapSurface =
 
 export type RuntimeProviderSnapshotSurface =
   | RuntimeProviderSupportedSurface<{
+      /**
+       * Version the snapshot facet independently so providers can reject a
+       * central contract they do not implement without forcing unrelated
+       * bundle surfaces to rev in lockstep.
+       */
+      readonly contractVersion: typeof RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION;
       readonly capabilities: {
         readonly backup: boolean;
         readonly restore: boolean;

@@ -61,6 +61,7 @@ const providerRestore = vi.hoisted(() => {
 });
 
 vi.mock("./snapshot/dependencies", () => ({
+  backupSandboxStateWithManagedAuthority: vi.fn(),
   captureSandboxRuntimeSnapshot: vi.fn(),
   confirmSandboxRuntimeRestore: providerRestore.confirmSandboxRuntimeRestore,
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
@@ -70,12 +71,12 @@ vi.mock("./snapshot/dependencies", () => ({
   requireCurrentSnapshotRuntimeProvider: providerRestore.requireCurrentSnapshotRuntimeProvider,
 }));
 
-function managedSnapshot() {
+function managedSnapshot(agent = "openclaw") {
   return {
     snapshotVersion: 4,
     timestamp: "2026-07-30T00:00:00.000Z",
     backupPath: "/tmp/backup-alpha",
-    agentType: "openclaw",
+    agentType: agent,
     workload: { kind: "managed-image" },
     runtimeSnapshot: providerRestore.source,
   };
@@ -95,7 +96,19 @@ beforeEach(() => {
     agent: "openclaw",
     openshellDriver: "docker",
   });
-  fixture.restoreSandboxStateMock.mockImplementation(() => {
+  fixture.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
+    try {
+      options?.validateBeforeMutation?.();
+    } catch (error) {
+      return {
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["workspace"],
+        failedFiles: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     providerRestore.events.push("filesystem-restore");
     return {
       success: true,
@@ -113,7 +126,24 @@ afterEach(() => {
 });
 
 describe("managed snapshot provider restore ordering", () => {
-  it("refreshes provider authority at the mutation edge and proves the profile afterward", async () => {
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("refreshes %s provider authority at the mutation edge and proves the profile", async (agent) => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent,
+      openshellDriver: "docker",
+    });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({ agent });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent,
+        profileFingerprint: "a".repeat(64),
+      },
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
@@ -155,7 +185,11 @@ describe("managed snapshot provider restore ordering", () => {
     });
 
     expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
-    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(fixture.restoreSandboxStateMock).toHaveBeenCalledWith(
+      "alpha",
+      "/tmp/backup-alpha",
+      expect.objectContaining({ validateBeforeMutation: expect.any(Function) }),
+    );
     expect(providerRestore.confirmSandboxRuntimeRestore).not.toHaveBeenCalled();
   });
 });
