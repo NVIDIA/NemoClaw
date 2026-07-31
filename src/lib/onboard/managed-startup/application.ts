@@ -307,26 +307,45 @@ function parseStateControl(
   return control;
 }
 
-function atomicWriteStateControl(
+function publishStateControlIfAbsent(
   stateDirectory: string,
   basename: "committed.json" | "pending.json",
   control: StateControl,
   runtime: ManagedStartupApplicationRuntime,
-): void {
+): {
+  readonly control: StateControl;
+  readonly created: boolean;
+} {
   const target = path.join(stateDirectory, basename);
   const temporary = path.join(stateDirectory, `.${basename}-${randomToken()}.tmp`);
   writeSecureNewFile(temporary, serializeStateControl(control), runtime);
+
   try {
-    fs.renameSync(temporary, target);
-    syncDirectory(stateDirectory);
-  } catch {
+    fs.linkSync(temporary, target);
+  } catch (error) {
     try {
-      fs.unlinkSync(temporary);
+      unlinkSecureControlOrTemp(temporary, runtime);
     } catch {
-      // Preserve the primary atomic-write error.
+      // Preserve the primary publication error.
     }
-    fail(`could not atomically write ${basename}`);
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return {
+        control: parseStateControl(target, runtime),
+        created: false,
+      };
+    }
+    fail(`could not atomically publish ${basename}`);
   }
+
+  try {
+    fs.unlinkSync(temporary);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      fail(`could not finalize atomic publication of ${basename}`);
+    }
+  }
+  syncDirectory(stateDirectory);
+  return { control, created: true };
 }
 
 function validateCorporateCaBytes(bytes: Buffer): void {
@@ -520,6 +539,20 @@ function discardDirectory(target: string, runtime: ManagedStartupApplicationRunt
   fs.rmSync(target, { recursive: true });
 }
 
+function discardDirectoryIfPresent(
+  target: string,
+  runtime: ManagedStartupApplicationRuntime,
+): boolean {
+  try {
+    fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    fail(`could not inspect disposable generation ${target}`);
+  }
+  discardDirectory(target, runtime);
+  return true;
+}
+
 function unlinkSecureControlOrTemp(
   target: string,
   runtime: ManagedStartupApplicationRuntime,
@@ -540,19 +573,65 @@ function listStateEntries(stateDirectory: string): string[] {
   return entries;
 }
 
+function unlinkRecoverableControlTemp(
+  stateDirectory: string,
+  entry: string,
+  runtime: ManagedStartupApplicationRuntime,
+): void {
+  const temporary = path.join(stateDirectory, entry);
+  const stat = fs.lstatSync(temporary);
+  if (stat.nlink === 1) {
+    unlinkSecureControlOrTemp(temporary, runtime);
+    return;
+  }
+
+  const basename = entry.startsWith(".committed.json-")
+    ? "committed.json"
+    : entry.startsWith(".pending.json-")
+      ? "pending.json"
+      : null;
+  const target = basename === null ? null : path.join(stateDirectory, basename);
+  let targetStat: fs.Stats | null = null;
+  try {
+    targetStat = target === null ? null : fs.lstatSync(target);
+  } catch {
+    fail(`refused to remove an unpaired atomic-control temporary file: ${temporary}`);
+  }
+  if (
+    stat.nlink !== 2 ||
+    targetStat === null ||
+    stat.dev !== targetStat.dev ||
+    stat.ino !== targetStat.ino ||
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    modeOf(stat) !== STATE_FILE_MODE ||
+    stat.size < 1 ||
+    stat.size > MAX_CONTROL_FILE_BYTES
+  ) {
+    fail(`refused to remove an unpaired atomic-control temporary file: ${temporary}`);
+  }
+  requireOwner(stat, temporary, runtime);
+  requireOwner(targetStat, target as string, runtime);
+  fs.unlinkSync(temporary);
+}
+
 function cleanAtomicTemps(
   stateDirectory: string,
   entries: readonly string[],
   runtime: ManagedStartupApplicationRuntime,
 ): void {
+  let changed = false;
   for (const entry of entries) {
     const target = path.join(stateDirectory, entry);
     if (PREPARE_TEMP_RE.test(entry)) {
       discardDirectory(target, runtime);
+      changed = true;
     } else if (CONTROL_TEMP_RE.test(entry)) {
-      unlinkSecureControlOrTemp(target, runtime);
+      unlinkRecoverableControlTemp(stateDirectory, entry, runtime);
+      changed = true;
     }
   }
+  if (changed) syncDirectory(stateDirectory);
 }
 
 function requireKnownStateEntries(stateDirectory: string, entries: readonly string[]): void {
@@ -577,7 +656,7 @@ function discardGenerationsExcept(
 ): void {
   for (const entry of listStateEntries(stateDirectory)) {
     if (GENERATION_RE.test(entry) && entry !== keepGeneration) {
-      discardDirectory(path.join(stateDirectory, entry), runtime);
+      discardDirectoryIfPresent(path.join(stateDirectory, entry), runtime);
     }
   }
 }
@@ -601,8 +680,35 @@ function removePendingControl(
   stateDirectory: string,
   runtime: ManagedStartupApplicationRuntime,
 ): void {
-  unlinkSecureControlOrTemp(path.join(stateDirectory, "pending.json"), runtime);
+  try {
+    unlinkSecureControlOrTemp(path.join(stateDirectory, "pending.json"), runtime);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
   syncDirectory(stateDirectory);
+}
+
+function stateControlsMatch(left: StateControl, right: StateControl): boolean {
+  return left.fingerprint === right.fingerprint && left.generation === right.generation;
+}
+
+function recoverCommittedState(
+  stateDirectory: string,
+  committedControl: StateControl,
+  pendingControl: StateControl | null,
+  requested: StateControl,
+  expectedAgent: ManagedStartupAgent,
+  runtime: ManagedStartupApplicationRuntime,
+): ValidatedGeneration {
+  const committed = validateGeneration(stateDirectory, committedControl, runtime, expectedAgent);
+  if (pendingControl) removePendingControl(stateDirectory, runtime);
+  discardGenerationsExcept(stateDirectory, committedControl.generation, runtime);
+  syncDirectory(stateDirectory);
+  if (!stateControlsMatch(committedControl, requested)) {
+    fail("a different startup profile is already committed; recreate the sandbox to change it");
+  }
+  return committed;
 }
 
 function recoverState(
@@ -618,44 +724,51 @@ function recoverState(
   requireKnownStateEntries(stateDirectory, initialEntries);
   cleanAtomicTemps(stateDirectory, initialEntries, runtime);
 
-  const committedControl = optionalStateControl(stateDirectory, "committed.json", runtime);
+  const initiallyCommittedControl = optionalStateControl(stateDirectory, "committed.json", runtime);
   const pendingControl = optionalStateControl(stateDirectory, "pending.json", runtime);
+  const committedAfterPendingRead = optionalStateControl(stateDirectory, "committed.json", runtime);
+  const committedControl = committedAfterPendingRead ?? initiallyCommittedControl;
   if (committedControl) {
-    const committed = validateGeneration(stateDirectory, committedControl, runtime, expectedAgent);
-    if (
-      committedControl.fingerprint !== requested.fingerprint ||
-      committedControl.generation !== requested.generation
-    ) {
-      fail("a different startup profile is already committed; recreate the sandbox to change it");
-    }
-    if (pendingControl) {
-      if (
-        pendingControl.fingerprint !== committedControl.fingerprint ||
-        pendingControl.generation !== committedControl.generation
-      ) {
-        fail("committed and pending startup state disagree");
-      }
-      removePendingControl(stateDirectory, runtime);
-    }
-    discardGenerationsExcept(stateDirectory, committedControl.generation, runtime);
-    return { committed, pending: null };
+    return {
+      committed: recoverCommittedState(
+        stateDirectory,
+        committedControl,
+        pendingControl,
+        requested,
+        expectedAgent,
+        runtime,
+      ),
+      pending: null,
+    };
   }
 
   if (pendingControl) {
-    if (
-      pendingControl.fingerprint === requested.fingerprint &&
-      pendingControl.generation === requested.generation
-    ) {
+    if (stateControlsMatch(pendingControl, requested)) {
       const pending = validateGeneration(stateDirectory, pendingControl, runtime, expectedAgent);
+      const committedAfterPendingValidation = optionalStateControl(
+        stateDirectory,
+        "committed.json",
+        runtime,
+      );
+      if (committedAfterPendingValidation) {
+        return {
+          committed: recoverCommittedState(
+            stateDirectory,
+            committedAfterPendingValidation,
+            pendingControl,
+            requested,
+            expectedAgent,
+            runtime,
+          ),
+          pending: null,
+        };
+      }
       discardGenerationsExcept(stateDirectory, pendingControl.generation, runtime);
       return { committed: null, pending };
     }
-    discardGenerationsExcept(stateDirectory, null, runtime);
-    removePendingControl(stateDirectory, runtime);
-    return { committed: null, pending: null };
+    fail("a different startup profile is already pending; wait for it to commit or recreate");
   }
 
-  discardGenerationsExcept(stateDirectory, null, runtime);
   return { committed: null, pending: null };
 }
 
@@ -669,6 +782,7 @@ function createGeneration(
   const temporaryName = `.prepare-${String(process.pid)}-${randomToken()}`;
   const temporary = path.join(stateDirectory, temporaryName);
   const generation = path.join(stateDirectory, control.generation);
+  let renameAttempted = false;
   try {
     fs.mkdirSync(temporary, { mode: STATE_DIRECTORY_MODE });
     fs.chownSync(temporary, runtime.rootUid, runtime.rootGid);
@@ -678,6 +792,7 @@ function createGeneration(
       writeSecureNewFile(path.join(temporary, "corporate-ca.pem"), corporateCa, runtime);
     }
     syncDirectory(temporary);
+    renameAttempted = true;
     fs.renameSync(temporary, generation);
     syncDirectory(stateDirectory);
   } catch (error) {
@@ -688,6 +803,13 @@ function createGeneration(
       // Preserve the generation error.
     }
     if (error instanceof ManagedStartupApplicationError) throw error;
+    if (
+      renameAttempted &&
+      ((error as NodeJS.ErrnoException).code === "EEXIST" ||
+        (error as NodeJS.ErrnoException).code === "ENOTEMPTY")
+    ) {
+      return validateGeneration(stateDirectory, control, runtime);
+    }
     fail(`could not atomically prepare generation ${control.generation}`);
   }
   return validateGeneration(stateDirectory, control, runtime);
@@ -752,8 +874,47 @@ export function prepareManagedStartupApplication(
   }
 
   const generation = createGeneration(stateDirectory, control, profileJson, corporateCa, runtime);
-  atomicWriteStateControl(stateDirectory, "pending.json", control, runtime);
-  return toPrepared("prepared", stateDirectory, generation, input.expectedAgent);
+  const publication = publishStateControlIfAbsent(stateDirectory, "pending.json", control, runtime);
+  if (
+    publication.control.fingerprint !== control.fingerprint ||
+    publication.control.generation !== control.generation
+  ) {
+    discardDirectoryIfPresent(generation.directory, runtime);
+    syncDirectory(stateDirectory);
+    fail("a different startup profile won the pending-state transaction");
+  }
+  const committedAfterPublication = optionalStateControl(stateDirectory, "committed.json", runtime);
+  if (committedAfterPublication) {
+    if (
+      committedAfterPublication.fingerprint !== control.fingerprint ||
+      committedAfterPublication.generation !== control.generation
+    ) {
+      if (publication.created) {
+        removePendingControl(stateDirectory, runtime);
+        discardDirectoryIfPresent(generation.directory, runtime);
+        syncDirectory(stateDirectory);
+      }
+      fail("a different startup profile committed during pending-state publication");
+    }
+    const committedGeneration = validateGeneration(
+      stateDirectory,
+      committedAfterPublication,
+      runtime,
+      input.expectedAgent,
+    );
+    removePendingControl(stateDirectory, runtime);
+    discardGenerationsExcept(stateDirectory, committedAfterPublication.generation, runtime);
+    return toPrepared(
+      "already-committed",
+      stateDirectory,
+      committedGeneration,
+      input.expectedAgent,
+    );
+  }
+  const activeGeneration = publication.created
+    ? generation
+    : validateGeneration(stateDirectory, publication.control, runtime, input.expectedAgent);
+  return toPrepared("prepared", stateDirectory, activeGeneration, input.expectedAgent);
 }
 
 function validatePreparedHandle(handle: PreparedManagedStartupApplication): StateControl {
@@ -773,7 +934,7 @@ function validatePreparedHandle(handle: PreparedManagedStartupApplication): Stat
 
 /**
  * Mark a prepared profile applied only after every agent-specific adapter has
- * completed. The marker rename is the sole commit point.
+ * completed. Exclusive publication of the marker is the sole commit point.
  */
 export function commitManagedStartupApplication(
   prepared: PreparedManagedStartupApplication,
@@ -817,8 +978,21 @@ export function commitManagedStartupApplication(
     runtime,
     prepared.expectedAgent,
   );
-  atomicWriteStateControl(stateDirectory, "committed.json", pendingControl, runtime);
+  const publication = publishStateControlIfAbsent(
+    stateDirectory,
+    "committed.json",
+    pendingControl,
+    runtime,
+  );
+  if (
+    publication.control.fingerprint !== requested.fingerprint ||
+    publication.control.generation !== requested.generation
+  ) {
+    fail("a different startup profile won the committed-state transaction");
+  }
   removePendingControl(stateDirectory, runtime);
+  discardGenerationsExcept(stateDirectory, publication.control.generation, runtime);
+  syncDirectory(stateDirectory);
   return {
     ...toPrepared("already-committed", stateDirectory, generation, prepared.expectedAgent),
     status: "committed",
