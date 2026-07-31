@@ -12,6 +12,7 @@ import { getGatewayClusterContainerName } from "../adapters/openshell/gateway-dr
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import * as agentRuntime from "../agent/runtime";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
 import * as registry from "../state/registry";
 import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 
@@ -24,7 +25,7 @@ type ProcessRunner = (
 ) => SpawnSyncReturns<string>;
 
 export type SandboxGatewayStopDeps = {
-  channelStopTransport?: "docker-kubectl-first" | "openshell";
+  channelStopTransport?: RuntimeProviderChannelStopTransport;
   getSandbox?: typeof registry.getSandbox;
   getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
   getAgentDisplayName?: typeof agentRuntime.getAgentDisplayName;

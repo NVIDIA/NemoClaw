@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 
 import { expect, type MockInstance, vi } from "vitest";
+import type { SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
 type DestroySandbox = typeof import("../../src/lib/actions/sandbox/destroy")["destroySandbox"];
 
@@ -37,6 +38,7 @@ export type DestroyHarness = {
   stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
+  warnSpy: MockInstance;
 };
 
 type DestroyHarnessOptions = {
@@ -47,6 +49,7 @@ type DestroyHarnessOptions = {
   dockerPsOutput?: string;
   endpointUrl?: string;
   finalizeMcpError?: string;
+  imageTag?: string | null;
   liveListOutput?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
@@ -57,6 +60,7 @@ type DestroyHarnessOptions = {
   sandboxPresent?: boolean;
   shieldsDown?: boolean;
   shieldsUpError?: Error;
+  workload?: SandboxWorkloadReceipt;
 };
 
 const sandboxEntry = {
@@ -107,7 +111,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const runtime = requireDist("../../adapters/openshell/runtime.js");
@@ -137,9 +141,11 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     ...sandboxEntry,
+    imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
     agent: options.agent ?? sandboxEntry.agent,
     ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
     ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
+    ...(options.workload ? { workload: options.workload } : {}),
     ...(options.mcpServers?.length
       ? {
           mcp: {
@@ -336,5 +342,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     stopAllSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
+    warnSpy,
   };
 }

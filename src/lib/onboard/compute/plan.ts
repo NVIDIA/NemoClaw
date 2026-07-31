@@ -3,9 +3,9 @@
 
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
-  RuntimeProviderBundle,
-  RuntimeProviderBundleRegistry,
-  RuntimeProviderGatewayLauncher,
+  type RuntimeProviderBundle,
+  type RuntimeProviderBundleRegistry,
+  type RuntimeProviderGatewayLauncher,
   resolveRuntimeProviderBundle,
   resolveCurrentRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,

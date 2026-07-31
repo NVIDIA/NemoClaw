@@ -338,7 +338,7 @@ export function createDockerRuntimeProviderBundle(
     cleanup: {
       providerId,
       supported: true,
-      prepareDestroy: (input, operations) => operations.detachProviders(input.sandboxName),
+      prepareDestroy: (_input, operations) => operations.detachProviders(),
       removeOwnedWorkload: (input) => removeOwnedDockerWorkload(input, deps),
     },
     containerEngine: {
@@ -421,7 +421,7 @@ export function createKubernetesRuntimeProviderBundle(
     cleanup: {
       providerId,
       supported: true,
-      prepareDestroy: (input, operations) => operations.detachProviders(input.sandboxName),
+      prepareDestroy: (_input, operations) => operations.detachProviders(),
       removeOwnedWorkload: (input) => removeOwnedDockerWorkload(input, deps),
     },
     containerEngine: {

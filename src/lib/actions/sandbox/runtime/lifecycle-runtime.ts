@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  RuntimeProviderBundle,
-  RuntimeProviderBundleRegistry,
+  type RuntimeProviderBundle,
+  type RuntimeProviderBundleRegistry,
   normalizeRuntimeProviderIdentity,
   requireRuntimeProviderMutationAuthority,
   resolveRuntimeProviderBundle,
@@ -21,6 +21,7 @@ export type { RuntimeProviderLifecycleResult as SandboxLifecycleResult };
 export type SandboxLifecycleProviderResolution =
   | {
       readonly ok: true;
+      readonly sandbox: SandboxEntry;
       readonly bundle: RuntimeProviderBundle;
       readonly lifecycle: Extract<RuntimeProviderBundle["lifecycle"], { readonly supported: true }>;
     }
@@ -80,5 +81,5 @@ export function resolveSandboxLifecycleProvider(
       },
     };
   }
-  return { ok: true, bundle, lifecycle: bundle.lifecycle };
+  return { ok: true, sandbox, bundle, lifecycle: bundle.lifecycle };
 }

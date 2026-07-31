@@ -6,6 +6,7 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
+  type RuntimeProviderChannelStopTransport,
   type RuntimeProviderContainerEngineOperation,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderRuntimeReceipt,
@@ -30,7 +31,10 @@ const BUNDLE_SURFACES = [
 const MAX_RECEIPT_HANDLE_BYTES = 4096;
 const MAX_RECEIPT_DEVICES = 64;
 const GATEWAY_LAUNCHERS = new Set(["nemoclaw", "openshell"]);
-const CHANNEL_STOP_TRANSPORTS = new Set(["docker-kubectl-first", "openshell"]);
+const CHANNEL_STOP_TRANSPORTS: ReadonlySet<unknown> = new Set<RuntimeProviderChannelStopTransport>([
+  "docker-kubectl-first",
+  "openshell",
+]);
 const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-managed"]);
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
@@ -237,52 +241,70 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
   }
 }
 
-function validateSupportedSurfaceSchemas(
-  providerId: string,
-  surfaces: Record<(typeof BUNDLE_SURFACES)[number], Record<string, unknown>>,
-): void {
-  requireSupported("plan", surfaces.plan);
-  if (!GATEWAY_LAUNCHERS.has(String(surfaces.plan.gatewayLauncher))) {
+type RuntimeProviderSurfaceRecords = Record<
+  (typeof BUNDLE_SURFACES)[number],
+  Record<string, unknown>
+>;
+
+function validatePlanSurface(providerId: string, surface: Record<string, unknown>): void {
+  requireSupported("plan", surface);
+  if (!GATEWAY_LAUNCHERS.has(String(surface.gatewayLauncher))) {
     throw new RuntimeProviderRegistrationError(`plan for '${providerId}' has an invalid launcher`);
   }
+}
 
-  requireSupported("capabilities", surfaces.capabilities);
+function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
+  requireSupported("capabilities", surface);
   for (const field of [
     "hostLocalInference",
     "directLifecycle",
     "legacyGatewayContainerInspection",
     "workloadImageCleanup",
   ] as const) {
-    requireBoolean(surfaces.capabilities, field, "capabilities");
+    requireBoolean(surface, field, "capabilities");
   }
+}
 
-  requireSupported("preflightDoctor", surfaces.preflightDoctor);
-  requireFunction(surfaces.preflightDoctor, "inspectHost", "preflightDoctor");
-  requireFunction(surfaces.preflightDoctor, "preflightLifecycle", "preflightDoctor");
+function validatePreflightDoctorSurface(surface: Record<string, unknown>): void {
+  requireSupported("preflightDoctor", surface);
+  requireFunction(surface, "inspectHost", "preflightDoctor");
+  requireFunction(surface, "preflightLifecycle", "preflightDoctor");
+}
 
-  requireSupported("gateway", surfaces.gateway);
-  if (!GATEWAY_LAUNCHERS.has(String(surfaces.gateway.launcher))) {
+function validateGatewaySurface(providerId: string, surface: Record<string, unknown>): void {
+  requireSupported("gateway", surface);
+  if (!GATEWAY_LAUNCHERS.has(String(surface.launcher))) {
     throw new RuntimeProviderRegistrationError(
       `gateway for '${providerId}' has an invalid launcher`,
     );
   }
-  requireBoolean(surfaces.gateway, "inspectLegacyContainer", "gateway");
+  requireBoolean(surface, "inspectLegacyContainer", "gateway");
+}
 
-  requireSupported("workload", surfaces.workload);
-  validateWorkloadProfile(providerId, surfaces.workload);
+function validateWorkloadSurface(providerId: string, surface: Record<string, unknown>): void {
+  requireSupported("workload", surface);
+  validateWorkloadProfile(providerId, surface);
+}
 
-  if (surfaces.lifecycle.supported === true) {
-    if (!CHANNEL_STOP_TRANSPORTS.has(String(surfaces.lifecycle.channelStopTransport))) {
+function validateLifecycleSurface(providerId: string, surface: Record<string, unknown>): void {
+  if (surface.supported === true) {
+    if (!CHANNEL_STOP_TRANSPORTS.has(String(surface.channelStopTransport))) {
       throw new RuntimeProviderRegistrationError(
         `lifecycle for '${providerId}' has an invalid channel-stop transport`,
       );
     }
-    requireFunction(surfaces.lifecycle, "start", "lifecycle");
-    requireFunction(surfaces.lifecycle, "verifyStarted", "lifecycle");
-    requireFunction(surfaces.lifecycle, "stop", "lifecycle");
+    requireFunction(surface, "start", "lifecycle");
+    requireFunction(surface, "verifyStarted", "lifecycle");
+    requireFunction(surface, "stop", "lifecycle");
   }
-  if (surfaces.mutationAuthority.supported === true) {
-    const operations = surfaces.mutationAuthority.operations;
+}
+
+function validateMutationAuthoritySurface(
+  providerId: string,
+  surface: Record<string, unknown>,
+): void {
+  if (surface.supported === true) {
+    const operations = surface.operations;
     if (
       !Array.isArray(operations) ||
       operations.length === 0 ||
@@ -294,22 +316,40 @@ function validateSupportedSurfaceSchemas(
       );
     }
   }
-  if (surfaces.bootstrap.supported === true) {
-    requireFunction(surfaces.bootstrap, "prepare", "bootstrap");
+}
+
+function validateBootstrapSurface(surface: Record<string, unknown>): void {
+  if (surface.supported === true) {
+    requireFunction(surface, "prepare", "bootstrap");
   }
-  if (surfaces.snapshot.supported === true) {
-    requireFunction(surfaces.snapshot, "capture", "snapshot");
-    requireFunction(surfaces.snapshot, "restore", "snapshot");
+}
+
+function validateSnapshotSurface(surface: Record<string, unknown>): void {
+  if (surface.supported === true) {
+    requireFunction(surface, "capture", "snapshot");
+    requireFunction(surface, "restore", "snapshot");
   }
-  if (surfaces.recovery.supported === true) {
-    requireFunction(surfaces.recovery, "recover", "recovery");
+}
+
+function validateRecoverySurface(surface: Record<string, unknown>): void {
+  if (surface.supported === true) {
+    requireFunction(surface, "recover", "recovery");
   }
-  if (surfaces.cleanup.supported === true) {
-    requireFunction(surfaces.cleanup, "prepareDestroy", "cleanup");
-    requireFunction(surfaces.cleanup, "removeOwnedWorkload", "cleanup");
+}
+
+function validateCleanupSurface(surface: Record<string, unknown>): void {
+  if (surface.supported === true) {
+    requireFunction(surface, "prepareDestroy", "cleanup");
+    requireFunction(surface, "removeOwnedWorkload", "cleanup");
   }
-  if (surfaces.containerEngine.supported === true) {
-    const identities = surfaces.containerEngine.identities;
+}
+
+function validateContainerEngineSurface(
+  providerId: string,
+  surface: Record<string, unknown>,
+): void {
+  if (surface.supported === true) {
+    const identities = surface.identities;
     if (!Array.isArray(identities)) {
       throw new RuntimeProviderRegistrationError(
         `containerEngine for '${providerId}' must list operation-scoped identities`,
@@ -341,6 +381,24 @@ function validateSupportedSurfaceSchemas(
       );
     }
   }
+}
+
+function validateSupportedSurfaceSchemas(
+  providerId: string,
+  surfaces: RuntimeProviderSurfaceRecords,
+): void {
+  validatePlanSurface(providerId, surfaces.plan);
+  validateCapabilitiesSurface(surfaces.capabilities);
+  validatePreflightDoctorSurface(surfaces.preflightDoctor);
+  validateGatewaySurface(providerId, surfaces.gateway);
+  validateWorkloadSurface(providerId, surfaces.workload);
+  validateLifecycleSurface(providerId, surfaces.lifecycle);
+  validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
+  validateBootstrapSurface(surfaces.bootstrap);
+  validateSnapshotSurface(surfaces.snapshot);
+  validateRecoverySurface(surfaces.recovery);
+  validateCleanupSurface(surfaces.cleanup);
+  validateContainerEngineSurface(providerId, surfaces.containerEngine);
 
   if (surfaces.plan.gatewayLauncher !== surfaces.gateway.launcher) {
     throw new RuntimeProviderRegistrationError(

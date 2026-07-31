@@ -5,7 +5,11 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
-import { decodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import {
+  decodeManagedStartupProfile,
+  MANAGED_STARTUP_PROFILE_MAX_BYTES,
+  MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
+} from "../../onboard/managed-startup/profile";
 import type { SandboxWorkloadReceipt } from "./types";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -18,8 +22,6 @@ const RELEASE_PATTERN = /^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.
 const MAX_COHORT_BYTES = 128;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const STANDARD_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
-const MAX_PROFILE_BYTES = 64 * 1024;
-const MAX_PROFILE_ENCODED_BYTES = Math.ceil(MAX_PROFILE_BYTES / 3) * 4;
 const MAX_CORPORATE_CA_BYTES = 128 * 1024;
 const MAX_CORPORATE_CA_ENCODED_BYTES = Math.ceil(MAX_CORPORATE_CA_BYTES / 3) * 4;
 
@@ -31,7 +33,7 @@ function decodeCanonicalBase64Url(value: unknown): Buffer | null {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
-    value.length > MAX_PROFILE_ENCODED_BYTES ||
+    value.length > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES ||
     value.length % 4 === 1 ||
     !BASE64URL_PATTERN.test(value)
   ) {
@@ -39,7 +41,7 @@ function decodeCanonicalBase64Url(value: unknown): Buffer | null {
   }
   const decoded = Buffer.from(value, "base64url");
   return decoded.length > 0 &&
-    decoded.length <= MAX_PROFILE_BYTES &&
+    decoded.length <= MANAGED_STARTUP_PROFILE_MAX_BYTES &&
     decoded.toString("base64url") === value
     ? decoded
     : null;

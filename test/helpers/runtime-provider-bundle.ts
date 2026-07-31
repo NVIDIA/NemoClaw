@@ -143,7 +143,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       prepareDestroy(input: RuntimeProviderCleanupInput, operations) {
         event("prepare-destroy", input.sandboxName);
-        return operations.detachProviders(input.sandboxName);
+        return operations.detachProviders();
       },
       removeOwnedWorkload(input: RuntimeProviderCleanupInput) {
         const reference = input.sandbox.imageTag;

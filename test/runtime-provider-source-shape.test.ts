@@ -10,35 +10,44 @@ const repoRoot = join(import.meta.dirname, "..");
 describe("runtime provider central source boundary", () => {
   // source-shape-contract: compatibility -- Migrated lifecycle and mutation consumers must stay provider-neutral while production selection excludes unqualified future providers and managed-bootstrap dependencies
   it("keeps migrated provider identities and implementations behind the one bundle composition", () => {
-    const centralConsumers = [
-      readFileSync(join(repoRoot, "src/lib/actions/inference-set.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/actions/sandbox/destroy-execution.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/actions/sandbox/destroy.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/actions/sandbox/runtime/lifecycle-runtime.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/actions/sandbox/start.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/actions/sandbox/stop.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/compute/plan.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-registration.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/workload/runtime.ts"), "utf8"),
-    ];
-    const nonSnapshotActions = centralConsumers.slice(0, 6);
-    const providerContract = [
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/contract.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/current.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/docker.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/registry.ts"), "utf8"),
-    ];
+    const read = (relativePath: string) => readFileSync(join(repoRoot, relativePath), "utf8");
+    const driverNeutralActions = {
+      "actions/inference-set.ts": read("src/lib/actions/inference-set.ts"),
+      "actions/sandbox/destroy-execution.ts": read("src/lib/actions/sandbox/destroy-execution.ts"),
+      "actions/sandbox/destroy.ts": read("src/lib/actions/sandbox/destroy.ts"),
+      "actions/sandbox/runtime/lifecycle-runtime.ts": read(
+        "src/lib/actions/sandbox/runtime/lifecycle-runtime.ts",
+      ),
+      "actions/sandbox/start.ts": read("src/lib/actions/sandbox/start.ts"),
+      "actions/sandbox/stop.ts": read("src/lib/actions/sandbox/stop.ts"),
+    };
+    const onboardConsumers = {
+      "onboard/compute/plan.ts": read("src/lib/onboard/compute/plan.ts"),
+      "onboard/sandbox-registration.ts": read("src/lib/onboard/sandbox-registration.ts"),
+      "onboard/workload/runtime.ts": read("src/lib/onboard/workload/runtime.ts"),
+    };
+    const providerContract = {
+      contract: read("src/lib/onboard/runtime-provider/contract.ts"),
+      current: read("src/lib/onboard/runtime-provider/current.ts"),
+      docker: read("src/lib/onboard/runtime-provider/docker.ts"),
+      registry: read("src/lib/onboard/runtime-provider/registry.ts"),
+    };
 
-    for (const source of nonSnapshotActions) {
+    for (const source of Object.values(driverNeutralActions)) {
       expect(source).not.toMatch(/\b(?:docker|podman)\b/iu);
       expect(source).not.toMatch(/(?:adapters\/docker|docker-driver-sandbox-recovery)/u);
     }
-    for (const source of centralConsumers) {
+    for (const source of [
+      ...Object.values(driverNeutralActions),
+      ...Object.values(onboardConsumers),
+    ]) {
       expect(source).not.toMatch(/\b(?:openshellDriver|driverName)\s*={2,3}\s*["'][^"']+["']/u);
       expect(source).not.toMatch(/switch\s*\([^)]*\b(?:openshellDriver|driverName)\b[^)]*\)/u);
     }
-    expect(centralConsumers[4]).toMatch(/resolved\.lifecycle\.verifyStarted\(/u);
-    expect(providerContract.join("\n")).not.toMatch(/managed-bootstrap/u);
-    expect(providerContract[1]).not.toMatch(/\b(?:podman|mxc)\b/iu);
+    expect(driverNeutralActions["actions/sandbox/start.ts"]).toMatch(
+      /resolved\.lifecycle\.verifyStarted\(/u,
+    );
+    expect(Object.values(providerContract).join("\n")).not.toMatch(/managed-bootstrap/u);
+    expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
   });
 });

@@ -25,10 +25,12 @@ import {
 } from "../../onboard/sandbox-provider-cleanup";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
-  RuntimeProviderBundleRegistry,
-  RuntimeProviderWorkloadCleanupResult,
+  type RuntimeProviderBundleRegistry,
+  type RuntimeProviderWorkloadCleanupResult,
+  normalizeRuntimeProviderIdentity,
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
+  RuntimeProviderSelectionError,
 } from "../../onboard/runtime-provider/access";
 import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
@@ -62,6 +64,17 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
   removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
+
+type RemoveSandboxRegistryEntryOutcome =
+  | {
+      readonly status: "complete";
+      readonly removed: boolean;
+    }
+  | {
+      readonly status: "blocked";
+      readonly reason: "authority-unproven";
+      readonly removed: false;
+    };
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
 
@@ -234,6 +247,9 @@ export function removeSandboxImage(
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const sb = getSandbox(sandboxName);
   if (!sb) return { status: "skipped", reason: "no-owned-image" };
+  const providerId = normalizeRuntimeProviderIdentity(sb.openshellDriver);
+  const log = deps.log ?? console.log;
+  const warn = deps.warn ?? console.warn;
   let result: RuntimeProviderWorkloadCleanupResult;
   try {
     const provider = requireRuntimeProviderBundleForSandbox(
@@ -242,14 +258,25 @@ export function removeSandboxImage(
     );
     requireRuntimeProviderMutationAuthority(provider, "workload-cleanup");
     if (provider.cleanup.supported !== true) {
-      return { status: "skipped", reason: "authority-unproven" };
+      throw new RuntimeProviderSelectionError(
+        `Runtime provider '${provider.identity.id}' has no cleanup implementation.`,
+      );
     }
     result = provider.cleanup.removeOwnedWorkload({ sandbox: sb, sandboxName });
-  } catch {
+  } catch (error) {
+    const detail =
+      error instanceof RuntimeProviderSelectionError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    warn(
+      `  ${YW}⚠${R} Runtime provider '${providerId}' could not prove workload cleanup ` +
+        `authority: ${detail} Local ownership state was preserved; repair the provider ` +
+        "metadata and retry the operation.",
+    );
     return { status: "skipped", reason: "authority-unproven" };
   }
-  const log = deps.log ?? console.log;
-  const warn = deps.warn ?? console.warn;
   if (result.status === "removed") {
     log(`  Removed ${result.engineDisplayName} image ${result.reference}`);
   } else if (result.status === "failed") {
@@ -257,21 +284,34 @@ export function removeSandboxImage(
       `  ${YW}⚠${R} Failed to remove ${result.engineDisplayName} image ${result.reference}; ` +
         `run '${CLI_NAME} gc' to clean up.`,
     );
+  } else if (result.reason === "authority-unproven") {
+    warn(
+      `  ${YW}⚠${R} Runtime provider '${providerId}' did not prove ownership of the ` +
+        "recorded workload image. Local ownership state was preserved; repair the workload " +
+        "receipt and retry the operation.",
+    );
   }
   return result;
+}
+
+function removeSandboxRegistryEntryOutcome(
+  sandboxName: string,
+  deps: RemoveSandboxRegistryEntryDeps = {},
+): RemoveSandboxRegistryEntryOutcome {
+  const removeImage = deps.removeImage ?? removeSandboxImage;
+  const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
+  const imageResult = removeImage(sandboxName);
+  if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
+    return { status: "blocked", reason: "authority-unproven", removed: false };
+  }
+  return { status: "complete", removed: removeSandbox(sandboxName) };
 }
 
 export function removeSandboxRegistryEntry(
   sandboxName: string,
   deps: RemoveSandboxRegistryEntryDeps = {},
 ): boolean {
-  const removeImage = deps.removeImage ?? removeSandboxImage;
-  const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
-  const imageResult = removeImage(sandboxName);
-  if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
-    return false;
-  }
-  return removeSandbox(sandboxName);
+  return removeSandboxRegistryEntryOutcome(sandboxName, deps).removed;
 }
 
 export function removeSandboxRegistryEntryWithReceipt(
@@ -458,7 +498,23 @@ async function destroySandboxUnlocked(
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
-  const removed = removeSandboxRegistryEntry(sandboxName);
+  const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
+  const removed = removalOutcome.removed;
+  if (removalOutcome.status === "blocked") {
+    const providerId = normalizeRuntimeProviderIdentity(sandbox?.openshellDriver);
+    console.warn(
+      `  ${YW}⚠${R} Sandbox '${sandboxName}' cleanup is incomplete for runtime provider ` +
+        `'${providerId}' because workload ownership authority could not be proven.`,
+    );
+    console.warn(
+      `  ${YW}⚠${R} The local registry and session were preserved. Repair the provider/workload ` +
+        `receipt, then re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish cleanup.`,
+    );
+    emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (message) =>
+      console.warn(`  ${YW}⚠${R}${message}`),
+    );
+    process.exit(1);
+  }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
   }

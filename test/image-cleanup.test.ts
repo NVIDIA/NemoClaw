@@ -13,6 +13,7 @@ import {
   cleanupShieldsDestroyArtifacts,
   removeSandboxImage,
   removeSandboxRegistryEntry,
+  removeSandboxRegistryEntryWithReceipt,
   removeShieldsState,
 } from "../src/lib/actions/sandbox/destroy";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
@@ -134,6 +135,57 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
       }),
     ).toBe(true);
     expect(removeSandbox).toHaveBeenCalledWith("alpha");
+  });
+
+  it("fails closed and reports the provider when workload image authority is unproven", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const warn = vi.fn();
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+
+    const result = removeSandboxImage("alpha", {
+      getSandbox: () =>
+        ({
+          name: "alpha",
+          openshellDriver: "docker",
+          imageTag: "local/alpha:current",
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile",
+            reference: "local/alpha:recorded",
+            shared: false,
+          },
+        }) as any,
+      runtimeProviders,
+      warn,
+    });
+
+    expect(result).toEqual({ status: "skipped", reason: "authority-unproven" });
+    expect(removeImage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Runtime provider 'docker'"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("workload receipt"));
+  });
+
+  it("preserves registry ownership when workload cleanup authority is unproven", () => {
+    const removeSandbox = vi.fn(() => true);
+    const removeSandboxWithReceipt = vi.fn();
+    const authorityUnproven = () => ({ status: "skipped", reason: "authority-unproven" }) as const;
+
+    expect(
+      removeSandboxRegistryEntry("alpha", {
+        removeImage: authorityUnproven,
+        removeSandbox,
+      }),
+    ).toBe(false);
+    expect(
+      removeSandboxRegistryEntryWithReceipt("alpha", {
+        removeImage: authorityUnproven,
+        removeSandboxWithReceipt,
+      }),
+    ).toBeNull();
+    expect(removeSandbox).not.toHaveBeenCalled();
+    expect(removeSandboxWithReceipt).not.toHaveBeenCalled();
   });
 
   it("treats missing sandbox delete results as already gone", () => {

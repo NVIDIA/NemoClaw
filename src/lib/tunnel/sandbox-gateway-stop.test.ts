@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxEntry } from "../state/registry";
+import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 import { type SandboxGatewayStopDeps, stopSandboxChannels } from "./sandbox-gateway-stop";
 
 function spawnResult(status: number | null, stdout = "", stderr = ""): SpawnSyncReturns<string> {
@@ -109,7 +110,7 @@ describe("stopSandboxChannels", () => {
       "/usr/local/bin/openshell",
       ["sandbox", "exec", "--name", "my-sandbox", "--gateway", "nemoclaw", "--", "sh", "-s"],
       expect.objectContaining({
-        input: expect.stringContaining("find_gateway_pids"),
+        input: GATEWAY_STOP_SCRIPT,
         timeout: 20000,
       }),
     );
@@ -128,7 +129,7 @@ describe("stopSandboxChannels", () => {
       "/usr/local/bin/openshell",
       ["sandbox", "exec", "--name", "my-sandbox", "--gateway", "nemoclaw", "--", "sh", "-s"],
       expect.objectContaining({
-        input: expect.stringContaining("find_gateway_pids"),
+        input: GATEWAY_STOP_SCRIPT,
         timeout: 20000,
       }),
     );

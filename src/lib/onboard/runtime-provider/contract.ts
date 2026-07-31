@@ -8,6 +8,7 @@ export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
+export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
   | "registration"
   | "start"
@@ -132,7 +133,7 @@ export type RuntimeProviderWorkloadCleanupResult =
     };
 
 export interface RuntimeProviderCleanupOperations {
-  readonly detachProviders: (sandboxName: string) => RuntimeProviderProviderDetachResult;
+  readonly detachProviders: () => RuntimeProviderProviderDetachResult;
 }
 
 /**
@@ -178,7 +179,7 @@ export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
 
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
-      readonly channelStopTransport: "docker-kubectl-first" | "openshell";
+      readonly channelStopTransport: RuntimeProviderChannelStopTransport;
       start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,
