@@ -30,15 +30,11 @@ async function assertDcodeMcpSnapshotPlatformContract(
 python3 -I - <<'PY'
 import errno
 import fcntl
-import importlib.util
 import os
 import stat
 from pathlib import Path
 
-runtime_path = "/opt/nemoclaw-deepagents-code/managed-dcode-runtime.py"
-spec = importlib.util.spec_from_file_location("_nemoclaw_managed_snapshot_proof", runtime_path)
-managed = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(managed)
+from deepagents_code import _nemoclaw_managed as managed
 
 try:
     os.memfd_create("nemoclaw-dcode-mcp-proof", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
