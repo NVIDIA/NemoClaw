@@ -484,7 +484,6 @@ describe("complete managed-image publication workflow", () => {
       'docker buildx imagetools create --tag "$cohort_alias" "${sources[@]}"',
     );
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotion.run).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
     expect(promotion.run).toContain(
       'consumer_aliases=("$(jq -r \'.image\' <<<"$openclaw_manifest"):${GITHUB_SHA}")',
     );
@@ -593,6 +592,11 @@ describe("complete managed-image publication workflow", () => {
 
     const accepted = runManagedImagePromotion(promotion);
     const acceptedCalls = accepted.calls.join("\n");
+    const cohortDigest = `sha256:${"f".repeat(64)}`;
+    const expectedPullCalls = publicationAgents.flatMap((agent) => {
+      const reference = `ghcr.io/nvidia/nemoclaw/${agent}-sandbox@${cohortDigest}`;
+      return publicationPlatforms.map((platform) => `pull --platform ${platform} ${reference}`);
+    });
     const lastCohortStage = Math.max(
       acceptedCalls.indexOf(`hermes-sandbox:cohort-${cohort}`),
       acceptedCalls.indexOf(`langchain-deepagents-code-sandbox:cohort-${cohort}`),
@@ -601,6 +605,16 @@ describe("complete managed-image publication workflow", () => {
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
 
     expect(accepted.status, accepted.stderr).toBe(0);
+    expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
+      expectedPullCalls.sort(),
+    );
+    for (const pull of expectedPullCalls) {
+      const index = accepted.calls.indexOf(pull);
+      const reference = pull.match(/^pull --platform linux\/(?:amd64|arm64) (.+)$/u)?.[1];
+      expect(reference).toBeDefined();
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(accepted.calls[index + 1]).toBe(`image rm ${reference}`);
+    }
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
     expect(acceptedCalls).not.toContain(`hermes-sandbox:${revision}`);
