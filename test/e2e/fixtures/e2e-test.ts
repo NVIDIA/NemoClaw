@@ -11,6 +11,7 @@ import {
   collectResourceSnapshot,
 } from "../../../tools/e2e/runner-pressure.mts";
 import { renderSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
+import type { ExecutionProfile } from "../registry/execution-profile.ts";
 
 import { type ArtifactSink, createArtifactSink } from "./artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
@@ -37,6 +38,7 @@ import {
   type TestProgress,
   type TestProgressOptions,
 } from "./progress.ts";
+import type { RuntimeProviderFixture } from "./runtime-provider.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 
@@ -63,6 +65,9 @@ export interface E2ETargetFixtures {
   lifecycle: LifecyclePhaseFixture;
   runtime: RuntimePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
+  /** Inert injection points for a future compiled cross-runtime target. */
+  executionProfile: ExecutionProfile | undefined;
+  runtimeProvider: RuntimeProviderFixture | undefined;
   progress: TestProgress;
 }
 
@@ -291,6 +296,12 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   stateValidation: async ({ artifacts, host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox, {}, artifacts));
+  },
+  executionProfile: async ({}, use) => {
+    await use(undefined);
+  },
+  runtimeProvider: async ({}, use) => {
+    await use(undefined);
   },
 });
 
