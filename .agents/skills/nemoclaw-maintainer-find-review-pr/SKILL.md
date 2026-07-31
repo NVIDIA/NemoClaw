@@ -69,8 +69,14 @@ Run the comparator's canonical detector with the open candidate PR numbers:
 ../nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh <pr-number-1> <pr-number-2> ...
 ```
 
-It recognizes `supersedes #N`, `replaces #N`, `closes in favor of #N`,
-`closed in favor of #N`, and `folds in #N`.
+It recognizes the comparator parser's case-insensitive statement families:
+
+- `supersed[a-z]*` before `#N`: `supersedes #N` points from the current PR to `#N`; `superseded by #N` points from `#N` to the current PR.
+- `replac[a-z]*` before `#N`: `replaces #N` points from the current PR to `#N`; `replaced by #N` points from `#N` to the current PR.
+- `clos[a-z]* in favor of` before `#N`: `closes in favor of #N` and `closed in favor of #N` point from `#N` to the current PR.
+- `fold[a-z]* in` before `#N`: `folds in #N` points from the current PR to `#N`; `folded into #N` points from `#N` to the current PR.
+
+The bracket expressions describe the parser grammar; they are not literal PR body text.
 A `follow-up to #N` statement is a related-PR signal, not a supersession declaration,
 unless one of these phrases also appears.
 

@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -329,6 +331,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const tiebreakers = read(".agents/skills/nemoclaw-maintainer-pr-comparator/tiebreakers.md");
     const verdict = read(".agents/skills/nemoclaw-maintainer-pr-comparator/templates/verdict.md");
     const finder = read(".agents/skills/nemoclaw-maintainer-find-review-pr/SKILL.md");
+    const parser = read(
+      ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh",
+    );
 
     expect(policy).toContain("Supersedes #<number>");
     expect(policy).toContain("Preserve the source contributor as the Git author");
@@ -351,14 +356,23 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(comparator).toContain("leave `winner` null");
     expect(finder).toContain("../nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh");
     for (const pattern of [
-      "supersedes #N",
-      "replaces #N",
-      "closes in favor of #N",
-      "closed in favor of #N",
-      "folds in #N",
+      "supersed[a-z]*",
+      "replac[a-z]*",
+      "clos[a-z]* in favor of",
+      "fold[a-z]* in",
     ]) {
+      expect(parser).toContain(pattern);
       expect(comparator).toContain(pattern);
       expect(finder).toContain(pattern);
+    }
+    for (const example of [
+      "superseded by #N",
+      "replaced by #N",
+      "closed in favor of #N",
+      "folded into #N",
+    ]) {
+      expect(comparator).toContain(example);
+      expect(finder).toContain(example);
     }
     expect(comparator).toContain("A `follow-up to #N` statement is a related-PR signal");
     expect(finder).toContain("A `follow-up to #N` statement is a related-PR signal");
@@ -400,6 +414,70 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(finder).toContain("merged the selected target");
     expect(finder).toContain("After the updated verdict selects #1416 and #1416 merges");
+  });
+
+  it("orients active and passive supersession statements", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "parse-supersession-"));
+    const bin = path.join(tmp, "bin");
+    const mockGh = path.join(bin, "gh");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(
+      mockGh,
+      [
+        "#!/usr/bin/env bash",
+        'case "$3" in',
+        '  100) printf "%s" "${PR_BODY_100:-}" ;;',
+        '  200) printf "%s" "${PR_BODY_200:-}" ;;',
+        "esac",
+      ].join("\n"),
+    );
+    fs.chmodSync(mockGh, 0o755);
+
+    const parser = path.join(
+      root,
+      ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh",
+    );
+    const scenarios = [
+      { statement: "Supersedes #200", superseder: 100, superseded: 200 },
+      { statement: "Superseded by #200", superseder: 200, superseded: 100 },
+      { statement: "Replaces #200", superseder: 100, superseded: 200 },
+      { statement: "Replaced by #200", superseder: 200, superseded: 100 },
+      { statement: "Closes in favor of #200", superseder: 200, superseded: 100 },
+      { statement: "Closed in favor of #200", superseder: 200, superseded: 100 },
+      { statement: "Folds in #200", superseder: 100, superseded: 200 },
+      { statement: "Folded into #200", superseder: 200, superseded: 100 },
+      {
+        statement: "Supersedes #200\nReplaces #200",
+        superseder: 100,
+        superseded: 200,
+      },
+    ];
+
+    try {
+      for (const scenario of scenarios) {
+        const result = spawnSync("bash", [parser, "100", "200"], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+            PR_BODY_100: scenario.statement,
+            PR_BODY_200: "",
+          },
+        });
+
+        expect(result.status).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual({
+          edges: [
+            {
+              superseder: scenario.superseder,
+              superseded: scenario.superseded,
+            },
+          ],
+        });
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("keeps PR workflow writes behind their safety checks", () => {
