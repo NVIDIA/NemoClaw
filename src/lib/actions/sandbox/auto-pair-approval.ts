@@ -512,28 +512,6 @@ def normalized_roles(device):
             roles.add(role.strip())
     return roles
 
-def consistent_scope_view(device):
-    if 'scopes' not in device or 'requestedScopes' in device:
-        return None
-    views = []
-    for key in ('scopes', 'requestedScopes'):
-        if key not in device:
-            continue
-        raw_scopes = device.get(key)
-        if not isinstance(raw_scopes, list) or not raw_scopes:
-            return None
-        scopes = []
-        for scope in raw_scopes:
-            if not isinstance(scope, str) or not scope.strip():
-                return None
-            scopes.append(scope.strip())
-        if len(scopes) != len(set(scopes)) or not set(scopes).issubset(ALLOWED_LOCAL_SCOPES):
-            return None
-        views.append(set(scopes))
-    if not views or any(view != views[0] for view in views[1:]):
-        return None
-    return views[0]
-
 def bounded_scope_set(raw_scopes):
     if not isinstance(raw_scopes, list) or not raw_scopes:
         return None
@@ -545,6 +523,21 @@ def bounded_scope_set(raw_scopes):
     if len(scopes) != len(set(scopes)) or not set(scopes).issubset(ALLOWED_LOCAL_SCOPES):
         return None
     return set(scopes)
+
+def consistent_scope_view(device):
+    if 'scopes' not in device or 'requestedScopes' in device:
+        return None
+    views = []
+    for key in ('scopes', 'requestedScopes'):
+        if key not in device:
+            continue
+        scopes = bounded_scope_set(device.get(key))
+        if scopes is None:
+            return None
+        views.append(scopes)
+    if not views or any(view != views[0] for view in views[1:]):
+        return None
+    return views[0]
 
 def paired_operator_credential(device):
     raw_tokens = device.get('tokens')

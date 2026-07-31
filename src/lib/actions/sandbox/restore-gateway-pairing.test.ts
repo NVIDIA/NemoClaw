@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   establishRestoredSandboxGatewayPairing,
   restartRestoredSandboxGateway,
+  waitForRestoredSandboxGatewaySupervisor,
 } from "./restore-gateway-pairing";
 
 afterEach(() => {
@@ -201,6 +202,19 @@ describe("establishRestoredSandboxGatewayPairing", () => {
 });
 
 describe("restartRestoredSandboxGateway", () => {
+  it("requires the managed supervisor proof before restored clone state can be applied (#7818)", () => {
+    const waitForManagedGatewaySupervisor = vi.fn(() => true);
+
+    expect(
+      waitForRestoredSandboxGatewaySupervisor("beta", {
+        restartSandboxGateway: vi.fn(),
+        checkAndRecoverSandboxProcesses: vi.fn(),
+        waitForManagedGatewaySupervisor,
+      }),
+    ).toBe(true);
+    expect(waitForManagedGatewaySupervisor).toHaveBeenCalledWith("beta");
+  });
+
   it("restarts through the existing supervisor-mediated gateway lifecycle (#7431)", () => {
     const restartSandboxGateway = vi.fn(() => ({
       ok: true as const,

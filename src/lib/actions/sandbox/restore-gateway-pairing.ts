@@ -60,6 +60,13 @@ function defaultRestoredSandboxGatewayRestartDeps(): RestoredSandboxGatewayResta
   };
 }
 
+export function waitForRestoredSandboxGatewaySupervisor(
+  sandboxName: string,
+  deps: RestoredSandboxGatewayRestartDeps = defaultRestoredSandboxGatewayRestartDeps(),
+): boolean {
+  return deps.waitForManagedGatewaySupervisor?.(sandboxName) === true;
+}
+
 export function restartRestoredSandboxGateway(
   sandboxName: string,
   deps: RestoredSandboxGatewayRestartDeps = defaultRestoredSandboxGatewayRestartDeps(),
