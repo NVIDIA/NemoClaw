@@ -10,6 +10,7 @@ import { createPrivateRegularFile } from "./private-file.mts";
 import * as importedRiskSignal from "./risk-signal.ts";
 import {
   RETIRED_CONTROLLER_SELECTOR_IDS,
+  RETIRED_CONTROLLER_TARGET_SELECTOR_IDS,
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
 
@@ -37,6 +38,7 @@ type Replacement = {
 };
 
 const RETIRED_SELECTOR_ID_SET = new Set<string>(RETIRED_CONTROLLER_SELECTOR_IDS);
+const RETIRED_TARGET_SELECTOR_ID_SET = new Set<string>(RETIRED_CONTROLLER_TARGET_SELECTOR_IDS);
 const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> = {
   "credential-migration": {
     legacyFile: "test/e2e/live/credential-migration.test.ts",
@@ -100,6 +102,22 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
       },
     ],
   },
+  "sandbox-rebuild": {
+    legacyFile: "test/e2e/live/sandbox-rebuild.test.ts",
+    tests: [
+      {
+        files: [
+          "src/lib/actions/sandbox/rebuild-finalization.test.ts",
+          "src/lib/actions/sandbox/rebuild-flow-helpers.test.ts",
+        ],
+        project: "cli",
+      },
+      {
+        files: ["test/rebuild-stale-recovery.test.ts"],
+        project: "integration",
+      },
+    ],
+  },
   "ubuntu-repo-cli-smoke": {
     legacyFile: "test/e2e/live/ubuntu-repo-cli-smoke.test.ts",
     tests: [
@@ -109,26 +127,50 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
       },
     ],
   },
+  "upgrade-stale-sandbox": {
+    legacyFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
+    tests: [
+      {
+        files: [
+          "src/lib/actions/sandbox/rebuild-route-preflight.test.ts",
+          "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
+          "src/lib/sandbox/version.test.ts",
+        ],
+        project: "cli",
+      },
+      {
+        files: ["test/cli/list-share-live-inference.test.ts"],
+        project: "integration",
+      },
+    ],
+  },
 };
 
 export function selectedRetiredControllerJobs(options: {
   allowedJobs: readonly string[];
   expectedSha?: string;
   jobs?: string;
+  targets?: string;
 }): RetiredControllerSelectorId[] {
-  if (!SHA_PATTERN.test(options.expectedSha ?? "") || !options.jobs) return [];
-  if (!SELECTOR_LIST_PATTERN.test(options.jobs)) {
-    throw new Error("retired selector compatibility requires safe comma-separated job IDs");
+  if (!SHA_PATTERN.test(options.expectedSha ?? "")) return [];
+  for (const selectors of [options.jobs, options.targets]) {
+    if (selectors && !SELECTOR_LIST_PATTERN.test(selectors)) {
+      throw new Error(
+        "retired selector compatibility requires comma-separated selector IDs containing only letters, numbers, underscores, and hyphens",
+      );
+    }
   }
   const allowedJobs = new Set(options.allowedJobs);
+  const requestedJobs = options.jobs?.split(",") ?? [];
+  const requestedTargets = (options.targets?.split(",") ?? []).filter((target) =>
+    RETIRED_TARGET_SELECTOR_ID_SET.has(target),
+  );
   return [
     ...new Set(
-      options.jobs
-        .split(",")
-        .filter(
-          (job): job is RetiredControllerSelectorId =>
-            RETIRED_SELECTOR_ID_SET.has(job) && !allowedJobs.has(job),
-        ),
+      [...requestedJobs, ...requestedTargets].filter(
+        (selector): selector is RetiredControllerSelectorId =>
+          RETIRED_SELECTOR_ID_SET.has(selector) && !allowedJobs.has(selector),
+      ),
     ),
   ].sort();
 }
@@ -229,6 +271,7 @@ export function runRetiredSelectorCompatibility(
     allowedJobs,
     expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
     jobs: environment.JOBS,
+    targets: environment.TARGETS,
   });
   const output = environment.GITHUB_OUTPUT;
   if (!output) throw new Error("GITHUB_OUTPUT is required");
