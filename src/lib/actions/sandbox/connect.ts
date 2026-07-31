@@ -84,6 +84,7 @@ import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
+  type ManagedGatewayControlCompletion,
   resolveSandboxDashboardPort,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
@@ -300,7 +301,15 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
-    console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    const managedControlCompletion =
+      "managedControlCompletion" in processCheck
+        ? (processCheck.managedControlCompletion as ManagedGatewayControlCompletion)
+        : null;
+    if (managedControlCompletion?.disposition === "already-running") {
+      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    } else {
+      console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    }
     return;
   }
   await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
