@@ -249,9 +249,41 @@ then performs its canonical silent local-pairing transaction and issues the
 stored device token. Once that credential exists, the patch automatically
 retains CLI identity on ordinary loopback shared-token calls; the upstream
 local-backend omission remains unchanged. This restores device-scope
-enforcement without moving the gateway credential into OpenClaw state. After
-bootstrap, list calls and every `devices approve` remove the gateway URL, port,
-and shared token so the bounded approval flow uses that device credential.
+enforcement without moving the gateway credential into OpenClaw state.
+After bootstrap, ordinary list and `devices approve` calls remove the gateway
+URL, port, and shared token so the approval flow uses the stored device
+credential.
+
+A restored clone has one bounded exception while its server pairing state
+exists but its client-auth state has not converged.
+The preflight opens the clone-owned pending, paired, and identity files through
+no-follow descriptors.
+It accepts only one CLI operator transition that exactly matches the device ID,
+public key, request ID, role, and allowed scopes.
+The pairing-only operator token remains in the clone-owned
+`devices/paired.json` until canonical rotation replaces it.
+The wrapper reads the previous token from the pinned descriptor for preflight
+and post-state comparison.
+The approval child independently reads the inherited descriptor and holds the
+token in memory only during the bounded pass.
+The child passes the token to the pinned loopback gateway.
+It removes shared gateway credentials and the configuration path, and it
+disables pathname-backed device-auth reads and writes.
+The live pairing list must match the descriptor-backed preflight before one
+canonical approval can run.
+OpenClaw reloads the state under its pairing lock, rotates the token, persists
+the paired state, broadcasts the change, and responds.
+NemoClaw then verifies the exact pending-to-paired transition and atomically
+writes the rotated token to the clone's `identity/device-auth.json` with mode
+`0600`.
+The wrapper and approval child keep the old token in memory only for the
+bounded pass.
+Any pre-approval identity, state, transport, or live-preflight mismatch
+prevents the approval call.
+A post-state mismatch reports failure and does not treat the client credential
+as synchronized.
+It does not roll back a canonical server transition that OpenClaw already
+persisted.
 
 ## Gateway Startup Migration Compatibility
 
