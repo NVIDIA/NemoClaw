@@ -97,6 +97,10 @@ export function setupGpuFlowMocks(mocks: Record<string, ReturnType<typeof vi.fn>
     imageId: GPU_IMAGE_ID,
     bookkeepingImageRef: "openshell/sandbox-from:test",
     stateError: "",
+    deviceRequests: null,
+    devices: null,
+    runtime: "nvidia",
+    nvidiaVisibleDevices: "all",
     nativeGpuAttachmentState: "present",
     containerId: "container-a",
   });

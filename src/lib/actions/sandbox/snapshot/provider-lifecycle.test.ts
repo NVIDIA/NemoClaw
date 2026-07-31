@@ -82,6 +82,7 @@ function provider(
       snapshot: {
         providerId,
         supported: true,
+        contractVersion: 1,
         capabilities: { backup: true, restore: true, managedProfileRestore: true },
         preflight,
         capture,
@@ -144,6 +145,47 @@ describe("snapshot provider lifecycle", () => {
     expect(validated.restoreReceipt).toMatchObject({
       providerId: "mxc",
       managedProfile,
+    });
+  });
+
+  it("leaves opaque provider and runtime handles under provider ownership", () => {
+    const { bundle, restore } = provider();
+    const target = sandbox("target");
+    const prepared = prepareSandboxRuntimeRestore(
+      bundle,
+      target,
+      {
+        schemaVersion: 1,
+        providerId: "mxc",
+        providerHandle: "opaque-source-provider",
+        lifecycleState: "running",
+        lifecycleGeneration: "source-generation",
+        runtime: {
+          ...runtime(),
+          runtime: { kind: "session", handle: "opaque-source-runtime" },
+        },
+      },
+      managedProfile,
+    );
+    restore.mockReturnValueOnce({
+      schemaVersion: 1,
+      providerId: "mxc",
+      sandboxName: "target",
+      providerHandle: "opaque-provider-owned-restore",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime: {
+        ...runtime(),
+        runtime: { kind: "replacement-session", handle: "opaque-provider-owned-runtime" },
+      },
+      managedProfile,
+    });
+
+    expect(confirmSandboxRuntimeRestore(bundle, target, prepared).restoreReceipt).toMatchObject({
+      providerHandle: "opaque-provider-owned-restore",
+      runtime: {
+        runtime: { kind: "replacement-session", handle: "opaque-provider-owned-runtime" },
+      },
     });
   });
 
@@ -268,5 +310,102 @@ describe("snapshot provider lifecycle", () => {
     expect(() => confirmSandboxRuntimeRestore(bundle, sandbox("target"), prepared)).toThrow(
       /invalid managed restore proof/u,
     );
+  });
+
+  it.each([
+    { field: "lifecycle state", lifecycleState: "stopped", lifecycleGeneration: "generation-1" },
+    { field: "lifecycle generation", lifecycleState: "running", lifecycleGeneration: "changed" },
+  ] as const)("rejects restore proof with changed $field", ({
+    lifecycleState,
+    lifecycleGeneration,
+  }) => {
+    const { bundle, restore } = provider();
+    const target = sandbox("target");
+    const prepared = prepareSandboxRuntimeRestore(
+      bundle,
+      target,
+      {
+        schemaVersion: 1,
+        providerId: "mxc",
+        providerHandle: "opaque-source",
+        lifecycleState: "running",
+        lifecycleGeneration: "source-generation",
+        runtime: runtime(),
+      },
+      managedProfile,
+    );
+    restore.mockReturnValueOnce({
+      schemaVersion: 1,
+      providerId: "mxc",
+      sandboxName: "target",
+      providerHandle: "provider-owned-restore-handle",
+      lifecycleState,
+      lifecycleGeneration,
+      runtime: runtime(),
+      managedProfile,
+    });
+
+    expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
+      /invalid managed restore proof/u,
+    );
+  });
+
+  it("rejects restore proof that changes acceleration authority", () => {
+    const { bundle } = provider();
+    const target = sandbox("target");
+    const prepared = prepareSandboxRuntimeRestore(
+      bundle,
+      target,
+      {
+        schemaVersion: 1,
+        providerId: "mxc",
+        providerHandle: "opaque-source",
+        lifecycleState: "running",
+        lifecycleGeneration: "source-generation",
+        runtime: {
+          ...runtime(),
+          acceleration: { kind: "gpu", vendor: "nvidia", devices: ["GPU-0"] },
+        },
+      },
+      managedProfile,
+    );
+
+    expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
+      /invalid managed restore proof/u,
+    );
+  });
+
+  it("isolates central authority from a hostile provider that mutates backup inputs", () => {
+    const { bundle, capture } = provider();
+    capture.mockImplementationOnce((_entry, preflight) => {
+      (preflight as { providerHandle: string }).providerHandle = "mutated";
+      return runtime();
+    });
+
+    expect(() => captureSandboxRuntimeSnapshot(bundle, sandbox())).toThrow(TypeError);
+  });
+
+  it("isolates central authority from a hostile MXC-style restore facet", () => {
+    const { bundle, validateRestore } = provider();
+    validateRestore.mockImplementationOnce((_entry, _preflight, source, authority) => {
+      (source as { providerHandle: string }).providerHandle = "mutated";
+      (authority as { agent: string }).agent = "other";
+    });
+
+    expect(() =>
+      prepareSandboxRuntimeRestore(
+        bundle,
+        sandbox("target"),
+        {
+          schemaVersion: 1,
+          providerId: "mxc",
+          providerHandle: "opaque-source",
+          lifecycleState: "running",
+          lifecycleGeneration: "source-generation",
+          runtime: runtime(),
+        },
+        managedProfile,
+      ),
+    ).toThrow(TypeError);
   });
 });

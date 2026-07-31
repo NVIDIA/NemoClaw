@@ -128,6 +128,11 @@ const lifecycleMock = vi.hoisted(() => {
 });
 
 export const backupSandboxStateMock = vi.fn();
+export const captureSnapshotRestoreAuthorityMock = vi.fn(() => ({
+  schemaVersion: 1 as const,
+  backupPath: "/tmp/backup-alpha",
+  contentSha256: "a".repeat(64),
+}));
 export const loadAgentMock = vi.fn((name: string) => ({
   name,
   policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
@@ -287,6 +292,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
+  getBaselineExclusions: vi.fn(() => []),
   getConfiguredMessagingChannelsFromEntry: vi.fn(() => []),
   getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
@@ -302,6 +308,7 @@ vi.mock("../../state/registry", () => ({
 
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: backupSandboxStateMock,
+  captureSnapshotRestoreAuthority: captureSnapshotRestoreAuthorityMock,
   findBackup: findBackupMock,
   getLatestBackup: getLatestBackupMock,
   listBackups: listBackupsMock,
@@ -332,6 +339,11 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
+  captureSnapshotRestoreAuthorityMock.mockReturnValue({
+    schemaVersion: 1,
+    backupPath: "/tmp/backup-alpha",
+    contentSha256: "a".repeat(64),
+  });
   shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
   shieldsMock.isShieldsDownMock.mockReturnValue(true);
   shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));

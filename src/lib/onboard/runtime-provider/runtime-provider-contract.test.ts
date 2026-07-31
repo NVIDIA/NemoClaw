@@ -425,6 +425,40 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/duplicate operation identities/u);
   });
 
+  it("versions supported snapshot facets and enforces managed-profile capability dependencies", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const snapshot = docker.snapshot;
+    expectSupportedSurface(snapshot);
+    expect(snapshot.contractVersion).toBe(1);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "docker",
+          replaceSurface(docker, "snapshot", {
+            ...snapshot,
+            contractVersion: 2,
+          }),
+        ],
+      ]),
+    ).toThrow(/unsupported contract version/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "docker",
+          replaceSurface(docker, "snapshot", {
+            ...snapshot,
+            capabilities: {
+              ...snapshot.capabilities,
+              restore: false,
+              managedProfileRestore: true,
+            },
+          }),
+        ],
+      ]),
+    ).toThrow(/cannot restore managed profiles/u);
+  });
+
   it("normalizes bounded opaque runtime receipts and rejects duplicate GPU devices", () => {
     const receipt = {
       schemaVersion: 1,
@@ -502,6 +536,12 @@ describe("RuntimeProviderBundle registry contract", () => {
       normalizeRuntimeProviderSnapshotPreflightReceipt({
         ...preflight,
         lifecycleGeneration: "generation\ninjection",
+      }),
+    ).toBeNull();
+    expect(
+      normalizeRuntimeProviderSnapshotPreflightReceipt({
+        ...preflight,
+        operation: { toString: () => "restore" },
       }),
     ).toBeNull();
     expect(
