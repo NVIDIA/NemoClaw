@@ -340,6 +340,7 @@ function validateRecoverySurface(surface: Record<string, unknown>): void {
 function validateCleanupSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
     requireFunction(surface, "prepareDestroy", "cleanup");
+    requireFunction(surface, "planOwnedWorkloadCleanup", "cleanup");
     requireFunction(surface, "removeOwnedWorkload", "cleanup");
   }
 }
@@ -506,6 +507,67 @@ export function requireRuntimeProviderMutationAuthority(
       `Runtime provider '${bundle.identity.id}' does not authorize '${operation}' mutation.`,
     );
   }
+}
+
+export type RuntimeProviderDestructiveCleanupAuthority = {
+  readonly provider: RuntimeProviderBundle & {
+    readonly cleanup: Extract<RuntimeProviderBundle["cleanup"], { readonly supported: true }>;
+  };
+  readonly workloadAction: "retain" | "remove";
+};
+
+/**
+ * Prove the complete provider/workload cleanup boundary without mutating it.
+ *
+ * SOURCE_OF_TRUTH
+ * Invalid state: a destructive sandbox action removes the live workload before
+ * NemoClaw proves that the recorded provider can retire its exact local
+ * ownership state.
+ * Source boundary: the selected RuntimeProviderBundle owns destroy,
+ * provider-cleanup, and workload-cleanup authority plus the side-effect-free
+ * workload cleanup plan.
+ * Source-fix constraint: mutable sandbox names are not runtime ownership
+ * receipts, and a provider may use a CLI, socket, API, or no container engine.
+ * Regression proof: snapshot-restore-lifecycle.test.ts rejects unknown
+ * providers and mismatched legacy workload receipts before any delete,
+ * provider cleanup, shields cleanup, or replacement creation.
+ * Removal condition: this guard may be replaced only by a provider-native
+ * atomic replace operation that returns authenticated rollback/cleanup
+ * receipts for the exact prior runtime.
+ */
+export function requireRuntimeProviderDestructiveCleanupAuthority(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  providers: RuntimeProviderBundleRegistry,
+): RuntimeProviderDestructiveCleanupAuthority {
+  const provider = requireRuntimeProviderBundleForSandbox(sandbox, providers);
+  requireRuntimeProviderMutationAuthority(provider, "destroy");
+  requireRuntimeProviderMutationAuthority(provider, "provider-cleanup");
+  requireRuntimeProviderMutationAuthority(provider, "workload-cleanup");
+  if (provider.cleanup.supported !== true) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${provider.identity.id}' has no cleanup implementation.`,
+    );
+  }
+  const supportedProvider = provider as RuntimeProviderDestructiveCleanupAuthority["provider"];
+  const plan = supportedProvider.cleanup.planOwnedWorkloadCleanup({ sandbox, sandboxName });
+  // Shared managed images and rows with no owned image require no destructive
+  // workload mutation, so malformed or legacy-dropped receipts cannot turn
+  // their immutable image into a deletion candidate.
+  if (plan.action === "retain") {
+    return Object.freeze({ provider: supportedProvider, workloadAction: plan.action });
+  }
+  if (plan.action === "block") {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${provider.identity.id}' could not prove ownership of the recorded workload receipt.`,
+    );
+  }
+  if (!provider.workload.acceptsReceipt(sandbox.workload)) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${provider.identity.id}' rejected the durable workload receipt.`,
+    );
+  }
+  return Object.freeze({ provider: supportedProvider, workloadAction: plan.action });
 }
 
 export function runtimeProviderContainerEngineIdentity(

@@ -41,6 +41,12 @@ export type SandboxRecord = {
   fromDockerfile?: string | null;
   gatewayName?: string | null;
   imageTag?: string | null;
+  workload?: {
+    schemaVersion: 1;
+    kind: "legacy-dockerfile";
+    reference: string | null;
+    shared: false;
+  };
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
   provider?: string | null;
@@ -165,6 +171,8 @@ export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string)
 export const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() => null);
 export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
+export const stopNimContainerMock = vi.fn();
+export const stopNimContainerByNameMock = vi.fn();
 export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
 export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
@@ -219,8 +227,8 @@ vi.mock("../../domain/sandbox/destroy", () => ({
 }));
 
 vi.mock("../../inference/nim", () => ({
-  stopNimContainer: vi.fn(),
-  stopNimContainerByName: vi.fn(),
+  stopNimContainer: stopNimContainerMock,
+  stopNimContainerByName: stopNimContainerByNameMock,
 }));
 
 vi.mock("../../policy", () => ({
@@ -297,10 +305,21 @@ vi.mock("../../state/sandbox", () => ({
   restoreSandboxState: restoreSandboxStateMock,
 }));
 
-vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
-  removeSandboxRegistryEntry: vi.fn(),
-}));
+vi.mock("./destroy", async () => {
+  const runtimeProviders = await vi.importActual<
+    typeof import("../../onboard/runtime-provider/access")
+  >("../../onboard/runtime-provider/access");
+  return {
+    cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
+    removeSandboxRegistryEntry: vi.fn(),
+    requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
+      runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
+        sandboxName,
+        sandbox,
+        runtimeProviders.CURRENT_RUNTIME_PROVIDER_BUNDLES,
+      ),
+  };
+});
 
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: establishRestoredSandboxGatewayPairingMock,

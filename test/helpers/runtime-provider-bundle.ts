@@ -51,6 +51,18 @@ export function createInMemoryRuntimeProviderBundle({
 }: InMemoryRuntimeProviderOptions): InMemoryRuntimeProviderBundle {
   const futureReason = "Unsupported by this in-memory contract fixture.";
   const event = (kind: string, sandboxName: string) => recordEvent(`${kind}:${sandboxName}`);
+  const planOwnedWorkloadCleanup = (input: RuntimeProviderCleanupInput) => {
+    const reference = input.sandbox.imageTag;
+    return input.sandbox.workload?.shared === true
+      ? { action: "retain" as const, reason: "shared-image" as const }
+      : reference && state.workloads.has(reference)
+        ? {
+            action: "remove" as const,
+            engineDisplayName: "In-memory",
+            reference,
+          }
+        : { action: "retain" as const, reason: "no-owned-image" as const };
+  };
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
@@ -145,22 +157,19 @@ export function createInMemoryRuntimeProviderBundle({
         event("prepare-destroy", input.sandboxName);
         return operations.detachProviders();
       },
+      planOwnedWorkloadCleanup,
       removeOwnedWorkload(input: RuntimeProviderCleanupInput) {
-        const reference = input.sandbox.imageTag;
-        const remove = (ownedReference: string) => {
-          state.workloads.delete(ownedReference);
-          event("cleanup", input.sandboxName);
-          return {
-            status: "removed" as const,
-            engineDisplayName: "In-memory",
-            reference: ownedReference,
-          };
+        const plan = planOwnedWorkloadCleanup(input);
+        if (plan.action !== "remove") {
+          return { status: "skipped", reason: plan.reason };
+        }
+        state.workloads.delete(plan.reference);
+        event("cleanup", input.sandboxName);
+        return {
+          status: "removed" as const,
+          engineDisplayName: plan.engineDisplayName,
+          reference: plan.reference,
         };
-        return input.sandbox.workload?.shared === true
-          ? { status: "skipped", reason: "shared-image" }
-          : reference && state.workloads.has(reference)
-            ? remove(reference)
-            : { status: "skipped", reason: "no-owned-image" };
       },
     },
     containerEngine: {

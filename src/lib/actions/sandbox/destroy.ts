@@ -20,18 +20,17 @@ import { withGatewayRouteMutationLock } from "../../inference/gateway-route-muta
 import { parseHttpsPinRouteId } from "../../inference/https-pin-runtime";
 import { revokeHttpsPinRuntimeAdapterRoute } from "../../inference/https-pin-runtime-adapter";
 import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  normalizeRuntimeProviderIdentity,
+  type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  type RuntimeProviderWorkloadCleanupResult,
+  requireRuntimeProviderDestructiveCleanupAuthority,
+} from "../../onboard/runtime-provider/access";
+import {
   emitProviderDetachResidualHint,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
-import {
-  CURRENT_RUNTIME_PROVIDER_BUNDLES,
-  type RuntimeProviderBundleRegistry,
-  type RuntimeProviderWorkloadCleanupResult,
-  normalizeRuntimeProviderIdentity,
-  requireRuntimeProviderBundleForSandbox,
-  requireRuntimeProviderMutationAuthority,
-  RuntimeProviderSelectionError,
-} from "../../onboard/runtime-provider/access";
 import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -75,6 +74,14 @@ type RemoveSandboxRegistryEntryOutcome =
       readonly reason: "authority-unproven";
       readonly removed: false;
     };
+
+export function requireSandboxDestructiveCleanupAuthority(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry,
+  providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
+) {
+  return requireRuntimeProviderDestructiveCleanupAuthority(sandboxName, sandbox, providers);
+}
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
 
@@ -252,17 +259,12 @@ export function removeSandboxImage(
   const warn = deps.warn ?? console.warn;
   let result: RuntimeProviderWorkloadCleanupResult;
   try {
-    const provider = requireRuntimeProviderBundleForSandbox(
+    const authority = requireSandboxDestructiveCleanupAuthority(
+      sandboxName,
       sb,
       deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
     );
-    requireRuntimeProviderMutationAuthority(provider, "workload-cleanup");
-    if (provider.cleanup.supported !== true) {
-      throw new RuntimeProviderSelectionError(
-        `Runtime provider '${provider.identity.id}' has no cleanup implementation.`,
-      );
-    }
-    result = provider.cleanup.removeOwnedWorkload({ sandbox: sb, sandboxName });
+    result = authority.provider.cleanup.removeOwnedWorkload({ sandbox: sb, sandboxName });
   } catch (error) {
     const detail =
       error instanceof RuntimeProviderSelectionError
@@ -272,8 +274,9 @@ export function removeSandboxImage(
           : String(error);
     warn(
       `  ${YW}⚠${R} Runtime provider '${providerId}' could not prove workload cleanup ` +
-        `authority: ${detail} Local ownership state was preserved; repair the provider ` +
-        "metadata and retry the operation.",
+        `authority: ${detail} Local ownership state was preserved. Run '${CLI_NAME} ` +
+        `${sandboxName} doctor --json'; restore trusted ownership metadata or resolve the ` +
+        "runtime conflict, then retry. Do not rewrite a receipt to match a mutable name.",
     );
     return { status: "skipped", reason: "authority-unproven" };
   }
@@ -287,8 +290,9 @@ export function removeSandboxImage(
   } else if (result.reason === "authority-unproven") {
     warn(
       `  ${YW}⚠${R} Runtime provider '${providerId}' did not prove ownership of the ` +
-        "recorded workload image. Local ownership state was preserved; repair the workload " +
-        "receipt and retry the operation.",
+        `recorded workload image. Local ownership state was preserved. Run '${CLI_NAME} ` +
+        `${sandboxName} doctor --json'; restore trusted ownership metadata or resolve the ` +
+        "runtime conflict, then retry. Do not rewrite a receipt to match a mutable name.",
     );
   }
   return result;
@@ -505,9 +509,11 @@ async function destroySandboxUnlocked(
    * cleanup authority, so the registry row and onboarding session are retained.
    * Source boundary: the persisted `openshellDriver` and `workload` receipt are
    * validated only by the selected provider's `cleanup.removeOwnedWorkload`.
-   * Source-fix constraint: destroy cannot synthesize provider ownership after
-   * remote deletion; guessing could remove a shared image or another provider's
-   * workload, so the operator must repair the durable authority and retry.
+   * Source-fix constraint: this is a residual guard for a raw writer or TOCTOU
+   * change after pre-delete authority validation. Destroy cannot synthesize
+   * provider ownership after remote deletion; guessing could remove a shared
+   * image or another provider's workload, so the operator must restore trusted
+   * ownership metadata or resolve the runtime conflict and retry.
    * Regression proof: destroy-flow.test.ts proves both blocked retention and
    * that a repaired matching receipt permits registry and session retirement;
    * test/image-cleanup.test.ts proves the lower-level fail-closed contract.
@@ -524,8 +530,10 @@ async function destroySandboxUnlocked(
         `'${providerId}' because workload ownership authority could not be proven.`,
     );
     console.warn(
-      `  ${YW}⚠${R} The local registry and session were preserved. Repair the provider/workload ` +
-        `receipt, then re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish cleanup.`,
+      `  ${YW}⚠${R} The local registry and session were preserved. Run '${CLI_NAME} ` +
+        `${sandboxName} doctor --json'; restore trusted ownership metadata or resolve the ` +
+        `runtime conflict, then re-run '${CLI_NAME} ${sandboxName} destroy --yes'. Do not ` +
+        "rewrite a receipt to match a mutable name.",
     );
     emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (message) =>
       console.warn(`  ${YW}⚠${R}${message}`),

@@ -5,10 +5,9 @@ import { R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
-  RuntimeProviderBundle,
-  RuntimeProviderBundleRegistry,
-  requireRuntimeProviderBundleForSandbox,
-  requireRuntimeProviderMutationAuthority,
+  type RuntimeProviderBundle,
+  type RuntimeProviderBundleRegistry,
+  requireRuntimeProviderDestructiveCleanupAuthority,
 } from "../../onboard/runtime-provider/access";
 import {
   type DetachSandboxProvidersResult,
@@ -199,14 +198,11 @@ export async function executeSandboxDestroy({
     let runtimeProvider: RuntimeProviderBundle | null = null;
     if (sandbox) {
       try {
-        runtimeProvider = requireRuntimeProviderBundleForSandbox(sandbox, runtimeProviders);
-        requireRuntimeProviderMutationAuthority(runtimeProvider, "provider-cleanup");
-        requireRuntimeProviderMutationAuthority(runtimeProvider, "destroy");
-        if (runtimeProvider.cleanup.supported !== true) {
-          throw new Error(
-            `Runtime provider '${runtimeProvider.identity.id}' has no cleanup implementation.`,
-          );
-        }
+        runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
+          sandboxName,
+          sandbox,
+          runtimeProviders,
+        ).provider;
       } catch (error) {
         return {
           ok: false as const,

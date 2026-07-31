@@ -12,7 +12,10 @@ import { redactFull } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import { registryEntryGatewayPort } from "../../state/gateway-registry";
 import * as registry from "../../state/registry";
-import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
+import {
+  removeSandboxRegistryEntryWithReceipt,
+  requireSandboxDestructiveCleanupAuthority,
+} from "./destroy";
 import { isExplicitMissingSandboxGatewayOutput } from "./gateway-state";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -108,6 +111,32 @@ function rebuildDeleteTargetMatchesRegistry(expected: RebuildDeleteTarget): bool
     );
   } catch {
     return false;
+  }
+}
+
+function rebuildCleanupAuthorityFailure(
+  sandboxName: string,
+): { readonly message: string; readonly code: number } | null {
+  const currentEntry = registry.getSandbox(sandboxName);
+  if (!currentEntry) {
+    return {
+      message: `Sandbox '${sandboxName}' runtime ownership entry disappeared before deletion.`,
+      code: 1,
+    };
+  }
+  try {
+    requireSandboxDestructiveCleanupAuthority(sandboxName, currentEntry);
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      message:
+        `Sandbox '${sandboxName}' runtime cleanup authority could not be proven before deletion: ` +
+        `${redactFull(detail)} Run 'nemoclaw ${sandboxName} doctor --json'; restore trusted ` +
+        "ownership metadata or resolve the runtime conflict, then retry. Do not rewrite a " +
+        "receipt to match a mutable name.",
+      code: 1,
+    };
   }
 }
 
@@ -246,6 +275,11 @@ export async function runRebuildDestroyPhase(
   log(
     `Registry entry: agent=${sbMeta?.agent}, agentVersion=${sbMeta?.agentVersion}, nimContainer=${sbMeta?.nimContainer}`,
   );
+  const initialCleanupAuthorityFailure = rebuildCleanupAuthorityFailure(sandboxName);
+  if (initialCleanupAuthorityFailure) {
+    bail(initialCleanupAuthorityFailure.message, initialCleanupAuthorityFailure.code);
+    return null;
+  }
   const stopNimBestEffort = (): void => {
     try {
       if (sbMeta && sbMeta.nimContainer) {
@@ -353,6 +387,23 @@ export async function runRebuildDestroyPhase(
       mcpRecoveryFailure
         ? `Sandbox delete target changed during rebuild preparation; MCP provider recovery also failed: ${mcpRecoveryFailure}`
         : "Sandbox delete target changed during rebuild preparation.",
+    );
+    return null;
+  }
+
+  const cleanupAuthorityFailure = rebuildCleanupAuthorityFailure(sandboxName);
+  if (cleanupAuthorityFailure) {
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    bail(
+      mcpRecoveryFailure
+        ? `${cleanupAuthorityFailure.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : cleanupAuthorityFailure.message,
+      cleanupAuthorityFailure.code,
     );
     return null;
   }
@@ -470,7 +521,9 @@ export async function runRebuildDestroyPhase(
         "  The registry entry was preserved because provider/workload cleanup authority could not be proven or registry ownership changed.",
       );
       console.error(
-        "  Repair the provider/workload receipt or reconcile the retained registry row, then retry rebuild.",
+        `  Run 'nemoclaw ${sandboxName} doctor --json'; restore trusted ownership metadata ` +
+          "or resolve the runtime conflict, then retry rebuild. Do not rewrite a receipt to " +
+          "match a mutable name.",
       );
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);

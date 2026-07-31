@@ -3,21 +3,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
-import type { SandboxRemovalReceipt } from "../../state/registry";
+import type { SandboxEntry, SandboxRemovalReceipt } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
-  getSandbox: vi.fn(
-    (
-      _name: string,
-    ): {
-      name: string;
-      agent: string;
-      nimContainer?: string | null;
-      gatewayName?: string | null;
-      gatewayPort?: number | null;
-    } | null => null,
-  ),
+  getSandbox: vi.fn((_name: string): SandboxEntry | null => null),
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
   prepareMcpForRebuild: vi.fn(),
   reattachMcpAfterDeleteFailure: vi.fn(),
@@ -59,9 +49,20 @@ vi.mock("../../state/registry", async (importOriginal) => ({
   listSandboxes: mocks.listSandboxes,
 }));
 
-vi.mock("./destroy", () => ({
-  removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
-}));
+vi.mock("./destroy", async () => {
+  const runtimeProviders = await vi.importActual<
+    typeof import("../../onboard/runtime-provider/access")
+  >("../../onboard/runtime-provider/access");
+  return {
+    removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
+    requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxEntry) =>
+      runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
+        sandboxName,
+        sandbox,
+        runtimeProviders.CURRENT_RUNTIME_PROVIDER_BUNDLES,
+      ),
+  };
+});
 
 vi.mock("./rebuild-flow-helpers", () => ({
   warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
@@ -215,6 +216,86 @@ describe("rebuild destroy phase", () => {
     expectNoSandboxDelete(mocks.runOpenshell);
   });
 
+  it("blocks before MCP preparation when runtime cleanup authority is unknown", async () => {
+    mocks.getSandbox.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      openshellDriver: "future-runtime",
+      imageTag: "local/alpha:current",
+    });
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: "openclaw",
+          openshellDriver: "future-runtime",
+          imageTag: "local/alpha:current",
+        },
+        staleRecovery: false,
+        backupManifest: null,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("is not registered for this operation");
+
+    expect(mocks.prepareMcpForRebuild).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+  });
+
+  it("rechecks workload ownership at the exact delete edge after MCP preparation", async () => {
+    const matchingEntry: SandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      openshellDriver: "docker",
+      imageTag: "local/alpha:current",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "local/alpha:current",
+        shared: false,
+      },
+    };
+    mocks.getSandbox
+      .mockReturnValueOnce(matchingEntry)
+      .mockReturnValueOnce(matchingEntry)
+      .mockReturnValue({
+        ...matchingEntry,
+        workload: {
+          ...matchingEntry.workload!,
+          reference: "local/alpha:changed",
+        },
+      });
+    const relockShieldsIfNeeded = vi.fn(() => true);
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: matchingEntry,
+        staleRecovery: false,
+        backupManifest: null,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("could not prove ownership");
+
+    expect(mocks.prepareMcpForRebuild).toHaveBeenCalledOnce();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expectNoSandboxDelete(mocks.runOpenshell);
+  });
+
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
     const log = vi.fn();
     const bail = vi.fn((message: string): never => {
@@ -325,9 +406,9 @@ describe("rebuild destroy phase", () => {
       }),
     ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
 
-    expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
+    expect(mocks.getSandbox).toHaveBeenCalledTimes(3);
     expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+      mocks.getSandbox.mock.invocationCallOrder[2] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
@@ -949,7 +1030,8 @@ describe("rebuild destroy phase", () => {
     );
     const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(errors).toContain("local runtime ownership cleanup is incomplete");
-    expect(errors).toContain("Repair the provider/workload receipt");
+    expect(errors).toContain("doctor --json");
+    expect(errors).toContain("Do not rewrite a receipt to match a mutable name");
     expect(errors).toContain("/tmp/rebuild-backups/alpha/backup");
     expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
       "Old sandbox deleted",

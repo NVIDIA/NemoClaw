@@ -7,19 +7,22 @@ export type {
   RuntimeProviderChannelStopTransport,
   RuntimeProviderGatewayLauncher,
   RuntimeProviderManagedImageSupport,
-  RuntimeProviderWorkloadProfile,
+  RuntimeProviderWorkloadCleanupPlan,
   RuntimeProviderWorkloadCleanupResult,
+  RuntimeProviderWorkloadProfile,
 } from "./contract";
 export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
+export type { RuntimeProviderDestructiveCleanupAuthority } from "./registry";
 export {
   normalizeRuntimeProviderIdentity,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderBundle,
   requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderDestructiveCleanupAuthority,
   requireRuntimeProviderMutationAuthority,
   resolveRuntimeProviderBundle,
-  RuntimeProviderSelectionError,
   runtimeProviderContainerEngineIdentity,
 } from "./registry";

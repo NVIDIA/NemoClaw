@@ -27,6 +27,7 @@ import {
   type RuntimeProviderLifecycleResult,
   type RuntimeProviderLifecycleStopHooks,
   type RuntimeProviderLifecycleStopOutcome,
+  type RuntimeProviderWorkloadCleanupPlan,
   type RuntimeProviderWorkloadCleanupResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
@@ -208,13 +209,12 @@ function stopDockerSandbox(
   return { exitCode: 0, state: "stopped" };
 }
 
-function removeOwnedDockerWorkload(
+function planOwnedDockerWorkloadCleanup(
   input: RuntimeProviderCleanupInput,
-  deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderWorkloadCleanupResult {
+): RuntimeProviderWorkloadCleanupPlan {
   const { imageTag, workload } = input.sandbox;
-  if (workload?.shared === true) return { status: "skipped", reason: "shared-image" };
-  if (!imageTag) return { status: "skipped", reason: "no-owned-image" };
+  if (workload?.shared === true) return { action: "retain", reason: "shared-image" };
+  if (!imageTag) return { action: "retain", reason: "no-owned-image" };
   if (
     Object.values(MANAGED_IMAGE_REPOSITORIES).some(
       (repository) =>
@@ -223,20 +223,32 @@ function removeOwnedDockerWorkload(
         imageTag.startsWith(`${repository}:`),
     )
   ) {
-    return { status: "skipped", reason: "shared-image" };
+    return { action: "retain", reason: "shared-image" };
   }
   if (
     workload?.kind === "legacy-dockerfile" &&
     workload.reference !== null &&
     workload.reference !== imageTag
   ) {
+    return { action: "block", reason: "authority-unproven" };
+  }
+  return { action: "remove", engineDisplayName: "Docker", reference: imageTag };
+}
+
+function removeOwnedDockerWorkload(
+  input: RuntimeProviderCleanupInput,
+  deps: DockerRuntimeProviderDependencies,
+): RuntimeProviderWorkloadCleanupResult {
+  const plan = planOwnedDockerWorkloadCleanup(input);
+  if (plan.action === "retain") return { status: "skipped", reason: plan.reason };
+  if (plan.action === "block") {
     return { status: "skipped", reason: "authority-unproven" };
   }
-  const result = deps.removeImage(imageTag, { ignoreError: true });
+  const result = deps.removeImage(plan.reference, { ignoreError: true });
   return {
     status: result.status === 0 ? "removed" : "failed",
-    engineDisplayName: "Docker",
-    reference: imageTag,
+    engineDisplayName: plan.engineDisplayName,
+    reference: plan.reference,
   };
 }
 
@@ -339,6 +351,7 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       prepareDestroy: (_input, operations) => operations.detachProviders(),
+      planOwnedWorkloadCleanup: planOwnedDockerWorkloadCleanup,
       removeOwnedWorkload: (input) => removeOwnedDockerWorkload(input, deps),
     },
     containerEngine: {
@@ -422,6 +435,10 @@ export function createKubernetesRuntimeProviderBundle(
       providerId,
       supported: true,
       prepareDestroy: (_input, operations) => operations.detachProviders(),
+      // The shipped Kubernetes gateway path has always built and retained its
+      // per-sandbox image in the host Docker engine. Keep that established
+      // engine ownership explicit until a CRI-native provider is registered.
+      planOwnedWorkloadCleanup: planOwnedDockerWorkloadCleanup,
       removeOwnedWorkload: (input) => removeOwnedDockerWorkload(input, deps),
     },
     containerEngine: {

@@ -15,6 +15,7 @@ import {
   removeSandboxRegistryEntry,
   removeSandboxRegistryEntryWithReceipt,
   removeShieldsState,
+  requireSandboxDestructiveCleanupAuthority,
 } from "../src/lib/actions/sandbox/destroy";
 import { requireSnapshotDestinationRegistryRemoval } from "../src/lib/actions/sandbox/snapshot";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
@@ -175,7 +176,45 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(() => requireSnapshotDestinationRegistryRemoval("alpha", registryRemoved)).toThrow();
     expect(removeSandbox).not.toHaveBeenCalled();
-    expect(error.mock.calls.flat().join("\n")).toContain("Repair the provider/workload receipt");
+    expect(error.mock.calls.flat().join("\n")).toContain("doctor --json");
+    expect(error.mock.calls.flat().join("\n")).toContain("Do not rewrite a receipt");
+  });
+
+  it.each([
+    {
+      label: "unknown provider",
+      sandbox: {
+        name: "alpha",
+        openshellDriver: "future-runtime",
+        imageTag: "local/alpha:current",
+      },
+      expected: "is not registered for this operation",
+    },
+    {
+      label: "mismatched legacy workload receipt",
+      sandbox: {
+        name: "alpha",
+        openshellDriver: "docker",
+        imageTag: "local/alpha:current",
+        workload: {
+          schemaVersion: 1,
+          kind: "legacy-dockerfile",
+          reference: "local/alpha:recorded",
+          shared: false,
+        },
+      },
+      expected: "could not prove ownership",
+    },
+  ])("rejects destructive cleanup before side effects for $label", ({ sandbox, expected }) => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+
+    expect(() =>
+      requireSandboxDestructiveCleanupAuthority("alpha", sandbox as any, runtimeProviders),
+    ).toThrow(expected);
+    expect(removeImage).not.toHaveBeenCalled();
   });
 
   it("preserves registry ownership when workload cleanup authority is unproven", () => {

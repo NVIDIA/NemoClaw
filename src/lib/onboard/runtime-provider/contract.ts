@@ -116,6 +116,21 @@ export interface RuntimeProviderCleanupInput {
   readonly sandboxName: string;
 }
 
+export type RuntimeProviderWorkloadCleanupPlan =
+  | {
+      readonly action: "retain";
+      readonly reason: "no-owned-image" | "shared-image";
+    }
+  | {
+      readonly action: "remove";
+      readonly engineDisplayName: string;
+      readonly reference: string;
+    }
+  | {
+      readonly action: "block";
+      readonly reason: "authority-unproven";
+    };
+
 export type RuntimeProviderWorkloadCleanupResult =
   | {
       readonly status: "skipped";
@@ -223,6 +238,14 @@ export type RuntimeProviderCleanupSurface =
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
       ): RuntimeProviderProviderDetachResult;
+      /**
+       * Produce a side-effect-free cleanup plan before any destructive
+       * sandbox action. Providers must revalidate the same authority inside
+       * removeOwnedWorkload before mutating their runtime.
+       */
+      planOwnedWorkloadCleanup(
+        input: RuntimeProviderCleanupInput,
+      ): RuntimeProviderWorkloadCleanupPlan;
       removeOwnedWorkload(input: RuntimeProviderCleanupInput): RuntimeProviderWorkloadCleanupResult;
     }>
   | RuntimeProviderUnsupportedSurface;

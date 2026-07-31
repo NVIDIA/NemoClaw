@@ -122,7 +122,7 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
 
-  it("reports incomplete cleanup and preserves ownership when image authority is unproven", async () => {
+  it("blocks deletion and preserves ownership when image authority is unproven", async () => {
     const harness = createDestroyHarness({
       imageTag: "local/alpha:current",
       workload: {
@@ -135,13 +135,12 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    const warningOutput = harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(warningOutput).toContain("Runtime provider 'docker'");
-    expect(warningOutput).toContain("workload ownership authority could not be proven");
-    expect(warningOutput).toContain("nemoclaw alpha destroy --yes");
+    expect(errorOutput).toContain("Runtime provider 'docker'");
+    expect(errorOutput).toContain("recorded workload receipt");
     expect(logOutput).not.toContain("Sandbox 'alpha' destroyed");
-    expect(harness.events).toContain("delete");
+    expect(harness.events).not.toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
   });

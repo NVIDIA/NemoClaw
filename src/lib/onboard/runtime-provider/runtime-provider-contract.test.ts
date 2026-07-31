@@ -339,6 +339,35 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/lifecycle\.verifyStarted must be a function/u);
   });
 
+  it("rejects cleanup without a side-effect-free ownership plan", () => {
+    const bundle = mxcBundle();
+    expectSupportedSurface(bundle.cleanup);
+    const { planOwnedWorkloadCleanup: _planOwnedWorkloadCleanup, ...incomplete } = bundle.cleanup;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([["mxc", replaceSurface(bundle, "cleanup", incomplete)]]),
+    ).toThrow(/cleanup\.planOwnedWorkloadCleanup must be a function/u);
+  });
+
+  it("plans owned workload cleanup without mutating the runtime", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    expectSupportedSurface(docker.cleanup);
+    const sandbox = {
+      name: "alpha",
+      imageTag: "nemoclaw-alpha:current",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "nemoclaw-alpha:recorded",
+        shared: false,
+      },
+    } as SandboxEntry;
+
+    expect(docker.cleanup.planOwnedWorkloadCleanup({ sandbox, sandboxName: sandbox.name })).toEqual(
+      { action: "block", reason: "authority-unproven" },
+    );
+  });
+
   it("rejects capability/surface drift and duplicate operation-scoped engine identities", () => {
     const bundle = mxcBundle();
     expect(() =>
