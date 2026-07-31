@@ -1,8 +1,8 @@
 # Managed bootstrap protocol
 
-This directory defines a dormant, driver-neutral transaction contract. It does
-not register a runtime provider or change sandbox creation, onboarding,
-snapshot, clone, or restore behavior.
+This directory defines a dormant, driver-neutral transaction contract and its
+first driver adapter. It does not register a runtime provider or change sandbox
+creation, onboarding, snapshot, clone, or restore behavior.
 
 The protocol binds one random bootstrap identity to:
 
@@ -19,10 +19,24 @@ bootstrap variables and file descriptors, and then uses `exec "$@"` to preserve
 the captured supervisor argument boundaries.
 
 The trampoline is intentionally not an entrypoint and no production TypeScript
-module imports this protocol. The current image definitions also do not package
-`nemoclaw-managed-startup-hold` or
-`managed-startup-image-runtime.cjs`. A later provider integration must add those
-prerequisites together with their image-runtime bootstrap modes, implement
-driver-specific exact-runtime replacement and rollback, and only then wire the
-coordinator into create. Until that complete boundary lands, every registered
-runtime provider keeps its bootstrap surface unsupported.
+module imports this protocol or the Docker adapter.
+
+The Docker adapter creates and validates a stopped replacement under an
+identity-derived staging name while the original remains running. It stages the
+0400 envelope, then durably journals both full runtime IDs, all three names,
+both launch-spec hashes, image identity, profile fingerprint, and sandbox ID.
+Only a durable `cutover` transition permits stopping the original. Rollback
+publishes `rollback-authorized` before exact replacement deletion; commit
+publishes `shared-state-committed` before exact backup deletion. All cleanup is
+by full runtime ID. Mutable OpenShell names are read only to detect ownership
+reuse, and unsafe name-only deletion returns a typed retention error.
+The dormant adapter assumes the protocol's single coordinator; multi-process
+lease/arbitration is an explicit production-activation gate.
+Activation must also inject the selected gateway's canonical state root.
+
+The current image definitions still do not package
+`nemoclaw-managed-startup-hold`, `managed-startup-image-runtime.cjs`, or the
+shared-state bootstrap modes consumed by this adapter. A later activation slice
+must add those prerequisites and wire the coordinator into Docker create as one
+boundary. Until then every registered runtime provider keeps bootstrap
+unsupported.
