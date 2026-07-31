@@ -115,6 +115,25 @@ describe("stopSandboxChannels", () => {
     );
   });
 
+  it("uses the OpenShell transport without invoking Docker", () => {
+    const h = harness();
+
+    stopSandboxChannels("my-sandbox", {
+      ...h.deps,
+      channelStopTransport: "openshell",
+    });
+
+    expect(h.runDocker).not.toHaveBeenCalled();
+    expect(h.runProcess).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["sandbox", "exec", "--name", "my-sandbox", "--gateway", "nemoclaw", "--", "sh", "-s"],
+      expect.objectContaining({
+        input: expect.stringContaining("find_gateway_pids"),
+        timeout: 20000,
+      }),
+    );
+  });
+
   it("selects the exact generated sandbox pod and excludes overlapping names", () => {
     const h = harness();
     h.runDocker
