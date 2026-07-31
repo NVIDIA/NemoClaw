@@ -47,6 +47,14 @@ const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 const OLD_RELEASE = "v0.0.99";
 const NEW_RELEASE = "v0.0.100";
 
+function raiseInjectedFailure(message: string): never {
+  throw new Error(message);
+}
+
+function failWhenInjected(condition: boolean, message: string): void {
+  condition ? raiseInjectedFailure(message) : undefined;
+}
+
 function contract(
   agent: ShippedManagedImageAgent,
   generation: "old" | "new",
@@ -341,9 +349,10 @@ function transactionHarness(
     replacement: SandboxEntry,
   ): SandboxRebuildAuthoritySwapResult => {
     events.push("registry-commit");
-    if (failAt === "registry-commit-before-persist") {
-      throw new Error("registry write failed before persistence");
-    }
+    failWhenInjected(
+      failAt === "registry-commit-before-persist",
+      "registry write failed before persistence",
+    );
     const currentRegistry: SandboxRegistry = {
       sandboxes: { [oldEntry.name]: currentEntry },
       defaultSandbox: oldEntry.name,
@@ -360,12 +369,11 @@ function transactionHarness(
         : swapSandboxRebuildAuthorityInRegistry(currentRegistry, expected, replacement);
     currentEntry =
       swapped.result.status === "committed" ? structuredClone(swapped.result.entry) : currentEntry;
-    if (
+    failWhenInjected(
       failAt === "registry-commit-after-persist" ||
-      failAt === "registry-commit-after-persist-read-fails"
-    ) {
-      throw new Error("registry acknowledgement lost after persistence");
-    }
+        failAt === "registry-commit-after-persist-read-fails",
+      "registry acknowledgement lost after persistence",
+    );
     return swapped.result;
   };
   return {
@@ -386,12 +394,14 @@ function transactionHarness(
         {
           getSandbox: () => {
             registryReadCount += 1;
-            if (failAt === "registry-read-after-prepare" && registryReadCount === 2) {
-              throw new Error("registry read failed after provider preparation");
-            }
-            if (failAt === "registry-commit-after-persist-read-fails" && registryReadCount >= 3) {
-              throw new Error("registry readback failed after ambiguous persistence");
-            }
+            failWhenInjected(
+              failAt === "registry-read-after-prepare" && registryReadCount === 2,
+              "registry read failed after provider preparation",
+            );
+            failWhenInjected(
+              failAt === "registry-commit-after-persist-read-fails" && registryReadCount >= 3,
+              "registry readback failed after ambiguous persistence",
+            );
             return structuredClone(currentEntry);
           },
           commitAuthority,

@@ -62,8 +62,8 @@ function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInp
     dcodeAutoApprovalMode: "disabled" as const,
     observabilityEnabled: false,
   };
-  if (agent === "openclaw") {
-    return {
+  const profiles = {
+    openclaw: {
       ...common,
       inference: {
         routeProvider: "openai",
@@ -77,10 +77,8 @@ function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInp
       },
       manageDashboard: true,
       hermesDashboardState: { config: null, enabled: false },
-    };
-  }
-  if (agent === "hermes") {
-    return {
+    },
+    hermes: {
       ...common,
       inference: {
         routeProvider: "inference",
@@ -94,25 +92,26 @@ function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInp
       },
       manageDashboard: true,
       hermesDashboardState: { config: null, enabled: false },
-    };
-  }
-  return {
-    ...common,
-    inference: {
-      routeProvider: "inference",
-      upstreamProvider: "openrouter",
-      model: "openai/gpt-5.4",
-      routedBaseUrl: "https://inference.local/v1",
-      upstreamEndpointUrl: "https://openrouter.ai/api/v1",
-      api: "openai-completions",
-      primaryModelRef: null,
-      compatibility: null,
     },
-    chatUiUrl: "",
-    effectiveDashboardPort: 0,
-    manageDashboard: false,
-    hermesDashboardState: { config: null, enabled: false },
-  };
+    "langchain-deepagents-code": {
+      ...common,
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "openrouter",
+        model: "openai/gpt-5.4",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: "https://openrouter.ai/api/v1",
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+      },
+      chatUiUrl: "",
+      effectiveDashboardPort: 0,
+      manageDashboard: false,
+      hermesDashboardState: { config: null, enabled: false },
+    },
+  } as const satisfies Record<ShippedManagedImageAgent, RebuildProfileInput>;
+  return profiles[agent];
 }
 
 function managedContract(
