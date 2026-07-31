@@ -233,7 +233,14 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
 
 describe("managed startup agent environment", () => {
   it("maps every OpenClaw profile field to the existing generator and entrypoint contracts", () => {
-    const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile());
+    const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile(), {
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
+      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3e0",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "03",
+      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10.0",
+      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "6e2",
+    });
 
     expect(result.schemaVersion).toBe(1);
     expect(result.agent).toBe("openclaw");
@@ -283,6 +290,20 @@ describe("managed startup agent environment", () => {
       no_proxy: "127.0.0.1,inference.local,localhost",
     });
     expect(Object.hasOwn(result.runtimeEnvironment, "NEMOCLAW_MESSAGING_PLAN_B64")).toBe(false);
+    expect(result.applicationRuntime).toEqual({
+      exportEnvironment: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+      },
+      unsetEnvironment: [],
+    });
+    expect(Object.isFrozen(result.applicationRuntime)).toBe(true);
+    expect(Object.isFrozen(result.applicationRuntime.exportEnvironment)).toBe(true);
+    expect(Object.isFrozen(result.applicationRuntime.unsetEnvironment)).toBe(true);
 
     expect(
       decodeBase64Json(result.configurationEnvironment.NEMOCLAW_INFERENCE_COMPAT_B64 ?? ""),
@@ -343,8 +364,27 @@ describe("managed startup agent environment", () => {
     ]);
   });
 
+  it.each([
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "0", /positive safe integer/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "1.5", /positive safe integer/u],
+    [
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+      String(Number.MAX_SAFE_INTEGER + 1),
+      /positive safe integer/u,
+    ],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "Infinity", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "-0.1", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", " ", /finite positive seconds/u],
+  ] as const)("rejects invalid application runtime input %s=%s", (name, value, message) => {
+    expect(() =>
+      mapManagedStartupProfileToAgentEnvironment(openClawProfile(), { [name]: value }),
+    ).toThrow(message);
+  });
+
   it("maps every Hermes profile field, including gateway presets and dashboard forwarding", () => {
-    const result = mapManagedStartupProfileToAgentEnvironment(hermesProfile());
+    const result = mapManagedStartupProfileToAgentEnvironment(hermesProfile(), {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "not-a-number",
+    });
 
     expect(result.configurationEnvironment).toEqual({
       CHAT_UI_URL: "http://127.0.0.1:19189",
@@ -372,6 +412,7 @@ describe("managed startup agent environment", () => {
       HTTPS_PROXY: "http://proxy.example.test:3128",
       NO_PROXY: "127.0.0.1,localhost",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
+      NEMOCLAW_DASHBOARD_PORT: "19189",
       NEMOCLAW_HERMES_DASHBOARD: "1",
       NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "29189",
       NEMOCLAW_HERMES_DASHBOARD_PORT: "19189",
@@ -392,6 +433,10 @@ describe("managed startup agent environment", () => {
       http_proxy: "http://proxy.example.test:8080",
       https_proxy: "http://proxy.example.test:3128",
       no_proxy: "127.0.0.1,localhost",
+    });
+    expect(result.applicationRuntime).toEqual({
+      exportEnvironment: {},
+      unsetEnvironment: ["NEMOCLAW_DASHBOARD_BIND", "NEMOCLAW_MINIMAL_BOOTSTRAP"],
     });
     expect(result.actions).toContainEqual({
       kind: "apply-messaging-plan",
@@ -414,7 +459,9 @@ describe("managed startup agent environment", () => {
   });
 
   it("keeps DCode routing and auto-approval in root-owned files instead of ambient runtime env", () => {
-    const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile());
+    const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile(), {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "not-a-number",
+    });
 
     expect(result.configurationEnvironment).toEqual({
       HTTP_PROXY: "",
@@ -446,6 +493,10 @@ describe("managed startup agent environment", () => {
     expect(result.runtimeEnvironment).toEqual({
       ...expectedDcodeRuntime,
       NEMOCLAW_OBSERVABILITY: "1",
+    });
+    expect(result.applicationRuntime).toEqual({
+      exportEnvironment: {},
+      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
     });
     for (const environment of [result.configurationEnvironment, result.runtimeEnvironment]) {
       expect(environment).not.toHaveProperty("NEMOCLAW_DCODE_AUTO_APPROVAL");
@@ -670,6 +721,7 @@ describe("managed startup agent environment", () => {
     expect(hermesResult.configurationEnvironment.NEMOCLAW_CONTEXT_WINDOW).toBe("");
     expect(hermesResult.runtimeEnvironment).toMatchObject({
       NEMOCLAW_HERMES_DASHBOARD: "0",
+      NEMOCLAW_DASHBOARD_PORT: "",
       NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "",
       NEMOCLAW_HERMES_DASHBOARD_PORT: "",
       NEMOCLAW_HERMES_DASHBOARD_TUI: "0",

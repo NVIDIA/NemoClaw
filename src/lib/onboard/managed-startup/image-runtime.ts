@@ -7,7 +7,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
+  type ManagedStartupApplicationRuntimePlan,
   mapManagedStartupProfileToAgentEnvironment,
 } from "./agent-environment";
 import {
@@ -16,6 +18,7 @@ import {
   type ManagedStartupAgentAdapter,
 } from "./coordinator";
 import {
+  decodeManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
@@ -142,6 +145,70 @@ function exactActionPlanAgent(value: string): ManagedStartupAgent {
 
 function fail(message: string): never {
   throw new ManagedStartupImageRuntimeError(message);
+}
+
+export function validateManagedStartupApplicationRuntimePlan(
+  plan: ManagedStartupApplicationRuntimePlan,
+): ManagedStartupApplicationRuntimePlan {
+  if (typeof plan !== "object" || plan === null) {
+    return fail("application runtime plan must be an object");
+  }
+  const exportEnvironment = plan.exportEnvironment;
+  const unsetEnvironment = plan.unsetEnvironment;
+  if (
+    typeof exportEnvironment !== "object" ||
+    exportEnvironment === null ||
+    Array.isArray(exportEnvironment) ||
+    !Array.isArray(unsetEnvironment)
+  ) {
+    return fail("application runtime plan must contain exports and unsets");
+  }
+  const exports: Record<string, string> = {};
+  for (const [name, value] of Object.entries(exportEnvironment)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+      return fail(`invalid application runtime environment key ${JSON.stringify(name)}`);
+    }
+    if (typeof value !== "string" || value.includes("\0") || /[\r\n]/u.test(value)) {
+      return fail(`application runtime environment value for ${name} must be single-line text`);
+    }
+    exports[name] = value;
+  }
+  const unsets = new Set<string>();
+  for (const name of unsetEnvironment) {
+    if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+      return fail(`invalid application runtime unset ${JSON.stringify(name)}`);
+    }
+    if (unsets.has(name)) {
+      return fail(`duplicate application runtime unset ${name}`);
+    }
+    if (Object.hasOwn(exports, name)) {
+      return fail(`application runtime cannot both export and unset ${name}`);
+    }
+    unsets.add(name);
+  }
+  return Object.freeze({
+    exportEnvironment: Object.freeze(
+      Object.fromEntries(
+        Object.entries(exports).sort(([left], [right]) => left.localeCompare(right)),
+      ),
+    ),
+    unsetEnvironment: Object.freeze([...unsets].sort()),
+  });
+}
+
+export function applyManagedStartupApplicationRuntimePlan(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  plan: ManagedStartupApplicationRuntimePlan,
+): NodeJS.ProcessEnv {
+  const validated = validateManagedStartupApplicationRuntimePlan(plan);
+  const applied: NodeJS.ProcessEnv = {
+    ...environment,
+    ...validated.exportEnvironment,
+  };
+  for (const name of validated.unsetEnvironment) {
+    delete applied[name];
+  }
+  return applied;
 }
 
 function exactAgent(value: string): ManagedStartupAgent {
@@ -336,18 +403,22 @@ function sandboxPrefix(): readonly string[] {
 
 function commandEnvironment(
   configurationEnvironment: Readonly<Record<string, string>>,
+  applicationRuntime: ManagedStartupApplicationRuntimePlan,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...configurationEnvironment,
-    HOME: "/sandbox",
-    PATH: FIXED_PATH,
-    NPM_CONFIG_OFFLINE: "true",
-    npm_config_offline: "true",
-    PIP_DISABLE_PIP_VERSION_CHECK: "1",
-    PIP_NO_INDEX: "1",
-    UV_OFFLINE: "1",
-  };
+  const env = applyManagedStartupApplicationRuntimePlan(
+    {
+      ...process.env,
+      ...configurationEnvironment,
+      HOME: "/sandbox",
+      PATH: FIXED_PATH,
+      NPM_CONFIG_OFFLINE: "true",
+      npm_config_offline: "true",
+      PIP_DISABLE_PIP_VERSION_CHECK: "1",
+      PIP_NO_INDEX: "1",
+      UV_OFFLINE: "1",
+    },
+    applicationRuntime,
+  );
   delete env[MANAGED_STARTUP_PROFILE_ENV];
   delete env[MANAGED_STARTUP_CA_ENV];
   return env;
@@ -357,13 +428,14 @@ function execute(
   argv: readonly string[],
   runAs: ManagedStartupImageIdentity,
   configurationEnvironment: Readonly<Record<string, string>>,
+  applicationRuntime: ManagedStartupApplicationRuntimePlan,
   capture = false,
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
   const command = runAs === "sandbox" ? [...sandboxPrefix(), ...argv] : [...argv];
   const result = spawnSync(command[0] as string, command.slice(1), {
     encoding: "utf8",
-    env: commandEnvironment(configurationEnvironment),
+    env: commandEnvironment(configurationEnvironment, applicationRuntime),
     stdio: capture ? "pipe" : "inherit",
   });
   if (result.error) {
@@ -573,17 +645,20 @@ function verifyMessagingRuntimeTarget(mode: "apply" | "clear"): void {
 function runInternalSandboxAction(
   action: "write-openclaw-hash" | "write-hermes-compat-hash",
   configurationEnvironment: Readonly<Record<string, string>>,
+  applicationRuntime: ManagedStartupApplicationRuntimePlan,
   extraEnvironment: Readonly<Record<string, string>> = {},
 ): void {
   execute(
     ["/usr/local/bin/node", MANAGED_STARTUP_RUNTIME_EXECUTABLE, `--internal-${action}`],
     "sandbox",
     { ...configurationEnvironment, ...extraEnvironment },
+    applicationRuntime,
   );
 }
 
 function sealOpenClawConfiguration(
   configurationEnvironment: Readonly<Record<string, string>>,
+  applicationRuntime: ManagedStartupApplicationRuntimePlan,
 ): void {
   const validation = execute(
     ["/usr/local/bin/openclaw", "config", "validate", "--json"],
@@ -592,6 +667,7 @@ function sealOpenClawConfiguration(
       ...configurationEnvironment,
       OPENCLAW_CONFIG_PATH: "/sandbox/.openclaw/openclaw.json",
     },
+    applicationRuntime,
     true,
   );
   let parsed: unknown;
@@ -607,7 +683,7 @@ function sealOpenClawConfiguration(
   ) {
     fail("OpenClaw rejected the generated managed startup config");
   }
-  runInternalSandboxAction("write-openclaw-hash", configurationEnvironment);
+  runInternalSandboxAction("write-openclaw-hash", configurationEnvironment, applicationRuntime);
 }
 
 interface StableRegularFile {
@@ -782,7 +858,10 @@ function normalizeHermesManagedConfiguration(): void {
   }
 }
 
-function sealHermesConfiguration(configurationEnvironment: Readonly<Record<string, string>>): void {
+function sealHermesConfiguration(
+  configurationEnvironment: Readonly<Record<string, string>>,
+  applicationRuntime: ManagedStartupApplicationRuntimePlan,
+): void {
   const configPath = "/sandbox/.hermes/config.yaml";
   const envPath = "/sandbox/.hermes/.env";
   const config = readStableRegularFile(configPath, 4 * 1024 * 1024);
@@ -799,6 +878,7 @@ function sealHermesConfiguration(configurationEnvironment: Readonly<Record<strin
     ],
     "root",
     configurationEnvironment,
+    applicationRuntime,
     true,
   ).stdout.trim();
   if (!SHA256_RE.test(digest)) {
@@ -811,9 +891,14 @@ function sealHermesConfiguration(configurationEnvironment: Readonly<Record<strin
     "",
   ].join("\n");
   atomicWriteRootFile("/etc/nemoclaw/hermes.config-hash", hashText, 0o444);
-  runInternalSandboxAction("write-hermes-compat-hash", configurationEnvironment, {
-    NEMOCLAW_MANAGED_HERMES_HASH_B64: Buffer.from(hashText, "utf8").toString("base64"),
-  });
+  runInternalSandboxAction(
+    "write-hermes-compat-hash",
+    configurationEnvironment,
+    applicationRuntime,
+    {
+      NEMOCLAW_MANAGED_HERMES_HASH_B64: Buffer.from(hashText, "utf8").toString("base64"),
+    },
+  );
 }
 
 function installRootOwnedMaterials(materials: readonly ManagedStartupAgentMaterial[]): void {
@@ -906,9 +991,16 @@ export function serializeManagedStartupRuntimeEnvironment(
   environment: Readonly<Record<string, string>>,
   corporateCaMerged: boolean,
   configurationEnvironment: Readonly<Record<string, string>> = {},
+  applicationRuntime: ManagedStartupApplicationRuntimePlan = {
+    exportEnvironment: {},
+    unsetEnvironment: [],
+  },
 ): string {
+  const validatedApplicationRuntime =
+    validateManagedStartupApplicationRuntimePlan(applicationRuntime);
   const output: Record<string, string> = {
     ...environment,
+    ...validatedApplicationRuntime.exportEnvironment,
     NEMOCLAW_MANAGED_STARTUP_APPLIED: "1",
   };
   if (corporateCaMerged) {
@@ -923,15 +1015,21 @@ export function serializeManagedStartupRuntimeEnvironment(
     }
     output._NEMOCLAW_CORPORATE_CA_MERGED = "1";
   }
-  const unsetLines = Object.keys(configurationEnvironment)
-    .filter((name) => !Object.hasOwn(environment, name))
-    .sort()
-    .map((name) => {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
-        fail(`invalid runtime environment key ${JSON.stringify(name)}`);
-      }
-      return `unset ${name}`;
-    });
+  const unsetNames = new Set([
+    ...Object.keys(configurationEnvironment).filter((name) => !Object.hasOwn(output, name)),
+    ...validatedApplicationRuntime.unsetEnvironment,
+  ]);
+  for (const name of validatedApplicationRuntime.unsetEnvironment) {
+    if (Object.hasOwn(output, name)) {
+      fail(`runtime environment cannot both export and unset ${name}`);
+    }
+  }
+  const unsetLines = [...unsetNames].sort().map((name) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+      fail(`invalid runtime environment key ${JSON.stringify(name)}`);
+    }
+    return `unset ${name}`;
+  });
   const exportLines = Object.entries(output)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, value]) => {
@@ -943,8 +1041,10 @@ export function serializeManagedStartupRuntimeEnvironment(
   return `${[...unsetLines, ...exportLines].join("\n")}\n`;
 }
 
-function applyAdapter(context: ManagedStartupAdapterContext): void {
-  const mapped = mapManagedStartupProfileToAgentEnvironment(context.profile);
+function applyAdapter(
+  context: ManagedStartupAdapterContext,
+  mapped: ManagedStartupAgentEnvironment,
+): void {
   if (mapped.agent !== context.agent) {
     fail(`mapped ${mapped.agent} environment for ${context.agent}`);
   }
@@ -962,13 +1062,23 @@ function applyAdapter(context: ManagedStartupAdapterContext): void {
       if (action.phase === "runtime-setup") {
         prepareMessagingRuntimeTarget(action.mode);
       }
-      execute(command.argv, command.runAs, mapped.configurationEnvironment);
+      execute(
+        command.argv,
+        command.runAs,
+        mapped.configurationEnvironment,
+        mapped.applicationRuntime,
+      );
       if (action.phase === "runtime-setup") {
         verifyMessagingRuntimeTarget(action.mode);
       }
       continue;
     }
-    execute(command.argv, command.runAs, mapped.configurationEnvironment);
+    execute(
+      command.argv,
+      command.runAs,
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
   }
   if (commandIndex !== commandPlan.length) {
     fail("image action plan contains an unmatched command");
@@ -976,10 +1086,10 @@ function applyAdapter(context: ManagedStartupAdapterContext): void {
 
   switch (context.agent) {
     case "openclaw":
-      sealOpenClawConfiguration(mapped.configurationEnvironment);
+      sealOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       break;
     case "hermes":
-      sealHermesConfiguration(mapped.configurationEnvironment);
+      sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       // Normalize before the coordinator commits a newly applied profile so
       // the durable transaction never records generator-created 0600 files as
       // a completed mutable image contract.
@@ -993,10 +1103,10 @@ function applyAdapter(context: ManagedStartupAdapterContext): void {
   mergeCorporateCa(context.corporateCaPath);
 }
 
-function adapters(): readonly ManagedStartupAgentAdapter[] {
+function adapters(mapped: ManagedStartupAgentEnvironment): readonly ManagedStartupAgentAdapter[] {
   return MANAGED_STARTUP_AGENTS.map((agent) => ({
     agent,
-    apply: (context: ManagedStartupAdapterContext) => applyAdapter(context),
+    apply: (context: ManagedStartupAdapterContext) => applyAdapter(context, mapped),
   }));
 }
 
@@ -1011,6 +1121,17 @@ export async function applyManagedStartupImageProfile(
   }
   const encodedProfile = env[MANAGED_STARTUP_PROFILE_ENV];
   if (!encodedProfile) fail(`${MANAGED_STARTUP_PROFILE_ENV} is required`);
+  let profile;
+  try {
+    profile = decodeManagedStartupProfile(encodedProfile);
+  } catch (error) {
+    fail((error as Error).message);
+  }
+  if (profile.agent !== expectedAgent) {
+    fail(`managed startup profile targets ${profile.agent}, expected ${expectedAgent}`);
+  }
+  const mapped = mapManagedStartupProfileToAgentEnvironment(profile, env);
+  validateManagedStartupApplicationRuntimePlan(mapped.applicationRuntime);
 
   ensureRootOwnedDirectory(ROOT_STATE_PARENT);
   ensureRootOwnedDirectory(ROOT_RUNTIME_DIRECTORY);
@@ -1022,9 +1143,11 @@ export async function applyManagedStartupImageProfile(
         ? {}
         : { corporateCaB64: env[MANAGED_STARTUP_CA_ENV] }),
     },
-    adapters(),
+    adapters(mapped),
   );
-  const mapped = mapManagedStartupProfileToAgentEnvironment(result.application.profile);
+  if (mapped.agent !== result.application.profile.agent) {
+    fail(`mapped ${mapped.agent} environment for ${result.application.profile.agent}`);
+  }
   if (expectedAgent === "hermes" && !result.adapterApplied) {
     // Committed startup replays still repair generator-created 0600 files,
     // while the descriptor guard preserves root-owned shields-up files.
@@ -1054,6 +1177,7 @@ export async function applyManagedStartupImageProfile(
       mapped.runtimeEnvironment,
       corporateCaMerged,
       mapped.configurationEnvironment,
+      mapped.applicationRuntime,
     ),
     0o400,
   );

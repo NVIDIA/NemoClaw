@@ -13,6 +13,7 @@ import {
 } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
 import {
+  applyManagedStartupApplicationRuntimePlan,
   buildManagedStartupImageActionPlan,
   MANAGED_STARTUP_MERGED_CA_FILE,
   type ManagedStartupImageActionPlanInput,
@@ -335,6 +336,13 @@ describe("managed startup image runtime", () => {
   });
 
   it("writes a deterministic root-sourced runtime environment without profile transport", () => {
+    const applicationRuntime = {
+      exportEnvironment: {
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      },
+      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+    };
     const script = serializeManagedStartupRuntimeEnvironment(
       {
         NEMOCLAW_MODEL: "model-with-'quote",
@@ -345,9 +353,13 @@ describe("managed startup image runtime", () => {
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_MODEL: "model-with-'quote",
       },
+      applicationRuntime,
     );
 
     expect(script).toContain("unset NEMOCLAW_INFERENCE_BASE_URL");
+    expect(script).toContain("unset NEMOCLAW_MINIMAL_BOOTSTRAP");
+    expect(script).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS='0.25'");
+    expect(script).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(script).toContain("export NEMOCLAW_MANAGED_STARTUP_APPLIED='1'");
     expect(script).toContain("export NEMOCLAW_MODEL='model-with-'\"'\"'quote'");
     expect(script).toContain(`export SSL_CERT_FILE='${MANAGED_STARTUP_MERGED_CA_FILE}'`);
@@ -355,6 +367,75 @@ describe("managed startup image runtime", () => {
     expect(script).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(script).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
     expect(script.endsWith("\n")).toBe(true);
+    expect(
+      serializeManagedStartupRuntimeEnvironment(
+        {
+          NEMOCLAW_MODEL: "model-with-'quote",
+          NEMOCLAW_OBSERVABILITY: "0",
+        },
+        true,
+        {
+          NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+          NEMOCLAW_MODEL: "model-with-'quote",
+        },
+        applicationRuntime,
+      ),
+    ).toBe(script);
+  });
+
+  it("validates application runtime plans before applying command exports and unsets", () => {
+    const ambient = {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "stale",
+      NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
+      PRESERVED: "yes",
+    };
+    const applied = applyManagedStartupApplicationRuntimePlan(ambient, {
+      exportEnvironment: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3" },
+      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+    });
+
+    expect(applied).toEqual({
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      PRESERVED: "yes",
+    });
+    expect(ambient).toHaveProperty("NEMOCLAW_MINIMAL_BOOTSTRAP", "1");
+    expect(() =>
+      applyManagedStartupApplicationRuntimePlan(ambient, {
+        exportEnvironment: { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
+        unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+      }),
+    ).toThrow(/both export and unset NEMOCLAW_MINIMAL_BOOTSTRAP/u);
+    expect(ambient).toHaveProperty("NEMOCLAW_MINIMAL_BOOTSTRAP", "1");
+  });
+
+  it("rejects a serialized runtime export that conflicts with an explicit unset", () => {
+    expect(() =>
+      serializeManagedStartupRuntimeEnvironment(
+        { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
+        false,
+        {},
+        { exportEnvironment: {}, unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"] },
+      ),
+    ).toThrow(/runtime environment cannot both export and unset NEMOCLAW_MINIMAL_BOOTSTRAP/u);
+  });
+
+  it.each([
+    [
+      { exportEnvironment: { "BAD-NAME": "value" }, unsetEnvironment: [] },
+      /invalid application runtime environment key/u,
+    ],
+    [
+      { exportEnvironment: { VALID_NAME: "line 1\nline 2" }, unsetEnvironment: [] },
+      /must be single-line text/u,
+    ],
+    [
+      { exportEnvironment: {}, unsetEnvironment: ["DUPLICATE", "DUPLICATE"] },
+      /duplicate application runtime unset/u,
+    ],
+  ])("rejects a malformed application runtime plan before command mutation", (plan, message) => {
+    const ambient = { PRESERVED: "yes" };
+    expect(() => applyManagedStartupApplicationRuntimePlan(ambient, plan)).toThrow(message);
+    expect(ambient).toEqual({ PRESERVED: "yes" });
   });
 
   it.each(["openclaw", "hermes"] as const)("preserves launch-only proxy env for %s", (agent) => {

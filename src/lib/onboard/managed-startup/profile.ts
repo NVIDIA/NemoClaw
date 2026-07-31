@@ -597,14 +597,12 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
     deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
       "application-environment",
-      "the image consumes this documented scheduler control but managed launch must admit it in the application environment transaction",
-      "image-consumed-not-forwarded",
+      "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
       "application-environment",
-      "the image consumes this documented scheduler control but managed launch must admit it in the application environment transaction",
-      "image-consumed-not-forwarded",
+      "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
