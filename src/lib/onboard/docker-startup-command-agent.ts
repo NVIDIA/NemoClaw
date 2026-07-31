@@ -24,7 +24,7 @@ export function resolveDockerStartupCommandPatch(
   if (dockerDriverGateway !== true) {
     return { persistStartupCommand: false, requiredUlimits: null };
   }
-  const agentName = agent?.name;
+  const agentName = agent?.name ?? "openclaw";
   return {
     persistStartupCommand:
       agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
