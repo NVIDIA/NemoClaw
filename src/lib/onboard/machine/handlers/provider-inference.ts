@@ -358,6 +358,42 @@ function assertOnboardReasoningEffortRoute(
   }
 }
 
+interface CompatibleEndpointReasoningReplayDeps {
+  cliName(): string;
+  log(message?: string): void;
+  configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
+  configureCompatibleEndpointReasoningEffort(
+    storedValue?: unknown,
+    env?: NodeJS.ProcessEnv,
+    allowRequestFallback?: boolean,
+  ): Promise<ReasoningEffort | null>;
+}
+
+// A recovered selection that reuses the registered gateway credential skips the
+// custom-endpoint validation, and that validation is where a compatible endpoint
+// configures its reasoning mode and effort. Replay the recorded configuration for
+// the same route — including the process env the sandbox image patch reads — so a
+// rebuild recreate cannot silently replace it with no reasoning configuration
+// (#7940). Report before configuring, like the resumed-selection path: the
+// recorded value wins over an ambient one, and #7462 requires that replay to name
+// the recorded value instead of silently discarding the exported variable. A
+// rebuild recreate seeds the env from the same recorded configuration, so it stays
+// silent.
+async function replayRecoveredCompatibleEndpointReasoning(
+  deps: CompatibleEndpointReasoningReplayDeps,
+  recorded: { reasoning: string | null; effort: string | null },
+  env: NodeJS.ProcessEnv,
+): Promise<{ reasoning: "true" | "false"; effort: ReasoningEffort | null }> {
+  const ignoredReasoning = describeIgnoredReasoningEnv(recorded.reasoning, deps.cliName(), env);
+  if (ignoredReasoning) deps.log(ignoredReasoning);
+  const ignoredEffort = describeIgnoredReasoningEffortEnv(recorded.effort, deps.cliName(), env);
+  if (ignoredEffort) deps.log(ignoredEffort);
+  return {
+    reasoning: await deps.configureCompatibleEndpointReasoning(recorded.reasoning),
+    effort: await deps.configureCompatibleEndpointReasoningEffort(recorded.effort, env, false),
+  };
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -643,25 +679,21 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
       shouldRecordProviderSelection = true;
-      // A recovered selection that reuses the registered gateway credential
-      // skips the custom-endpoint validation, and that validation is where a
-      // compatible endpoint configures its reasoning mode and effort. Replay
-      // the recorded configuration for the same route — including the process
-      // env the sandbox image patch reads — so a rebuild recreate cannot
-      // silently replace it with no reasoning configuration (#7940).
       if (
         reuseGatewayCredentialWithoutLocalKey &&
         provider === "compatible-endpoint" &&
         initial.provider === "compatible-endpoint"
       ) {
-        compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
-          compatibleEndpointReasoning ?? initial.compatibleEndpointReasoning,
-        );
-        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
-          compatibleEndpointReasoningEffort ?? initial.compatibleEndpointReasoningEffort,
+        const replayed = await replayRecoveredCompatibleEndpointReasoning(
+          deps,
+          {
+            reasoning: compatibleEndpointReasoning ?? initial.compatibleEndpointReasoning,
+            effort: compatibleEndpointReasoningEffort ?? initial.compatibleEndpointReasoningEffort,
+          },
           env,
-          false,
         );
+        compatibleEndpointReasoning = replayed.reasoning;
+        compatibleEndpointReasoningEffort = replayed.effort;
       }
     }
 

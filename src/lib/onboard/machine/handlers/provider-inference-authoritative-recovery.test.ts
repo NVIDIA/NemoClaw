@@ -142,4 +142,61 @@ describe("authoritative provider inference recovery", () => {
       expect.objectContaining({ compatibleEndpointReasoningEffort: "high" }),
     );
   });
+
+  it("names the recorded values it replays over a conflicting ambient request (#7462)", async () => {
+    const session = createSession({
+      sandboxName: "my-assistant",
+      provider: "compatible-endpoint",
+      model: "mock/channels-rebuild",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
+    });
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      model: "mock/channels-rebuild",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      recoveredFromSandbox: true,
+      skipHostInferenceSmoke: true,
+      reuseGatewayCredentialWithoutLocalKey: true,
+    }));
+    const { deps, calls } = createDeps({
+      setupNim,
+      hydrateCredentialEnv: vi.fn(() => null),
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "my-assistant",
+      sessionId: session.sessionId,
+    });
+    // The caller exported values that disagree with the recorded ones.
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_REASONING: "false",
+      NEMOCLAW_REASONING_EFFORT: "low",
+    };
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+      env,
+    });
+
+    const logged = calls.log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logged).toContain("Ignoring NEMOCLAW_REASONING=false");
+    expect(logged).toContain("Ignoring NEMOCLAW_REASONING_EFFORT=low");
+    expect(result.compatibleEndpointReasoning).toBe("true");
+    expect(result.compatibleEndpointReasoningEffort).toBe("high");
+  });
 });
