@@ -216,6 +216,15 @@ const { createSandbox } = require(${onboardPath});
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
+    assert.ok(
+      payload.commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("docker run -d") &&
+          entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
+          entry.command.includes("nemoclaw-start"),
+      ),
+      "expected the default OpenClaw startup command to be persisted in the recreated container",
+    );
   });
 
   it("skips OpenClaw sandbox-base resolution for agent-staged Dockerfiles", async () => {
