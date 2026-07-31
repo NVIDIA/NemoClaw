@@ -195,7 +195,9 @@ describe("authoritative provider inference recovery", () => {
 
     const logged = calls.log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(logged).toContain("Ignoring NEMOCLAW_REASONING=false");
+    expect(logged).toContain("recorded as reasoning=true");
     expect(logged).toContain("Ignoring NEMOCLAW_REASONING_EFFORT=low");
+    expect(logged).toContain("reasoning effort=high");
     expect(result.compatibleEndpointReasoning).toBe("true");
     expect(result.compatibleEndpointReasoningEffort).toBe("high");
   });
