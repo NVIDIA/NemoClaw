@@ -10,6 +10,8 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+type ReasoningEffort = "low" | "medium" | "high";
+
 type Settings = {
   model: string;
   baseUrl: string;
@@ -17,6 +19,7 @@ type Settings = {
   upstreamProvider: string;
   upstreamEndpointUrl: string | null;
   inferenceApi: string;
+  reasoningEffort: ReasoningEffort | null;
 };
 
 type ManagedDeepAgentsProvider = "openai" | "openrouter";
@@ -63,7 +66,17 @@ function readSettings(env: NodeJS.ProcessEnv): Settings {
       env.NEMOCLAW_INFERENCE_API || "openai-completions",
       "NEMOCLAW_INFERENCE_API",
     ),
+    reasoningEffort: normalizeReasoningEffort(env.NEMOCLAW_REASONING_EFFORT),
   };
+}
+
+function normalizeReasoningEffort(value: string | undefined): ReasoningEffort | null {
+  if (value === undefined || value.trim() === "") return null;
+  const text = value.trim();
+  if (text !== "low" && text !== "medium" && text !== "high") {
+    throw new Error("NEMOCLAW_REASONING_EFFORT must be low, medium, or high.");
+  }
+  return text;
 }
 
 function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {
@@ -165,26 +178,38 @@ function modelNameForManagedProvider(model: string): string {
   return trimmed;
 }
 
-function openAiModelRequestParamLines(model: string): string[] {
+function openAiModelRequestParamLines(
+  model: string,
+  reasoningEffort: ReasoningEffort | null,
+): string[] {
   // Source boundary: NVIDIA's Ultra serving template owns the empty assistant
   // content behavior; this generator owns only the managed per-model request
   // parameters. Keep the exact invalid state, regression proof, and separate
   // removal conditions for this option and the dispatch guard in
   // dependency-review.md under "Managed Ultra compatibility workarounds."
-  return NEMOTRON_ULTRA_MODEL_IDS.has(model)
-    ? [
-        "",
-        `[models.providers.openai.params.${tomlString(model)}]`,
-        "# Nemotron Ultra coding-agent requests need nonempty content when tool calls and reasoning are combined.",
-        "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
-      ]
-    : [];
+  const isUltra = NEMOTRON_ULTRA_MODEL_IDS.has(model);
+  const extraBodyEntries = [
+    ...(isUltra ? ["chat_template_kwargs = { force_nonempty_content = true }"] : []),
+    ...(reasoningEffort ? [`reasoning_effort = ${tomlString(reasoningEffort)}`] : []),
+  ];
+  if (extraBodyEntries.length === 0) return [];
+  return [
+    "",
+    `[models.providers.openai.params.${tomlString(model)}]`,
+    ...(isUltra
+      ? [
+          "# Nemotron Ultra coding-agent requests need nonempty content when tool calls and reasoning are combined.",
+        ]
+      : []),
+    `extra_body = { ${extraBodyEntries.join(", ")} }`,
+  ];
 }
 
 function providerConfigLines(
   provider: ManagedDeepAgentsProvider,
   model: string,
   baseUrl: string,
+  reasoningEffort: ReasoningEffort | null,
 ): string[] {
   return [
     `[models.providers.${provider}]`,
@@ -199,7 +224,7 @@ function providerConfigLines(
           "# NemoClaw-managed inference.local currently exposes Chat Completions.",
           "# Remove this override when that route supports OpenAI Responses API.",
           "use_responses_api = false",
-          ...openAiModelRequestParamLines(model),
+          ...openAiModelRequestParamLines(model, reasoningEffort),
         ]
       : []),
   ];
@@ -216,7 +241,7 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "[models]",
     `default = ${tomlString(defaultModel)}`,
     "",
-    ...providerConfigLines(provider, model, settings.baseUrl),
+    ...providerConfigLines(provider, model, settings.baseUrl, settings.reasoningEffort),
     "",
     "[update]",
     "check = false",

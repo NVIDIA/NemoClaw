@@ -14,7 +14,12 @@ const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
-const POST_REBOOT_STATUS_RUNTIME = "src/lib/actions/sandbox/status-snapshot.ts";
+const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/status-snapshot.ts",
+  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-startup-command-agent.ts",
+  "src/lib/onboard/sandbox-create-step.ts",
+]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -129,9 +134,9 @@ export function focusedPrE2eTargetsForChangedFiles(
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
-  const postRebootMatchedFiles = changedFiles.includes(POST_REBOOT_STATUS_RUNTIME)
-    ? [POST_REBOOT_STATUS_RUNTIME]
-    : [];
+  const postRebootMatchedFiles = stableUnique(
+    changedFiles.filter((file) => POST_REBOOT_DELIVERY_RUNTIME_FILES.has(file)),
+  );
   return [
     ...(deepAgentsMatchedFiles.length > 0
       ? [

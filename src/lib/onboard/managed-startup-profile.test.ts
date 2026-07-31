@@ -277,6 +277,8 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
   HTTP_PROXY: MANAGED_STARTUP_AGENTS,
   NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: ["openclaw"],
   NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: ["openclaw"],
+  NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: ["openclaw"],
+  NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: ["openclaw"],
   NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: ["openclaw"],
   NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: ["openclaw"],
   NEMOCLAW_DASHBOARD_BIND: ["openclaw"],
@@ -504,8 +506,8 @@ describe("managed startup profile", () => {
     ).toEqual({
       NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "managed-launch-forwarded",
       NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "image-consumed-not-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "image-consumed-not-forwarded",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "managed-launch-forwarded",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "managed-launch-forwarded",
       NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "managed-launch-forwarded",
       NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "managed-launch-forwarded",
     });
