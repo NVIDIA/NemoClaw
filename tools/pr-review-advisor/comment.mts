@@ -120,12 +120,22 @@ type LaneFingerprints = {
   e2e: string;
 };
 
+type LaneE2eRecommendation = {
+  id: string;
+};
+
+type LaneE2eRecommendations = {
+  recommended: LaneE2eRecommendation[];
+  optional: LaneE2eRecommendation[];
+};
+
 export type AdvisorLaneReport = {
   status: "completed" | "failed" | "skipped" | "unavailable";
   partial: boolean;
   counts?: FindingCounts;
   confidence?: "low" | "medium" | "high";
   fingerprints?: LaneFingerprints;
+  e2e?: LaneE2eRecommendations;
 };
 
 export type AdvisorLaneReports = {
@@ -415,9 +425,10 @@ function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
   ];
   const comparison = renderLaneComparison(lanes.primary, lanes.secondOpinion);
   if (comparison) lines.push(`- **Model comparison:** ${comparison}`);
+  lines.push(...renderSecondOpinionE2eRecommendations(lanes.primary, lanes.secondOpinion));
   lines.push(
     "",
-    "_Nemotron output stays in workflow artifacts and does not change the assessment above._",
+    "_Second-opinion E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate._",
     "",
   );
   return `${lines.join("\n")}\n`;
@@ -472,6 +483,54 @@ function renderLaneComparison(
     ? "severity counts match"
     : `Nemotron reported ${differences.join(", ")}`;
   return `${findingComparison}; ${e2eComparison}; ${countComparison}.`;
+}
+
+function renderSecondOpinionE2eRecommendations(
+  primary: AdvisorLaneReport,
+  secondOpinion: AdvisorLaneReport,
+): string[] {
+  if (
+    primary.status !== "completed" ||
+    secondOpinion.status !== "completed" ||
+    primary.partial ||
+    secondOpinion.partial ||
+    !primary.e2e ||
+    !secondOpinion.e2e
+  ) {
+    return [];
+  }
+
+  const primaryIds = new Set(
+    [...primary.e2e.recommended, ...primary.e2e.optional].map(({ id }) => id),
+  );
+  const additionalIds = new Set<string>();
+  const additional = [...secondOpinion.e2e.recommended, ...secondOpinion.e2e.optional].filter(
+    ({ id }) => {
+      if (primaryIds.has(id) || additionalIds.has(id)) return false;
+      additionalIds.add(id);
+      return true;
+    },
+  );
+  if (additional.length === 0) return [];
+
+  const lines = [
+    "",
+    "<details>",
+    `<summary>${compactCount(additional.length, "additional E2E selection")} from the second opinion</summary>`,
+    "",
+    "_Advisory only. The primary lane did not select these E2E jobs or targets._",
+    "",
+  ];
+  for (const recommendation of additional.slice(0, E2E_RENDER_LIMIT)) {
+    lines.push(
+      `- <code>${escapeLocationHtml(recommendation.id)}</code>: The completed second-opinion lane identified E2E coverage that the primary lane omitted.`,
+    );
+  }
+  if (additional.length > E2E_RENDER_LIMIT) {
+    lines.push(`- _${additional.length - E2E_RENDER_LIMIT} more._`);
+  }
+  lines.push("", "</details>");
+  return lines;
 }
 
 function countDifference(difference: number, label: string): string {
@@ -536,29 +595,22 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
 }
 
 function trustedCoverageIds(
-  items: Array<{ id?: string; reason?: string }> | undefined,
+  items: unknown[] | undefined,
   inventory: TrustedE2eRecommendationInventory,
 ): string[] {
   const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
   const seen = new Set<string>();
   return (items ?? []).flatMap((item) => {
+    if (!isRecord(item)) return [];
     const id = item.id;
-    if (!id || !allowedIds.has(id) || seen.has(id)) return [];
+    if (typeof id !== "string" || !allowedIds.has(id) || seen.has(id)) return [];
     seen.add(id);
     return [id];
   });
 }
 
 function trustedTargetIds(
-  items:
-    | Array<{
-        id?: string;
-        workflow?: string;
-        selectorType?: string;
-        required?: boolean;
-        reason?: string;
-      }>
-    | undefined,
+  items: unknown[] | undefined,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,
@@ -567,9 +619,15 @@ function trustedTargetIds(
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
   const seen = new Set<string>();
   return (items ?? []).flatMap((item) => {
+    if (!isRecord(item)) return [];
     const id = item.id;
     const selectorType = item.selectorType;
-    if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
+    if (
+      typeof id !== "string" ||
+      item.workflow !== inventory.workflow ||
+      item.required !== required
+    )
+      return [];
     const trustedTuple =
       (selectorType === "all" && id === inventory.fanoutId) ||
       (selectorType === "job" && (allowedJobs.has(id) || changedCredentialFreeJobIds.has(id))) ||
@@ -633,6 +691,7 @@ function trustedLaneStructure(
       counts: FindingCounts;
       confidence?: "low" | "medium" | "high";
       fingerprints: LaneFingerprints;
+      e2e: LaneE2eRecommendations;
     }
   | undefined {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.findings)) return undefined;
@@ -646,9 +705,11 @@ function trustedLaneStructure(
   }
   const summary = isRecord(value.summary) ? value.summary : undefined;
   const confidence = trustedLaneConfidence(summary?.confidence);
+  const e2e = trustedLaneE2eRecommendations(value as ReviewAdvisorResult);
   return {
     counts,
     ...(confidence ? { confidence } : {}),
+    e2e,
     fingerprints: {
       findings: opaqueFingerprint(normalizedFindingRecords(value.findings)),
       e2e: opaqueFingerprint(e2eDecisionSets(value.e2e)),
@@ -665,6 +726,43 @@ function normalizedFindingRecords(value: unknown[]): unknown[] {
 
 function trustedLaneConfidence(value: unknown): "low" | "medium" | "high" | undefined {
   return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
+function trustedLaneE2eRecommendations(result: ReviewAdvisorResult): LaneE2eRecommendations {
+  const inventory = commentE2eInventory();
+  const changedCredentialFreeJobIds = trustedChangedCredentialFreeJobIds(result);
+  const coverage = result.e2e?.coverage;
+  const targets = result.e2e?.targets;
+  return {
+    recommended: trustedLaneE2eTier(
+      Array.isArray(coverage?.requiredTests) ? coverage.requiredTests : undefined,
+      Array.isArray(targets?.required) ? targets.required : undefined,
+      true,
+      inventory,
+      changedCredentialFreeJobIds,
+    ),
+    optional: trustedLaneE2eTier(
+      Array.isArray(coverage?.optionalTests) ? coverage.optionalTests : undefined,
+      Array.isArray(targets?.optional) ? targets.optional : undefined,
+      false,
+      inventory,
+      changedCredentialFreeJobIds,
+    ),
+  };
+}
+
+function trustedLaneE2eTier(
+  coverageItems: unknown[] | undefined,
+  targetItems: unknown[] | undefined,
+  required: boolean,
+  inventory: TrustedE2eRecommendationInventory,
+  changedCredentialFreeJobIds: ReadonlySet<string>,
+): LaneE2eRecommendation[] {
+  const ids = uniqueE2eIds([
+    ...trustedTargetIds(targetItems, required, inventory, changedCredentialFreeJobIds),
+    ...trustedCoverageIds(coverageItems, inventory),
+  ]);
+  return ids.map((id) => ({ id }));
 }
 
 function e2eDecisionSets(value: unknown): Record<string, string[]> {
