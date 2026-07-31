@@ -5,6 +5,8 @@
 //   - validateSnapshotName accepts/rejects names
 //   - listBackups computes virtual v<N> versions by timestamp-ascending position
 //   - findBackup resolves selectors (v<N>, name, exact timestamp)
+
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
@@ -65,6 +67,39 @@ function writeBackup(
   };
   fs.writeFileSync(path.join(dir, "rebuild-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
+}
+function managedSnapshotAuthority() {
+  const encodedProfile = Buffer.from('{"schemaVersion":1}', "utf8").toString("base64url");
+  return {
+    workload: {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+      platform: "linux/amd64",
+      release: "v0.0.97",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-123456-1",
+      capabilityContractVersion: 1,
+      startupProfileContractVersion: 1,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      credentialProxyReplayRequired: false,
+      shared: true,
+    },
+    runtimeSnapshot: {
+      schemaVersion: 1,
+      providerId: "docker",
+      providerHandle: "opaque-provider-handle",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime: {
+        schemaVersion: 1,
+        providerId: "docker",
+        runtime: { kind: "docker-container", handle: "opaque-container-id" },
+        acceleration: { kind: "none" },
+      },
+    },
+  } as const;
 }
 afterAll(() => {
   if (ORIGINAL_HOME === undefined) {
@@ -187,6 +222,38 @@ describe("listBackups computes virtual versions", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: custom });
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry.customPolicies).toEqual(custom);
+  });
+
+  it("round-trips normalized managed workload and provider runtime authority", () => {
+    const authority = managedSnapshotAuthority();
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      workload: { ...authority.workload, ignored: "not-authority" },
+      runtimeSnapshot: {
+        ...authority.runtimeSnapshot,
+        containerName: "not-authority",
+      },
+    });
+
+    const [entry] = sandboxState.listBackups("test-sandbox");
+
+    expect(entry?.workload).toEqual(authority.workload);
+    expect(entry?.runtimeSnapshot).toEqual(authority.runtimeSnapshot);
+  });
+
+  it("rejects a managed snapshot manifest without valid provider runtime authority", () => {
+    const authority = managedSnapshotAuthority();
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      workload: authority.workload,
+    });
+    writeBackup("test-sandbox", "2026-04-21T14-01-00-000Z", {
+      ...authority,
+      runtimeSnapshot: {
+        ...authority.runtimeSnapshot,
+        lifecycleGeneration: "",
+      },
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
 
   it("preserves an empty customPolicies array so restore can distinguish zero-custom from legacy snapshots", () => {
