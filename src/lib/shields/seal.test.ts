@@ -1,10 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 async function loadSeal(): Promise<typeof import("./seal")> {
   return import("./seal");
+}
+
+const CONFIG_BODY = 'model = "nvidia/nemotron"\n';
+const EXPECTED_RECORD = `${createHash("sha256").update(CONFIG_BODY).digest("hex")}  config.toml\n`;
+const fixtures: string[] = [];
+
+function makeConfigDir(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-hash-repair-"));
+  fixtures.push(root);
+  const configDir = path.join(root, ".deepagents");
+  fs.mkdirSync(configDir, { mode: 0o2770 });
+  fs.writeFileSync(path.join(configDir, "config.toml"), CONFIG_BODY, { mode: 0o660 });
+  return configDir;
+}
+
+async function runRepair(
+  configDir: string,
+  configPath?: string,
+): Promise<{ status: number | null; stderr: string }> {
+  const { buildConfigHashRepairCommand } = await loadSeal();
+  const [binary, ...args] = buildConfigHashRepairCommand(
+    configDir,
+    configPath ?? path.join(configDir, "config.toml"),
+  );
+  const result = spawnSync(binary, args, { encoding: "utf-8" });
+  return { status: result.status, stderr: (result.stderr ?? "").trim() };
+}
+
+function hashRecordPath(configDir: string): string {
+  return path.join(configDir, ".config-hash");
 }
 
 describe("parseSha256Output", () => {
@@ -75,5 +111,102 @@ describe("isHashVerificationIssue", () => {
       ),
     ).toBe(false);
     expect(isHashVerificationIssue("dir mode=2770 (expected 755)")).toBe(false);
+  });
+});
+
+describe("buildConfigHashRepairCommand", () => {
+  afterEach(() => {
+    while (fixtures.length > 0) {
+      fs.rmSync(fixtures.pop() as string, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the repair helper under an isolated interpreter", async () => {
+    const { buildConfigHashRepairCommand, CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT } = await loadSeal();
+    expect(
+      buildConfigHashRepairCommand("/sandbox/.deepagents", "/sandbox/.deepagents/config.toml"),
+    ).toEqual([
+      "python3",
+      "-I",
+      "-c",
+      CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT,
+      "/sandbox/.deepagents",
+      "/sandbox/.deepagents/config.toml",
+    ]);
+  });
+
+  it("writes a read-only record for a config directory that has none", async () => {
+    const configDir = makeConfigDir();
+
+    expect(await runRepair(configDir)).toEqual({ status: 0, stderr: "" });
+
+    const record = hashRecordPath(configDir);
+    expect(fs.readFileSync(record, "utf-8")).toBe(EXPECTED_RECORD);
+    expect(fs.statSync(record).mode & 0o777).toBe(0o444);
+  });
+
+  it("keeps an existing record even when its digest is stale", async () => {
+    const configDir = makeConfigDir();
+    const record = hashRecordPath(configDir);
+    const staleRecord = `${"0".repeat(64)}  config.toml\n`;
+    fs.writeFileSync(record, staleRecord, { mode: 0o660 });
+    const modeBefore = fs.statSync(record).mode & 0o777;
+
+    expect(await runRepair(configDir)).toEqual({ status: 0, stderr: "" });
+
+    expect(fs.readFileSync(record, "utf-8")).toBe(staleRecord);
+    expect(fs.statSync(record).mode & 0o777).toBe(modeBefore);
+  });
+
+  it("refuses a symlink planted at the record name", async () => {
+    const configDir = makeConfigDir();
+    const record = hashRecordPath(configDir);
+    const outside = path.join(configDir, "..", "outside");
+    fs.writeFileSync(outside, "untouched\n");
+    fs.symlinkSync(outside, record);
+
+    const outcome = await runRepair(configDir);
+
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain("not a regular file");
+    expect(fs.lstatSync(record).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(outside, "utf-8")).toBe("untouched\n");
+  });
+
+  it("refuses a directory planted at the record name", async () => {
+    const configDir = makeConfigDir();
+    fs.mkdirSync(hashRecordPath(configDir));
+
+    const outcome = await runRepair(configDir);
+
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain("not a regular file");
+  });
+
+  it("refuses to read a config file that is a symlink", async () => {
+    const configDir = makeConfigDir();
+    const configPath = path.join(configDir, "config.toml");
+    const outside = path.join(configDir, "..", "secret");
+    fs.writeFileSync(outside, "secret\n");
+    fs.rmSync(configPath);
+    fs.symlinkSync(outside, configPath);
+
+    const outcome = await runRepair(configDir);
+
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain("refusing symlink path");
+    expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
+  });
+
+  it("refuses a config path outside the config directory", async () => {
+    const configDir = makeConfigDir();
+    const outside = path.join(configDir, "..", "elsewhere.toml");
+    fs.writeFileSync(outside, CONFIG_BODY);
+
+    const outcome = await runRepair(configDir, outside);
+
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain("refusing config path outside config dir");
+    expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
   });
 });

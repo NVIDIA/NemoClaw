@@ -81,3 +81,144 @@ describe("shields policy transition", () => {
     );
   });
 });
+
+describe("shields config lock without a shipped config hash", () => {
+  const CONFIG_DIR = "/sandbox/.deepagents";
+  const CONFIG_PATH = `${CONFIG_DIR}/config.toml`;
+  const HASH_PATH = `${CONFIG_DIR}/.config-hash`;
+
+  type SandboxEntry = { mode: string; owner: string };
+
+  let homeDir: string;
+  let shields: typeof import("./index.js");
+  let entries: Map<string, SandboxEntry>;
+  let repairCalls: string[][];
+
+  function target() {
+    return {
+      agentName: "langchain-deepagents-code",
+      configDir: CONFIG_DIR,
+      configFile: "config.toml",
+      configPath: CONFIG_PATH,
+      format: "toml",
+      sensitiveFiles: [HASH_PATH],
+    };
+  }
+
+  function requireEntry(pathname: string, operation: string): SandboxEntry {
+    const entry = entries.get(pathname);
+    if (!entry) {
+      throw new Error(`${operation}: cannot access '${pathname}': No such file or directory`);
+    }
+    return entry;
+  }
+
+  function runSandboxCommand(cmd: string[]): string {
+    const [head, ...rest] = cmd;
+    if (head === "python3") {
+      repairCalls.push(cmd);
+      entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
+      return "";
+    }
+    if (head === "chmod") {
+      const entry = requireEntry(rest[1], "chmod");
+      if (rest[0] !== "g-s") entry.mode = rest[0];
+      return "";
+    }
+    if (head === "chown") {
+      requireEntry(rest[1], "chown").owner = rest[0];
+      return "";
+    }
+    if (head === "chattr") {
+      requireEntry(String(cmd.at(-1)), "chattr");
+      return "";
+    }
+    if (head === "lsattr") {
+      const pathname = String(cmd.at(-1));
+      requireEntry(pathname, "lsattr");
+      return `----i---------e----- ${pathname}`;
+    }
+    if (head === "stat") {
+      const pathname = String(cmd.at(-1));
+      const entry = requireEntry(pathname, "stat");
+      return `${entry.mode} ${entry.owner}`;
+    }
+    if (head === "sha256sum") {
+      const pathname = String(cmd.at(-1));
+      requireEntry(pathname, "sha256sum");
+      return `${"a".repeat(64)}  ${pathname}`;
+    }
+    return "";
+  }
+
+  beforeEach(() => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-config-lock-"));
+    vi.stubEnv("HOME", homeDir);
+    repairCalls = [];
+    entries = new Map<string, SandboxEntry>([
+      ["/sandbox", { mode: "1775", owner: "root:sandbox" }],
+      [CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" }],
+      [CONFIG_PATH, { mode: "660", owner: "sandbox:sandbox" }],
+    ]);
+    delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
+    delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
+
+    const runner = requireSource("../runner.js");
+    const sandboxConfig = requireSource("../sandbox/config.js");
+    const privilegedExec = requireSource("../sandbox/privileged-exec.js");
+    const dockerExec = requireSource("../adapters/docker/exec.js");
+    const stateDirLock = requireSource("./state-dir-lock.js");
+
+    vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
+    vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
+    vi.spyOn(runner, "runCapture").mockReturnValue("");
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockImplementation(() => target());
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
+      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+    );
+    vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) =>
+      runSandboxCommand(cmd as string[]),
+    );
+    vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
+    vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
+    vi.spyOn(stateDirLock, "restoreStateDirLockPosture").mockReturnValue([]);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    shields = requireSource(SHIELDS_MODULE);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
+    delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("repairs the absent hash record before locking the protected files", () => {
+    const result = shields.lockAgentConfig("dcode-safety", target(), false);
+
+    expect(repairCalls).toHaveLength(1);
+    expect(repairCalls[0].slice(-2)).toEqual([CONFIG_DIR, CONFIG_PATH]);
+    expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(Object.keys(result.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
+  });
+
+  it("leaves the config unlocked when the hash record cannot be repaired", () => {
+    const dockerExec = requireSource("../adapters/docker/exec.js");
+    vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) => {
+      const argv = cmd as string[];
+      if (argv[0] === "python3")
+        throw new Error("not a regular file: /sandbox/.deepagents/.config-hash");
+      return runSandboxCommand(argv);
+    });
+
+    expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
+      /not a regular file/,
+    );
+
+    expect(entries.get(CONFIG_PATH)).toEqual({ mode: "660", owner: "sandbox:sandbox" });
+    expect(entries.has(HASH_PATH)).toBe(false);
+  });
+});

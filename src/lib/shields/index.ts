@@ -72,6 +72,7 @@ const {
   withTimerBoundShieldsMutationLock,
 }: typeof import("./timer-bound-lock") = require("./timer-bound-lock");
 const {
+  buildConfigHashRepairCommand,
   parseSha256Output,
   isHashVerificationIssue,
   isSha256Hex,
@@ -1578,6 +1579,16 @@ function unlockConfigPathsNoSymlinkFollow(
   ]);
 }
 
+function writeAbsentConfigHashNoSymlinkFollow(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): void {
+  privilegedSandboxExec(
+    sandboxName,
+    buildConfigHashRepairCommand(target.configDir, target.configPath),
+  );
+}
+
 function legacyDataDirFor(configDir: string): string {
   return `${configDir}-data`;
 }
@@ -2022,6 +2033,7 @@ function lockAgentConfigUnderMutationLock(
     } else if (legacyHermesProtocol) {
       transitionLegacyHermesConfig(sandboxName, target, "lock", filesToLock);
     } else if (target.agentName !== "hermes") {
+      writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
       for (const f of filesToLock) {
         try {
           privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
