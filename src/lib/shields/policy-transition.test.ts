@@ -93,6 +93,7 @@ describe("shields config lock without a shipped config hash", () => {
   let shields: typeof import("./index.js");
   let entries: Map<string, SandboxEntry>;
   let repairCalls: string[][];
+  let commandHandlers: Map<string, (args: string[], command: string[]) => string>;
 
   function target() {
     return {
@@ -105,50 +106,22 @@ describe("shields config lock without a shipped config hash", () => {
     };
   }
 
+  function missingEntry(pathname: string, operation: string): never {
+    throw new Error(`${operation}: cannot access '${pathname}': No such file or directory`);
+  }
+
   function requireEntry(pathname: string, operation: string): SandboxEntry {
-    const entry = entries.get(pathname);
-    if (!entry) {
-      throw new Error(`${operation}: cannot access '${pathname}': No such file or directory`);
-    }
-    return entry;
+    return entries.get(pathname) ?? missingEntry(pathname, operation);
+  }
+
+  function unsupportedCommand(command: string[]): never {
+    throw new Error(`unsupported sandbox command in fixture: ${command.join(" ")}`);
   }
 
   function runSandboxCommand(cmd: string[]): string {
     const [head, ...rest] = cmd;
-    if (head === "python3") {
-      repairCalls.push(cmd);
-      entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
-      return "";
-    }
-    if (head === "chmod") {
-      const entry = requireEntry(rest[1], "chmod");
-      if (rest[0] !== "g-s") entry.mode = rest[0];
-      return "";
-    }
-    if (head === "chown") {
-      requireEntry(rest[1], "chown").owner = rest[0];
-      return "";
-    }
-    if (head === "chattr") {
-      requireEntry(String(cmd.at(-1)), "chattr");
-      return "";
-    }
-    if (head === "lsattr") {
-      const pathname = String(cmd.at(-1));
-      requireEntry(pathname, "lsattr");
-      return `----i---------e----- ${pathname}`;
-    }
-    if (head === "stat") {
-      const pathname = String(cmd.at(-1));
-      const entry = requireEntry(pathname, "stat");
-      return `${entry.mode} ${entry.owner}`;
-    }
-    if (head === "sha256sum") {
-      const pathname = String(cmd.at(-1));
-      requireEntry(pathname, "sha256sum");
-      return `${"a".repeat(64)}  ${pathname}`;
-    }
-    return "";
+    const handler = commandHandlers.get(head) ?? unsupportedCommand(cmd);
+    return handler(rest, cmd);
   }
 
   beforeEach(() => {
@@ -159,6 +132,69 @@ describe("shields config lock without a shipped config hash", () => {
       ["/sandbox", { mode: "1775", owner: "root:sandbox" }],
       [CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" }],
       [CONFIG_PATH, { mode: "660", owner: "sandbox:sandbox" }],
+    ]);
+    commandHandlers = new Map<string, (args: string[], command: string[]) => string>([
+      [
+        "python3",
+        (_args, command) => {
+          repairCalls.push(command);
+          entries.set(CONFIG_DIR, { mode: "700", owner: "root:root" });
+          entries.set(HASH_PATH, { mode: "600", owner: "sandbox:sandbox" });
+          return "";
+        },
+      ],
+      [
+        "chmod",
+        ([mode, pathname]) => {
+          const entry = requireEntry(pathname, "chmod");
+          const applyMode =
+            new Map<string, () => void>([["g-s", () => undefined]]).get(mode) ??
+            (() => {
+              entry.mode = mode;
+            });
+          applyMode();
+          return "";
+        },
+      ],
+      [
+        "chown",
+        ([owner, pathname]) => {
+          requireEntry(pathname, "chown").owner = owner;
+          return "";
+        },
+      ],
+      [
+        "chattr",
+        (_args, command) => {
+          requireEntry(String(command.at(-1)), "chattr");
+          return "";
+        },
+      ],
+      [
+        "lsattr",
+        (_args, command) => {
+          const pathname = String(command.at(-1));
+          requireEntry(pathname, "lsattr");
+          return `----i---------e----- ${pathname}`;
+        },
+      ],
+      [
+        "stat",
+        (_args, command) => {
+          const pathname = String(command.at(-1));
+          const entry = requireEntry(pathname, "stat");
+          return `${entry.mode} ${entry.owner}`;
+        },
+      ],
+      [
+        "sha256sum",
+        (_args, command) => {
+          const pathname = String(command.at(-1));
+          requireEntry(pathname, "sha256sum");
+          return `${"a".repeat(64)}  ${pathname}`;
+        },
+      ],
+      ["sh", () => ""],
     ]);
     delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
     delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
@@ -207,11 +243,18 @@ describe("shields config lock without a shipped config hash", () => {
 
   it("leaves the config unlocked when the hash record cannot be repaired", () => {
     const dockerExec = requireSource("../adapters/docker/exec.js");
+    const injectedFailures = new Map<string, () => string>([
+      [
+        "python3",
+        () => {
+          throw new Error("not a regular file: /sandbox/.deepagents/.config-hash");
+        },
+      ],
+    ]);
     vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) => {
       const argv = cmd as string[];
-      if (argv[0] === "python3")
-        throw new Error("not a regular file: /sandbox/.deepagents/.config-hash");
-      return runSandboxCommand(argv);
+      const execute = injectedFailures.get(argv[0]) ?? (() => runSandboxCommand(argv));
+      return execute();
     });
 
     expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
@@ -220,5 +263,25 @@ describe("shields config lock without a shipped config hash", () => {
 
     expect(entries.get(CONFIG_PATH)).toEqual({ mode: "660", owner: "sandbox:sandbox" });
     expect(entries.has(HASH_PATH)).toBe(false);
+  });
+
+  it("restores the managed sandbox parent when the config is unlocked", () => {
+    entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+    entries.set(CONFIG_PATH, { mode: "444", owner: "root:root" });
+    entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
+    commandHandlers.set("python3", (_args, command) => {
+      expect(command.slice(4, 9)).toEqual(["660", "2770", "sandbox:sandbox", "1", CONFIG_DIR]);
+      entries.set("/sandbox", { mode: "755", owner: "sandbox:sandbox" });
+      entries.set(CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" });
+      entries.set(CONFIG_PATH, { mode: "660", owner: "sandbox:sandbox" });
+      entries.set(HASH_PATH, { mode: "660", owner: "sandbox:sandbox" });
+      return "";
+    });
+    commandHandlers.set("lsattr", () => "----------------------");
+
+    shields.unlockAgentConfig("dcode-safety", target(), true);
+
+    expect(entries.get("/sandbox")).toEqual({ mode: "755", owner: "sandbox:sandbox" });
+    expect(entries.get(CONFIG_DIR)).toEqual({ mode: "2770", owner: "sandbox:sandbox" });
   });
 });
