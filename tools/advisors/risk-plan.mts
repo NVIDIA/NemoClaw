@@ -342,9 +342,10 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Sandbox blueprint and agent-runtime changes must preserve equivalent isolation and readiness across supported agents.",
     tier: 3,
-    requiredJobs: ["full-e2e", "hermes-e2e", "security-posture"],
+    requiredJobs: ["full-e2e", "hermes-e2e", "hermes-inference-switch", "security-posture"],
     invariants: [
       "OpenClaw and Hermes both reach readiness through the changed sandbox boundary",
+      "the Hermes runtime preserves provider and model selection across managed inference updates",
       "the sandbox retains its required security posture and isolation controls",
       "blueprint state agrees with the runtime observed by both supported agents",
     ],

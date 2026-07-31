@@ -500,7 +500,12 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toContain("sandbox-boundary");
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["full-e2e", "hermes-e2e", "security-posture"]),
+      expect.arrayContaining([
+        "full-e2e",
+        "hermes-e2e",
+        "hermes-inference-switch",
+        "security-posture",
+      ]),
     );
   });
 
