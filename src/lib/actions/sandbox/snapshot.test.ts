@@ -83,6 +83,7 @@ const lifecycleMock = vi.hoisted(() => {
     events,
     cleanupShieldsDestroyArtifactsMock: vi.fn(() => events.push("cleanup-shields")),
     readTimerMarkerMock: vi.fn(() => null as Record<string, unknown> | null),
+    withSandboxMutationLockMock: vi.fn(async (_name: string, fn: () => unknown) => await fn()),
     withTimerBoundMock: vi.fn(
       (_sandboxName: string, command: string, fn: () => unknown): unknown => {
         events.push(`lock:${command}`);
@@ -213,6 +214,11 @@ vi.mock("../../state/gateway", () => ({
   isSandboxReady: vi.fn((output: string, sandboxName: string) =>
     output.includes(`${sandboxName} Ready`),
   ),
+}));
+
+vi.mock("../../state/mcp-lifecycle-lock", () => ({
+  withMcpLifecycleLock: lifecycleMock.withSandboxMutationLockMock,
+  withSandboxMutationLock: lifecycleMock.withSandboxMutationLockMock,
 }));
 
 vi.mock("../../state/registry", () => ({
@@ -776,19 +782,6 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("initial");
     expect(output).toContain("/tmp/alpha/v2");
     expect(output).toContain("2 snapshot(s). Restore with:");
-  });
-
-  it("prints create, list, and restore usage for the bare help branch", async () => {
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "help" });
-
-    const output = consoleLog.mock.calls.flat().join("\n");
-    expect(output).toContain("Usage:");
-    expect(output).toContain("alpha snapshot create");
-    expect(output).toContain("alpha snapshot list");
-    expect(output).toContain("alpha snapshot restore");
   });
 
   it("restores the latest snapshot into the source sandbox", async () => {

@@ -11,6 +11,9 @@ import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
 beforeEach(() => {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-lifecycle-"));
+  tempHomes.push(tempHome);
+  vi.stubEnv("HOME", tempHome);
   f.resetSnapshotRestoreMocks();
 });
 afterEach(() => {
@@ -20,6 +23,25 @@ afterEach(() => {
   }
 });
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
+  it("holds snapshot creation under the lifecycle gate before the timer-bound transition", () => {
+    const source = fs.readFileSync(new URL("./snapshot.ts", import.meta.url), "utf8");
+    const createCase = source.indexOf('case "create":');
+    const listCase = source.indexOf('case "list":', createCase);
+    const createDispatch = source.slice(createCase, listCase);
+    const createFunction = source.indexOf("function runSnapshotCreate");
+    const timerBoundLock = source.indexOf(
+      "withTimerBoundShieldsMutationLock(sandboxName,",
+      createFunction,
+    );
+
+    expect(createCase).toBeGreaterThanOrEqual(0);
+    expect(listCase).toBeGreaterThan(createCase);
+    expect(createDispatch).toContain(
+      "await withSandboxMutationLock(sandboxName, () => runSnapshotCreate(sandboxName, request));",
+    );
+    expect(timerBoundLock).toBeGreaterThan(createFunction);
+  });
+
   it("restores the latest snapshot into the source sandbox", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({

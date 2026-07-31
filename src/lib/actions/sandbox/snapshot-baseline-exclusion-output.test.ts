@@ -3,11 +3,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { runSandboxSnapshot } from "./snapshot";
+
 const mocks = vi.hoisted(() => ({
   backupSandboxState: vi.fn(),
   captureOpenshell: vi.fn(() => ({ status: 0, output: "alpha Ready\n" })),
   findBackup: vi.fn(),
   getBaselineExclusions: vi.fn(),
+  withSandboxMutationLock: vi.fn(
+    async (_sandboxName: string, operation: () => unknown) => await operation(),
+  ),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -28,6 +33,11 @@ vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: vi.fn(
     (_sandboxName: string, _command: string, operation: () => unknown) => operation(),
   ),
+}));
+
+vi.mock("../../state/mcp-lifecycle-lock", () => ({
+  withMcpLifecycleLock: mocks.withSandboxMutationLock,
+  withSandboxMutationLock: mocks.withSandboxMutationLock,
 }));
 
 vi.mock("../../state/registry", () => ({
@@ -71,7 +81,6 @@ describe("snapshot baseline exclusion output", () => {
 
   it("reports active exclusions and support impact after a successful snapshot (#7178)", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "create" });
 
