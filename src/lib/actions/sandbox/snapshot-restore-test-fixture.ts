@@ -311,7 +311,7 @@ vi.mock("./destroy", async () => {
   >("../../onboard/runtime-provider/access");
   return {
     cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
-    removeSandboxRegistryEntry: vi.fn(),
+    removeSandboxRegistryEntry: vi.fn(() => true),
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
       runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
         sandboxName,

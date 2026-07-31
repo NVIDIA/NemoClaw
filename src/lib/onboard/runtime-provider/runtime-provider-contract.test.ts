@@ -28,6 +28,7 @@ import {
 import { registerCreatedSandbox } from "../sandbox-registration";
 import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
+import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createRuntimeProviderBundleRegistry,
   normalizeRuntimeProviderRuntimeReceipt,
@@ -350,7 +351,13 @@ describe("RuntimeProviderBundle registry contract", () => {
   });
 
   it("plans owned workload cleanup without mutating the runtime", () => {
-    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const runtimeState = { imageRemovals: 0 };
+    const docker = createDockerRuntimeProviderBundle({
+      removeImage: vi.fn(() => {
+        runtimeState.imageRemovals += 1;
+        return { status: 0 };
+      }),
+    });
     expectSupportedSurface(docker.cleanup);
     const sandbox = {
       name: "alpha",
@@ -362,10 +369,14 @@ describe("RuntimeProviderBundle registry contract", () => {
         shared: false,
       },
     } as SandboxEntry;
+    const sandboxBefore = structuredClone(sandbox);
+    const runtimeStateBefore = structuredClone(runtimeState);
 
     expect(docker.cleanup.planOwnedWorkloadCleanup({ sandbox, sandboxName: sandbox.name })).toEqual(
       { action: "block", reason: "authority-unproven" },
     );
+    expect(sandbox).toEqual(sandboxBefore);
+    expect(runtimeState).toEqual(runtimeStateBefore);
   });
 
   it("rejects capability/surface drift and duplicate operation-scoped engine identities", () => {
