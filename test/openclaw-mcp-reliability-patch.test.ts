@@ -343,21 +343,25 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
       diagnostics: [],
     };
 
+    // Scripted per-attempt results: the first startup resets in flight, the
+    // retry succeeds.
+    const scriptedResults = [
+      startFailureResult(
+        helper,
+        Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+        }),
+      ),
+      success,
+    ];
+
     const task = helper.nemoClawWithMcpStartRetry({
       serverName: "remotedocs",
       initialResolved: { transportType: "streamable-http", connectionTimeoutMs: 30_000 },
       resolveTransport: () => ({ transportType: "streamable-http", connectionTimeoutMs: 30_000 }),
       attempt: async (resolved: Record<string, unknown>) => {
         seen.push(resolved);
-        if (seen.length === 1) {
-          return startFailureResult(
-            helper,
-            Object.assign(new TypeError("fetch failed"), {
-              cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
-            }),
-          );
-        }
-        return success;
+        return scriptedResults[seen.length - 1];
       },
     });
 
@@ -543,7 +547,8 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     let catalog: unknown = degraded;
     let activeLeases = 1;
     const acquireLease = () => {
-      if (activeLeases === 0 && helper.nemoClawCatalogHasStartDiagnostics(catalog)) catalog = null;
+      const dropsCatalog = activeLeases === 0 && helper.nemoClawCatalogHasStartDiagnostics(catalog);
+      catalog = dropsCatalog ? null : catalog;
       activeLeases += 1;
     };
     acquireLease();
