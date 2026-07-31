@@ -7,20 +7,30 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const coordinatorMock = vi.hoisted(() => ({
+  coordinateManagedStartupApplication: vi.fn(),
+}));
+vi.mock("./managed-startup/coordinator", () => coordinatorMock);
+
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
 } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
 import {
+  applyManagedStartupCommandEnvironmentPlan,
+  applyManagedStartupImageProfile,
   buildManagedStartupImageActionPlan,
   MANAGED_STARTUP_MERGED_CA_FILE,
+  MANAGED_STARTUP_PROFILE_ENV,
+  MANAGED_STARTUP_RUNTIME_ENV_FILE,
   type ManagedStartupImageActionPlanInput,
   normalizeHermesManagedConfigDescriptor,
   readStableRegularFile,
   serializeManagedStartupRuntimeEnvironment,
 } from "./managed-startup/image-runtime";
 import {
+  encodeManagedStartupProfile,
   fingerprintManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
@@ -257,11 +267,20 @@ const PROXY_ENV_NAMES = [
   "https_proxy",
   "no_proxy",
 ] as const;
+const OPENCLAW_APPLICATION_RUNTIME_NAMES = [
+  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+] as const;
 
 describe("managed startup image runtime", () => {
   let temporaryDirectoryPath = "";
 
   beforeEach(() => {
+    coordinatorMock.coordinateManagedStartupApplication.mockReset();
     temporaryDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-"));
   });
   afterEach(() => {
@@ -294,6 +313,112 @@ describe("managed startup image runtime", () => {
     vi.spyOn(fs, "lstatSync").mockImplementation(((file: fs.PathLike, options: { bigint: true }) =>
       owned(realLstatSync(file, options))) as typeof fs.lstatSync);
   }
+
+  function mockRootReplayFilesystem(runtimeWrites: string[]): void {
+    const directories = new Set([
+      "/",
+      "/run",
+      "/run/nemoclaw",
+      "/var",
+      "/var/lib",
+      "/var/lib/nemoclaw",
+    ]);
+    let runtimeFileWritten = false;
+    const stat = (kind: "directory" | "file", mode: number) =>
+      ({
+        gid: 0,
+        isDirectory: () => kind === "directory",
+        isFile: () => kind === "file",
+        isSymbolicLink: () => false,
+        mode,
+        nlink: 1,
+        uid: 0,
+      }) as fs.Stats;
+    const missing = () => Object.assign(new Error("missing"), { code: "ENOENT" });
+
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((target: fs.PathLike) => {
+      const resolved = String(target);
+      if (directories.has(resolved)) return stat("directory", 0o755);
+      if (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE && runtimeFileWritten) {
+        return stat("file", 0o400);
+      }
+      throw missing();
+    }) as typeof fs.lstatSync);
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "chownSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "chmodSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "existsSync").mockReturnValue(false);
+    vi.spyOn(fs, "openSync").mockReturnValue(91);
+    vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, value) => {
+      if (target === 91) runtimeWrites.push(String(value));
+    }) as typeof fs.writeFileSync);
+    vi.spyOn(fs, "fchmodSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "fsyncSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "closeSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "renameSync").mockImplementation((_source, target) => {
+      if (String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE) runtimeFileWritten = true;
+    });
+    vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
+      throw missing();
+    });
+  }
+
+  it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const lstat = vi.spyOn(fs, "lstatSync");
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+
+    await expect(
+      applyManagedStartupImageProfile("openclaw", {
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "NaN",
+        [MANAGED_STARTUP_PROFILE_ENV]: encodeManagedStartupProfile(profile),
+      }),
+    ).rejects.toThrow(/finite positive seconds/u);
+    expect(lstat).not.toHaveBeenCalled();
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+  });
+
+  it("refreshes admitted launch controls on committed replay without changing the profile", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const runtimeWrites: string[] = [];
+    mockRootReplayFilesystem(runtimeWrites);
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+
+    const first = await applyManagedStartupImageProfile("openclaw", {
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
+    });
+    const second = await applyManagedStartupImageProfile("openclaw", {
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "5",
+      [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
+    });
+
+    expect(first).toMatchObject({ adapterApplied: false, fingerprint });
+    expect(second).toMatchObject({ adapterApplied: false, fingerprint });
+    expect(runtimeWrites).toHaveLength(2);
+    expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
+    expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
+  });
 
   it.each(
     MANAGED_STARTUP_AGENTS,
@@ -335,6 +460,13 @@ describe("managed startup image runtime", () => {
   });
 
   it("writes a deterministic root-sourced runtime environment without profile transport", () => {
+    const applicationRuntime = {
+      exportEnvironment: {
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      },
+      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+    };
     const script = serializeManagedStartupRuntimeEnvironment(
       {
         NEMOCLAW_MODEL: "model-with-'quote",
@@ -345,9 +477,13 @@ describe("managed startup image runtime", () => {
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_MODEL: "model-with-'quote",
       },
+      applicationRuntime,
     );
 
     expect(script).toContain("unset NEMOCLAW_INFERENCE_BASE_URL");
+    expect(script).toContain("unset NEMOCLAW_MINIMAL_BOOTSTRAP");
+    expect(script).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS='0.25'");
+    expect(script).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(script).toContain("export NEMOCLAW_MANAGED_STARTUP_APPLIED='1'");
     expect(script).toContain("export NEMOCLAW_MODEL='model-with-'\"'\"'quote'");
     expect(script).toContain(`export SSL_CERT_FILE='${MANAGED_STARTUP_MERGED_CA_FILE}'`);
@@ -355,6 +491,106 @@ describe("managed startup image runtime", () => {
     expect(script).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(script).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
     expect(script.endsWith("\n")).toBe(true);
+    expect(
+      serializeManagedStartupRuntimeEnvironment(
+        {
+          NEMOCLAW_MODEL: "model-with-'quote",
+          NEMOCLAW_OBSERVABILITY: "0",
+        },
+        true,
+        {
+          NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+          NEMOCLAW_MODEL: "model-with-'quote",
+        },
+        applicationRuntime,
+      ),
+    ).toBe(script);
+  });
+
+  it("validates runtime plans while removing launch-only exports and unsets from child commands", () => {
+    const ambient = {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "stale",
+      NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
+      PRESERVED: "yes",
+    };
+    const applied = applyManagedStartupCommandEnvironmentPlan(ambient, {
+      exportEnvironment: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3" },
+      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+    });
+
+    expect(applied).toEqual({
+      PRESERVED: "yes",
+    });
+    expect(ambient).toHaveProperty("NEMOCLAW_MINIMAL_BOOTSTRAP", "1");
+    expect(() =>
+      applyManagedStartupCommandEnvironmentPlan(ambient, {
+        exportEnvironment: { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
+        unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+      }),
+    ).toThrow(/both export and unset NEMOCLAW_MINIMAL_BOOTSTRAP/u);
+    expect(ambient).toHaveProperty("NEMOCLAW_MINIMAL_BOOTSTRAP", "1");
+  });
+
+  it.each([
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("removes OpenClaw launch controls and cleanup obligations from %s children and runtime", (agent) => {
+    const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile(agent), {
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "invalid-for-this-agent",
+    });
+    const ambient = {
+      ...Object.fromEntries(OPENCLAW_APPLICATION_RUNTIME_NAMES.map((name) => [name, "ambient"])),
+      NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
+      NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
+      PRESERVED: "yes",
+    };
+    const child = applyManagedStartupCommandEnvironmentPlan(ambient, mapped.applicationRuntime);
+    const script = serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      false,
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+
+    expect(child).toEqual({ PRESERVED: "yes" });
+    for (const name of [
+      ...OPENCLAW_APPLICATION_RUNTIME_NAMES,
+      "NEMOCLAW_DASHBOARD_BIND",
+      "NEMOCLAW_MINIMAL_BOOTSTRAP",
+    ]) {
+      expect(script).toContain(`unset ${name}`);
+      expect(script).not.toContain(`export ${name}=`);
+    }
+  });
+
+  it("rejects a serialized runtime export that conflicts with an explicit unset", () => {
+    expect(() =>
+      serializeManagedStartupRuntimeEnvironment(
+        { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
+        false,
+        {},
+        { exportEnvironment: {}, unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"] },
+      ),
+    ).toThrow(/runtime environment cannot both export and unset NEMOCLAW_MINIMAL_BOOTSTRAP/u);
+  });
+
+  it.each([
+    [
+      { exportEnvironment: { "BAD-NAME": "value" }, unsetEnvironment: [] },
+      /invalid application runtime environment key/u,
+    ],
+    [
+      { exportEnvironment: { VALID_NAME: "line 1\nline 2" }, unsetEnvironment: [] },
+      /must be single-line text/u,
+    ],
+    [
+      { exportEnvironment: {}, unsetEnvironment: ["DUPLICATE", "DUPLICATE"] },
+      /duplicate application runtime unset/u,
+    ],
+  ])("rejects a malformed application runtime plan before command mutation", (plan, message) => {
+    const ambient = { PRESERVED: "yes" };
+    expect(() => applyManagedStartupCommandEnvironmentPlan(ambient, plan)).toThrow(message);
+    expect(ambient).toEqual({ PRESERVED: "yes" });
   });
 
   it.each(["openclaw", "hermes"] as const)("preserves launch-only proxy env for %s", (agent) => {
