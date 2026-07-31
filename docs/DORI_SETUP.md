@@ -10,6 +10,11 @@ Before inspecting or installing private components, ask the user to confirm that
 If the user does not confirm access, stop this setup and use the checked-in [Writing Style Guide](AGENTS.md#writing-style-guide).
 Access confirmation does not approve installation or host configuration.
 
+Use these internal sources for the current installation and registration instructions:
+
+- [NVIDIA Skill Library](https://gitlab-master.nvidia.com/tech-docs/skill-library) contains documentation-focused Agent Skills and guidance for installing them with DORI and other supported hosts.
+- [NVIDIA Template Library](https://gitlab-master.nvidia.com/tech-docs/template-library) contains reusable documentation templates and guidance for installing its template skills with DORI.
+
 ## Inspect the Environment
 
 1. Check for DORI MCP tools.
