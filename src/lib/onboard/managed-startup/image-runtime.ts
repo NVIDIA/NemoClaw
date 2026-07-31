@@ -19,10 +19,24 @@ import {
 } from "./coordinator";
 import {
   decodeManagedStartupProfile,
+  fingerprintManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupProfile,
 } from "./profile";
+import {
+  MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES,
+  type ManagedStartupRootApplyRequest,
+  parseManagedStartupRootApplyRequest,
+  selectManagedStartupApplicationRuntimeEnvironment,
+} from "./root-apply";
+import {
+  beginManagedStartupSharedStateTransaction,
+  commitManagedStartupSharedStateTransaction,
+  MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+  rollbackManagedStartupSharedStateTransaction,
+} from "./shared-state-transaction";
 import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
 
 export { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
@@ -30,6 +44,7 @@ export const MANAGED_STARTUP_RUNTIME_ENV_FILE = "/run/nemoclaw/managed-startup-r
 export const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
   "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 export const MANAGED_STARTUP_MERGED_CA_FILE = "/run/nemoclaw/managed-startup-ca-bundle.pem";
+export const MANAGED_STARTUP_COMPLETION_FILE = "/run/nemoclaw/managed-startup-complete.json";
 
 const MANAGED_STARTUP_CORPORATE_CA_FILE = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const MESSAGING_RUNTIME_PLAN_FILE = "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -43,6 +58,9 @@ const HERMES_MANAGED_CONFIG_FILES = [
 ] as const;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
+const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
+const MAX_MANAGED_STARTUP_COMPLETION_BYTES = 4096;
+const MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES = 512 * 1024;
 
 export type ManagedStartupImageIdentity = "root" | "sandbox";
 export type ManagedStartupMessagingAgent = "openclaw" | "hermes";
@@ -108,6 +126,18 @@ export interface ManagedStartupImageApplyResult {
   readonly adapterApplied: boolean;
   readonly fingerprint: string;
   readonly runtimeEnvironmentFile: string;
+}
+
+export interface ManagedStartupRootApplyResult extends ManagedStartupImageApplyResult {
+  readonly transactionPending: boolean;
+}
+
+export interface ManagedStartupCompletionMarker {
+  readonly schemaVersion: typeof MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION;
+  readonly agent: ManagedStartupAgent;
+  readonly profileFingerprint: string;
+  readonly runtimeEnvironmentSha256: string;
+  readonly corporateCaMerged: boolean;
 }
 
 export class ManagedStartupImageActionPlanError extends Error {
@@ -213,6 +243,24 @@ function exactAgent(value: string): ManagedStartupAgent {
     return value as ManagedStartupAgent;
   }
   return fail(`unsupported agent ${JSON.stringify(value)}`);
+}
+
+function managedTransactionProfile(
+  expectedAgentInput: string,
+  env: Environment = process.env,
+): ManagedStartupProfile {
+  requireRoot();
+  const expectedAgent = exactAgent(expectedAgentInput);
+  if (env.NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION !== "1") {
+    fail("shared-state transactions require a complete managed image");
+  }
+  const encodedProfile = env[MANAGED_STARTUP_PROFILE_ENV];
+  if (!encodedProfile) fail(`${MANAGED_STARTUP_PROFILE_ENV} is required`);
+  const profile = decodeManagedStartupProfile(encodedProfile);
+  if (profile.agent !== expectedAgent) {
+    fail(`shared-state transaction profile targets ${profile.agent}, expected ${expectedAgent}`);
+  }
+  return profile;
 }
 
 function requireRoot(): void {
@@ -993,6 +1041,28 @@ export function serializeManagedStartupRuntimeEnvironment(
     unsetEnvironment: [],
   },
 ): string {
+  const { output, unsetNames } = materializeManagedStartupRuntimeEnvironment(
+    environment,
+    corporateCaMerged,
+    configurationEnvironment,
+    applicationRuntime,
+  );
+  const unsetLines = unsetNames.map((name) => `unset ${name}`);
+  const exportLines = Object.entries(output)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `export ${name}=${shellSingleQuote(value)}`);
+  return `${[...unsetLines, ...exportLines].join("\n")}\n`;
+}
+
+function materializeManagedStartupRuntimeEnvironment(
+  environment: Readonly<Record<string, string>>,
+  corporateCaMerged: boolean,
+  configurationEnvironment: Readonly<Record<string, string>> = {},
+  applicationRuntime: ManagedStartupApplicationRuntimePlan = {
+    exportEnvironment: {},
+    unsetEnvironment: [],
+  },
+): { output: Record<string, string>; unsetNames: string[] } {
   const validatedApplicationRuntime =
     validateManagedStartupApplicationRuntimePlan(applicationRuntime);
   const output: Record<string, string> = {
@@ -1012,6 +1082,11 @@ export function serializeManagedStartupRuntimeEnvironment(
     }
     output._NEMOCLAW_CORPORATE_CA_MERGED = "1";
   }
+  for (const name of [...Object.keys(configurationEnvironment), ...Object.keys(output)]) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+      fail(`invalid runtime environment key ${JSON.stringify(name)}`);
+    }
+  }
   const unsetNames = new Set([
     ...Object.keys(configurationEnvironment).filter((name) => !Object.hasOwn(output, name)),
     ...validatedApplicationRuntime.unsetEnvironment,
@@ -1021,21 +1096,146 @@ export function serializeManagedStartupRuntimeEnvironment(
       fail(`runtime environment cannot both export and unset ${name}`);
     }
   }
-  const unsetLines = [...unsetNames].sort().map((name) => {
+  for (const name of unsetNames) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
       fail(`invalid runtime environment key ${JSON.stringify(name)}`);
     }
-    return `unset ${name}`;
-  });
-  const exportLines = Object.entries(output)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
-        fail(`invalid runtime environment key ${JSON.stringify(name)}`);
+  }
+  return { output, unsetNames: [...unsetNames].sort() };
+}
+
+export function serializeManagedStartupCompletionMarker(
+  marker: ManagedStartupCompletionMarker,
+): string {
+  if (
+    marker.schemaVersion !== MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(marker.agent) ||
+    !SHA256_RE.test(marker.profileFingerprint) ||
+    !SHA256_RE.test(marker.runtimeEnvironmentSha256) ||
+    typeof marker.corporateCaMerged !== "boolean"
+  ) {
+    fail("managed startup completion marker is invalid");
+  }
+  return `${JSON.stringify({
+    agent: marker.agent,
+    corporateCaMerged: marker.corporateCaMerged,
+    profileFingerprint: marker.profileFingerprint,
+    runtimeEnvironmentSha256: marker.runtimeEnvironmentSha256,
+    schemaVersion: marker.schemaVersion,
+  })}\n`;
+}
+
+function parseManagedStartupCompletionMarker(text: string): ManagedStartupCompletionMarker {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    fail("managed startup completion marker is not valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    fail("managed startup completion marker must be an object");
+  }
+  const record = parsed as Record<string, unknown>;
+  const expectedKeys = [
+    "agent",
+    "corporateCaMerged",
+    "profileFingerprint",
+    "runtimeEnvironmentSha256",
+    "schemaVersion",
+  ];
+  if (
+    Object.keys(record).sort().join(",") !== expectedKeys.sort().join(",") ||
+    record.schemaVersion !== MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION ||
+    typeof record.agent !== "string" ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(record.agent) ||
+    typeof record.profileFingerprint !== "string" ||
+    !SHA256_RE.test(record.profileFingerprint) ||
+    typeof record.runtimeEnvironmentSha256 !== "string" ||
+    !SHA256_RE.test(record.runtimeEnvironmentSha256) ||
+    typeof record.corporateCaMerged !== "boolean"
+  ) {
+    fail("managed startup completion marker has an invalid schema");
+  }
+  const marker = {
+    schemaVersion: MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
+    agent: record.agent as ManagedStartupAgent,
+    profileFingerprint: record.profileFingerprint,
+    runtimeEnvironmentSha256: record.runtimeEnvironmentSha256,
+    corporateCaMerged: record.corporateCaMerged,
+  } as const;
+  if (serializeManagedStartupCompletionMarker(marker) !== text) {
+    fail("managed startup completion marker is not canonical");
+  }
+  return marker;
+}
+
+export function verifyManagedStartupImageCompletion(
+  expectedAgentInput: string,
+  expectedFingerprint: string,
+  completionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
+  runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
+): { readonly agent: ManagedStartupAgent; readonly fingerprint: string } {
+  const expectedAgent = exactAgent(expectedAgentInput);
+  if (!SHA256_RE.test(expectedFingerprint)) {
+    fail("startup completion expected profile fingerprint is invalid");
+  }
+  const { bytes, stat } = readStableRegularFileSnapshot(
+    completionFile,
+    MAX_MANAGED_STARTUP_COMPLETION_BYTES,
+  );
+  if (
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o444
+  ) {
+    fail("managed startup completion marker must be root:root mode 0444");
+  }
+  const marker = parseManagedStartupCompletionMarker(bytes.toString("utf8"));
+  if (marker.agent !== expectedAgent || marker.profileFingerprint !== expectedFingerprint) {
+    fail("managed startup completion marker does not match the requested profile");
+  }
+  const runtimeEnvironment = readStableRegularFileSnapshot(
+    runtimeEnvironmentFile,
+    MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES,
+  );
+  if (
+    runtimeEnvironment.stat.nlink !== 1n ||
+    runtimeEnvironment.stat.uid !== 0n ||
+    runtimeEnvironment.stat.gid !== 0n ||
+    Number(runtimeEnvironment.stat.mode & 0o777n) !== 0o444
+  ) {
+    fail("managed startup runtime environment must be root:root mode 0444");
+  }
+  const runtimeEnvironmentSha256 = createHash("sha256")
+    .update(runtimeEnvironment.bytes)
+    .digest("hex");
+  if (runtimeEnvironmentSha256 !== marker.runtimeEnvironmentSha256) {
+    fail("managed startup completion marker runtime environment digest mismatch");
+  }
+  return { agent: expectedAgent, fingerprint: expectedFingerprint };
+}
+
+export function waitForManagedStartupImageCompletion(
+  expectedAgentInput: string,
+  expectedFingerprint: string,
+  timeoutSeconds = 600,
+): { readonly agent: ManagedStartupAgent; readonly fingerprint: string } {
+  if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3600) {
+    fail("startup completion wait timeout must be an integer from 1 to 3600 seconds");
+  }
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (true) {
+    try {
+      return verifyManagedStartupImageCompletion(expectedAgentInput, expectedFingerprint);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (Date.now() >= deadline) {
+        fail(`startup completion was not published within ${String(timeoutSeconds)} seconds`);
       }
-      return `export ${name}=${shellSingleQuote(value)}`;
-    });
-  return `${[...unsetLines, ...exportLines].join("\n")}\n`;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+  }
 }
 
 function applyAdapter(
@@ -1168,15 +1368,29 @@ export async function applyManagedStartupImageProfile(
     }
     corporateCaMerged = mergeCorporateCa(result.application.corporateCaPath);
   }
+  const runtimeEnvironment = serializeManagedStartupRuntimeEnvironment(
+    mapped.runtimeEnvironment,
+    corporateCaMerged,
+    mapped.configurationEnvironment,
+    mapped.applicationRuntime,
+  );
+  // This handoff is intentionally readable by the sandbox account only after
+  // the root-owned completion marker authenticates its exact digest. It
+  // contains the secret-free mapped profile environment, never provider
+  // credentials or the raw corporate-CA transport.
+  atomicWriteRootFile(MANAGED_STARTUP_RUNTIME_ENV_FILE, runtimeEnvironment, 0o444);
   atomicWriteRootFile(
-    MANAGED_STARTUP_RUNTIME_ENV_FILE,
-    serializeManagedStartupRuntimeEnvironment(
-      mapped.runtimeEnvironment,
+    MANAGED_STARTUP_COMPLETION_FILE,
+    serializeManagedStartupCompletionMarker({
+      schemaVersion: MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
+      agent: expectedAgent,
+      profileFingerprint: result.application.fingerprint,
+      runtimeEnvironmentSha256: createHash("sha256")
+        .update(runtimeEnvironment, "utf8")
+        .digest("hex"),
       corporateCaMerged,
-      mapped.configurationEnvironment,
-      mapped.applicationRuntime,
-    ),
-    0o400,
+    }),
+    0o444,
   );
   return {
     agent: expectedAgent,
@@ -1184,6 +1398,72 @@ export async function applyManagedStartupImageProfile(
     fingerprint: result.application.fingerprint,
     runtimeEnvironmentFile: MANAGED_STARTUP_RUNTIME_ENV_FILE,
   };
+}
+
+function completionAlreadyPublished(request: ManagedStartupRootApplyRequest): boolean {
+  try {
+    verifyManagedStartupImageCompletion(request.agent, request.profileFingerprint);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export async function applyManagedStartupRootRequest(
+  request: ManagedStartupRootApplyRequest,
+  env: Environment = process.env,
+): Promise<ManagedStartupRootApplyResult> {
+  requireRoot();
+  const profile = decodeManagedStartupProfile(request.encodedProfile);
+  if (
+    profile.agent !== request.agent ||
+    fingerprintManagedStartupProfile(profile) !== request.profileFingerprint
+  ) {
+    fail("root application request identity does not match its profile");
+  }
+  const imageEnvironment = {
+    HOME: "/root",
+    PATH: FIXED_PATH,
+    NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+    ...selectManagedStartupApplicationRuntimeEnvironment(env),
+    [MANAGED_STARTUP_PROFILE_ENV]: request.encodedProfile,
+    ...(request.corporateCaB64 === null
+      ? {}
+      : { [MANAGED_STARTUP_CA_ENV]: request.corporateCaB64 }),
+  };
+  // Validate launch controls before completion inspection or transaction
+  // mutation. A completed same-profile replay must still be allowed to refresh
+  // these non-fingerprinted application-runtime values.
+  mapManagedStartupProfileToAgentEnvironment(profile, imageEnvironment);
+  const alreadyPublished = completionAlreadyPublished(request);
+  if (!alreadyPublished) {
+    ensureRootOwnedDirectory(ROOT_STATE_PARENT);
+    beginManagedStartupSharedStateTransaction(profile);
+  }
+  const result = await applyManagedStartupImageProfile(request.agent, imageEnvironment);
+  return { ...result, transactionPending: !alreadyPublished };
+}
+
+function readBoundedRootApplyStdin(): string {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const chunk = Buffer.alloc(16 * 1024);
+    const read = fs.readSync(0, chunk, 0, chunk.length, null);
+    if (read === 0) break;
+    total += read;
+    if (total > MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES) {
+      fail("root application stdin exceeds its bounded transport");
+    }
+    chunks.push(chunk.subarray(0, read));
+  }
+  const bytes = Buffer.concat(chunks, total);
+  const text = bytes.toString("utf8");
+  if (text.includes("\0") || !Buffer.from(text, "utf8").equals(bytes)) {
+    fail("root application stdin must be valid UTF-8 without NUL bytes");
+  }
+  return text;
 }
 
 function writeSandboxFileAtomically(target: string, contents: string, mode: number): void {
@@ -1250,10 +1530,20 @@ function internalWriteHermesCompatHash(): void {
   writeSandboxFileAtomically("/sandbox/.hermes/.config-hash", decoded.toString("utf8"), 0o640);
 }
 
-function readCliAgent(argv: readonly string[]): string {
+function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
-  if (index < 0 || index + 1 >= argv.length || argv.length !== 2) {
-    fail("usage: managed-startup-image-runtime --agent <agent>");
+  if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
+    fail(
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction] --agent <agent>",
+    );
+  }
+  return argv[index + 1] as string;
+}
+
+function readCliFingerprint(argv: readonly string[]): string {
+  const index = argv.indexOf("--profile-fingerprint");
+  if (index < 0 || index + 1 >= argv.length) {
+    fail("managed startup profile fingerprint argument is missing");
   }
   return argv[index + 1] as string;
 }
@@ -1265,6 +1555,66 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
   if (argv.length === 1 && argv[0] === "--internal-write-hermes-compat-hash") {
     internalWriteHermesCompatHash();
+    return;
+  }
+  if (argv.length === 3 && argv[0] === "--apply-root-stdin") {
+    const expectedAgent = exactAgent(readCliAgent(argv, 3));
+    const request = parseManagedStartupRootApplyRequest(readBoundedRootApplyStdin());
+    if (request.agent !== expectedAgent) {
+      fail(`root application request targets ${request.agent}, expected ${expectedAgent}`);
+    }
+    const result = await applyManagedStartupRootRequest(request);
+    console.log(
+      result.transactionPending
+        ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
+        : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
+    );
+    return;
+  }
+  if (
+    argv.length === 5 &&
+    (argv[0] === "--verify-completion" || argv[0] === "--wait-for-completion")
+  ) {
+    const agent = readCliAgent(argv, 5);
+    const fingerprint = readCliFingerprint(argv);
+    const result =
+      argv[0] === "--wait-for-completion"
+        ? waitForManagedStartupImageCompletion(agent, fingerprint)
+        : verifyManagedStartupImageCompletion(agent, fingerprint);
+    console.log(
+      `[managed-startup] verified ${result.agent} profile ${result.fingerprint} completion`,
+    );
+    return;
+  }
+  if (argv.length === 3 && argv[0] === "--begin-shared-state-transaction") {
+    const profile = managedTransactionProfile(readCliAgent(argv, 3));
+    ensureRootOwnedDirectory(ROOT_STATE_PARENT);
+    const created = beginManagedStartupSharedStateTransaction(profile);
+    process.stdout.write(created ? "created\n" : "pending\n");
+    return;
+  }
+  if (
+    argv.length === 4 &&
+    argv[0] === "--rollback-shared-state-transaction" &&
+    argv[3] === "--read-only-receipt"
+  ) {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 4));
+    const rolledBack = rollbackManagedStartupSharedStateTransaction(agent, {
+      transactionDirectory: MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+      readOnlyReceipt: true,
+    });
+    if (!rolledBack) fail("read-only shared-state rollback receipt is missing");
+    console.log(`[managed-startup] verified and restored ${agent} shared state`);
+    return;
+  }
+  if (argv.length === 3 && argv[0] === "--commit-shared-state-transaction") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 3));
+    if (!commitManagedStartupSharedStateTransaction(agent)) {
+      fail("managed startup transaction is missing at commit");
+    }
+    console.log(`[managed-startup] committed ${agent} shared state`);
     return;
   }
   const result = await applyManagedStartupImageProfile(readCliAgent(argv));
