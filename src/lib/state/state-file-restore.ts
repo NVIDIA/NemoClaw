@@ -97,7 +97,7 @@ export function buildStateFileRestoreCommand(
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
     'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
     'cat > "$tmp"',
-    'chmod 640 "$tmp"',
+    `chmod ${refreshOpenClawConfigHash ? "660" : "640"} "$tmp"`,
   ];
 
   if (refreshOpenClawConfigHash) {
