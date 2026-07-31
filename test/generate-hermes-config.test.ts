@@ -735,7 +735,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
-  it("keeps generated and inference-switch Hermes proxy placeholders in sync", () => {
+  it("keeps generated and inference-switch Hermes proxy rewrite sentinels in sync", () => {
     const { config } = runConfigScript();
 
     expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);

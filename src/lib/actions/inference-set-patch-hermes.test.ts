@@ -66,7 +66,7 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.terminal).toEqual({ backend: "local" });
   });
 
-  it("replaces stale Hermes API keys with the OpenShell proxy placeholder", () => {
+  it("replaces stale Hermes API keys with the OpenShell proxy rewrite sentinel", () => {
     for (const api_key of ["no-key-required", "sk-real-looking-key-that-must-not-survive"]) {
       const config: ConfigObject = {
         model: {
