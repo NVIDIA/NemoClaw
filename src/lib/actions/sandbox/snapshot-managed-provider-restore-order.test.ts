@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  type ShippedManagedImageAgent,
+} from "../../onboard/managed-image/contract";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 
 import * as fixture from "./snapshot-restore-test-fixture";
 
@@ -61,6 +70,7 @@ const providerRestore = vi.hoisted(() => {
 });
 
 vi.mock("./snapshot/dependencies", () => ({
+  backupSandboxStateWithManagedAuthority: vi.fn(),
   captureSandboxRuntimeSnapshot: vi.fn(),
   confirmSandboxRuntimeRestore: providerRestore.confirmSandboxRuntimeRestore,
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
@@ -70,13 +80,32 @@ vi.mock("./snapshot/dependencies", () => ({
   requireCurrentSnapshotRuntimeProvider: providerRestore.requireCurrentSnapshotRuntimeProvider,
 }));
 
-function managedSnapshot() {
+function managedWorkload(agent: ShippedManagedImageAgent = "openclaw") {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile(agent));
+  return {
+    schemaVersion: 1 as const,
+    kind: "managed-image" as const,
+    reference: `${MANAGED_IMAGE_REPOSITORIES[agent]}@sha256:${"a".repeat(64)}`,
+    platform: "linux/amd64" as const,
+    release: "v0.0.100",
+    sourceRevision: "b".repeat(40),
+    sourceCohort: "ghrun-123-1",
+    capabilityContractVersion: 1 as const,
+    startupProfileContractVersion: 1 as const,
+    encodedProfile,
+    startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+    credentialProxyReplayRequired: false,
+    shared: true as const,
+  };
+}
+
+function managedSnapshot(agent: ShippedManagedImageAgent = "openclaw") {
   return {
     snapshotVersion: 4,
     timestamp: "2026-07-30T00:00:00.000Z",
     backupPath: "/tmp/backup-alpha",
-    agentType: "openclaw",
-    workload: { kind: "managed-image" },
+    agentType: agent,
+    workload: managedWorkload(agent),
     runtimeSnapshot: providerRestore.source,
   };
 }
@@ -95,7 +124,19 @@ beforeEach(() => {
     agent: "openclaw",
     openshellDriver: "docker",
   });
-  fixture.restoreSandboxStateMock.mockImplementation(() => {
+  fixture.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
+    try {
+      options?.validateBeforeMutation?.();
+    } catch (error) {
+      return {
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["workspace"],
+        failedFiles: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     providerRestore.events.push("filesystem-restore");
     return {
       success: true,
@@ -113,7 +154,24 @@ afterEach(() => {
 });
 
 describe("managed snapshot provider restore ordering", () => {
-  it("refreshes provider authority at the mutation edge and proves the profile afterward", async () => {
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("refreshes %s provider authority at the mutation edge and proves the profile", async (agent) => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent,
+      openshellDriver: "docker",
+    });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({ agent });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent,
+        profileFingerprint: "a".repeat(64),
+      },
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
@@ -155,7 +213,11 @@ describe("managed snapshot provider restore ordering", () => {
     });
 
     expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
-    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(fixture.restoreSandboxStateMock).toHaveBeenCalledWith(
+      "alpha",
+      "/tmp/backup-alpha",
+      expect.objectContaining({ validateBeforeMutation: expect.any(Function) }),
+    );
     expect(providerRestore.confirmSandboxRuntimeRestore).not.toHaveBeenCalled();
   });
 });
@@ -178,7 +240,7 @@ describe("legacy snapshot compatibility gate", () => {
       name: "alpha",
       agent: "openclaw",
       openshellDriver: "docker",
-      workload: { kind: "managed-image" },
+      workload: managedWorkload(),
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -204,7 +266,7 @@ describe("legacy snapshot compatibility gate", () => {
           agent: "openclaw",
           openshellDriver: "docker",
           imageTag: "legacy-source:test",
-          ...(managedSide === "source" ? { workload: { kind: "managed-image" } } : {}),
+          ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
         };
       }
       if (name === "beta" && managedSide === "destination") {
@@ -213,7 +275,7 @@ describe("legacy snapshot compatibility gate", () => {
           agent: "openclaw",
           openshellDriver: "docker",
           imageTag: "managed-target@test",
-          workload: { kind: "managed-image" },
+          workload: managedWorkload(),
         };
       }
       return null;

@@ -12,6 +12,7 @@ import {
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
+import * as snapshotBackup from "./snapshot/backup-authority";
 
 /** Read a registered sandbox's OpenShell driver, treating registry read
  * failure as unknown so callers fail closed on driver-gated decisions. */
@@ -182,7 +183,14 @@ interface BackupRetryDeps {
 }
 
 const defaultBackupRetryDeps: BackupRetryDeps = {
-  backup: (name) => sandboxState.backupSandboxState(name),
+  backup: (name) =>
+    snapshotBackup.backupSandboxStateWithManagedAuthority(
+      name,
+      {},
+      {
+        getSandbox: registry.getSandbox,
+      },
+    ),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   attempts: 5,
   delayMs: 2000,

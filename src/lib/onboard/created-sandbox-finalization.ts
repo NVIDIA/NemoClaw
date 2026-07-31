@@ -6,6 +6,7 @@ import type {
   OpenClawManagedExtensionDiscoveryResult,
 } from "../state/openclaw-plugin-restore";
 import {
+  MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
   OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
@@ -90,6 +91,16 @@ export function finalizeCreatedSandbox(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
+      if (restore.error === MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR) {
+        deps.error(
+          `  Managed snapshot restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
+        );
+        deps.error("  State was not restored and registry metadata was not updated.");
+        deps.error("  Remove the unregistered sandbox before retrying:");
+        deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+        deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
+        return deps.exitProcess(1);
+      }
       if (restore.error === OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR) {
         deps.error(
           `  OpenClaw image plugin provenance validation failed for sandbox '${options.sandboxName}': ${restore.error}`,

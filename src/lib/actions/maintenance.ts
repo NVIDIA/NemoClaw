@@ -22,6 +22,7 @@ import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../runtime-recovery";
+import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
@@ -37,6 +38,7 @@ import {
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
+import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -198,7 +200,7 @@ export async function backupAll(): Promise<void> {
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
   const strandedOrphans: string[] = [];
-  for (const sb of sandboxes) {
+  const backupRegisteredSandbox = async (sb: (typeof sandboxes)[number]): Promise<void> => {
     // A registered docker-driver sandbox whose container is merely stopped is
     // backupable: start it for the duration of the backup and return it to
     // its stopped state after (#6500). Anything else that is not Ready keeps
@@ -211,12 +213,12 @@ export async function backupAll(): Promise<void> {
           // Tracked separately from `skipped` so the strict gate stays
           // untripped: there is nothing to back up and nothing to start.
           strandedOrphans.push(sb.name);
-          continue;
+          return;
         }
         console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
         skipped++;
         notRunningSkipped++;
-        continue;
+        return;
       }
       console.log(`  Starting stopped sandbox '${sb.name}' to back it up...`);
     }
@@ -229,7 +231,13 @@ export async function backupAll(): Promise<void> {
       const attempt = await backupSandboxWithinShieldsWindow(sb.name, () =>
         startedForBackup
           ? backupStartedSandboxState(sb.name)
-          : sandboxState.backupSandboxState(sb.name),
+          : snapshotBackup.backupSandboxStateWithManagedAuthority(
+              sb.name,
+              {},
+              {
+                getSandbox: registry.getSandbox,
+              },
+            ),
       );
       result = attempt.result;
       orphanManifestMessage = attempt.orphanManifestMessage;
@@ -248,17 +256,17 @@ export async function backupAll(): Promise<void> {
     }
     if (!returnedToStopped) {
       failed++;
-      continue;
+      return;
     }
     if (!shieldsWindowOpened) {
       console.error(`  ${RD}✗${R} ${sb.name}: backup failed (could not safely unlock shields)`);
       failed++;
-      continue;
+      return;
     }
     if (orphanManifestMessage) {
       console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${orphanManifestMessage}`);
       skipped++;
-      continue;
+      return;
     }
     if (!result) throw new Error(`Backup for '${sb.name}' completed without a result`);
     if (result.success) {
@@ -273,7 +281,7 @@ export async function backupAll(): Promise<void> {
             `  ${YW}⚠${R} Skipped '${sb.name}' (running but SSH-unreachable; NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 set). Any uncommitted state since the last successful backup will be lost.`,
           );
           skipped++;
-          continue;
+          return;
         }
         unreachableRunning++;
       }
@@ -284,6 +292,9 @@ export async function backupAll(): Promise<void> {
       console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
       failed++;
     }
+  };
+  for (const sb of sandboxes) {
+    await withSandboxMutationLock(sb.name, () => backupRegisteredSandbox(sb));
   }
   // The classification above is only as fresh as the pre-loop listing, and
   // the backup loop can run for minutes. Confirm with a second pinned listing

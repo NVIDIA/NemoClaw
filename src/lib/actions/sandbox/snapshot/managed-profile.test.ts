@@ -74,6 +74,7 @@ function provider(accepted = true, managedProfileRestore = true): RuntimeProvide
     snapshot: {
       providerId: "mxc",
       supported: true,
+      contractVersion: 1,
       capabilities: {
         backup: true,
         restore: true,

@@ -107,6 +107,11 @@ export type OpenShellDockerSandboxRuntimeSnapshotQuery =
       deviceRequests: OpenShellDockerDeviceRequest[] | null;
       devices: OpenShellDockerDeviceMapping[] | null;
       runtime: string;
+      /**
+       * Exact allowlisted NVIDIA Container Runtime selector. Other container
+       * environment entries are deliberately never returned by this query.
+       */
+      nvidiaVisibleDevices: string | null;
       /** Closed-world classification of host-owned Docker GPU configuration. */
       nativeGpuAttachmentState: OpenShellDockerGpuAttachmentState;
       containerId: string;
@@ -196,9 +201,9 @@ function classifyGpuAttachment(
   deviceRequests: OpenShellDockerDeviceRequest[] | null,
   devices: OpenShellDockerDeviceMapping[] | null,
   runtime: string,
+  nvidiaVisibleDevices: string | null,
 ): OpenShellDockerGpuAttachmentState {
   const normalizedRuntime = runtime.trim().toLowerCase();
-  if (normalizedRuntime === "nvidia") return "present";
   if (
     deviceRequests?.some(
       (request) =>
@@ -210,6 +215,10 @@ function classifyGpuAttachment(
     )
   ) {
     return "present";
+  }
+  if (normalizedRuntime === "nvidia") {
+    if (nvidiaVisibleDevices === null) return "unknown";
+    return ["", "none", "void"].includes(nvidiaVisibleDevices) ? "absent" : "present";
   }
   if (
     devices?.some(
@@ -226,6 +235,45 @@ function classifyGpuAttachment(
     normalizedRuntime,
   );
   return noDeviceRequests && noDeviceMappings && knownNonGpuRuntime ? "absent" : "unknown";
+}
+
+function parseNvidiaVisibleDevices(result: {
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+  status?: number | null;
+}): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (Number(result.status ?? 1) !== 0) {
+    return {
+      ok: false,
+      error:
+        commandResultText(result) || "docker inspect could not read NVIDIA_VISIBLE_DEVICES safely",
+    };
+  }
+  const lines = String(result.stdout ?? "")
+    .split(/\r?\n/u)
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return { ok: true, value: null };
+  if (lines.length !== 1 || !lines[0]?.startsWith("NVIDIA_VISIBLE_DEVICES=")) {
+    return { ok: false, error: "docker inspect returned ambiguous NVIDIA_VISIBLE_DEVICES" };
+  }
+  const value = lines[0].slice("NVIDIA_VISIBLE_DEVICES=".length);
+  const identifiers = value.split(",");
+  const validKeyword = ["", "all", "none", "void"].includes(value);
+  const validIdentifiers =
+    !validKeyword &&
+    identifiers.length > 0 &&
+    identifiers.length <= 64 &&
+    identifiers.every(
+      (identifier) =>
+        !["all", "none", "void"].includes(identifier) &&
+        /^[A-Za-z0-9._:/=-]{1,256}$/u.test(identifier) &&
+        Buffer.byteLength(identifier, "utf8") <= 256,
+    ) &&
+    new Set(identifiers).size === identifiers.length;
+  if (!validKeyword && !validIdentifiers) {
+    return { ok: false, error: "docker inspect returned invalid NVIDIA_VISIBLE_DEVICES" };
+  }
+  return { ok: true, value };
 }
 
 /**
@@ -295,6 +343,28 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   const deviceRequests = fields[3];
   const devices = fields[4];
   const runtime = fields[5];
+  let nvidiaVisibleDevices: string | null = null;
+  if (runtime.trim().toLowerCase() === "nvidia") {
+    const visibleDevices = parseNvidiaVisibleDevices(
+      run(
+        [
+          "inspect",
+          "--type",
+          "container",
+          "--format",
+          '{{range .Config.Env}}{{if eq (index (split . "=") 0) "NVIDIA_VISIBLE_DEVICES"}}{{println .}}{{end}}{{end}}',
+          containerId,
+        ],
+        {
+          ignoreError: true,
+          suppressOutput: true,
+          timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+        },
+      ),
+    );
+    if (!visibleDevices.ok) return visibleDevices;
+    nvidiaVisibleDevices = visibleDevices.value;
+  }
   return {
     ok: true,
     imageId: fields[0].toLowerCase(),
@@ -303,7 +373,13 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
     deviceRequests,
     devices,
     runtime,
-    nativeGpuAttachmentState: classifyGpuAttachment(deviceRequests, devices, runtime),
+    nvidiaVisibleDevices,
+    nativeGpuAttachmentState: classifyGpuAttachment(
+      deviceRequests,
+      devices,
+      runtime,
+      nvidiaVisibleDevices,
+    ),
     containerId,
   };
 }

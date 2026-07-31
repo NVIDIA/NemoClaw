@@ -4,6 +4,7 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
@@ -339,8 +340,13 @@ function validateBootstrapSurface(surface: Record<string, unknown>): void {
   }
 }
 
-function validateSnapshotSurface(surface: Record<string, unknown>): void {
+function validateSnapshotSurface(providerId: string, surface: Record<string, unknown>): void {
   if (surface.supported === true) {
+    if (surface.contractVersion !== RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION) {
+      throw new RuntimeProviderRegistrationError(
+        `snapshot for '${providerId}' has an unsupported contract version`,
+      );
+    }
     const capabilities = requireOwnRecord(surface, "capabilities");
     for (const capability of ["backup", "restore", "managedProfileRestore"] as const) {
       requireBoolean(capabilities, capability, "snapshot capabilities");
@@ -349,6 +355,11 @@ function validateSnapshotSurface(surface: Record<string, unknown>): void {
     requireFunction(surface, "capture", "snapshot");
     requireFunction(surface, "validateRestore", "snapshot");
     requireFunction(surface, "restore", "snapshot");
+    if (capabilities.managedProfileRestore === true && capabilities.restore !== true) {
+      throw new RuntimeProviderRegistrationError(
+        `snapshot for '${providerId}' cannot restore managed profiles without restore support`,
+      );
+    }
   }
 }
 
@@ -417,7 +428,7 @@ function validateSupportedSurfaceSchemas(
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
   validateBootstrapSurface(surfaces.bootstrap);
-  validateSnapshotSurface(surfaces.snapshot);
+  validateSnapshotSurface(providerId, surfaces.snapshot);
   validateRecoverySurface(surfaces.recovery);
   validateCleanupSurface(surfaces.cleanup);
   validateContainerEngineSurface(providerId, surfaces.containerEngine);
@@ -682,7 +693,8 @@ export function normalizeRuntimeProviderSnapshotPreflightReceipt(
     !isPlainRecord(value) ||
     value.schemaVersion !== RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION ||
     !validProviderId(value.providerId) ||
-    !SNAPSHOT_OPERATIONS.has(String(value.operation)) ||
+    typeof value.operation !== "string" ||
+    !SNAPSHOT_OPERATIONS.has(value.operation) ||
     !boundedString(value.sandboxName, 512) ||
     !boundedString(value.providerHandle, MAX_RECEIPT_HANDLE_BYTES) ||
     !SNAPSHOT_LIFECYCLE_STATES.has(value.lifecycleState as RuntimeProviderSnapshotLifecycleState) ||
