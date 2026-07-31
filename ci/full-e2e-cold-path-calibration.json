@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each baseline budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget. The separate validation adjustment records four existing full-e2e job observations from three descendant heads after f62c278bd737f4f47be2e85436f65b270d5b4280 added the reviewed WeChat runtime graph to the supported sandbox image. The relevant image-building inputs listed in imageInputPaths were unchanged through 2adc8481ff3053a5a7be37d130cb183e222934ff; repository tests enforce that ancestry and unchanged-input boundary. All four jobs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn; two exceeded the prior root-start and/or sandbox-phase caps. The conclusion fields record the full-e2e job conclusions, not aggregate workflow conclusions. The adjustment raises only those two caps from the maximum observed value plus the existing headroom, rounded up to one second. This is a bounded post-change validation adjustment, not a replacement five-run single-SHA calibration. Retire it by replacing the baseline and removing validationAdjustment after five successful full-e2e samples from one SHA that contains the image change. The authoritative-local-build adjustment records functional PR runs that emitted the required local base-build reason. The latest observation covers the longer source build required when reviewed native security packages change. Its allowance is the maximum excess over the normal root-start or sandbox-phase budget plus an operator-selected stability floor of 27 seconds (or 10 percent, if larger), rounded up to one second. It applies only when that reason is observed and does not alter published-image budgets.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each baseline budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget. The separate validation adjustment records four existing full-e2e job observations from three descendant heads after f62c278bd737f4f47be2e85436f65b270d5b4280 added the reviewed WeChat runtime graph to the supported sandbox image. The relevant image-building inputs listed in imageInputPaths were unchanged through 2adc8481ff3053a5a7be37d130cb183e222934ff; repository tests enforce that ancestry and unchanged-input boundary. All four jobs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn; two exceeded the prior root-start and/or sandbox-phase caps. The restart-safe-startup adjustment records five later functional full-e2e jobs after b675ed361a02d2d602900e1f301ba117af7effaf began recreating OpenShell Docker containers with the persisted OpenClaw startup command. Every run exercised that exact output, completed install and the expected first turn, used BuildKit prebuild without fallback, and stayed within the silence limit; four exceeded the stale root-start and sandbox-phase caps. The adjustment raises only those two caps from the maximum observed value plus 10 percent, rounded up to one second. The conclusion fields record the full-e2e job conclusions, not aggregate workflow conclusions. These bounded post-change adjustments do not replace the five-run single-SHA calibration. Retire them when five successful full-e2e samples from one eligible SHA replace the baseline. The authoritative-local-build adjustment records functional PR runs that emitted the required local base-build reason. The latest observation covers the longer source build required when reviewed native security packages change. Its allowance is the maximum excess over the normal root-start or sandbox-phase budget plus an operator-selected stability floor of 27 seconds (or 10 percent, if larger), rounded up to one second. It applies only when that reason is observed and does not alter published-image budgets.",
   "schemaVersion": 1,
   "calibratedAt": "2026-07-13",
   "baselineMainSha": "1a74b8348c2182fbf806726341186f008444e28e",
@@ -327,6 +327,156 @@
       "sandboxPhaseBudgetMs": 171000
     }
   },
+  "restartSafeStartupAdjustment": {
+    "validatedAt": "2026-07-31",
+    "changeSha": "b675ed361a02d2d602900e1f301ba117af7effaf",
+    "runtimeInputsVerifiedThroughSha": "f8fb820159c4843a19759efc9b0e28d4aa122440",
+    "runtimeInputPaths": [
+      "src/lib/onboard/docker-startup-command-agent.ts",
+      "src/lib/onboard/docker-gpu-sandbox-create.ts",
+      "src/lib/onboard/docker-startup-command-sandbox-create.ts",
+      "src/lib/onboard/sandbox-gpu-create-run-attempt.ts"
+    ],
+    "triggerOutput": "Recreating OpenShell Docker sandbox container with restart-safe startup...",
+    "adjustedMetrics": [
+      "rootStartToFirstTurnCompletion",
+      "nemoclaw.onboard.phase.sandbox"
+    ],
+    "derivation": {
+      "statistic": "maximum",
+      "minimumHeadroomMs": 5000,
+      "relativeHeadroomPercent": 10,
+      "roundUpMs": 1000
+    },
+    "runs": [
+      {
+        "runId": 30614075121,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/30614075121",
+        "jobId": 91103324359,
+        "workflowHeadSha": "387cb08644fe030bb85146255f4b77e3c54697d2",
+        "testedSha": "387cb08644fe030bb85146255f4b77e3c54697d2",
+        "conclusion": "failure",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "firstTurnSentinelMatched": true,
+        "performancePassed": false,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 51,
+        "responseChars": 23,
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stdout.txt",
+          "output": "Recreating OpenShell Docker sandbox container with restart-safe startup..."
+        },
+        "rootStartToFirstTurnCompletionMs": 238921,
+        "sandboxPhaseMs": 185161
+      },
+      {
+        "runId": 30615995748,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/30615995748",
+        "jobId": 91109377750,
+        "workflowHeadSha": "387cb08644fe030bb85146255f4b77e3c54697d2",
+        "testedSha": "915b25c522d982fc7d40d01e583bc8f15bcf975f",
+        "conclusion": "failure",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "firstTurnSentinelMatched": true,
+        "performancePassed": false,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 55,
+        "responseChars": 23,
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stdout.txt",
+          "output": "Recreating OpenShell Docker sandbox container with restart-safe startup..."
+        },
+        "rootStartToFirstTurnCompletionMs": 236352,
+        "sandboxPhaseMs": 188905
+      },
+      {
+        "runId": 30619965759,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/30619965759",
+        "jobId": 91125282922,
+        "workflowHeadSha": "f8fb820159c4843a19759efc9b0e28d4aa122440",
+        "testedSha": "c3106eea0669aa645c0ff6f51adce0badf24477f",
+        "conclusion": "failure",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "firstTurnSentinelMatched": true,
+        "performancePassed": false,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 43,
+        "responseChars": 23,
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stdout.txt",
+          "output": "Recreating OpenShell Docker sandbox container with restart-safe startup..."
+        },
+        "rootStartToFirstTurnCompletionMs": 238040,
+        "sandboxPhaseMs": 183471
+      },
+      {
+        "runId": 30620296004,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/30620296004",
+        "jobId": 91129295688,
+        "workflowHeadSha": "f8fb820159c4843a19759efc9b0e28d4aa122440",
+        "testedSha": "f8fb820159c4843a19759efc9b0e28d4aa122440",
+        "conclusion": "success",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "firstTurnSentinelMatched": true,
+        "performancePassed": true,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 28,
+        "responseChars": 23,
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stdout.txt",
+          "output": "Recreating OpenShell Docker sandbox container with restart-safe startup..."
+        },
+        "rootStartToFirstTurnCompletionMs": 181679,
+        "sandboxPhaseMs": 131415
+      },
+      {
+        "runId": 30620879680,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/30620879680",
+        "jobId": 91125043079,
+        "workflowHeadSha": "f8fb820159c4843a19759efc9b0e28d4aa122440",
+        "testedSha": "d1b24c97c348215574fd8c55435a2e8c5e0d86e1",
+        "conclusion": "failure",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "firstTurnSentinelMatched": true,
+        "performancePassed": false,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 45,
+        "responseChars": 23,
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stdout.txt",
+          "output": "Recreating OpenShell Docker sandbox container with restart-safe startup..."
+        },
+        "rootStartToFirstTurnCompletionMs": 233979,
+        "sandboxPhaseMs": 184868
+      }
+    ],
+    "retirement": {
+      "trigger": "successful-single-sha-calibration",
+      "minimumSampleCount": 5,
+      "allSamplesSameHead": true,
+      "runtimeChangeMustBeAncestor": true,
+      "action": "replace-baseline-and-remove-adjustment"
+    },
+    "derivedCapsMs": {
+      "rootStartToFirstTurnCompletionBudgetMs": 263000,
+      "sandboxPhaseBudgetMs": 208000
+    }
+  },
   "authoritativeLocalBaseBuildAdjustment": {
     "validatedAt": "2026-07-28",
     "triggerOutput": "Building OpenClaw sandbox base image locally because no compatible published base image was found.",
@@ -393,7 +543,7 @@
       "nativeSecurityInputsMustBeUnchanged": true,
       "action": "replace-baseline-and-remove-adjustment"
     },
-    "derivedAllowanceMs": 610000
+    "derivedAllowanceMs": 570000
   },
   "derivedBudgetsMs": {
     "rootStartToFirstTurnCompletionBudgetMs": 205000,

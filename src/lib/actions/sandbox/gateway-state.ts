@@ -101,37 +101,6 @@ export function isMissingSandboxGatewayOutput(output = ""): boolean {
   );
 }
 
-/**
- * Strict absence classifier for destructive owner-gateway reconciliation.
- * Bare NotFound is not sufficient because OpenShell uses it for missing
- * gateways and providers as well as sandboxes.
- */
-export function isExplicitMissingSandboxGatewayOutput(
-  output: string,
-  sandboxName: string,
-): boolean {
-  const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
-  const exactNoSpec =
-    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i;
-  if (exactNoSpec.test(clean)) return true;
-  // OpenShell can omit the requested name from an owner-scoped lookup.
-  // Require both exact structured fields so gateway/provider absence and
-  // transport diagnostics remain ambiguous.
-  const exactStructuredNotFound =
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/i;
-  if (exactStructuredNotFound.test(clean)) return true;
-
-  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedSandbox = `(?:['\"]${escapedName}['\"]|${escapedName})`;
-  return (
-    new RegExp(
-      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
-      "i",
-    ).test(clean) ||
-    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "i").test(clean)
-  );
-}
-
 function formatGatewaySchemaMismatchOutput(
   issue: OpenShellStateRpcIssue,
   action: string,

@@ -495,6 +495,7 @@ export function registerRebuildFlowTargetImageTests(): void {
         expect(harness.finalizeIncompleteOnboardStepSpy).toHaveBeenCalledWith(
           "sandbox",
           "Rebuild recreate failed",
+          false,
         );
         expect(disposeImageRef).toHaveBeenCalledOnce();
         expect(harness.session).toMatchObject({

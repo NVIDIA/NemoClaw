@@ -130,6 +130,12 @@ For a Kubernetes-driver source, the pod image must remain resolvable through its
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
 
+<AgentOnly variant="openclaw">
+After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
+If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
+Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
+</AgentOnly>
+
 The force-overwrite path restores and verifies lockdown on a destination with an active shields timer, then revokes that timer before it deletes the destination.
 It clears the remaining local shields state only after deletion succeeds, before a same-name replacement is created.
 

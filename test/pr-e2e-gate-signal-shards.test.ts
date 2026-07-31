@@ -32,8 +32,8 @@ describe("PR E2E signal shard policy", () => {
       "vllm-docker-storage": ["default"],
     });
     expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
-      "hermes-inference-switch": ["hosted", "anthropic"],
-      "openclaw-inference-switch": ["hosted", "anthropic"],
+      "hermes-inference-switch": ["anthropic"],
+      "openclaw-inference-switch": ["anthropic"],
     });
     expect(expectedSignalShards(["openshell-gateway-upgrade"], undefined, [DCODE_TARGET])).toEqual({
       "openshell-gateway-upgrade": [
