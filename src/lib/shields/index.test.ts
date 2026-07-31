@@ -132,6 +132,23 @@ function routeProcessKill(pid: number, signal?: string | number): true {
   return (processActions.get(`${pid}:${signal}`) ?? reportProcessRunning)();
 }
 
+function readRuntimePolicyBeforeCleanup(
+  cleanupDir: string,
+  readFile: typeof fs.readFileSync,
+): string | null {
+  switch (
+    path.basename(cleanupDir).startsWith("nemoclaw-permissive-runtime-") &&
+    fs.existsSync(cleanupDir)
+  ) {
+    case false:
+      return null;
+    case true: {
+      const policyFile = fs.readdirSync(cleanupDir).find((name) => name.endsWith(".yaml"));
+      return policyFile ? readFile(path.join(cleanupDir, policyFile), "utf-8") : null;
+    }
+  }
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-test-"));
   vi.stubEnv("HOME", tmpDir);
@@ -552,15 +569,8 @@ describe("shields — unit logic", () => {
       let appliedPolicy = "";
       vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
         const cleanupDir = String(target);
-        if (
-          path.basename(cleanupDir).startsWith("nemoclaw-permissive-runtime-") &&
-          fs.existsSync(cleanupDir)
-        ) {
-          const policyFile = fs.readdirSync(cleanupDir).find((name) => name.endsWith(".yaml"));
-          if (policyFile) {
-            appliedPolicy = originalReadFileSync(path.join(cleanupDir, policyFile), "utf-8");
-          }
-        }
+        appliedPolicy =
+          readRuntimePolicyBeforeCleanup(cleanupDir, originalReadFileSync) ?? appliedPolicy;
         originalRmSync(target, options);
       });
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();

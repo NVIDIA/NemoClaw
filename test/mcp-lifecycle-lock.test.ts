@@ -391,10 +391,11 @@ const releasePath = process.argv[3];
     const rename = fs.promises.rename.bind(fs.promises);
     let injectedReplacement = false;
     const renameSpy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
-      if (!injectedReplacement && String(from) === lockPath) {
-        injectedReplacement = true;
-        fs.unlinkSync(lockPath);
-        fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+      switch (!injectedReplacement && String(from) === lockPath) {
+        case true:
+          injectedReplacement = true;
+          fs.unlinkSync(lockPath);
+          fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
       }
       return rename(from, to);
     });

@@ -71,9 +71,7 @@ function managedMcpPolicy(server: string, address = "8.8.8.8") {
     [address],
   );
   const entries = Object.entries(YAML.parse(content).network_policies as Record<string, unknown>);
-  if (entries.length !== 1) {
-    throw new Error(`Expected one rendered MCP policy for ${server}, found ${entries.length}`);
-  }
+  expect(entries, `rendered MCP policies for ${server}`).toHaveLength(1);
   const [key, networkPolicy] = entries[0]!;
   return { content, key, networkPolicy, server };
 }
@@ -267,18 +265,20 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
   const cleanupTempDirSpy = vi.spyOn(tempFiles, "cleanupTempDir");
-  if (options.failStateSave) {
-    const buildRuntimePermissivePolicy = permissiveRuntime.buildRuntimePermissivePolicy;
-    vi.spyOn(permissiveRuntime, "buildRuntimePermissivePolicy").mockImplementation(
-      (basePath, deps) => {
-        const runtimePolicy = buildRuntimePermissivePolicy(basePath, deps);
+  const prepareStateSaveFailure = options.failStateSave
+    ? () =>
         fs.mkdirSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"), {
           recursive: true,
-        });
-        return runtimePolicy;
-      },
-    );
-  }
+        })
+    : () => undefined;
+  const buildRuntimePermissivePolicy = permissiveRuntime.buildRuntimePermissivePolicy;
+  vi.spyOn(permissiveRuntime, "buildRuntimePermissivePolicy").mockImplementation(
+    (basePath, deps) => {
+      const runtimePolicy = buildRuntimePermissivePolicy(basePath, deps);
+      prepareStateSaveFailure();
+      return runtimePolicy;
+    },
+  );
 
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();
