@@ -91,6 +91,9 @@ describe("sandbox rebuild authority", () => {
     });
     expect(authority.entryRevisionSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(authority.workload).not.toBe(source.workload);
+    expect(Object.isFrozen(authority)).toBe(true);
+    expect(Object.isFrozen(authority.workload)).toBe(true);
+    expect(Reflect.set(authority.workload, "reference", "mutated")).toBe(false);
   });
 
   it.each([
@@ -169,6 +172,7 @@ describe("sandbox rebuild authority", () => {
 
   it.each([
     ["sandbox name", (candidate: SandboxEntry) => ({ ...candidate, name: "other" })],
+    ["agent", (candidate: SandboxEntry) => ({ ...candidate, agent: "hermes" })],
     ["provider", (candidate: SandboxEntry) => ({ ...candidate, openshellDriver: "mxc" })],
     [
       "lifecycle generation",
@@ -214,5 +218,8 @@ describe("sandbox rebuild authority", () => {
         "docker",
       ),
     ).toThrow(/live identity fingerprint/u);
+    expect(() => captureSandboxRebuildAuthority({ ...entry(), agent: "hermes" }, "docker")).toThrow(
+      /agent does not match/u,
+    );
   });
 });

@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { cloneAndDeepFreeze } from "../../../core/immutable";
 import { captureSandboxRebuildAuthority } from "../../../state/registry/rebuild-authority";
 import type { SandboxEntry } from "../../../state/registry/types";
 import type { RuntimeProviderBundle } from "../../runtime-provider/contract";
@@ -38,7 +39,7 @@ function safeReplacementMetadata(
       ([field]) => !PROTECTED_REBUILD_METADATA_FIELDS.has(field as keyof SandboxEntry),
     ),
   ) as Partial<SandboxEntry>;
-  return Object.freeze(safe);
+  return cloneAndDeepFreeze(safe);
 }
 
 export function createManagedWorkloadRebuildPlan(input: {
@@ -48,6 +49,7 @@ export function createManagedWorkloadRebuildPlan(input: {
   readonly replacementMetadata?: Readonly<Partial<SandboxEntry>>;
   readonly transactionId?: string;
 }): ManagedWorkloadRebuildPlan {
+  const handoff = cloneAndDeepFreeze(input.handoff);
   const providerId = input.provider.identity.id;
   if (normalizeRuntimeProviderIdentity(input.previousEntry.openshellDriver) !== providerId) {
     throw new ManagedWorkloadRebuildTransactionError(
@@ -57,23 +59,25 @@ export function createManagedWorkloadRebuildPlan(input: {
   }
   requireRuntimeProviderMutationAuthority(input.provider, "rebuild");
   if (
-    input.handoff.providerId !== providerId ||
-    input.handoff.agent !== input.previousEntry.agent
+    handoff.providerId !== providerId ||
+    handoff.agent !== input.previousEntry.agent ||
+    handoff.replacement.source.contract.agent !== handoff.agent ||
+    handoff.replacementProfile.profile.agent !== handoff.agent
   ) {
     throw new ManagedWorkloadRebuildTransactionError(
       "prepare",
       "the managed profile handoff does not match durable provider and agent authority",
     );
   }
-  if (!isDeepStrictEqual(input.handoff.previousReceipt, input.previousEntry.workload)) {
+  if (!isDeepStrictEqual(handoff.previousReceipt, input.previousEntry.workload)) {
     throw new ManagedWorkloadRebuildTransactionError(
       "prepare",
       "the managed profile handoff is stale against the durable workload receipt",
     );
   }
   if (
-    input.handoff.previousReceipt.platform !== input.handoff.previousContract.platform ||
-    input.handoff.replacement.source.contract.platform !== input.handoff.previousContract.platform
+    handoff.previousReceipt.platform !== handoff.previousContract.platform ||
+    handoff.replacement.source.contract.platform !== handoff.previousContract.platform
   ) {
     throw new ManagedWorkloadRebuildTransactionError(
       "prepare",
@@ -81,7 +85,7 @@ export function createManagedWorkloadRebuildPlan(input: {
     );
   }
   const previousAuthority = captureSandboxRebuildAuthority(input.previousEntry, providerId);
-  const replacementReceipt = buildManagedWorkloadRebuildReceipt(input.handoff, input.provider);
+  const replacementReceipt = buildManagedWorkloadRebuildReceipt(handoff, input.provider);
   const transactionId = input.transactionId ?? randomUUID();
   if (!/^[0-9A-Za-z][0-9A-Za-z._:-]{0,255}$/u.test(transactionId)) {
     throw new ManagedWorkloadRebuildTransactionError(
@@ -89,14 +93,14 @@ export function createManagedWorkloadRebuildPlan(input: {
       "the rebuild transaction identity is invalid",
     );
   }
-  return Object.freeze({
+  return cloneAndDeepFreeze({
     schemaVersion: 1,
     transactionId,
     sandboxName: input.previousEntry.name,
     providerId,
-    agent: input.handoff.agent,
+    agent: handoff.agent,
     previousAuthority,
-    handoff: input.handoff,
+    handoff,
     replacementReceipt,
     replacementMetadata: safeReplacementMetadata(input.replacementMetadata),
   });

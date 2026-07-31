@@ -13,12 +13,16 @@ import type {
   PreparedManagedWorkloadReplacement,
   StagedManagedWorkloadReplacement,
 } from "./contract";
-import { ManagedWorkloadRebuildTransactionError } from "./contract";
+import {
+  ManagedWorkloadRebuildIndeterminatePublicationError,
+  ManagedWorkloadRebuildTransactionError,
+} from "./contract";
 import { createStagedManagedWorkloadReplacement } from "./create";
 import { createManagedWorkloadRebuildPlan } from "./plan";
 import { prepareManagedWorkloadReplacement } from "./prepare";
 import { rebindStagedManagedWorkloadProviders } from "./provider-rebind";
 import { requireReadyManagedWorkloadReplacement } from "./readiness";
+import { createManagedWorkloadRebuildRecoveryTask } from "./recovery";
 import { restoreStagedManagedWorkloadState } from "./restore";
 import {
   createManagedWorkloadPreparationAbort,
@@ -82,14 +86,28 @@ export async function runManagedWorkloadRebuildTransaction(
   const readSandbox = dependencies.getSandbox ?? readSandboxFromRegistry;
   const plan = createManagedWorkloadRebuildPlan(input);
   const abortPreparation = createManagedWorkloadPreparationAbort(plan, input.operations);
-  const stillAuthoritative = (): boolean =>
-    sandboxRebuildAuthorityMatchesEntry(plan.previousAuthority, readSandbox(plan.sandboxName));
-  if (!stillAuthoritative()) {
-    throw new ManagedWorkloadRebuildTransactionError(
-      "prepare",
-      "the durable workload changed before provider preparation",
-    );
-  }
+  const requireOldAuthority = (timing: "before" | "during"): void => {
+    let stillAuthoritative: boolean;
+    try {
+      stillAuthoritative = sandboxRebuildAuthorityMatchesEntry(
+        plan.previousAuthority,
+        readSandbox(plan.sandboxName),
+      );
+    } catch (error) {
+      throw new ManagedWorkloadRebuildTransactionError(
+        "prepare",
+        `the durable workload could not be revalidated ${timing} provider preparation`,
+        { cause: error },
+      );
+    }
+    if (!stillAuthoritative) {
+      throw new ManagedWorkloadRebuildTransactionError(
+        "prepare",
+        `the durable workload changed ${timing} provider preparation`,
+      );
+    }
+  };
+  requireOldAuthority("before");
 
   let prepared: PreparedManagedWorkloadReplacement;
   try {
@@ -98,14 +116,10 @@ export async function runManagedWorkloadRebuildTransaction(
     if (input.operations.providerId !== plan.providerId) throw error;
     return failAfterCleanup(error, () => abortPreparation.run());
   }
-  if (!stillAuthoritative()) {
-    return failAfterCleanup(
-      new ManagedWorkloadRebuildTransactionError(
-        "prepare",
-        "the durable workload changed during provider preparation",
-      ),
-      () => abortPreparation.run(),
-    );
+  try {
+    requireOldAuthority("during");
+  } catch (error) {
+    return failAfterCleanup(error, () => abortPreparation.run());
   }
 
   let staged: StagedManagedWorkloadReplacement;
@@ -135,9 +149,11 @@ export async function runManagedWorkloadRebuildTransaction(
         entry,
         previousCleanup: "pending",
         cleanupError,
+        recoveryTask: createManagedWorkloadRebuildRecoveryTask(plan, rebound, "retire-previous"),
       };
     }
   } catch (error) {
+    if (error instanceof ManagedWorkloadRebuildIndeterminatePublicationError) throw error;
     return failAfterCleanup(error, () => rollback.run());
   }
 }

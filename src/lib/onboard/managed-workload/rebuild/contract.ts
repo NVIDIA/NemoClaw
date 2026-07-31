@@ -135,12 +135,39 @@ export interface ManagedWorkloadRebuildProviderOperations {
   ): Promise<void>;
 }
 
-export type ManagedWorkloadRebuildTransactionResult = {
-  readonly status: "committed";
-  readonly entry: SandboxEntry;
-  readonly previousCleanup: "complete" | "pending";
-  readonly cleanupError?: unknown;
-};
+export interface ManagedWorkloadRebuildRecoveryTask {
+  readonly schemaVersion: 1;
+  /** Later activation must durably persist this task for this owner. */
+  readonly owner: "durable-managed-workload-recovery";
+  readonly operation: "reconcile-publication" | "retire-previous";
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly providerId: string;
+  readonly previousRuntimeHandle: string;
+  readonly stagingHandle: string;
+  readonly previousAuthority: SandboxRebuildAuthority;
+  readonly replacement: {
+    readonly agent: ShippedManagedImageAgent;
+    readonly receipt: ManagedWorkloadReceipt;
+    readonly lifecycleGeneration: string;
+    readonly liveIdentityFingerprint: string;
+  };
+}
+
+export type ManagedWorkloadRebuildTransactionResult =
+  | {
+      readonly status: "committed";
+      readonly entry: SandboxEntry;
+      readonly previousCleanup: "complete";
+    }
+  | {
+      readonly status: "committed";
+      readonly entry: SandboxEntry;
+      readonly previousCleanup: "pending";
+      readonly cleanupError: unknown;
+      /** Exact handoff that the later durable recovery layer must persist and own. */
+      readonly recoveryTask: ManagedWorkloadRebuildRecoveryTask;
+    };
 
 export class ManagedWorkloadRebuildTransactionError extends Error {
   readonly phase: ManagedWorkloadRebuildPhase;
@@ -157,5 +184,23 @@ export class ManagedWorkloadRebuildTransactionError extends Error {
     this.name = "ManagedWorkloadRebuildTransactionError";
     this.phase = phase;
     this.rollbackError = options.rollbackError;
+  }
+}
+
+/**
+ * Publication may already be durable. Catchers must not destroy the staged
+ * runtime; they must hand recoveryTask to the durable reconciliation owner.
+ */
+export class ManagedWorkloadRebuildIndeterminatePublicationError extends ManagedWorkloadRebuildTransactionError {
+  readonly recoveryTask: ManagedWorkloadRebuildRecoveryTask;
+
+  constructor(
+    message: string,
+    recoveryTask: ManagedWorkloadRebuildRecoveryTask,
+    options: { readonly cause?: unknown } = {},
+  ) {
+    super("registry-commit", message, options);
+    this.name = "ManagedWorkloadRebuildIndeterminatePublicationError";
+    this.recoveryTask = recoveryTask;
   }
 }

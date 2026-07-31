@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cloneAndDeepFreeze } from "../../core/immutable";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
@@ -173,7 +174,7 @@ export function readManagedWorkloadAuthority(
     );
   }
 
-  return Object.freeze({
+  return cloneAndDeepFreeze({
     agent,
     receipt: cloned,
     contract,

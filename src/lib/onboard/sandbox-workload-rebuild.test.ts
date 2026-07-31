@@ -305,6 +305,9 @@ describe("managed workload rebuild preflight", () => {
       version: "0.0.100",
       policy: "require-managed",
     });
+    expect(Object.isFrozen(handoff)).toBe(true);
+    expect(Object.isFrozen(handoff?.previousProfile.proxy)).toBe(true);
+    expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
   });
 
   it.each(AGENTS)("prepares an arm64 replacement handoff for %s", async (agent) => {
@@ -426,6 +429,25 @@ describe("managed workload rebuild preflight", () => {
     expect(result).toEqual(receipt("hermes", "new"));
     expect(result.shared).toBe(true);
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it("rejects a cross-agent replacement contract and profile before receipt creation", async () => {
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>
+      replacement("openclaw"),
+    );
+    const catalog = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+      runtime: runtime(),
+      provider: provider(),
+    });
+    const crossAgentHandoff: ManagedWorkloadRebuildHandoff = {
+      ...catalog!,
+      replacement: replacement("hermes"),
+      replacementProfile: profileTransport("hermes"),
+    };
+
+    expect(() => buildManagedWorkloadRebuildReceipt(crossAgentHandoff, provider())).toThrow(
+      /does not match the exact rebuild agent/u,
+    );
   });
 
   it.each(AGENTS)("stages authoritative startup-profile reconstruction for %s", async (agent) => {

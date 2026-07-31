@@ -3,6 +3,12 @@
 
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { cloneAndDeepFreeze } from "../../core/immutable";
+import {
+  isShippedManagedImageAgent,
+  MANAGED_IMAGE_REPOSITORIES,
+  type ShippedManagedImageAgent,
+} from "../../onboard/managed-image/contract";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
 import type { SandboxEntry, SandboxRegistry, SandboxWorkloadReceipt } from "./types";
@@ -63,7 +69,24 @@ function clonedManagedReceipt(value: SandboxWorkloadReceipt | undefined): Manage
       "a managed replacement requires a valid durable workload receipt",
     );
   }
-  return cloned;
+  return cloneAndDeepFreeze(cloned);
+}
+
+function requireReceiptAgent(
+  agent: SandboxEntry["agent"],
+  workload: ManagedWorkloadReceipt,
+  label: string,
+): ShippedManagedImageAgent {
+  if (
+    typeof agent !== "string" ||
+    !isShippedManagedImageAgent(agent) ||
+    !workload.reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[agent]}@sha256:`)
+  ) {
+    throw new SandboxRebuildAuthorityError(
+      `${label} agent does not match its managed workload receipt`,
+    );
+  }
+  return agent;
 }
 
 function cloneEntry(entry: SandboxEntry): SandboxEntry {
@@ -114,12 +137,13 @@ export function captureSandboxRebuildAuthority(
     throw new SandboxRebuildAuthorityError("live identity fingerprint is missing or invalid");
   }
   const workload = clonedManagedReceipt(entry.workload);
+  requireReceiptAgent(entry.agent, workload, "authoritative");
   if (entry.imageTag !== workload.reference) {
     throw new SandboxRebuildAuthorityError(
       "image reference does not match the managed workload receipt",
     );
   }
-  return Object.freeze({
+  return cloneAndDeepFreeze({
     schemaVersion: 1 as const,
     sandboxName: entry.name,
     providerId,
@@ -201,6 +225,7 @@ function validateReplacement(
     );
   }
   const workload = clonedManagedReceipt(replacement.workload);
+  requireReceiptAgent(replacement.agent, workload, "replacement");
   if (replacement.imageTag !== workload.reference) {
     throw new SandboxRebuildAuthorityError(
       "replacement image reference does not match its managed workload receipt",

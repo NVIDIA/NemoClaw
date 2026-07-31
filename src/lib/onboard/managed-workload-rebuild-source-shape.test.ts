@@ -15,6 +15,7 @@ const CENTRAL_REBUILD_MODULES = [
   "prepare.ts",
   "provider-rebind.ts",
   "readiness.ts",
+  "recovery.ts",
   "restore.ts",
   "rollback.ts",
   "transaction.ts",

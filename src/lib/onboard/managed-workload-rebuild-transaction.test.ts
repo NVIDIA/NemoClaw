@@ -234,7 +234,10 @@ type FailurePhase =
   | "restore"
   | "provider-rebind"
   | "registry-commit"
+  | "registry-commit-before-persist"
   | "registry-commit-after-persist"
+  | "registry-commit-after-persist-read-fails"
+  | "registry-read-after-prepare"
   | "retire-previous"
   | "abort-preparation"
   | null;
@@ -326,12 +329,16 @@ function transactionHarness(
   const events: string[] = [];
   const oldEntry = previousEntry(agent, providerId, platform);
   let currentEntry = structuredClone(oldEntry);
+  let registryReadCount = 0;
   const operations = operationsHarness(providerId, events, failAt);
   const commitAuthority = (
     expected: ReturnType<typeof captureSandboxRebuildAuthority>,
     replacement: SandboxEntry,
   ): SandboxRebuildAuthoritySwapResult => {
     events.push("registry-commit");
+    if (failAt === "registry-commit-before-persist") {
+      throw new Error("registry write failed before persistence");
+    }
     const currentRegistry: SandboxRegistry = {
       sandboxes: { [oldEntry.name]: currentEntry },
       defaultSandbox: oldEntry.name,
@@ -348,7 +355,10 @@ function transactionHarness(
         : swapSandboxRebuildAuthorityInRegistry(currentRegistry, expected, replacement);
     currentEntry =
       swapped.result.status === "committed" ? structuredClone(swapped.result.entry) : currentEntry;
-    if (failAt === "registry-commit-after-persist") {
+    if (
+      failAt === "registry-commit-after-persist" ||
+      failAt === "registry-commit-after-persist-read-fails"
+    ) {
       throw new Error("registry acknowledgement lost after persistence");
     }
     return swapped.result;
@@ -369,7 +379,16 @@ function transactionHarness(
           transactionId: "transaction-1",
         },
         {
-          getSandbox: () => structuredClone(currentEntry),
+          getSandbox: () => {
+            registryReadCount += 1;
+            if (failAt === "registry-read-after-prepare" && registryReadCount === 2) {
+              throw new Error("registry read failed after provider preparation");
+            }
+            if (failAt === "registry-commit-after-persist-read-fails" && registryReadCount >= 3) {
+              throw new Error("registry readback failed after ambiguous persistence");
+            }
+            return structuredClone(currentEntry);
+          },
           commitAuthority,
         },
       ),
@@ -489,6 +508,17 @@ describe("managed workload rebuild transaction", () => {
     expect(operations.rollback).not.toHaveBeenCalled();
   });
 
+  it("aborts preparation when the post-prepare registry read fails", async () => {
+    const harness = transactionHarness("openclaw", "mxc", "registry-read-after-prepare");
+
+    await expect(harness.run()).rejects.toMatchObject({ phase: "prepare" });
+
+    expect(harness.events).toEqual(["prepare", "abort-preparation:transaction-1"]);
+    expect(harness.operations.create).not.toHaveBeenCalled();
+    expect(harness.operations.rollback).not.toHaveBeenCalled();
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+  });
+
   it("reports exact-old cleanup as pending without undoing a committed replacement", async () => {
     const harness = transactionHarness("langchain-deepagents-code", "mxc", "retire-previous");
 
@@ -498,6 +528,12 @@ describe("managed workload rebuild transaction", () => {
       status: "committed",
       previousCleanup: "pending",
       cleanupError: expect.any(Error),
+      recoveryTask: {
+        owner: "durable-managed-workload-recovery",
+        operation: "retire-previous",
+        previousRuntimeHandle: "runtime-old-exact",
+        stagingHandle: "runtime-new-staged-exact",
+      },
     });
     expect(harness.currentEntry().lifecycleGeneration).toBe("generation-new");
     expect(harness.events.at(-1)).toBe("retire:runtime-old-exact");
@@ -524,6 +560,38 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.currentEntry()).toEqual(result.entry);
     expect(harness.operations.rollback).not.toHaveBeenCalled();
     expect(harness.events.at(-1)).toBe("retire:runtime-old-exact");
+  });
+
+  it("never rolls back an ambiguously published replacement when readback also fails", async () => {
+    const harness = transactionHarness(
+      "openclaw",
+      "mxc",
+      "registry-commit-after-persist-read-fails",
+    );
+
+    await expect(harness.run()).rejects.toMatchObject({
+      name: "ManagedWorkloadRebuildIndeterminatePublicationError",
+      phase: "registry-commit",
+      recoveryTask: {
+        owner: "durable-managed-workload-recovery",
+        operation: "reconcile-publication",
+        previousRuntimeHandle: "runtime-old-exact",
+        stagingHandle: "runtime-new-staged-exact",
+      },
+    });
+
+    expect(harness.currentEntry().lifecycleGeneration).toBe("generation-new");
+    expect(harness.operations.rollback).not.toHaveBeenCalled();
+    expect(harness.operations.retirePrevious).not.toHaveBeenCalled();
+  });
+
+  it("rolls back only after an ambiguous write is reconciled to exact old authority", async () => {
+    const harness = transactionHarness("openclaw", "mxc", "registry-commit-before-persist");
+
+    await expect(harness.run()).rejects.toMatchObject({ phase: "registry-commit" });
+
+    expect(harness.currentEntry()).toEqual(harness.oldEntry);
+    expect(harness.operations.rollback).toHaveBeenCalledOnce();
   });
 
   it("coalesces repeated rollback calls onto one exact-handle operation", async () => {
@@ -588,6 +656,68 @@ describe("managed workload rebuild transaction", () => {
       ),
     ).rejects.toThrow();
     expect(operations.prepare).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-agent replacement contract and profile before provider mutation", async () => {
+    const oldEntry = previousEntry("openclaw", "mxc");
+    const openClawHandoff = handoff("openclaw", "mxc");
+    const hermesHandoff = handoff("hermes", "mxc");
+    const operations = operationsHarness("mxc", []);
+
+    await expect(
+      runManagedWorkloadRebuildTransaction(
+        {
+          previousEntry: oldEntry,
+          provider: bundle("mxc"),
+          handoff: {
+            ...openClawHandoff,
+            replacement: hermesHandoff.replacement,
+            replacementProfile: hermesHandoff.replacementProfile,
+          },
+          operations,
+          transactionId: "transaction-1",
+        },
+        { getSandbox: () => structuredClone(oldEntry) },
+      ),
+    ).rejects.toMatchObject({ phase: "prepare" });
+    expect(operations.prepare).not.toHaveBeenCalled();
+  });
+
+  it("deeply freezes provider-visible rebuild authority", async () => {
+    const oldEntry = previousEntry("openclaw", "mxc");
+    const operations = operationsHarness("mxc", []);
+    const prepare = operations.prepare;
+    operations.prepare = vi.fn(async (plan) => {
+      expect(Object.isFrozen(plan)).toBe(true);
+      expect(Object.isFrozen(plan.previousAuthority.workload)).toBe(true);
+      expect(Object.isFrozen(plan.handoff.previousProfile.proxy)).toBe(true);
+      expect(Object.isFrozen(plan.handoff.replacement.source.contract.source)).toBe(true);
+      expect(Object.isFrozen(plan.replacementReceipt)).toBe(true);
+      expect(
+        Reflect.set(plan.handoff.replacement.source.contract.source, "release", "v999.0.0"),
+      ).toBe(false);
+      expect(Reflect.set(plan.previousAuthority.workload, "reference", "mutated")).toBe(false);
+      return prepare(plan);
+    });
+
+    const result = await runManagedWorkloadRebuildTransaction(
+      {
+        previousEntry: oldEntry,
+        provider: bundle("mxc"),
+        handoff: handoff("openclaw", "mxc"),
+        operations,
+        transactionId: "transaction-1",
+      },
+      {
+        getSandbox: () => structuredClone(oldEntry),
+        commitAuthority: (_expected, replacement) => ({
+          status: "committed",
+          entry: structuredClone(replacement),
+        }),
+      },
+    );
+
+    expect(result.status).toBe("committed");
   });
 
   it("rejects a provider adapter that is not bound to the selected bundle", async () => {

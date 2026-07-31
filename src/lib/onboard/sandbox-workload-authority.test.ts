@@ -71,6 +71,10 @@ describe("managed workload authority", () => {
       receipt: { kind: "managed-image", platform },
     });
     expect(authority?.receipt).not.toBe(managedEntry(agent, platform).workload);
+    expect(Object.isFrozen(authority)).toBe(true);
+    expect(Object.isFrozen(authority?.receipt)).toBe(true);
+    expect(Object.isFrozen(authority?.contract.source)).toBe(true);
+    expect(Object.isFrozen(authority?.profile.proxy)).toBe(true);
   });
 
   it("returns null only for an unambiguously non-managed workload", () => {

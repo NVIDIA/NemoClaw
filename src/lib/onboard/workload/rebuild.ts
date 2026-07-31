@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-
+import { cloneAndDeepFreeze } from "../../core/immutable";
 import { getVersion } from "../../core/version";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractV1,
+  parseManagedImageContractV1,
   type ShippedManagedImageAgent,
 } from "../managed-image/contract";
 import {
@@ -155,7 +157,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
     );
   }
 
-  return Object.freeze({
+  return cloneAndDeepFreeze({
     schemaVersion: 1 as const,
     providerId: options.provider.identity.id,
     agent: authority.agent,
@@ -304,7 +306,7 @@ export function stageManagedWorkloadRebuildProfile(
       "the replacement startup profile does not match the selected managed-image agent",
     );
   }
-  return Object.freeze({ ...handoff, replacementProfile });
+  return cloneAndDeepFreeze({ ...handoff, replacementProfile });
 }
 
 /**
@@ -376,8 +378,30 @@ export function buildManagedWorkloadRebuildReceipt(
       "the replacement receipt does not belong to the selected provider",
     );
   }
-  const contract = handoff.replacement.source.contract;
+  let contract: ManagedImageContractV1;
+  try {
+    contract = parseManagedImageContractV1(
+      handoff.replacement.source.contract,
+      handoff.agent,
+      handoff.previousContract.platform,
+    );
+  } catch (error) {
+    throw new ManagedWorkloadRebuildError(
+      "the replacement image contract does not match the exact rebuild agent and platform",
+      { cause: error },
+    );
+  }
+  if (handoff.replacement.source.reference !== contract.reference) {
+    throw new ManagedWorkloadRebuildError(
+      "the replacement image source does not match its immutable image contract",
+    );
+  }
   const profile = handoff.replacementProfile;
+  if (profile.profile.agent !== handoff.agent) {
+    throw new ManagedWorkloadRebuildError(
+      "the replacement startup profile does not match the exact rebuild agent",
+    );
+  }
   const receipt: ManagedWorkloadReceipt = {
     schemaVersion: 1,
     kind: "managed-image",
@@ -394,12 +418,18 @@ export function buildManagedWorkloadRebuildReceipt(
     ...(profile.corporateCaB64 === undefined ? {} : { corporateCaB64: profile.corporateCaB64 }),
     shared: true,
   };
-  if (!provider.workload.acceptsReceipt(receipt)) {
+  const validatedReceipt = cloneSandboxWorkloadReceipt(receipt);
+  if (validatedReceipt?.kind !== "managed-image" || !isDeepStrictEqual(validatedReceipt, receipt)) {
+    throw new ManagedWorkloadRebuildError(
+      "the replacement startup profile and image contract do not form valid durable authority",
+    );
+  }
+  if (!provider.workload.acceptsReceipt(validatedReceipt)) {
     throw new ManagedWorkloadRebuildError(
       `provider '${provider.identity.id}' rejected the replacement workload receipt`,
     );
   }
-  return Object.freeze(receipt);
+  return cloneAndDeepFreeze(validatedReceipt);
 }
 
 export type ManagedWorkloadRebuildEntry = Pick<
