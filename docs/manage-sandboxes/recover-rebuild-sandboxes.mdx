@@ -182,7 +182,7 @@ The command reports `Sandbox '<name>' already holds the replacement from the int
 Pass `--verbose` to include the replacement identifier, OpenShell gateway, and journal phase in rebuild diagnostics.
 
 NemoClaw fails closed when the selected gateway, replacement settings, durable source registry fields, or live source or target identity no longer matches the journal.
-The error starts with `Cannot resume sandbox '<name>' replacement` or `Cannot resume sandbox '<name>' recreation` and includes the mismatch.
+The error names the sandbox and the mismatch that stopped recovery.
 Do not delete a same-name sandbox to bypass this check.
 Inspect the named OpenShell gateway and sandbox, correct the reported drift, and rerun the original command.
 
