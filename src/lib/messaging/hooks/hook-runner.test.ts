@@ -38,6 +38,8 @@ describe("MessagingHookRegistry", () => {
       "common.tokenPaste",
       "common.configPrompt",
       "discord.openclawBridgeHealth",
+      "googlechat.tunnelAudienceGate",
+      "googlechat.tokenPaste",
       "slack.socketModeGatewayConflict",
       "slack.socketModeGatewayStatus",
       "slack.openclawBridgeHealth",

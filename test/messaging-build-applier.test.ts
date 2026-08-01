@@ -158,6 +158,7 @@ function runApplierProcess(
   agent: "hermes" | "openclaw",
   phase: MessagingBuildPhase,
   dryRun = false,
+  managedStartupRuntime = false,
 ) {
   return spawnSync(
     "node",
@@ -169,6 +170,7 @@ function runApplierProcess(
       "--phase",
       phase,
       ...(dryRun ? ["--dry-run"] : []),
+      ...(managedStartupRuntime ? ["--managed-startup-runtime"] : []),
     ],
     {
       encoding: "utf-8",
@@ -417,7 +419,16 @@ describe("messaging-build-applier.mts: agent-install", () => {
     try {
       const result = spawnSync(
         "node",
-        ["--experimental-strip-types", SCRIPT_PATH, "--agent", agent, "--phase", "runtime-setup"],
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          agent,
+          "--phase",
+          "runtime-setup",
+          "--mode",
+          "apply",
+        ],
         {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
@@ -482,6 +493,59 @@ describe("messaging-build-applier.mts: agent-install", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("honors explicit clear intent without recreating a provider-removed runtime artifact", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clear-runtime-plan-artifact-"));
+    const artifactPath = path.join(tmp, "messaging-runtime-plan.json");
+    fs.writeFileSync(artifactPath, "stale\n");
+    fs.unlinkSync(artifactPath);
+
+    try {
+      expect(
+        applyMessagingBuildPhase(
+          null,
+          "runtime-setup",
+          { NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath },
+          { mode: "clear" },
+        ),
+      ).toEqual([]);
+      expect(fs.existsSync(artifactPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects contradictory managed messaging mode and plan state", () => {
+    const plan = readMessagingBuildPlanFromEnv(
+      {
+        NEMOCLAW_MESSAGING_PLAN_B64: encodePlan({
+          schemaVersion: 1,
+          sandboxName: "test-sandbox",
+          agent: "hermes",
+          channels: [],
+          credentialBindings: [],
+          agentRender: [],
+          buildSteps: [],
+        }),
+      },
+      "hermes",
+    );
+
+    expect(() => applyMessagingBuildPhase(plan, "runtime-setup", {}, { mode: "clear" })).toThrow(
+      /clear mode requires an absent plan/u,
+    );
+    expect(() =>
+      applyMessagingBuildPhase(
+        null,
+        "post-agent-install",
+        {},
+        {
+          managedStartupRuntime: true,
+          mode: "apply",
+        },
+      ),
+    ).toThrow(/apply mode requires a messaging plan/u);
   });
 
   it("preserves Hermes runtime env aliases in the reduced runtime plan artifact", () => {
@@ -1209,7 +1273,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("reapplies OpenClaw messaging render after doctor rewrites config", async () => {
+  it("keeps doctor rerendering while managed startup skips the broad doctor", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-doctor-rewrite-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -1271,6 +1335,29 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.plugins?.entries?.slack).toEqual({ enabled: true });
       expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
       expect(config.channels?.wechat).toBeUndefined();
+
+      fs.writeFileSync(
+        path.join(tmp, ".openclaw", "openclaw.json"),
+        `${JSON.stringify({ channels: {}, plugins: { entries: {} } }, null, 2)}\n`,
+      );
+      fs.writeFileSync(tracePath, "");
+      const managedResult = runApplierProcess(env, "openclaw", "post-agent-install", false, true);
+      expect(managedResult.status, managedResult.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8")).toBe("");
+      const managedConfig = JSON.parse(
+        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
+      );
+      expect(managedConfig.channels?.telegram?.accounts?.default).toMatchObject({
+        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        enabled: true,
+      });
+      expect(managedConfig.channels?.discord?.enabled).toBe(true);
+      expect(managedConfig.plugins?.entries?.discord).toEqual({ enabled: true });
+      expect(managedConfig.channels?.slack?.enabled).toBe(true);
+      expect(managedConfig.plugins?.entries?.slack).toEqual({ enabled: true });
+      expect(managedConfig.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+        enabled: true,
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

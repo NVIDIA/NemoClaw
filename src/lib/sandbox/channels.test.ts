@@ -16,7 +16,7 @@ import {
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
-  it("covers telegram, discord, wechat, slack, whatsapp, and teams", () => {
+  it("covers telegram, discord, wechat, slack, whatsapp, teams, and googlechat", () => {
     expect(knownChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -24,6 +24,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat",
     ]);
   });
 
@@ -194,6 +195,7 @@ describe("sandbox-channels listChannels", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat",
     ]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");

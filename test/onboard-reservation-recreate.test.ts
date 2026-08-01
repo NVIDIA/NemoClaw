@@ -50,6 +50,7 @@ describe("onboard sandbox recreate reservation safety", () => {
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const onboardSession = require(${onboardSessionPath});
@@ -58,6 +59,7 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 let sandboxDeleted = false;
+let sandboxRecreated = false;
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
@@ -66,9 +68,9 @@ runner.run = (command) => {
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) {
-    return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
+    return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
@@ -101,6 +103,7 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
+  sandboxRecreated = true;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

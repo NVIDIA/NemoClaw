@@ -5,14 +5,16 @@ import { Buffer } from "node:buffer";
 
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import {
+  MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupMessagingAgent,
   type ManagedStartupProfile,
   validateManagedStartupProfile,
 } from "./profile";
 
 export type ManagedStartupConfigAgent = ManagedStartupAgent;
-export type ManagedStartupMessagingAgent = "openclaw" | "hermes";
+export type { ManagedStartupMessagingAgent } from "./profile";
 
 export interface ManagedStartupCorporateCaMaterial {
   readonly kind: "corporate-ca-handoff";
@@ -31,12 +33,14 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "NEMOCLAW_DCODE_AUTO_APPROVAL"
     | "NEMOCLAW_INFERENCE_BASE_URL"
     | "NEMOCLAW_PROXY_HOST"
-    | "NEMOCLAW_PROXY_PORT";
+    | "NEMOCLAW_PROXY_PORT"
+    | "NEMOCLAW_REASONING_EFFORT";
   readonly path:
     | "/usr/local/share/nemoclaw/dcode-auto-approval"
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
     | "/usr/local/share/nemoclaw/dcode-proxy-host"
-    | "/usr/local/share/nemoclaw/dcode-proxy-port";
+    | "/usr/local/share/nemoclaw/dcode-proxy-port"
+    | "/usr/local/share/nemoclaw/dcode-reasoning-effort";
   readonly contents: string;
   readonly owner: "root";
   readonly group: "root";
@@ -46,6 +50,13 @@ export interface ManagedStartupRootOwnedFileMaterial {
 export type ManagedStartupAgentMaterial =
   | ManagedStartupCorporateCaMaterial
   | ManagedStartupRootOwnedFileMaterial;
+
+export interface ManagedStartupApplicationRuntimePlan {
+  /** Validated launch-only values that remain available to image setup and the agent runtime. */
+  readonly exportEnvironment: Readonly<Record<string, string>>;
+  /** Ambient launch values that are unsupported for the selected agent and must be removed. */
+  readonly unsetEnvironment: readonly string[];
+}
 
 export interface ManagedStartupGenerateConfigAction {
   readonly kind: "generate-agent-config";
@@ -107,6 +118,7 @@ export interface ManagedStartupAgentEnvironment {
    * agent runtime adapters after generated configuration is committed.
    */
   readonly runtimeEnvironment: Readonly<Record<string, string>>;
+  readonly applicationRuntime: ManagedStartupApplicationRuntimePlan;
   readonly materials: readonly ManagedStartupAgentMaterial[];
   readonly actions: readonly ManagedStartupAgentAction[];
 }
@@ -119,6 +131,17 @@ export class ManagedStartupAgentEnvironmentError extends Error {
 }
 
 type MutableEnvironment = Record<string, string>;
+type ApplicationEnvironment = Readonly<Record<string, string | undefined>>;
+const EMPTY_APPLICATION_ENVIRONMENT: ApplicationEnvironment = Object.freeze({});
+
+const OPENCLAW_APPLICATION_RUNTIME_INPUTS = Object.freeze([
+  ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "positive-finite-seconds"],
+  ["NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS", "positive-finite-seconds"],
+  ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "positive-finite-seconds"],
+  ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "positive-safe-integer"],
+  ["NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS", "positive-finite-seconds"],
+  ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "positive-finite-seconds"],
+] as const);
 
 function booleanFlag(value: boolean): "0" | "1" {
   return value ? "1" : "0";
@@ -147,6 +170,58 @@ function sortedEnvironment(environment: MutableEnvironment): Readonly<Record<str
       ),
     ),
   );
+}
+
+function canonicalApplicationRuntimeValue(
+  name: string,
+  raw: string,
+  kind: "positive-finite-seconds" | "positive-safe-integer",
+): string {
+  if (raw.includes("\0") || /[\r\n]/u.test(raw)) {
+    throw new ManagedStartupAgentEnvironmentError(`${name} must be single-line text`);
+  }
+  const value = Number(raw.trim());
+  const valid =
+    kind === "positive-safe-integer"
+      ? Number.isSafeInteger(value) && value > 0
+      : Number.isFinite(value) && value > 0;
+  if (!valid) {
+    throw new ManagedStartupAgentEnvironmentError(
+      `${name} must be ${
+        kind === "positive-safe-integer" ? "a positive safe integer" : "finite positive seconds"
+      }`,
+    );
+  }
+  return String(value);
+}
+
+function applicationRuntimePlan(
+  profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment,
+): ManagedStartupApplicationRuntimePlan {
+  const exportEnvironment: MutableEnvironment = {};
+  if (profile.agent === "openclaw") {
+    for (const [name, kind] of OPENCLAW_APPLICATION_RUNTIME_INPUTS) {
+      const raw = environment[name];
+      if (raw !== undefined) {
+        exportEnvironment[name] = canonicalApplicationRuntimeValue(name, raw, kind);
+      }
+    }
+  }
+  const unsetEnvironment = new Set(
+    MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS.filter(
+      ({ supportedFor }) => !supportedFor.includes(profile.agent),
+    ).map(({ input }) => input),
+  );
+  if (profile.agent !== "openclaw") {
+    for (const [name] of OPENCLAW_APPLICATION_RUNTIME_INPUTS) {
+      unsetEnvironment.add(name);
+    }
+  }
+  return Object.freeze({
+    exportEnvironment: sortedEnvironment(exportEnvironment),
+    unsetEnvironment: Object.freeze([...unsetEnvironment].sort()),
+  });
 }
 
 function commonConfigurationEnvironment(profile: ManagedStartupProfile): MutableEnvironment {
@@ -272,7 +347,10 @@ function applicationActions(
   return Object.freeze(actions);
 }
 
-function mapOpenClawProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnvironment {
+function mapOpenClawProfile(
+  profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment,
+): ManagedStartupAgentEnvironment {
   if (
     profile.agent !== "openclaw" ||
     profile.agentConfig.agent !== "openclaw" ||
@@ -327,12 +405,16 @@ function mapOpenClawProfile(profile: ManagedStartupProfile): ManagedStartupAgent
     agent: profile.agent,
     configurationEnvironment: sortedEnvironment(configurationEnvironment),
     runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
+    applicationRuntime: applicationRuntimePlan(profile, environment),
     materials: Object.freeze([corporateCaMaterial(profile)]),
     actions: applicationActions(profile, "openclaw"),
   });
 }
 
-function mapHermesProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnvironment {
+function mapHermesProfile(
+  profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment,
+): ManagedStartupAgentEnvironment {
   if (
     profile.agent !== "hermes" ||
     profile.agentConfig.agent !== "hermes" ||
@@ -373,12 +455,16 @@ function mapHermesProfile(profile: ManagedStartupProfile): ManagedStartupAgentEn
     agent: profile.agent,
     configurationEnvironment: sortedEnvironment(configurationEnvironment),
     runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
+    applicationRuntime: applicationRuntimePlan(profile, environment),
     materials: Object.freeze([corporateCaMaterial(profile)]),
     actions: applicationActions(profile, "hermes"),
   });
 }
 
-function mapDcodeProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnvironment {
+function mapDcodeProfile(
+  profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment,
+): ManagedStartupAgentEnvironment {
   if (
     profile.agent !== "langchain-deepagents-code" ||
     profile.agentConfig.agent !== "langchain-deepagents-code" ||
@@ -390,8 +476,13 @@ function mapDcodeProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnv
     );
   }
 
+  const reasoningEffort =
+    profile.tuning.reasoningEffort === null || profile.tuning.reasoningEffort === "default"
+      ? ""
+      : profile.tuning.reasoningEffort;
   const configurationEnvironment: MutableEnvironment = {
     ...commonConfigurationEnvironment(profile),
+    NEMOCLAW_REASONING_EFFORT: reasoningEffort,
     NEMOCLAW_UPSTREAM_ENDPOINT_URL: profile.inference.upstreamEndpointUrl ?? "",
   };
   appendHostProxyEnvironment(configurationEnvironment, profile);
@@ -399,10 +490,11 @@ function mapDcodeProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnv
     ...configurationEnvironment,
     NEMOCLAW_OBSERVABILITY: booleanFlag(profile.agentConfig.observabilityEnabled),
   };
-  // The config generator needs the routed base URL, but the long-running
-  // DCode process trusts only the root-owned file consumed by
-  // managed-dcode-runtime.py.
+  // The config generator needs the routed base URL and the reasoning effort,
+  // but the long-running DCode process trusts only the root-owned files
+  // consumed by managed-dcode-runtime.py.
   delete runtimeEnvironment.NEMOCLAW_INFERENCE_BASE_URL;
+  delete runtimeEnvironment.NEMOCLAW_REASONING_EFFORT;
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -435,6 +527,11 @@ function mapDcodeProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnv
       "/usr/local/share/nemoclaw/dcode-proxy-port",
       String(profile.proxy.managedPort),
     ),
+    rootOwnedFile(
+      "NEMOCLAW_REASONING_EFFORT",
+      "/usr/local/share/nemoclaw/dcode-reasoning-effort",
+      reasoningEffort,
+    ),
   ]);
 
   return Object.freeze({
@@ -442,6 +539,7 @@ function mapDcodeProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnv
     agent: profile.agent,
     configurationEnvironment: sortedEnvironment(configurationEnvironment),
     runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
+    applicationRuntime: applicationRuntimePlan(profile, environment),
     materials,
     actions: applicationActions(profile, null),
   });
@@ -455,14 +553,15 @@ function mapDcodeProfile(profile: ManagedStartupProfile): ManagedStartupAgentEnv
  */
 export function mapManagedStartupProfileToAgentEnvironment(
   profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment = EMPTY_APPLICATION_ENVIRONMENT,
 ): ManagedStartupAgentEnvironment {
   const validated = validateManagedStartupProfile(profile);
   switch (validated.agent) {
     case "openclaw":
-      return mapOpenClawProfile(validated);
+      return mapOpenClawProfile(validated, environment);
     case "hermes":
-      return mapHermesProfile(validated);
+      return mapHermesProfile(validated, environment);
     case "langchain-deepagents-code":
-      return mapDcodeProfile(validated);
+      return mapDcodeProfile(validated, environment);
   }
 }

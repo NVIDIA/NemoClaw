@@ -31,12 +31,14 @@ import {
 } from "./openshell-driver-config-test-wrapper.ts";
 
 export const EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV = "NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF";
-export const EXACT_MAIN_TMPFS_TARGET = "/tmp/nemoclaw-exact-main-driver-config";
+export const EXACT_MAIN_TMPFS_TARGET = "/run/nemoclaw-dcode-mcp";
 export const EXACT_MAIN_TMPFS_MOUNT = {
   type: "tmpfs",
   target: EXACT_MAIN_TMPFS_TARGET,
+  // Docker applies nosuid and nodev by default; only noexec is accepted as an
+  // additional structured tmpfs option by the pinned Docker driver.
   options: ["noexec"],
-  size_bytes: 16_777_216,
+  size_bytes: 1_048_576,
   mode: 0o1777,
 } as const;
 export const EXACT_MAIN_DRIVER_CONFIG_JSON = JSON.stringify({
@@ -501,7 +503,10 @@ async function assertSandboxMountAndAuth(options: {
       'mount_options="${mount_line#* }"',
       'test "$mount_type" = tmpfs',
       'case ",$mount_options," in *,noexec,*) ;; *) exit 1 ;; esac',
+      'case ",$mount_options," in *,nosuid,*) ;; *) exit 1 ;; esac',
+      'case ",$mount_options," in *,nodev,*) ;; *) exit 1 ;; esac',
       `test "$(stat -c '%a' ${EXACT_MAIN_TMPFS_TARGET})" = 1777`,
+      `set -- $(stat -fc '%S %b' ${EXACT_MAIN_TMPFS_TARGET}); test $(( $1 * $2 )) -le ${EXACT_MAIN_TMPFS_MOUNT.size_bytes}`,
       `test -r ${SANDBOX_TOKEN_TARGET} && test -s ${SANDBOX_TOKEN_TARGET}`,
       ...TLS_MOUNT_TARGETS.map((target) => `test -r ${target} && test -s ${target}`),
       markerCheck,
@@ -549,7 +554,7 @@ async function writeSnapshotArtifact(
     mount: {
       target: EXACT_MAIN_TMPFS_TARGET,
       representation: "structured-tmpfs-not-bind",
-      options: ["noexec"],
+      options: ["noexec", "nosuid", "nodev"],
       mode: "1777",
       lifecycle: mountLifecycle,
     },
@@ -578,7 +583,6 @@ export function prepareExactMainDriverConfigProof(
   const components = resolveOpenShellSiblingComponents(openshellPath);
   const wrapper = createOpenShellDriverConfigTestWrapper({
     delegatedCapabilityMarkers: REQUIRED_OPENSHELL_MCP_FEATURES,
-    driverConfigJson: EXACT_MAIN_DRIVER_CONFIG_JSON,
     label: "exact-main-driver-config",
     realOpenshellPath: components.cli,
   });

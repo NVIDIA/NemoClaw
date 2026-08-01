@@ -97,6 +97,10 @@ interface ChannelInputBaseSpec {
 export interface ChannelSecretInputSpec extends ChannelInputBaseSpec {
   readonly kind: "secret";
   readonly statePath?: never;
+  /** Cap the echoed asterisks and show "(and N more characters)" for a long pasted secret. */
+  readonly maskCap?: number;
+  /** Interactive re-prompts allowed on a format mismatch before the channel is skipped (default 1 = skip on first invalid). */
+  readonly maxTokenAttempts?: number;
 }
 
 /** Non-secret input metadata that may persist into channel state. */

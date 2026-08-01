@@ -67,6 +67,46 @@ harness or runner. Vitest remains the only test harness.
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
 
+## Cross-Runtime Foundation
+
+The registry contains an inert foundation for describing the same behavior on
+more than one execution provider:
+
+- `scenario.ts` owns provider-neutral desired state and explicit support
+  obligations, an ordered semantic user journey, and normalized assertions.
+- `execution-profile.ts` describes provider, host platform and architecture,
+  root mode, acceleration, capabilities, and bounded runner capacity. Provider
+  IDs are open; adding one does not require editing a central union.
+- `runtime-matrix.ts` binds every scenario obligation to a registered callable
+  fixture adapter, rejects incompatible capabilities, keeps full-profile
+  preparation batches atomic, schedules those batches within a host-wide shard
+  ceiling, and derives isolated resource identities.
+- `fixtures/runtime-provider.ts` is the provider-command boundary for
+  readiness, exact workload identity, obligation execution, lifecycle evidence,
+  and cleanup. Its fixture-only executor exercises compiled cases without
+  crossing the legacy Docker phase-fixture path.
+- `parity-evidence.ts` compares normalized lifecycle traces, desired-state
+  fingerprints, terminal outcomes, and user-visible projections. It retains
+  exact head/base, engine, architecture, workload, managed-image, capability,
+  and opaque provider receipt evidence without comparing provider internals.
+
+Compile one registry-wide `RuntimeMatrixDefinition`, then attach only a
+`scenarioId`/`profileId` reference with `TargetBuilder.runtimeCase(...)` in fast
+compiler tests today. The existing target compiler resolves the reference but
+does not dispatch its adapter IDs. Support tests execute the same compiled case
+through Docker-shaped and fake-MXC providers; no canonical target, workflow
+selector, live scenario, or production runtime registration consumes this
+metadata yet. Existing legacy Docker command fixtures, their ordering, and
+their output contracts are unchanged.
+Execution evidence must be published with
+`ArtifactSink.writeExecutionEvidence(...)` so normal artifact redaction still
+applies.
+
+When extending the foundation, keep product intent in the scenario, runtime
+mechanics in obligation bindings, and support facts in capabilities. A binding
+must cover every obligation explicitly; a missing adapter or capability is a
+compile error rather than a skip.
+
 ## How To Run
 
 ```bash

@@ -18,6 +18,7 @@ import {
   type SandboxMessagingPlan,
   toMessagingAgentId,
 } from "../messaging";
+import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
 import * as registry from "../state/registry";
 
 export { MessagingHostStateApplier };
@@ -38,6 +39,7 @@ export interface SetupSelectedMessagingChannelsOptions {
   readonly agent?: { readonly name?: string } | null;
   readonly sandboxName?: string | null;
   readonly interactive?: boolean;
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "sandboxName">;
   /** Reuse already-answered config fields while reacquiring process-only credentials. */
   readonly configurationCompleted?: boolean;
 }
@@ -47,8 +49,36 @@ export interface SetupMessagingChannelsDeps {
   readonly note?: (message: string) => void;
   readonly isNonInteractive?: () => boolean;
   readonly sandboxName?: string | null;
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "sandboxName">;
   /** The channel selection is durable; do not reopen the selector on resume. */
   readonly selectionCompleted?: boolean;
+}
+
+export interface CreateSetupMessagingChannelsDeps {
+  readonly step: NonNullable<SetupMessagingChannelsDeps["step"]>;
+  readonly note: NonNullable<SetupMessagingChannelsDeps["note"]>;
+  readonly isNonInteractive: NonNullable<SetupMessagingChannelsDeps["isNonInteractive"]>;
+  readonly prompt: NonNullable<GooglechatTunnelRuntimeDeps["prompt"]>;
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
+}
+
+export function createSetupMessagingChannels(deps: CreateSetupMessagingChannelsDeps) {
+  return (
+    agent: AgentDefinition | null = null,
+    existingChannels: string[] | null = null,
+    sandboxName: string | null = null,
+    options: { readonly selectionCompleted?: boolean } = {},
+  ): Promise<string[]> =>
+    setupMessagingChannels(agent, existingChannels, {
+      step: deps.step,
+      note: deps.note,
+      isNonInteractive: deps.isNonInteractive,
+      sandboxName,
+      selectionCompleted: options.selectionCompleted,
+      googlechatTunnelRuntime: deps.googlechatTunnelRuntime
+        ? { ...deps.googlechatTunnelRuntime, prompt: deps.prompt }
+        : undefined,
+    });
 }
 
 const getMessagingToken = (envKey: string): string | null =>
@@ -138,6 +168,7 @@ export async function setupMessagingChannels(
         agent,
         interactive: false,
         sandboxName: deps.sandboxName,
+        googlechatTunnelRuntime: deps.googlechatTunnelRuntime,
       });
     } else {
       MessagingSetupApplier.clearPlanEnv();
@@ -191,6 +222,7 @@ export async function setupMessagingChannels(
     agent,
     sandboxName: deps.sandboxName,
     configurationCompleted: deps.selectionCompleted,
+    googlechatTunnelRuntime: deps.googlechatTunnelRuntime,
   });
   console.log("");
 
@@ -254,6 +286,9 @@ export async function setupSelectedMessagingChannels(
 
   const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
+  const googlechatHooks = {
+    tunnelRuntime: { ...options.googlechatTunnelRuntime, sandboxName },
+  };
   const hooks = options.configurationCompleted
     ? createBuiltInMessagingHookRegistry({
         common: {
@@ -266,8 +301,9 @@ export async function setupSelectedMessagingChannels(
             prompt: async () => "",
           },
         },
+        googlechat: googlechatHooks,
       })
-    : createBuiltInMessagingHookRegistry();
+    : createBuiltInMessagingHookRegistry({ googlechat: googlechatHooks });
   const planner = new MessagingWorkflowPlanner(
     registry,
     hooks,
