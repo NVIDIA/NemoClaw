@@ -159,10 +159,12 @@ deterministic, labelled, Podman-managed local volume for image-transaction
 state at `/var/lib/nemoclaw`. The replacement is created under a deterministic
 staging name with final managed labels, an immutable image content ID, and
 image-owned entrypoint and command arguments. Environment values travel only
-through a mode-`0600` temporary file. The primitive accepts the replacement
+through a mode-`0600` temporary file, and replacement creation requests
+`relabel=shared` for the state mount. The primitive accepts the replacement
 only after stable volume and container inspections prove the volume driver,
-labels, mountpoint, writable shared relabel, full runtime ID, name, image,
-labels, environment, entrypoint, command, and stopped state.
+volume labels, mountpoint, a writable mount with no reported private `Z`
+relabel, full runtime ID, name, image, container labels, environment,
+entrypoint, command, and stopped state.
 
 `stopExactPodmanBootstrapOriginal` re-proves both identities before stopping
 the original and records that boundary only after the original is stably
