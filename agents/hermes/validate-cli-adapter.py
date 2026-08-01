@@ -103,6 +103,11 @@ def validate(contract_path: Path, hermes_binary: str) -> None:
             option_names.add(name)
         for surface in option_surfaces:
             if surface == "preparse":
+                if arity != "required":
+                    _fail(
+                        f"adapter option {option_id} has arity {arity}, "
+                        "but preparse parser metadata requires a value"
+                    )
                 missing = sorted(name for name in names if preparse.get(name) is not True)
                 if missing:
                     _fail(
