@@ -269,8 +269,8 @@ describe("PR review advisor security boundaries", () => {
     );
 
     expect(result.e2e.coverage.requiredTests.map((item) => item.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     const normalized = JSON.stringify(result);
     const summary = renderSummary(result);

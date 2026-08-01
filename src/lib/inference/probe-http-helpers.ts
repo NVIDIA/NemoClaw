@@ -108,6 +108,26 @@ export function getValidationProbeCurlArgs(opts?: ValidationProbeOptions): strin
   );
 }
 
+// Dedicated short deadline for the /responses streaming probe. It only needs the
+// first output_text.delta, and its failure falls back to chat completions, so a
+// stalled stream must not spend the full validation budget (up to 60s). See #7792.
+export const STREAMING_EVENT_PROBE_MAX_SECONDS = 12;
+
+// Cap the streaming probe's --max-time only (min, never lengthen); connect-timeout
+// stays and --max-time bounds the whole call. See #7792.
+export function getStreamingEventProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
+  const args = getValidationProbeCurlArgs(opts);
+  const maxTimeIndex = args.indexOf("--max-time");
+  if (maxTimeIndex === -1) return args;
+  const current = Number(args[maxTimeIndex + 1]);
+  const capped = Number.isFinite(current)
+    ? Math.min(current, STREAMING_EVENT_PROBE_MAX_SECONDS)
+    : STREAMING_EVENT_PROBE_MAX_SECONDS;
+  const next = [...args];
+  next[maxTimeIndex + 1] = String(capped);
+  return next;
+}
+
 export function getDeepSeekV4ProValidationProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
   const args = isWsl(opts)
     ? ["--connect-timeout", "30", "--max-time", "150"]

@@ -2,32 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
-import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+} from "../../onboard/runtime-provider/access";
 import * as registry from "../../state/registry";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
-import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-
-// Lazy adapter accessor, same pattern as docker-driver-sandbox-recovery.ts:
-// tests inject `deps.dockerStop` so the lazy require never fires.
-type DockerOpResult = { status?: number | null };
-type DockerStopFn = (name: string, opts?: Record<string, unknown>) => DockerOpResult;
-
-function loadDockerStop(): DockerStopFn {
-  return (require("../../adapters/docker") as { dockerStop: DockerStopFn }).dockerStop;
-}
-
-const DOCKER_STOP_TIMEOUT_MS = 30_000;
-
-// Docker `Status` strings for containers that hold no resources: nothing to
-// stop. Everything else — `Up`, `Up … (Paused)`, and crash-looping
-// `Restarting (N) …` — is stoppable; `docker stop` also disarms an armed
-// restart policy, which is exactly how a crash loop is silenced (#6026).
-const AT_REST_STATUS_PREFIXES = ["Exited", "Created", "Dead"] as const;
-
-function isAtRest(status: string): boolean {
-  return AT_REST_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix));
-}
+import {
+  resolveSandboxLifecycleProvider,
+  type SandboxLifecycleResult,
+} from "./runtime/lifecycle-runtime";
 
 function teardownDashboardForwardBestEffort(
   sandboxName: string,
@@ -42,84 +27,21 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
-export type SandboxLifecycleResult = {
-  exitCode: number;
-  message?: string;
-};
+export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
 export interface SandboxStopDeps {
+  environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
-  isDockerRuntimeDown?: typeof isDockerRuntimeDown;
-  printDockerRuntimeDownGuidance?: typeof printDockerRuntimeDownGuidance;
-  findLabeledSandboxContainers?: typeof findLabeledSandboxContainers;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
-  dockerStop?: DockerStopFn;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
 
-function normalizeDriver(driver: unknown): string | null {
-  return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
-}
-
 /**
- * Refuse lifecycle control for sandboxes we cannot reach through the local
- * Docker daemon. Mirrors the gate `privilegedSandboxExecArgv` applies before
- * direct-container mutation (src/lib/sandbox/privileged-exec.ts).
- */
-export function gateDirectDriverLifecycle(
-  sandboxName: string,
-  action: "stop" | "start",
-  getSandbox: typeof registry.getSandbox,
-): SandboxLifecycleResult | null {
-  const entry = getSandbox(sandboxName);
-  if (!entry) {
-    return {
-      exitCode: 1,
-      message:
-        `  Sandbox '${sandboxName}' is not registered. ` +
-        `Run '${CLI_NAME} list' to see registered sandboxes.`,
-    };
-  }
-  const driver = normalizeDriver(entry.openshellDriver);
-  if (driver !== null && driver !== "docker" && driver !== "vm") {
-    return {
-      exitCode: 1,
-      message:
-        `  '${CLI_NAME} ${sandboxName} ${action}' controls the local Docker container ` +
-        `directly and is unavailable for driver '${driver}'.`,
-    };
-  }
-  return null;
-}
-
-/**
- * Fail fast with the shared #4428 outage guidance when the Docker daemon is
- * unreachable. Without this preflight an empty `docker ps` result is
- * indistinguishable from "no containers", and stop/start would misreport a
- * daemon outage as a removed container and steer the user toward `rebuild` —
- * exactly the guidance printDockerRuntimeDownGuidance exists to prevent.
- */
-export function gateDockerRuntimeUp(
-  sandboxName: string,
-  retryCommand: "stop" | "start",
-  deps: Pick<SandboxStopDeps, "isDockerRuntimeDown" | "printDockerRuntimeDownGuidance">,
-): SandboxLifecycleResult | null {
-  if (!(deps.isDockerRuntimeDown ?? isDockerRuntimeDown)(sandboxName)) return null;
-  (deps.printDockerRuntimeDownGuidance ?? printDockerRuntimeDownGuidance)(sandboxName, {
-    retryCommand,
-  });
-  return { exitCode: 1 };
-}
-
-/**
- * Stop a sandbox's Docker container while preserving every piece of state
- * destroy would remove: the workspace volume, registry entry, OpenShell
- * sandbox record, credentials, and images all stay in place (#6026).
- *
- * The shared host gateway, tunnel, and any NIM inference container are
- * gateway-scoped and serve other sandboxes — deliberately untouched.
+ * Stop the selected provider workload while preserving registry, workspace,
+ * credentials, and shared gateway state.
  */
 export function stopSandbox(
   sandboxName: string,
@@ -127,36 +49,45 @@ export function stopSandbox(
 ): SandboxLifecycleResult {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
-
-  const gate = gateDirectDriverLifecycle(
+  const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+  const resolved = resolveSandboxLifecycleProvider(
     sandboxName,
+    sandbox,
     "stop",
-    deps.getSandbox ?? registry.getSandbox,
+    deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
   );
-  if (gate) return gate;
+  if (!resolved.ok) return resolved.result;
 
-  const runtimeGate = gateDockerRuntimeUp(sandboxName, "stop", deps);
-  if (runtimeGate) return runtimeGate;
-
-  const containers = (deps.findLabeledSandboxContainers ?? findLabeledSandboxContainers)(
+  const input = {
+    environment: deps.environment ?? process.env,
+    log,
+    sandbox: resolved.sandbox,
     sandboxName,
-  );
-  if (containers.length === 0) {
-    return {
-      exitCode: 1,
-      message:
-        `  No Docker container found for sandbox '${sandboxName}'. ` +
-        `If the container was removed, run '${CLI_NAME} ${sandboxName} rebuild' to recreate it.`,
-    };
-  }
+  };
+  const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("stop", input);
+  if (preflight) return preflight;
 
-  const stoppable = containers.filter((container) => !isAtRest(container.status));
-  if (stoppable.length === 0) {
+  let channelsStopped = false;
+  const outcome = resolved.lifecycle.stop(input, {
+    beforeStop() {
+      if (channelsStopped) return;
+      channelsStopped = true;
+      try {
+        (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
+          channelStopTransport: resolved.lifecycle.channelStopTransport,
+          info: (message) => log(`  ${message}`),
+          warn: (message) => warn(`  ${message}`),
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
+      }
+    },
+  });
+  if (outcome.exitCode !== 0) return outcome;
+
+  if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);
-    // Idempotent teardown: an earlier stop may have left the dashboard forward
-    // alive (e.g. openshell was unreachable then, or the forward was orphaned by
-    // a raw `docker stop`). Release it here too so a repeated stop always
-    // converges on no leftover listener (#7227).
     teardownDashboardForwardBestEffort(
       sandboxName,
       deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
@@ -166,56 +97,11 @@ export function stopSandbox(
     return { exitCode: 0 };
   }
 
-  // Graceful in-sandbox gateway shutdown first, so channels disconnect
-  // cleanly instead of dying with the container's SIGTERM. Best-effort:
-  // a stop must still free resources when the gateway is unreachable.
-  // Agent-managed gateways (e.g. Hermes) are supervised inside the sandbox
-  // and shut down with the container's stop signal instead.
-  try {
-    (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
-      info: (message) => log(`  ${message}`),
-      warn: (message) => warn(`  ${message}`),
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
-  }
-
-  // Attempt every stoppable container even if one fails: a sandbox can have
-  // more than one labeled container (e.g. a gpu-backup sibling), and aborting
-  // on the first failure would leave the rest running — the opposite of what
-  // stop is for. Collect failures and report them together.
-  const dockerStop = deps.dockerStop ?? ((name, opts) => loadDockerStop()(name, opts));
-  const failures: string[] = [];
-  for (const container of stoppable) {
-    log(`  Stopping container '${container.name}'…`);
-    const result = dockerStop(container.name, {
-      ignoreError: true,
-      timeout: DOCKER_STOP_TIMEOUT_MS,
-    });
-    if (result.status !== 0) {
-      failures.push(`${container.name} (exit ${result.status ?? "unknown"})`);
-    }
-  }
-
-  if (failures.length > 0) {
-    return {
-      exitCode: 1,
-      message: `  docker stop failed for: ${failures.join(", ")}.`,
-    };
-  }
-
-  // Release the host-side dashboard port-forward this sandbox created. Without
-  // this, the `ssh -L` listener stays alive after the container is stopped, so
-  // `status` misreports the cleanly-stopped sandbox as a foreign
-  // `sandbox_dashboard_port_conflict` and `start`/`recover` contend with the
-  // still-held port (#7227). Best-effort — the container is already stopped.
   teardownDashboardForwardBestEffort(
     sandboxName,
     deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
     warn,
   );
-
   log(`  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`);
   log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
   return { exitCode: 0 };

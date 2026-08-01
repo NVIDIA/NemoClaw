@@ -60,8 +60,15 @@ import {
   DCODE_PROBE_STATE,
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
-import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
-import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
+import {
+  cleanupShieldsDestroyArtifacts,
+  removeSandboxRegistryEntryOutcome,
+  requireSandboxDestructiveCleanupAuthority,
+} from "./destroy";
+import {
+  establishRestoredSandboxGatewayPairing,
+  waitForRestoredSandboxGatewaySupervisor,
+} from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -119,6 +126,36 @@ function snapshotExit(exitCode = 1): never {
 function formatSnapshotVersion(b: unknown) {
   const snapshotVersion = (b as { snapshotVersion?: number }).snapshotVersion ?? 0;
   return `v${snapshotVersion}`;
+}
+
+export function requireSnapshotDestinationRegistryRemoval(
+  name: string,
+  removalOutcome: ReturnType<typeof removeSandboxRegistryEntryOutcome>,
+): void {
+  if (removalOutcome.status !== "blocked") return;
+  // SOURCE_OF_TRUTH
+  // Invalid state: a bypassing registry writer changed cleanup authority after
+  // the locked pre-delete proof, leaving the destination absent while its
+  // ownership row must be retained.
+  // Source boundary: deleteSandboxForRestore proves provider/workload cleanup
+  // authority under the destination lifecycle lock, then registry removal
+  // rechecks that authority after the live delete.
+  // Source-fix constraint: the current runtime API has no authenticated atomic
+  // replace primitive and raw writers do not participate in NemoClaw's lock.
+  // Regression proof: snapshot-restore-lifecycle.test.ts covers pre-delete
+  // refusal; snapshot restore authority tests cover this retained-row stop.
+  // Removal condition: an exact provider-native replace transaction supplies
+  // durable delete, rollback, and cleanup receipts.
+  console.error(
+    `  Destination '${name}' is deleted, but local runtime ownership cleanup is incomplete.`,
+  );
+  console.error(
+    "  The registry entry was preserved because provider/workload cleanup authority could not be proven.",
+  );
+  console.error(
+    `  Run '${CLI_NAME} ${name} doctor --json'; restore trusted ownership metadata or resolve the runtime conflict, then retry. Do not rewrite a receipt to match a mutable name.`,
+  );
+  snapshotExit(1);
 }
 
 function renderSnapshotTable(
@@ -408,6 +445,15 @@ async function autoCreateSandboxFromSource(
         : (srcEntry as SandboxEntry).hermesDashboardPort,
   });
 
+  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
+  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
+    console.error(
+      `  Sandbox '${dstName}' reached OpenShell Ready, but its managed OpenClaw supervisor did not become ready.`,
+    );
+    console.error("  Snapshot state was not restored into the incomplete clone.");
+    snapshotExit(1);
+  }
+
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
@@ -425,14 +471,32 @@ async function autoCreateSandboxFromSource(
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
 function deleteSandboxForRestore(name: string): void {
-  const sbMeta = registry.getSandbox(name);
-  if (sbMeta?.nimContainer) {
-    nim.stopNimContainerByName(sbMeta.nimContainer);
-  } else {
-    nim.stopNimContainer(name, { silent: true });
-  }
-  console.log(`  Deleting existing destination '${name}' before restore...`);
   withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
+    const sbMeta = registry.getSandbox(name);
+    if (!sbMeta) {
+      console.error(
+        `  Cannot delete destination '${name}': its durable runtime ownership entry disappeared.`,
+      );
+      snapshotExit(1);
+    }
+    try {
+      requireSandboxDestructiveCleanupAuthority(name, sbMeta);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(
+        `  Cannot delete destination '${name}' because runtime cleanup authority is unproven: ${detail}`,
+      );
+      console.error(
+        `  Run '${CLI_NAME} ${name} doctor --json' and resolve the recorded ownership conflict before retrying.`,
+      );
+      snapshotExit(1);
+    }
+    if (sbMeta.nimContainer) {
+      nim.stopNimContainerByName(sbMeta.nimContainer);
+    } else {
+      nim.stopNimContainer(name, { silent: true });
+    }
+    console.log(`  Deleting existing destination '${name}' before restore...`);
     if (readTimerMarker(name)) {
       shields.shieldsUp(name, {
         throwOnError: true,
@@ -473,7 +537,7 @@ function deleteSandboxForRestore(name: string): void {
       });
     }
     cleanupShieldsDestroyArtifacts(name);
-    removeSandboxRegistryEntry(name);
+    requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
@@ -986,30 +1050,26 @@ async function runSnapshotRestoreUnlocked(
       );
       snapshotExit(1);
     }
-    // Cross-sandbox restore — whether dst exists (with --force) or not,
-    // we must be able to clone the source's running pod image. Resolve it
-    // upfront so a missing source / unresolvable image cannot delete the
-    // destination first (#3756 P1).
-    if (!sourceLiveNames.has(sandboxName)) {
-      if (targetExists) {
-        console.error(
-          `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
-        );
-      } else {
-        console.error(
-          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
-        );
-        console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
-      }
-      snapshotExit(1);
-    }
+    // Cross-sandbox restore — whether dst exists (with --force) or not, we
+    // must be able to clone the source's image. Resolve it upfront so a
+    // missing source / unresolvable image cannot delete the destination first
+    // (#3756 P1). A source that is no longer running stays restorable while
+    // its registry entry still records the image and inference route, because
+    // that is the case a replacement sandbox exists to recover from.
     const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
     const fromImage = resolveSrcPodImage(sandboxName, srcEntry);
     if (!fromImage) {
-      console.error(
-        `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
-          (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
-      );
+      if (!sourceLiveNames.has(sandboxName)) {
+        console.error(
+          `  Cannot ${targetExists ? "recreate" : "auto-create"} '${targetSandbox}': source '${sandboxName}' is not running and its registry entry records no image.`,
+        );
+        console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
+      } else {
+        console.error(
+          `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
+            (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
+        );
+      }
       snapshotExit(1);
     }
     if (targetExists) {

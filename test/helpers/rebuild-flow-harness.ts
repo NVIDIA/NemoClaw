@@ -52,6 +52,10 @@ const rebuildInference = requireDist("./rebuild-inference-preflight.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
+const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
+const gatewayTeardownAuthority = requireDist(
+  "../../onboard/gateway-teardown-authority.js",
+) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 const shields = requireDist("../../shields/index.js");
 
 type RebuildFlowStep = {
@@ -137,6 +141,9 @@ export type RebuildFlowOverrides = {
   openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
+  revalidateRebuildRouteBeforeDelete?: (
+    receipt: Record<string, unknown>,
+  ) => { ok: true; receipt: Record<string, unknown> } | { ok: false; message: string };
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
@@ -223,12 +230,32 @@ function createStep(status: string): RebuildFlowStep {
   return { status, startedAt: null, completedAt: null, error: null };
 }
 
+function sourceSandboxGateway(argv: string[], verb: string): string | null {
+  const gatewayFlag = argv.indexOf("-g");
+  return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
+    ? (argv[gatewayFlag + 1] ?? null)
+    : null;
+}
+
 function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
   return {
+    sessionId: "rebuild-flow-session",
+    updatedAt: "2026-06-01T00:00:00.000Z",
     sandboxName: "alpha",
+    agent: null,
     provider: "ollama-local",
     model: "nvidia/nemotron",
     credentialEnv: null,
+    checkpoint: null,
+    webSearchConfig: null,
+    resourceProfile: null,
+    messagingPlan: null,
+    sandboxPromptProgress: {
+      sandboxName: true,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: false,
+    },
     metadata: {},
     hermesToolGateways: [],
     lastStepStarted: null,
@@ -308,6 +335,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
@@ -442,6 +481,42 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockImplementation(
+    (...args: unknown[]) => {
+      const input = args[0] as {
+        sandboxName: string;
+        gatewayName: string;
+        targetUpdate: Record<string, unknown>;
+      };
+      if (!registry.updateSandbox(input.sandboxName, input.targetUpdate)) {
+        return {
+          ok: false,
+          message: "Sandbox registry entry disappeared during rebuild route preflight.",
+        };
+      }
+      return {
+        ok: true,
+        receipt: {
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          route: {
+            provider: input.targetUpdate.provider ?? null,
+            model: input.targetUpdate.model ?? null,
+            endpointUrl: input.targetUpdate.endpointUrl ?? null,
+            preferredInferenceApi: input.targetUpdate.preferredInferenceApi ?? null,
+            credentialEnv: input.targetUpdate.credentialEnv ?? null,
+          },
+          migratedSandboxNames: [],
+        },
+      };
+    },
+  );
+  vi.spyOn(rebuildRoutePreflight, "revalidateRebuildRouteBeforeDelete").mockImplementation(
+    (...args: unknown[]) => {
+      const receipt = args[0] as Record<string, unknown>;
+      return overrides.revalidateRebuildRouteBeforeDelete?.(receipt) ?? { ok: true, receipt };
+    },
+  );
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation(() => undefined);
@@ -541,8 +616,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      return overrides.captureOpenshell
-        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+      if (overrides.captureOpenshell) {
+        return overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined);
+      }
+      const probedGateway = sourceSandboxGateway(argv, "get");
+      const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+      return probedGateway && !deletedSourceGateways.has(probedGateway)
+        ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : {
             status: 1,
             output: "",
@@ -550,8 +630,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             stderr: "Error: sandbox alpha not found",
           };
     });
+  const deletedSourceGateways = new Set<string>();
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
+    const deleteGateway = sourceSandboxGateway(argv, "delete");
+    if (deleteGateway) {
+      deletedSourceGateways.add(deleteGateway);
+      return { status: 0, output: "" };
+    }
     if (
       argv.join(" ") === "sandbox get alpha" ||
       argv.join(" ") === "sandbox get -g nemoclaw alpha"
