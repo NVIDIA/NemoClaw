@@ -81,8 +81,9 @@ describe("validation probe curl timing helpers", () => {
       "--connect-timeout",
       "10",
       "--max-time",
-      String(STREAMING_EVENT_PROBE_MAX_SECONDS),
+      "5",
     ]);
+    expect(STREAMING_EVENT_PROBE_MAX_SECONDS).toBe(5);
     // Non-stream standard budget stays at the full 15s for comparison.
     expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
       "--connect-timeout",
@@ -98,7 +99,7 @@ describe("validation probe curl timing helpers", () => {
       "--connect-timeout",
       "10",
       "--max-time",
-      String(STREAMING_EVENT_PROBE_MAX_SECONDS),
+      "5",
     ]);
   });
 });
