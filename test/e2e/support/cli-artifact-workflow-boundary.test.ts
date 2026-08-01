@@ -285,6 +285,11 @@ describe("exact-commit CLI artifact workflow boundary", () => {
   });
 
   it.each([
+    [
+      "candidate repository",
+      { candidateRepository: "example/other-repository" },
+      "consumer checkout repository does not match producer provenance",
+    ],
     ["workflow SHA", { workflowSha: "e".repeat(40) }, "consumer and producer workflow SHAs differ"],
     ["run ID", { runId: "98766" }, "consumer and producer workflow run identities differ"],
     ["run attempt", { runAttempt: "2" }, "consumer and producer workflow run identities differ"],
