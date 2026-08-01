@@ -125,15 +125,18 @@ const PHASES = new Set<PersistedEngineLifecyclePhase>([
   "completed",
 ]);
 const PHASE_FILES = ["prepared", "mutation-authorized", "completed"] as const;
+const resourceRoles = (
+  ...roles: PersistedEngineLifecycleResourceRole[]
+): readonly PersistedEngineLifecycleResourceRole[] => Object.freeze(roles);
 const REQUIRED_ROLES: Readonly<
   Record<PersistedEngineLifecycleAction, readonly PersistedEngineLifecycleResourceRole[]>
 > = Object.freeze({
-  "snapshot-create": Object.freeze(["source"]),
-  "snapshot-clone": Object.freeze(["source", "target"]),
-  rebuild: Object.freeze(["source", "target"]),
-  backup: Object.freeze(["source"]),
-  restore: Object.freeze(["source", "target"]),
-  recovery: Object.freeze(["target"]),
+  "snapshot-create": resourceRoles("source"),
+  "snapshot-clone": resourceRoles("source", "target"),
+  rebuild: resourceRoles("source", "target"),
+  backup: resourceRoles("source"),
+  restore: resourceRoles("source", "target"),
+  recovery: resourceRoles("target"),
 });
 
 function fail(message: string): never {
@@ -732,8 +735,16 @@ function authorizedScope(
   };
   return Object.freeze({
     record,
-    captureExact: (role, buildArgs, timeoutMs) => capture(false, role, buildArgs, timeoutMs),
-    captureHostExact: (role, buildArgs, timeoutMs) => capture(true, role, buildArgs, timeoutMs),
+    captureExact: (
+      role: PersistedEngineLifecycleResourceRole,
+      buildArgs: (runtimeId: string) => readonly string[],
+      timeoutMs?: number,
+    ) => capture(false, role, buildArgs, timeoutMs),
+    captureHostExact: (
+      role: PersistedEngineLifecycleResourceRole,
+      buildArgs: (runtimeId: string) => readonly string[],
+      timeoutMs?: number,
+    ) => capture(true, role, buildArgs, timeoutMs),
   });
 }
 
