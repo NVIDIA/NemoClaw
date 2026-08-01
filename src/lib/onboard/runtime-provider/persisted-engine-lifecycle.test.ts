@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createContainerEngineCommand } from "../../adapters/container-engine";
+import {
+  type ContainerEngineCommandCapture,
+  createContainerEngineCommand,
+} from "../../adapters/container-engine";
 import {
   createFilePersistedEngineAuthorityStore,
   createPersistedEngineAuthority,
@@ -41,7 +44,11 @@ function temporaryRoot(): string {
 }
 
 function lifecycleEngine(
-  capture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" })),
+  capture: ContainerEngineCommandCapture = vi.fn(() => ({
+    status: 0,
+    stdout: "ok",
+    stderr: "",
+  })),
   authorityId = AUTHORITY_ID,
 ) {
   return createContainerEngineCommand({
@@ -78,7 +85,7 @@ function harness(
   options: {
     readonly root?: string;
     readonly action?: PersistedEngineLifecycleAction;
-    readonly capture?: ReturnType<typeof vi.fn>;
+    readonly capture?: ContainerEngineCommandCapture;
     readonly authorityId?: string;
     readonly transactionId?: string;
     readonly runtimeStateSha256?: string;
