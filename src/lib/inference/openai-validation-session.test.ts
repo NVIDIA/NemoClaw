@@ -191,11 +191,11 @@ describe("OpenAI validation keepalive sequence", () => {
       );
 
       await initialStarted;
-      await vi.advanceTimersByTimeAsync(12_001);
+      await vi.advanceTimersByTimeAsync(5_001);
       expect(initialResponse).toBeDefined();
       initialResponse!.end('{"output":[{"type":"message"}]}');
       await streamingStarted;
-      await vi.advanceTimersByTimeAsync(12_000);
+      await vi.advanceTimersByTimeAsync(5_000);
 
       await expect(resultPromise).resolves.toMatchObject({
         ok: true,

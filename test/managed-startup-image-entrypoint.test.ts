@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HOLD = path.join(ROOT, "scripts", "managed-startup-hold.sh");
+const MESSAGING_PERSISTENCE = path.join(ROOT, "src", "lib", "messaging", "persistence.ts");
 
 function executable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -60,6 +61,14 @@ function runHoldWithFakeIdentity(identity: FakeIdentity, args: readonly string[]
 }
 
 describe("managed startup image hold", () => {
+  it("keeps the bundled image runtime independent of the host-only channel policy parser", () => {
+    const persistence = fs.readFileSync(MESSAGING_PERSISTENCE, "utf8");
+
+    expect(persistence).toContain('from "./channels/built-ins"');
+    expect(persistence).toContain('from "./channels/template-resolver"');
+    expect(persistence).not.toMatch(/from ["']\.\/channels["']/u);
+  });
+
   it.each([
     "openclaw",
     "hermes",

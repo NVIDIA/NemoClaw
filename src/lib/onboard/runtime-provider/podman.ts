@@ -75,6 +75,9 @@ export function createPodmanRuntimeProviderBundle(
   const { hostDoctor, sandboxLifecycle } = options.engines;
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
+  if (hostDoctor.authorityId !== sandboxLifecycle.authorityId) {
+    throw new Error("Podman provider engines must bind the same endpoint authority.");
+  }
   const preflight = options.preflight ?? {};
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
 
