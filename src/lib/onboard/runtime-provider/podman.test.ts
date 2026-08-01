@@ -129,12 +129,13 @@ function inferenceEngine(authorityId = AUTHORITY_ID): ContainerEngine {
   };
 }
 
-function inferenceRuntime(): HostLocalInferenceRuntime {
+function inferenceRuntime(authorityId = AUTHORITY_ID): HostLocalInferenceRuntime {
   const unavailable = () => {
     throw new Error("not exercised by the bundle contract test");
   };
   return {
     providerId: "podman",
+    authorityId,
     services: ["ollama", "nim", "vllm"],
     translateContainerArgs: (args) => args,
     qualifyOllama: unavailable,
@@ -214,6 +215,7 @@ describe("dormant Podman runtime provider", () => {
 
     expect(surface).toMatchObject({ providerId: "podman", supported: true });
     assert(surface?.supported === true, "expected supported inference surface");
+    expect(surface.runtime.authorityId).toBe(AUTHORITY_ID);
     expect(surface.runtime.services).toEqual(["ollama", "nim", "vllm"]);
     expect(surface.runtime).not.toHaveProperty("agent");
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
@@ -237,6 +239,19 @@ describe("dormant Podman runtime provider", () => {
         },
       }),
     ).toThrow("same endpoint authority");
+  });
+
+  it("rejects an inference runtime bound to a different endpoint authority", () => {
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: {
+          hostDoctor: hostDoctorEngine(),
+          hostLocalInference: inferenceEngine(),
+          sandboxLifecycle: lifecycleEngine("mismatched-inference"),
+        },
+        hostLocalInference: inferenceRuntime("test:other-inference-socket"),
+      }),
+    ).toThrow("bind the provider endpoint");
   });
 
   it("requires the inference engine and runtime as one bound surface", () => {

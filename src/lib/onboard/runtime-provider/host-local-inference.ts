@@ -10,6 +10,32 @@ export const HOST_LOCAL_INFERENCE_RECEIPT_SCHEMA_VERSION = 1 as const;
 
 export type HostLocalInferenceService = "ollama" | "nim" | "vllm";
 
+export interface HostLocalInferenceEndpointInput {
+  readonly networkName: string;
+  readonly hostPort: number;
+  readonly probeImageRef: string;
+}
+
+export interface HostLocalInferenceMount {
+  readonly source: string;
+  readonly target: string;
+  readonly readOnly?: boolean;
+}
+
+export interface HostLocalManagedInferenceInput extends HostLocalInferenceEndpointInput {
+  readonly service: "nim" | "vllm";
+  readonly containerName: string;
+  readonly containerPort: number;
+  readonly imageRef: string;
+  readonly gpuDevices: readonly string[];
+  /** Environment variable names forwarded from the current process; values are never persisted. */
+  readonly environment?: readonly string[];
+  readonly mounts?: readonly HostLocalInferenceMount[];
+  readonly sharedMemory?: string;
+  readonly ipc?: "host" | "private";
+  readonly command?: readonly string[];
+}
+
 export interface HostLocalInferenceEndpointAuthority {
   readonly host: string;
   readonly port: number;
@@ -47,6 +73,25 @@ export interface HostLocalInferenceReceipt {
   readonly engineAuthority: PersistedEngineAuthority;
   readonly endpoint: HostLocalInferenceEndpointAuthority;
   readonly runtime: HostLocalInferenceRuntimeAuthority;
+}
+
+export interface HostLocalManagedInferenceInspection {
+  readonly running: boolean;
+  readonly receipt: HostLocalInferenceReceipt;
+}
+
+export interface HostLocalInferenceRuntime {
+  readonly providerId: string;
+  /** Exact opaque endpoint identity shared with the operation-scoped engine. */
+  readonly authorityId: string;
+  readonly services: readonly HostLocalInferenceService[];
+  translateContainerArgs(args: readonly string[]): readonly string[];
+  qualifyOllama(input: HostLocalInferenceEndpointInput): HostLocalInferenceReceipt;
+  startManaged(input: HostLocalManagedInferenceInput): HostLocalInferenceReceipt;
+  inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
+  stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
+  /** Re-prove the same out-of-sandbox service before carrying it into a rebuild. */
+  preserveForRebuild(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
 }
 
 const PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
