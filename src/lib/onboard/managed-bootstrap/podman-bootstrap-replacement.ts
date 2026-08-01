@@ -668,15 +668,17 @@ function inspectExactContainer(
   );
   const commandArgv = parsedStringArray(config.Cmd, "Podman bootstrap inspect command");
   const environment = parsedStringArray(config.Env, "Podman bootstrap inspect environment");
-  const stateVolumeAuthority = expected.stateVolume
-    ? inspectExactStateVolume(authority, expected.stateVolume)
+  const stateVolumeExpectation = expected.stateVolume;
+  const stateVolumeAuthority = stateVolumeExpectation
+    ? inspectExactStateVolume(authority, stateVolumeExpectation)
     : null;
-  const stateVolume = stateVolumeAuthority
-    ? exactContainerStateMount(inspect, {
-        ...expected.stateVolume,
-        mountpoint: stateVolumeAuthority.mountpoint,
-      })
-    : null;
+  const stateVolume =
+    stateVolumeAuthority && stateVolumeExpectation
+      ? exactContainerStateMount(inspect, {
+          ...stateVolumeExpectation,
+          mountpoint: stateVolumeAuthority.mountpoint,
+        })
+      : null;
   if (
     actualRuntimeId !== runtimeId ||
     name !== expected.name ||
