@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ContainerEngine } from "../../adapters/container-engine";
-import type { HostLocalInferenceRuntime } from "./host-local-inference";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -10,6 +9,7 @@ import {
   type RuntimeProviderLifecycleResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import type { HostLocalInferenceRuntime } from "./host-local-inference";
 import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
 import {
   inspectPodmanHost,
@@ -75,8 +75,11 @@ export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
 ): RuntimeProviderBundle {
   const providerId = "podman";
-  const { hostDoctor, hostLocalInference: hostLocalInferenceEngine, sandboxLifecycle } =
-    options.engines;
+  const {
+    hostDoctor,
+    hostLocalInference: hostLocalInferenceEngine,
+    sandboxLifecycle,
+  } = options.engines;
   const hostLocalInference = options.hostLocalInference;
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");

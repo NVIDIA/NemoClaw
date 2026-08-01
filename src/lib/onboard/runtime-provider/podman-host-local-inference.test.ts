@@ -203,7 +203,9 @@ describe("Podman host-local inference runtime", () => {
     });
     expect(host.runtime.preserveForRebuild(receipt)).toEqual(receipt);
     expect(
-      host.capture.mock.calls.filter(([args]) => args.includes("http://host.containers.internal:11434/api/tags")),
+      host.capture.mock.calls.filter(([args]) =>
+        args.includes("http://host.containers.internal:11434/api/tags"),
+      ),
     ).toHaveLength(2);
     expect(host.runtime.translateContainerArgs(["--gpus", "all"])).toEqual([
       "--device",
@@ -211,48 +213,50 @@ describe("Podman host-local inference runtime", () => {
     ]);
   });
 
-  it.each(["nim", "vllm"] as const)(
-    "starts, inspects, stops, and restarts exact managed %s authority",
-    (service) => {
-      const host = runtimeHarness();
-      const input = managedInput(service);
-      const receipt = host.runtime.startManaged(input);
-      const run = host.capture.mock.calls.find(([args]) => args[0] === "run" && !args.includes("--rm"))?.[0];
+  it.each([
+    "nim",
+    "vllm",
+  ] as const)("starts, inspects, stops, and restarts exact managed %s authority", (service) => {
+    const host = runtimeHarness();
+    const input = managedInput(service);
+    const receipt = host.runtime.startManaged(input);
+    const run = host.capture.mock.calls.find(
+      ([args]) => args[0] === "run" && !args.includes("--rm"),
+    )?.[0];
 
-      expect(receipt).toMatchObject({
-        providerId: "podman",
-        service,
-        endpoint: { host: "host.containers.internal", port: input.hostPort },
-        runtime: {
-          kind: "container",
-          name: input.containerName,
-          imageRef: IMAGE_REF,
-          gpu: { devices: ["nvidia.com/gpu=all"] },
-        },
-      });
-      expect(run).toEqual(
-        expect.arrayContaining([
-          "--pull=never",
-          "--device",
-          "nvidia.com/gpu=all",
-          "--publish",
-          `127.0.0.1:${String(input.hostPort)}:8000`,
-          "--shm-size",
-          "16g",
-        ]),
-      );
-      expect(run?.join(" ")).not.toContain("secret");
-      expect(host.runtime.inspectManaged(receipt).running).toBe(true);
-      expect(host.runtime.stopManaged(receipt).running).toBe(false);
-      expect(host.runtime.startManaged(input)).toEqual(receipt);
-      expect(host.runtime.preserveForRebuild(receipt)).toEqual(receipt);
-      expect(host.capture.mock.calls.filter(([args]) => args[0] === "run")).toHaveLength(1);
-      expect(host.capture.mock.calls.map(([args]) => args)).toContainEqual([
-        "start",
-        receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable",
-      ]);
-    },
-  );
+    expect(receipt).toMatchObject({
+      providerId: "podman",
+      service,
+      endpoint: { host: "host.containers.internal", port: input.hostPort },
+      runtime: {
+        kind: "container",
+        name: input.containerName,
+        imageRef: IMAGE_REF,
+        gpu: { devices: ["nvidia.com/gpu=all"] },
+      },
+    });
+    expect(run).toEqual(
+      expect.arrayContaining([
+        "--pull=never",
+        "--device",
+        "nvidia.com/gpu=all",
+        "--publish",
+        `127.0.0.1:${String(input.hostPort)}:8000`,
+        "--shm-size",
+        "16g",
+      ]),
+    );
+    expect(run?.join(" ")).not.toContain("secret");
+    expect(host.runtime.inspectManaged(receipt).running).toBe(true);
+    expect(host.runtime.stopManaged(receipt).running).toBe(false);
+    expect(host.runtime.startManaged(input)).toEqual(receipt);
+    expect(host.runtime.preserveForRebuild(receipt)).toEqual(receipt);
+    expect(host.capture.mock.calls.filter(([args]) => args[0] === "run")).toHaveLength(1);
+    expect(host.capture.mock.calls.map(([args]) => args)).toContainEqual([
+      "start",
+      receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable",
+    ]);
+  });
 
   it("removes only a newly created container when exact post-start inspection fails", () => {
     const host = runtimeHarness();
@@ -262,8 +266,9 @@ describe("Podman host-local inference runtime", () => {
       "does not match its exact managed authority",
     );
     expect(host.containers).toHaveLength(0);
-    expect(host.capture.mock.calls.map(([args]) => args).some(([operation]) => operation === "rm"))
-      .toBe(true);
+    expect(
+      host.capture.mock.calls.map(([args]) => args).some(([operation]) => operation === "rm"),
+    ).toBe(true);
   });
 
   it("rejects foreign name ownership and unavailable CDI devices before mutation", () => {
@@ -281,9 +286,9 @@ describe("Podman host-local inference runtime", () => {
       "does not match its exact managed authority",
     );
 
-    expect(() =>
-      host.runtime.startManaged({ ...managedInput("nim"), gpuDevices: ["1"] }),
-    ).toThrow("does not advertise");
+    expect(() => host.runtime.startManaged({ ...managedInput("nim"), gpuDevices: ["1"] })).toThrow(
+      "does not advertise",
+    );
     expect(host.capture.mock.calls.filter(([args]) => args[0] === "run")).toHaveLength(0);
   });
 

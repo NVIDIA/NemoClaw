@@ -131,7 +131,10 @@ function requireSuccess(operation: string, result: ContainerEngineCommandResult)
   return result.stdout;
 }
 
-function normalizedArguments(values: readonly string[] | undefined, label: string): readonly string[] {
+function normalizedArguments(
+  values: readonly string[] | undefined,
+  label: string,
+): readonly string[] {
   if (!Array.isArray(values) || values.length > 256) {
     throw new Error(`${label} is invalid or exceeds its item limit.`);
   }
@@ -432,8 +435,7 @@ export function createPodmanHostLocalInferenceRuntime(
   }
   const availableCdiDevices = Object.freeze([...preflight.cdiDevices]);
 
-  const currentAuthority = () =>
-    createPersistedEngineAuthority(PROVIDER_ID, engine, bindingSha256);
+  const currentAuthority = () => createPersistedEngineAuthority(PROVIDER_ID, engine, bindingSha256);
   const authorize = (recordIfMissing: boolean): PersistedEngineAuthority => {
     const current = currentAuthority();
     const persisted = authorityStore.load("host-local-inference");
@@ -451,12 +453,7 @@ export function createPodmanHostLocalInferenceRuntime(
       throw new Error("Host-local inference receipt belongs to another runtime provider.");
     }
     authorize(false);
-    requirePersistedEngineAuthority(
-      normalized.engineAuthority,
-      PROVIDER_ID,
-      engine,
-      bindingSha256,
-    );
+    requirePersistedEngineAuthority(normalized.engineAuthority, PROVIDER_ID, engine, bindingSha256);
     return normalized;
   };
   const inspectReceipt = (
@@ -466,13 +463,16 @@ export function createPodmanHostLocalInferenceRuntime(
     if (normalized.runtime.kind !== "container" || normalized.service === "ollama") {
       throw new Error("Podman managed inference requires a container receipt.");
     }
-    const container = requireManagedIdentity(inspectContainer(engine, normalized.runtime.runtimeId), {
-      runtimeId: normalized.runtime.runtimeId,
-      name: normalized.runtime.name,
-      imageRef: normalized.runtime.imageRef,
-      service: normalized.service,
-      specSha256: normalized.runtime.specSha256,
-    });
+    const container = requireManagedIdentity(
+      inspectContainer(engine, normalized.runtime.runtimeId),
+      {
+        runtimeId: normalized.runtime.runtimeId,
+        name: normalized.runtime.name,
+        imageRef: normalized.runtime.imageRef,
+        service: normalized.service,
+        specSha256: normalized.runtime.specSha256,
+      },
+    );
     return { receipt: normalized, container };
   };
 
