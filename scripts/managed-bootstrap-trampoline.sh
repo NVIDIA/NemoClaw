@@ -14,8 +14,9 @@ fail() {
   exit 1
 }
 
-[ "$(/usr/bin/id -u)" -eq 0 ] && [ "$(/usr/bin/id -g)" -eq 0 ] \
-  || fail "must run as root"
+if [ "$(/usr/bin/id -u)" -ne 0 ] || [ "$(/usr/bin/id -g)" -ne 0 ]; then
+  fail "must run as root"
+fi
 [ "$#" -ge 16 ] \
   || fail "managed bootstrap arguments are incomplete"
 [ "$1" = "--agent" ] || fail "agent argument is missing"
@@ -53,19 +54,22 @@ esac
 case "$_nemoclaw_agent_uid:$_nemoclaw_agent_gid" in
   *[!0-9:]* | :* | *:) fail "agent uid/gid must be numeric" ;;
 esac
-[ "$(/usr/bin/id -u sandbox)" = "$_nemoclaw_agent_uid" ] \
-  && [ "$(/usr/bin/id -g sandbox)" = "$_nemoclaw_agent_gid" ] \
-  || fail "agent identity does not match the image sandbox account"
-[ "$_nemoclaw_agent_workdir" = "/sandbox" ] \
-  && [ -d "$_nemoclaw_agent_workdir" ] \
-  && [ ! -L "$_nemoclaw_agent_workdir" ] \
-  || fail "agent workdir does not match the image sandbox workspace"
+if [ "$(/usr/bin/id -u sandbox)" != "$_nemoclaw_agent_uid" ] \
+  || [ "$(/usr/bin/id -g sandbox)" != "$_nemoclaw_agent_gid" ]; then
+  fail "agent identity does not match the image sandbox account"
+fi
+if [ "$_nemoclaw_agent_workdir" != "/sandbox" ] \
+  || [ ! -d "$_nemoclaw_agent_workdir" ] \
+  || [ -L "$_nemoclaw_agent_workdir" ]; then
+  fail "agent workdir does not match the image sandbox workspace"
+fi
 [ "$_nemoclaw_request" = "/var/lib/nemoclaw-managed-bootstrap-request.json" ] \
   || fail "request file path is not the fixed bootstrap path"
 
 _nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
-[ -f "$_nemoclaw_runtime" ] && [ ! -L "$_nemoclaw_runtime" ] \
-  || fail "managed startup runtime is missing"
+if [ ! -f "$_nemoclaw_runtime" ] || [ -L "$_nemoclaw_runtime" ]; then
+  fail "managed startup runtime is missing"
+fi
 if [ -L "$_nemoclaw_request" ]; then
   fail "bootstrap request path is a symbolic link"
 fi
@@ -86,8 +90,9 @@ if [ -e "$_nemoclaw_request" ]; then
     --profile-fingerprint "$_nemoclaw_fingerprint" \
     --bootstrap-identity "$_nemoclaw_bootstrap_identity"
   /usr/bin/rm -f -- "$_nemoclaw_request"
-  [ ! -e "$_nemoclaw_request" ] && [ ! -L "$_nemoclaw_request" ] \
-    || fail "bootstrap runtime did not consume its request"
+  if [ -e "$_nemoclaw_request" ] || [ -L "$_nemoclaw_request" ]; then
+    fail "bootstrap runtime did not consume its request"
+  fi
 fi
 /usr/bin/env -i \
   HOME="/root" \

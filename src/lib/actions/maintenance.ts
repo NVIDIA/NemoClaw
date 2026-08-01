@@ -31,6 +31,7 @@ import {
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
 } from "./sandbox/backup-shields-window";
+import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
@@ -38,7 +39,6 @@ import {
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
-import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -294,7 +294,22 @@ export async function backupAll(): Promise<void> {
     }
   };
   for (const sb of sandboxes) {
-    await withSandboxMutationLock(sb.name, () => backupRegisteredSandbox(sb));
+    let enteredMutationLock = false;
+    try {
+      await withSandboxMutationLock(sb.name, () => {
+        enteredMutationLock = true;
+        return backupRegisteredSandbox(sb);
+      });
+    } catch (error) {
+      // Callback failures retain the existing fail-fast behavior. A lock that
+      // could not be acquired is instead one failed sandbox attempt so the
+      // remaining backups, orphan confirmation, summary, and strict gate all
+      // still run.
+      if (enteredMutationLock) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (mutation lock: ${detail})`);
+      failed++;
+    }
   }
   // The classification above is only as fresh as the pre-loop listing, and
   // the backup loop can run for minutes. Confirm with a second pinned listing
