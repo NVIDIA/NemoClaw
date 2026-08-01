@@ -15,7 +15,11 @@ import {
 } from "./socket-authority";
 
 export interface PodmanContainerEngineOptions {
-  readonly operation: "host-doctor" | "managed-bootstrap" | "sandbox-lifecycle";
+  readonly operation:
+    | "host-doctor"
+    | "host-local-inference"
+    | "managed-bootstrap"
+    | "sandbox-lifecycle";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
   readonly capture?: ContainerEngineCommandCapture;

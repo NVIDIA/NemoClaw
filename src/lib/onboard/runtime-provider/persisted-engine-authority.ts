@@ -22,6 +22,7 @@ const AUTHORITY_ID = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const OPERATIONS = new Set<ContainerEngineOperationScope>([
   "host-doctor",
+  "host-local-inference",
   "gateway-inspection",
   "managed-bootstrap",
   "sandbox-lifecycle",

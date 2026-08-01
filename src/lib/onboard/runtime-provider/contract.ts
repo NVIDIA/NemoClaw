@@ -29,6 +29,7 @@ export type RuntimeProviderMutationOperation =
   | "workload-cleanup";
 export type RuntimeProviderContainerEngineOperation =
   | "host-doctor"
+  | "host-local-inference"
   | "gateway-inspection"
   | "sandbox-lifecycle"
   | "workload-cleanup";
