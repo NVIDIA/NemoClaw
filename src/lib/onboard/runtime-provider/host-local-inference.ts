@@ -45,12 +45,16 @@ export interface HostLocalInferenceEndpointAuthority {
 export type HostLocalInferenceRuntimeAuthority =
   | {
       readonly kind: "host";
+      /** Immutable utility image used to prove endpoint reachability from the runtime network. */
+      readonly probeImageRef: string;
     }
   | {
       readonly kind: "container";
       readonly runtimeId: string;
       readonly name: string;
       readonly imageRef: string;
+      /** Secret-free digest of the complete provider-owned container specification. */
+      readonly specSha256: string;
       readonly gpu: {
         readonly vendor: "nvidia";
         readonly devices: readonly string[];
@@ -95,6 +99,7 @@ const RUNTIME_ID = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const OCI_DIGEST_REFERENCE =
   /^(?:[A-Za-z0-9._-]+(?::[0-9]+)?\/)*(?:[A-Za-z0-9._-]+)@sha256:[a-f0-9]{64}$/u;
 const CDI_DEVICE = /^nvidia\.com\/gpu=[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 const SERVICES = new Set<HostLocalInferenceService>(["ollama", "nim", "vllm"]);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_SERIALIZED_BYTES = 32 * 1024;
@@ -135,6 +140,10 @@ function exactPort(value: unknown, label: string): number {
   return Number(value);
 }
 
+export function normalizeHostLocalInferenceImageRef(value: unknown): string {
+  return exactText(value, OCI_DIGEST_REFERENCE, "runtime image reference");
+}
+
 function normalizeEndpoint(value: unknown): HostLocalInferenceEndpointAuthority {
   const endpoint = exactRecord(value, "endpoint authority");
   exactKeys(endpoint, ["host", "networkName", "port"], "endpoint authority");
@@ -151,12 +160,19 @@ function normalizeRuntime(
 ): HostLocalInferenceRuntimeAuthority {
   const runtime = exactRecord(value, "runtime authority");
   if (runtime.kind === "host") {
-    exactKeys(runtime, ["kind"], "host runtime authority");
+    exactKeys(runtime, ["kind", "probeImageRef"], "host runtime authority");
     if (service !== "ollama") fail("only Ollama may use host-process authority");
-    return Object.freeze({ kind: "host" as const });
+    return Object.freeze({
+      kind: "host" as const,
+      probeImageRef: normalizeHostLocalInferenceImageRef(runtime.probeImageRef),
+    });
   }
   if (runtime.kind !== "container") fail("runtime kind is unsupported");
-  exactKeys(runtime, ["gpu", "imageRef", "kind", "name", "runtimeId"], "container authority");
+  exactKeys(
+    runtime,
+    ["gpu", "imageRef", "kind", "name", "runtimeId", "specSha256"],
+    "container authority",
+  );
   if (service === "ollama") fail("Ollama must use host-process authority");
   const gpu = exactRecord(runtime.gpu, "GPU authority");
   exactKeys(gpu, ["devices", "vendor"], "GPU authority");
@@ -169,7 +185,8 @@ function normalizeRuntime(
     kind: "container" as const,
     runtimeId: exactText(runtime.runtimeId, RUNTIME_ID, "runtime identity"),
     name: exactText(runtime.name, SAFE_NAME, "runtime name"),
-    imageRef: exactText(runtime.imageRef, OCI_DIGEST_REFERENCE, "runtime image reference"),
+    imageRef: normalizeHostLocalInferenceImageRef(runtime.imageRef),
+    specSha256: exactText(runtime.specSha256, SHA256, "runtime specification digest"),
     gpu: Object.freeze({ vendor: "nvidia" as const, devices: Object.freeze(devices) }),
   });
 }

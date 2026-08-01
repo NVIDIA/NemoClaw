@@ -32,12 +32,16 @@ function receipt(service: "ollama" | "nim" | "vllm" = "vllm"): HostLocalInferenc
     },
     runtime:
       service === "ollama"
-        ? { kind: "host" }
+        ? {
+            kind: "host",
+            probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+          }
         : {
             kind: "container",
             runtimeId: "mxc-runtime:alpha",
             name: `nemoclaw-${service}-alpha`,
             imageRef: `nvcr.io/nvidia/${service}@sha256:${"c".repeat(64)}`,
+            specSha256: "d".repeat(64),
             gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
           },
   };
@@ -95,7 +99,13 @@ describe("host-local inference receipt contract", () => {
 
   it("rejects a host runtime for managed services and container runtime for Ollama", () => {
     expect(() =>
-      normalizeHostLocalInferenceReceipt({ ...receipt("nim"), runtime: { kind: "host" } }),
+      normalizeHostLocalInferenceReceipt({
+        ...receipt("nim"),
+        runtime: {
+          kind: "host",
+          probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+        },
+      }),
     ).toThrow("only Ollama");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
@@ -103,6 +113,24 @@ describe("host-local inference receipt contract", () => {
         runtime: receipt("vllm").runtime,
       }),
     ).toThrow("Ollama must use host-process authority");
+  });
+
+  it("rejects mutable probe images and malformed managed specification digests", () => {
+    const ollama = receipt("ollama");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...ollama,
+        runtime: { kind: "host", probeImageRef: "curlimages/curl:latest" },
+      }),
+    ).toThrow("runtime image reference is malformed");
+
+    const vllm = receipt("vllm");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...vllm,
+        runtime: { ...vllm.runtime, specSha256: "mutable" },
+      }),
+    ).toThrow("runtime specification digest is malformed");
   });
 
   it("rejects extensions and noncanonical serialized receipts", () => {
