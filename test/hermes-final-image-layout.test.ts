@@ -227,9 +227,12 @@ describe("Hermes final image layout", () => {
           "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/",
           "COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/",
           "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
+          "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
@@ -335,6 +338,7 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
@@ -352,6 +356,9 @@ describe("Hermes final image layout", () => {
       "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",
     );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
+    expect(finalStage).toContain("RUN chown root:root /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chmod 1755 /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chown sandbox:sandbox /sandbox/.nemoclaw/config.json");
   });
 
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image

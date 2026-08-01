@@ -107,6 +107,8 @@ describe("LangChain Deep Agents Code profile build gate", () => {
 
   it.each([
     "NEMOCLAW_CORPORATE_CA_B64",
+    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+    "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
     "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
     "PERL_VERSION",
     "PERL_SHA256",
