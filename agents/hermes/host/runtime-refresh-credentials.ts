@@ -21,20 +21,22 @@ class RuntimeRefreshCredentialStore {
     const normalized = String(refreshToken || "").trim();
     if (!sandbox || !expectedHash || !normalized) return false;
     if (this.hashCredential(normalized) !== expectedHash) return false;
-    this.credentials.set(sandbox, normalized);
+    // Keep a distinct entry for every successful write. Rollback callbacks
+    // compare the entry identity so a later write of the same token still wins.
+    this.credentials.set(sandbox, { refreshToken: normalized });
     return true;
   }
 
   resolve(state) {
     const sandbox = String(state?.sandbox || "").trim();
     const expectedHash = String(state?.refresh_token_sha256 || "").trim();
-    const refreshToken = this.credentials.get(sandbox);
-    if (!sandbox || !expectedHash || !refreshToken) return null;
-    if (this.hashCredential(refreshToken) !== expectedHash) {
+    const entry = this.credentials.get(sandbox);
+    if (!sandbox || !expectedHash || !entry) return null;
+    if (this.hashCredential(entry.refreshToken) !== expectedHash) {
       this.credentials.delete(sandbox);
       return null;
     }
-    return refreshToken;
+    return entry.refreshToken;
   }
 
   rotate(state, nextRefreshToken) {
