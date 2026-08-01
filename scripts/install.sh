@@ -1313,6 +1313,46 @@ upstream_openshell_gateway_user_service_installed() {
     || [[ -f /lib/systemd/user/openshell-gateway.service ]]
 }
 
+resolve_upstream_openshell_gateway_bin_for_service() {
+  local service_path gateway_bin
+  for service_path in \
+    /usr/local/lib/systemd/user/openshell-gateway.service \
+    /usr/lib/systemd/user/openshell-gateway.service \
+    /lib/systemd/user/openshell-gateway.service; do
+    [[ -f "$service_path" ]] || continue
+    case "$service_path" in
+      /usr/local/*) gateway_bin="/usr/local/bin/openshell-gateway" ;;
+      *) gateway_bin="/usr/bin/openshell-gateway" ;;
+    esac
+    [[ -x "$gateway_bin" ]] || return 1
+    printf '%s\n' "$gateway_bin"
+    return 0
+  done
+  return 1
+}
+
+openshell_binary_version() {
+  local binary="${1:-}" version_output
+  [[ -x "$binary" ]] || return 1
+  version_output="$("$binary" --version 2>/dev/null)" || return 1
+  printf '%s\n' "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+require_compatible_upstream_openshell_gateway_service() {
+  local nemoclaw_gateway_bin upstream_gateway_bin nemoclaw_version upstream_version
+  nemoclaw_gateway_bin="$(resolve_openshell_gateway_bin_for_service)" \
+    || error "Could not locate the NemoClaw OpenShell gateway binary before checking the existing upstream service."
+  upstream_gateway_bin="$(resolve_upstream_openshell_gateway_bin_for_service)" \
+    || error "Could not locate the gateway binary used by the existing upstream OpenShell user service. Remove or repair that OpenShell installation, then rerun the installer."
+  nemoclaw_version="$(openshell_binary_version "$nemoclaw_gateway_bin")" \
+    || error "Could not determine the NemoClaw OpenShell gateway version at $nemoclaw_gateway_bin."
+  upstream_version="$(openshell_binary_version "$upstream_gateway_bin")" \
+    || error "Could not determine the existing upstream OpenShell gateway version at $upstream_gateway_bin."
+  if [[ "$nemoclaw_version" != "$upstream_version" ]]; then
+    error "OpenShell gateway version mismatch: NemoClaw installed ${nemoclaw_version} at ${nemoclaw_gateway_bin}, but the existing upstream user service uses ${upstream_version} at ${upstream_gateway_bin}. Align or remove the upstream OpenShell package (for apt installs: sudo apt remove openshell), then rerun the installer."
+  fi
+}
+
 macos_openshell_homebrew_gateway_service_installed() {
   [[ "$(uname -s)" == "Darwin" ]] || return 1
   command -v brew >/dev/null 2>&1 || return 1
@@ -1381,6 +1421,7 @@ install_nemoclaw_openshell_gateway_user_service() {
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
+    require_compatible_upstream_openshell_gateway_service
     info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
     return 0
   fi

@@ -139,16 +139,29 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
-  it("defers a marked unit when an upstream service exists (#6903)", () => {
+  it("defers a marked unit when the upstream service version matches (#6903)", () => {
     const home = makeTempRoot();
     const unitPath = servicePath(home);
+    const nemoclawGatewayBin = userGatewayBin(home);
+    const upstreamGatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
     fs.mkdirSync(path.dirname(unitPath), { recursive: true });
     fs.writeFileSync(unitPath, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
+    fs.mkdirSync(path.dirname(upstreamGatewayBin), { recursive: true });
+    writeExecutable(
+      nemoclawGatewayBin,
+      "#!/usr/bin/env bash\nprintf 'openshell-gateway 0.0.85\\n'\n",
+    );
+    writeExecutable(
+      upstreamGatewayBin,
+      "#!/usr/bin/env bash\nprintf 'openshell-gateway 0.0.85\\n'\n",
+    );
 
     const result = runInstallHelper(
       home,
       [
         "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(nemoclawGatewayBin)}; }`,
+        `resolve_upstream_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(upstreamGatewayBin)}; }`,
         "install_nemoclaw_openshell_gateway_user_service",
       ].join("\n"),
     );
@@ -156,6 +169,39 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(unitPath)).toBe(true);
     expect(result.stdout).toContain("upstream gateway user service is staged");
+  });
+
+  it("stops before onboarding when the upstream service version differs (#8051)", () => {
+    const home = makeTempRoot();
+    const nemoclawGatewayBin = userGatewayBin(home);
+    const upstreamGatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
+    fs.mkdirSync(path.dirname(upstreamGatewayBin), { recursive: true });
+    writeExecutable(
+      nemoclawGatewayBin,
+      "#!/usr/bin/env bash\nprintf 'openshell-gateway 0.0.85\\n'\n",
+    );
+    writeExecutable(
+      upstreamGatewayBin,
+      "#!/usr/bin/env bash\nprintf 'openshell-gateway 0.0.91\\n'\n",
+    );
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(nemoclawGatewayBin)}; }`,
+        `resolve_upstream_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(upstreamGatewayBin)}; }`,
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("OpenShell gateway version mismatch");
+    expect(result.stderr).toContain("0.0.85");
+    expect(result.stderr).toContain("0.0.91");
+    expect(result.stderr).toContain("sudo apt remove openshell");
+    expect(result.stdout).not.toContain("upstream gateway user service is staged");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
   it("does not overwrite a foreign unit at the NemoClaw path (#6903)", () => {
