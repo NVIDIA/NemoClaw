@@ -108,9 +108,9 @@ export function getValidationProbeCurlArgs(opts?: ValidationProbeOptions): strin
   );
 }
 
-// The calibrated inference phase has 5 seconds of headroom above its observed
-// p95. Keep a stalled stream inside that headroom so it cannot consume the
-// complete 6-second phase budget before Chat Completions fallback. See #7792.
+// The calibrated provider-selection phase has 5 seconds of headroom above its
+// p95. Limit the streaming-specific wait to that headroom. The complete probe
+// remains subject to the 8-second provider-selection phase budget. See #7792.
 export const STREAMING_EVENT_PROBE_MAX_SECONDS = 5;
 
 // Cap the streaming probe's --max-time only (min, never lengthen); connect-timeout
