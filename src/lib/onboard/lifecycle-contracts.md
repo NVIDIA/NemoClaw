@@ -147,6 +147,38 @@ replace, or expose a workload. Crash-window, ambiguous-owner, durable-write,
 and compare-and-clear behavior is covered by
 `podman-watcher-lease.test.ts`.
 
+## Dormant Podman bootstrap replacement transaction
+
+`prepareStoppedPodmanBootstrapReplacement` is the next internal, unregistered
+bootstrap primitive. It requires the authority-bound Podman engine and a
+durable stopped-watcher lease from the preceding slice. Before its first
+container mutation, it writes a private, secret-free journal that binds the
+bootstrap identity, engine authority, watcher lease, exact running original,
+and intended replacement specification. The replacement is created under a
+deterministic staging name with final managed labels, an immutable image
+content ID, and image-owned entrypoint and command arguments. Environment
+values travel only through a mode-`0600` temporary file. The primitive accepts
+the replacement only after two stable inspections prove its full runtime ID,
+name, image, labels, environment, entrypoint, command, and stopped state.
+
+`stopExactPodmanBootstrapOriginal` re-proves both identities before stopping
+the original and records that boundary only after the original is stably
+stopped while the replacement remains exact and stopped. A failure before the
+later commit boundary must call `rollbackPodmanBootstrapBeforeCommit`.
+Rollback first records an exclusive durable decision, reconciles one exact
+staging candidate when the create acknowledgement was lost, removes only the
+exact stopped replacement, restarts and re-proves the exact original, and then
+clears the journal. Ambiguous candidates, changed identities, changed engine
+authority, and premature replacement startup fail closed. The caller keeps the
+watcher lease stopped throughout and owns its later release.
+
+This slice neither starts the replacement nor changes registry, agent state,
+or user-visible runtime selection. Commit, all-agent bootstrap, durable resume,
+and activation remain separate work in epic
+[#7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Journal and exact
+rollback behavior is covered by `podman-bootstrap-journal.test.ts` and
+`podman-bootstrap-replacement.test.ts`.
+
 ## Durable resumed recreate journal
 
 A resumed same-name replacement writes a secret-free journal before the lower create path can delete the source sandbox.
