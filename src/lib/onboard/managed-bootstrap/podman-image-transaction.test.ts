@@ -16,6 +16,12 @@ import {
   parseManagedBootstrapEnvelope,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
+import type { PodmanBootstrapJournal } from "./podman-bootstrap-journal";
+import {
+  PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION,
+  PODMAN_BOOTSTRAP_STATE_DIRECTORY,
+  type PodmanBootstrapPreparedReplacement,
+} from "./podman-bootstrap-replacement";
 import {
   awaitPodmanBootstrapImageTransaction,
   startPodmanBootstrapImageTransaction,
@@ -23,10 +29,15 @@ import {
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 
 const RUNTIME_ID = "1".repeat(64);
+const ORIGINAL_RUNTIME_ID = "0".repeat(64);
 const IMAGE_ID = `sha256:${"2".repeat(64)}`;
 const BOOTSTRAP_IDENTITY = "3".repeat(64);
 const AUTHORITY_ID = `podman-sha256:${"4".repeat(64)}`;
 const LEASE_ID = "01234567-89ab-4cde-8fab-0123456789ab";
+const SPEC_FINGERPRINT = "5".repeat(64);
+const STAGING_NAME = "sandbox-nemoclaw-bootstrap-333333333333";
+const STATE_VOLUME_NAME = "sandbox-nemoclaw-state-333333333333";
+const STATE_VOLUME_MOUNTPOINT = "/var/lib/containers/storage/volumes/state/_data";
 
 function requestFor(agent: ManagedStartupAgent) {
   return createManagedStartupRootApplyRequest({
@@ -60,17 +71,63 @@ function watcherLease(): PodmanGatewayWatcherLease {
   };
 }
 
+function journal(overrides: Partial<PodmanBootstrapJournal> = {}): PodmanBootstrapJournal {
+  return {
+    schemaVersion: 1,
+    phase: "original-stopped",
+    bootstrapIdentity: BOOTSTRAP_IDENTITY,
+    engineAuthorityId: AUTHORITY_ID,
+    watcherLeaseId: LEASE_ID,
+    sandboxName: "sandbox",
+    sandboxId: "sandbox-id",
+    originalRuntimeId: ORIGINAL_RUNTIME_ID,
+    originalContainerName: "sandbox-original",
+    originalImageContentId: `sha256:${"6".repeat(64)}`,
+    originalSpecFingerprint: "7".repeat(64),
+    replacementStateVolumeName: STATE_VOLUME_NAME,
+    replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
+    replacementRuntimeId: RUNTIME_ID,
+    replacementStagingName: STAGING_NAME,
+    replacementImageContentId: IMAGE_ID,
+    replacementSpecFingerprint: SPEC_FINGERPRINT,
+    ...overrides,
+  };
+}
+
+function preparedReplacement(
+  durableJournal: PodmanBootstrapJournal = journal(),
+): PodmanBootstrapPreparedReplacement {
+  return {
+    schemaVersion: PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION,
+    bootstrapIdentity: durableJournal.bootstrapIdentity,
+    originalRuntimeId: durableJournal.originalRuntimeId,
+    replacementRuntimeId: durableJournal.replacementRuntimeId as string,
+    replacementStagingName: durableJournal.replacementStagingName,
+    replacementStateVolumeName: durableJournal.replacementStateVolumeName,
+    replacementStateVolumeMountpoint: durableJournal.replacementStateVolumeMountpoint as string,
+    replacementImageContentId: durableJournal.replacementImageContentId,
+    replacementSpecFingerprint: durableJournal.replacementSpecFingerprint,
+    journal: durableJournal,
+  };
+}
+
 interface HarnessOptions {
   readonly completionAgent?: ManagedStartupAgent;
   readonly completionMode?: number;
   readonly completionUnavailableCount?: number;
   readonly inspectImage?: string;
+  readonly inspectName?: string;
   readonly inspectRuntimeId?: string;
+  readonly inspectStateVolumeMountpoint?: string;
+  readonly inspectStateVolumeName?: string;
+  readonly journal?: PodmanBootstrapJournal | null;
   readonly startsRunning?: boolean;
 }
 
 function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   const request = requestFor(agent);
+  const prepared = preparedReplacement();
+  const durableJournal = options.journal === undefined ? prepared.journal : options.journal;
   const commands: string[][] = [];
   const timeouts: number[] = [];
   let running = options.startsRunning ?? false;
@@ -82,6 +139,20 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
         {
           Id: options.inspectRuntimeId ?? RUNTIME_ID,
           Image: options.inspectImage ?? IMAGE_ID,
+          Name: options.inspectName ?? STAGING_NAME,
+          Mounts: [
+            {
+              Destination: PODMAN_BOOTSTRAP_STATE_DIRECTORY,
+              Driver: "local",
+              Mode: "z",
+              Name: options.inspectStateVolumeName ?? STATE_VOLUME_NAME,
+              Options: ["rw"],
+              Propagation: "",
+              RW: true,
+              Source: options.inspectStateVolumeMountpoint ?? STATE_VOLUME_MOUNTPOINT,
+              Type: "volume",
+            },
+          ],
           State: { Dead: false, Paused: false, Restarting: false, Running: running },
         },
       ]),
@@ -146,11 +217,14 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
     capture,
     captureHost: vi.fn(),
   };
+  const journalStore = { load: vi.fn(() => durableJournal) };
   const watcher = watcherLease();
   return {
     commands,
     completionAttempts: () => completionAttempts,
     engine,
+    journalStore,
+    prepared,
     request,
     stagedEnvelope: () => stagedEnvelope,
     timeouts,
@@ -161,11 +235,10 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
 function startInput(agent: ManagedStartupAgent, fake: ReturnType<typeof harness>) {
   return {
     agent,
-    bootstrapIdentity: BOOTSTRAP_IDENTITY,
     engine: fake.engine,
+    journalStore: fake.journalStore,
+    prepared: fake.prepared,
     profileFingerprint: fake.request.profileFingerprint,
-    replacementImageContentId: IMAGE_ID,
-    replacementRuntimeId: RUNTIME_ID,
     request: fake.request,
     watcherLease: fake.watcher,
   } as const;
@@ -182,6 +255,8 @@ describe("Podman image-owned bootstrap transaction", () => {
     const completion = awaitPodmanBootstrapImageTransaction(
       {
         engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
         watcherLease: fake.watcher,
         transaction,
         timeoutSecs: 30,
@@ -198,17 +273,27 @@ describe("Podman image-owned bootstrap transaction", () => {
       agent,
       bootstrapIdentity: BOOTSTRAP_IDENTITY,
       engineAuthorityId: AUTHORITY_ID,
+      originalRuntimeId: ORIGINAL_RUNTIME_ID,
       replacementRuntimeId: RUNTIME_ID,
       replacementImageContentId: IMAGE_ID,
+      replacementSpecFingerprint: SPEC_FINGERPRINT,
+      replacementStagingName: STAGING_NAME,
+      replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
+      replacementStateVolumeName: STATE_VOLUME_NAME,
       watcherLeaseId: LEASE_ID,
     });
     expect(completion).toMatchObject({
       agent,
       bootstrapIdentity: BOOTSTRAP_IDENTITY,
       engineAuthorityId: AUTHORITY_ID,
+      originalRuntimeId: ORIGINAL_RUNTIME_ID,
       profileFingerprint: fake.request.profileFingerprint,
       replacementRuntimeId: RUNTIME_ID,
       replacementImageContentId: IMAGE_ID,
+      replacementSpecFingerprint: SPEC_FINGERPRINT,
+      replacementStagingName: STAGING_NAME,
+      replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
+      replacementStateVolumeName: STATE_VOLUME_NAME,
       transactionPending: true,
       watcherLeaseId: LEASE_ID,
     });
@@ -231,6 +316,8 @@ describe("Podman image-owned bootstrap transaction", () => {
     const completion = awaitPodmanBootstrapImageTransaction(
       {
         engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
         watcherLease: fake.watcher,
         transaction,
         timeoutSecs: 1,
@@ -248,6 +335,23 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(fake.completionAttempts()).toBe(2);
   });
 
+  it("rejects a durable journal lost after replacement startup", () => {
+    const fake = harness("openclaw");
+    const transaction = startPodmanBootstrapImageTransaction(startInput("openclaw", fake));
+    fake.journalStore.load.mockReturnValue(null);
+
+    expect(() =>
+      awaitPodmanBootstrapImageTransaction({
+        engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
+        watcherLease: fake.watcher,
+        transaction,
+        timeoutSecs: 1,
+      }),
+    ).toThrow("durable prepared-replacement journal is unavailable");
+  });
+
   it("rejects a root request belonging to another agent before any container mutation", () => {
     const fake = harness("openclaw");
 
@@ -257,6 +361,32 @@ describe("Podman image-owned bootstrap transaction", () => {
         request: requestFor("hermes"),
       }),
     ).toThrow("root request does not match");
+    expect(fake.commands).toEqual([]);
+  });
+
+  it("rejects a lost durable replacement journal before request staging", () => {
+    const fake = harness("openclaw", { journal: null });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("openclaw", fake))).toThrow(
+      "durable prepared-replacement journal is unavailable",
+    );
+    expect(fake.commands).toEqual([]);
+  });
+
+  it.each([
+    ["phase", { phase: "replacement-created" as const }],
+    ["engine authority", { engineAuthorityId: `podman-sha256:${"8".repeat(64)}` }],
+    ["watcher lease", { watcherLeaseId: "fedcba98-7654-4abc-9def-fedcba987654" }],
+    ["replacement runtime", { replacementRuntimeId: "9".repeat(64) }],
+    ["replacement image", { replacementImageContentId: `sha256:${"a".repeat(64)}` }],
+    ["replacement name", { replacementStagingName: "different-staging-name" }],
+    ["state volume", { replacementStateVolumeName: "different-state-volume" }],
+  ])("rejects durable %s drift before request staging", (_label, overrides) => {
+    const fake = harness("openclaw", { journal: journal(overrides) });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("openclaw", fake))).toThrow(
+      "exact original-stopped authority",
+    );
     expect(fake.commands).toEqual([]);
   });
 
@@ -275,10 +405,23 @@ describe("Podman image-owned bootstrap transaction", () => {
 
     expect(() =>
       startPodmanBootstrapImageTransaction(startInput("openclaw", runtimeDrift)),
-    ).toThrow("runtime or image identity changed");
+    ).toThrow("runtime, image, or name identity changed");
     expect(() => startPodmanBootstrapImageTransaction(startInput("openclaw", imageDrift))).toThrow(
-      "runtime or image identity changed",
+      "runtime, image, or name identity changed",
     );
+  });
+
+  it.each([
+    ["replacement name", { inspectName: "different-staging-name" }],
+    ["state-volume name", { inspectStateVolumeName: "different-state-volume" }],
+    ["state-volume mountpoint", { inspectStateVolumeMountpoint: "/different/mountpoint" }],
+  ])("rejects live %s drift before request staging", (_label, options) => {
+    const fake = harness("openclaw", options);
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("openclaw", fake))).toThrow(
+      /replacement (runtime, image, or name identity|state-volume authority) changed/u,
+    );
+    expect(fake.commands.every((command) => command[1] !== "cp")).toBe(true);
   });
 
   it("rejects a copied completion that is not protected mode 0444", () => {
@@ -290,6 +433,8 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(() =>
       awaitPodmanBootstrapImageTransaction({
         engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
         watcherLease: fake.watcher,
         transaction,
         timeoutSecs: 1,
@@ -304,6 +449,8 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(() =>
       awaitPodmanBootstrapImageTransaction({
         engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
         watcherLease: fake.watcher,
         transaction,
         timeoutSecs: 1,
@@ -323,6 +470,8 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(() =>
       awaitPodmanBootstrapImageTransaction({
         engine: differentEngine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
         watcherLease: fake.watcher,
         transaction,
         timeoutSecs: 1,
@@ -338,6 +487,8 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(() =>
       awaitPodmanBootstrapImageTransaction({
         engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
         watcherLease: differentLease,
         transaction,
         timeoutSecs: 1,
@@ -354,6 +505,8 @@ describe("Podman image-owned bootstrap transaction", () => {
       awaitPodmanBootstrapImageTransaction(
         {
           engine: fake.engine,
+          journalStore: fake.journalStore,
+          prepared: fake.prepared,
           watcherLease: fake.watcher,
           transaction,
           timeoutSecs: 1,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import type {
   ContainerEngine,
@@ -18,6 +19,16 @@ import {
   parseManagedBootstrapImageCompletion,
   serializeManagedBootstrapEnvelope,
 } from "./envelope";
+import {
+  normalizePodmanBootstrapJournal,
+  type PodmanBootstrapJournal,
+  type PodmanBootstrapJournalStore,
+} from "./podman-bootstrap-journal";
+import {
+  PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION,
+  PODMAN_BOOTSTRAP_STATE_DIRECTORY,
+  type PodmanBootstrapPreparedReplacement,
+} from "./podman-bootstrap-replacement";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 
 export const PODMAN_BOOTSTRAP_IMAGE_TRANSACTION_SCHEMA_VERSION = 1 as const;
@@ -27,6 +38,7 @@ const COMPLETION_TEMP_PREFIX = "nemoclaw-podman-bootstrap-completion";
 const FULL_RUNTIME_ID = /^[a-f0-9]{64}$/u;
 const IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$/u;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_START_TIMEOUT_MS = 90_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
@@ -36,12 +48,11 @@ type BootstrapEngine = ContainerEngine & { readonly authorityId: string };
 
 export interface PodmanBootstrapImageTransactionInput {
   readonly engine: BootstrapEngine;
+  readonly journalStore: Pick<PodmanBootstrapJournalStore, "load">;
   readonly watcherLease: PodmanGatewayWatcherLease;
   readonly agent: ManagedStartupAgent;
-  readonly bootstrapIdentity: string;
+  readonly prepared: PodmanBootstrapPreparedReplacement;
   readonly profileFingerprint: string;
-  readonly replacementRuntimeId: string;
-  readonly replacementImageContentId: string;
   readonly request: ManagedStartupRootApplyRequest;
 }
 
@@ -50,17 +61,27 @@ export interface PodmanBootstrapImageTransaction {
   readonly agent: ManagedStartupAgent;
   readonly bootstrapIdentity: string;
   readonly engineAuthorityId: string;
+  readonly originalRuntimeId: string;
   readonly profileFingerprint: string;
   readonly replacementRuntimeId: string;
+  readonly replacementStagingName: string;
+  readonly replacementStateVolumeName: string;
+  readonly replacementStateVolumeMountpoint: string;
   readonly replacementImageContentId: string;
+  readonly replacementSpecFingerprint: string;
   readonly watcherLeaseId: string;
   readonly startedAt: string;
 }
 
 export interface PodmanBootstrapImageTransactionCompletion extends ManagedBootstrapImageCompletion {
   readonly engineAuthorityId: string;
+  readonly originalRuntimeId: string;
   readonly replacementRuntimeId: string;
+  readonly replacementStagingName: string;
+  readonly replacementStateVolumeName: string;
+  readonly replacementStateVolumeMountpoint: string;
   readonly replacementImageContentId: string;
+  readonly replacementSpecFingerprint: string;
   readonly watcherLeaseId: string;
   readonly completedAt: string;
 }
@@ -73,8 +94,11 @@ export interface PodmanBootstrapImageTransactionDeps {
 
 interface ExactPodmanContainerState {
   readonly imageContentId: string;
+  readonly name: string;
   readonly runtimeId: string;
   readonly running: boolean;
+  readonly stateVolumeMountpoint: string;
+  readonly stateVolumeName: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -120,6 +144,70 @@ function exactImageContentId(value: string): string {
   return value;
 }
 
+function exactName(value: string, label: string): string {
+  if (!SAFE_NAME.test(value)) fail(`${label} must be one exact Podman name`);
+  return value;
+}
+
+function exactMountpoint(value: string): string {
+  if (
+    !path.isAbsolute(value) ||
+    path.normalize(value) !== value ||
+    value === path.parse(value).root
+  ) {
+    fail("replacement state-volume mountpoint must be one normalized non-root absolute path");
+  }
+  return value;
+}
+
+function sameJournal(left: PodmanBootstrapJournal, right: PodmanBootstrapJournal): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function exactPreparedAuthority(
+  input: Pick<
+    PodmanBootstrapImageTransactionInput,
+    "engine" | "journalStore" | "prepared" | "watcherLease"
+  >,
+): PodmanBootstrapPreparedReplacement {
+  const prepared = input.prepared;
+  if (
+    !prepared ||
+    typeof prepared !== "object" ||
+    prepared.schemaVersion !== PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION
+  ) {
+    return fail("the prepared replacement authority is invalid");
+  }
+  exactSha256(prepared.bootstrapIdentity, "bootstrap identity");
+  exactRuntimeId(prepared.originalRuntimeId);
+  exactRuntimeId(prepared.replacementRuntimeId);
+  exactImageContentId(prepared.replacementImageContentId);
+  exactSha256(prepared.replacementSpecFingerprint, "replacement specification fingerprint");
+  exactName(prepared.replacementStagingName, "replacement staging name");
+  exactName(prepared.replacementStateVolumeName, "replacement state-volume name");
+  exactMountpoint(prepared.replacementStateVolumeMountpoint);
+  const expectedJournal = normalizePodmanBootstrapJournal(prepared.journal);
+  const loaded = input.journalStore.load(prepared.bootstrapIdentity);
+  if (!loaded) return fail("the durable prepared-replacement journal is unavailable");
+  const journal = normalizePodmanBootstrapJournal(loaded);
+  if (
+    journal.phase !== "original-stopped" ||
+    !sameJournal(journal, expectedJournal) ||
+    journal.engineAuthorityId !== input.engine.authorityId ||
+    journal.watcherLeaseId !== input.watcherLease.record.leaseId ||
+    journal.originalRuntimeId !== prepared.originalRuntimeId ||
+    journal.replacementRuntimeId !== prepared.replacementRuntimeId ||
+    journal.replacementStagingName !== prepared.replacementStagingName ||
+    journal.replacementStateVolumeName !== prepared.replacementStateVolumeName ||
+    journal.replacementStateVolumeMountpoint !== prepared.replacementStateVolumeMountpoint ||
+    journal.replacementImageContentId !== prepared.replacementImageContentId ||
+    journal.replacementSpecFingerprint !== prepared.replacementSpecFingerprint
+  ) {
+    return fail("the prepared replacement does not match its exact original-stopped authority");
+  }
+  return prepared;
+}
+
 function exactWatcherLease(lease: PodmanGatewayWatcherLease, expectedLeaseId?: string): void {
   if (
     !lease ||
@@ -162,10 +250,66 @@ function normalizedRuntimeId(value: unknown, label: string): string {
   return match[1];
 }
 
+function exactString(value: unknown, label: string, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
+    return fail(`${label} must be one exact string`);
+  }
+  return value;
+}
+
+function exactStringArray(value: unknown, label: string): readonly string[] {
+  if (value === undefined || value === null) return Object.freeze([]);
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    return fail(`${label} must be an array of strings`);
+  }
+  return Object.freeze([...(value as string[])]);
+}
+
+function exactStateVolume(
+  inspect: JsonRecord,
+  prepared: PodmanBootstrapPreparedReplacement,
+): Pick<ExactPodmanContainerState, "stateVolumeMountpoint" | "stateVolumeName"> {
+  if (!Array.isArray(inspect.Mounts)) {
+    return fail("Podman replacement inspect Mounts must be an array");
+  }
+  const mounts = inspect.Mounts.map((entry, index) =>
+    record(entry, `Podman replacement mount ${String(index)}`),
+  ).filter((entry) => entry.Destination === PODMAN_BOOTSTRAP_STATE_DIRECTORY);
+  if (mounts.length !== 1) {
+    return fail("the exact replacement state-volume mount is unavailable");
+  }
+  const mount = mounts[0] as JsonRecord;
+  const mode = exactString(mount.Mode, "Podman replacement state-volume mode", true);
+  const options = exactStringArray(mount.Options, "Podman replacement state-volume options");
+  const propagation = exactString(
+    mount.Propagation,
+    "Podman replacement state-volume propagation",
+    true,
+  );
+  const modeTokens = new Set(mode.split(",").filter(Boolean));
+  if (
+    mount.Type !== "volume" ||
+    mount.Name !== prepared.replacementStateVolumeName ||
+    mount.Source !== prepared.replacementStateVolumeMountpoint ||
+    mount.Driver !== "local" ||
+    mount.RW !== true ||
+    !["", "rprivate"].includes(propagation) ||
+    !modeTokens.has("z") ||
+    modeTokens.has("Z") ||
+    modeTokens.has("ro") ||
+    options.some((option) => option === "ro" || option === "readonly")
+  ) {
+    return fail("the exact replacement state-volume authority changed");
+  }
+  return Object.freeze({
+    stateVolumeMountpoint: prepared.replacementStateVolumeMountpoint,
+    stateVolumeName: prepared.replacementStateVolumeName,
+  });
+}
+
 function parseInspect(
   text: string,
-  expectedRuntimeId: string,
-  expectedImageContentId: string,
+  prepared: PodmanBootstrapPreparedReplacement,
 ): ExactPodmanContainerState {
   let parsed: unknown;
   try {
@@ -182,9 +326,15 @@ function parseInspect(
     inspect.Image,
     "Podman replacement image content ID",
   )}`;
-  if (runtimeId !== expectedRuntimeId || imageContentId !== expectedImageContentId) {
-    return fail("the exact replacement runtime or image identity changed");
+  const name = exactString(inspect.Name, "Podman replacement name");
+  if (
+    runtimeId !== prepared.replacementRuntimeId ||
+    imageContentId !== prepared.replacementImageContentId ||
+    name !== prepared.replacementStagingName
+  ) {
+    return fail("the exact replacement runtime, image, or name identity changed");
   }
+  const stateVolume = exactStateVolume(inspect, prepared);
   const state = record(inspect.State, "Podman replacement state");
   if (
     typeof state.Running !== "boolean" ||
@@ -197,18 +347,20 @@ function parseInspect(
   ) {
     return fail("the exact replacement is not in a stable running or stopped state");
   }
-  return Object.freeze({ imageContentId, runtimeId, running: state.Running });
+  return Object.freeze({ imageContentId, name, runtimeId, running: state.Running, ...stateVolume });
 }
 
 function inspectExact(
   engine: BootstrapEngine,
-  runtimeId: string,
-  imageContentId: string,
+  prepared: PodmanBootstrapPreparedReplacement,
 ): ExactPodmanContainerState {
   return parseInspect(
-    capture(engine, ["container", "inspect", runtimeId], "exact replacement inspection").stdout,
-    runtimeId,
-    imageContentId,
+    capture(
+      engine,
+      ["container", "inspect", prepared.replacementRuntimeId],
+      "exact replacement inspection",
+    ).stdout,
+    prepared,
   );
 }
 
@@ -216,31 +368,36 @@ function sameState(left: ExactPodmanContainerState, right: ExactPodmanContainerS
   return (
     left.runtimeId === right.runtimeId &&
     left.imageContentId === right.imageContentId &&
-    left.running === right.running
+    left.name === right.name &&
+    left.running === right.running &&
+    left.stateVolumeMountpoint === right.stateVolumeMountpoint &&
+    left.stateVolumeName === right.stateVolumeName
   );
 }
 
 function inspectStable(
   engine: BootstrapEngine,
-  runtimeId: string,
-  imageContentId: string,
+  prepared: PodmanBootstrapPreparedReplacement,
   expectedRunning: boolean,
 ): ExactPodmanContainerState {
-  const first = inspectExact(engine, runtimeId, imageContentId);
-  const second = inspectExact(engine, runtimeId, imageContentId);
+  const first = inspectExact(engine, prepared);
+  const second = inspectExact(engine, prepared);
   if (!sameState(first, second) || second.running !== expectedRunning) {
     fail(`the exact replacement is not stably ${expectedRunning ? "running" : "stopped"}`);
   }
   return second;
 }
 
-function writeProtectedEnvelope(input: PodmanBootstrapImageTransactionInput): string {
+function writeProtectedEnvelope(
+  input: PodmanBootstrapImageTransactionInput,
+  prepared: PodmanBootstrapPreparedReplacement,
+): string {
   const file = secureTempFile(REQUEST_TEMP_PREFIX, ".json");
   try {
     fs.writeFileSync(
       file,
       serializeManagedBootstrapEnvelope({
-        bootstrapIdentity: input.bootstrapIdentity,
+        bootstrapIdentity: prepared.bootstrapIdentity,
         rootApplyRequest: input.request,
       }),
       { encoding: "utf8", flag: "wx", mode: 0o400 },
@@ -262,12 +419,20 @@ function writeProtectedEnvelope(input: PodmanBootstrapImageTransactionInput): st
   }
 }
 
-function stageProtectedEnvelope(input: PodmanBootstrapImageTransactionInput): void {
-  const file = writeProtectedEnvelope(input);
+function stageProtectedEnvelope(
+  input: PodmanBootstrapImageTransactionInput,
+  prepared: PodmanBootstrapPreparedReplacement,
+): void {
+  const file = writeProtectedEnvelope(input, prepared);
   try {
     capture(
       input.engine,
-      ["container", "cp", file, `${input.replacementRuntimeId}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`],
+      [
+        "container",
+        "cp",
+        file,
+        `${prepared.replacementRuntimeId}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
+      ],
       "protected root request staging",
     );
   } finally {
@@ -369,20 +534,20 @@ function pollInterval(deps: PodmanBootstrapImageTransactionDeps): number {
   return value;
 }
 
-function assertInput(input: PodmanBootstrapImageTransactionInput): void {
+function assertInput(
+  input: PodmanBootstrapImageTransactionInput,
+): PodmanBootstrapPreparedReplacement {
   exactEngine(input.engine);
   exactWatcherLease(input.watcherLease);
   exactAgent(input.agent);
-  exactSha256(input.bootstrapIdentity, "bootstrap identity");
   exactSha256(input.profileFingerprint, "profile fingerprint");
-  exactRuntimeId(input.replacementRuntimeId);
-  exactImageContentId(input.replacementImageContentId);
   if (
     input.request.agent !== input.agent ||
     input.request.profileFingerprint !== input.profileFingerprint
   ) {
     fail("the root request does not match its exact agent and profile authority");
   }
+  return exactPreparedAuthority(input);
 }
 
 /**
@@ -394,29 +559,38 @@ export function startPodmanBootstrapImageTransaction(
   input: PodmanBootstrapImageTransactionInput,
   deps: Pick<PodmanBootstrapImageTransactionDeps, "now"> = {},
 ): PodmanBootstrapImageTransaction {
-  assertInput(input);
-  inspectStable(input.engine, input.replacementRuntimeId, input.replacementImageContentId, false);
+  const prepared = assertInput(input);
+  inspectStable(input.engine, prepared, false);
   exactWatcherLease(input.watcherLease);
-  stageProtectedEnvelope(input);
+  exactPreparedAuthority(input);
+  stageProtectedEnvelope(input, prepared);
   exactWatcherLease(input.watcherLease);
-  inspectStable(input.engine, input.replacementRuntimeId, input.replacementImageContentId, false);
+  exactPreparedAuthority(input);
+  inspectStable(input.engine, prepared, false);
   capture(
     input.engine,
-    ["container", "start", input.replacementRuntimeId],
+    ["container", "start", prepared.replacementRuntimeId],
     "exact replacement start",
     DEFAULT_START_TIMEOUT_MS,
   );
   exactWatcherLease(input.watcherLease);
-  inspectStable(input.engine, input.replacementRuntimeId, input.replacementImageContentId, true);
+  exactPreparedAuthority(input);
+  inspectStable(input.engine, prepared, true);
   exactWatcherLease(input.watcherLease);
+  exactPreparedAuthority(input);
   return Object.freeze({
     schemaVersion: PODMAN_BOOTSTRAP_IMAGE_TRANSACTION_SCHEMA_VERSION,
     agent: input.agent,
-    bootstrapIdentity: input.bootstrapIdentity,
+    bootstrapIdentity: prepared.bootstrapIdentity,
     engineAuthorityId: input.engine.authorityId,
+    originalRuntimeId: prepared.originalRuntimeId,
     profileFingerprint: input.profileFingerprint,
-    replacementRuntimeId: input.replacementRuntimeId,
-    replacementImageContentId: input.replacementImageContentId,
+    replacementRuntimeId: prepared.replacementRuntimeId,
+    replacementStagingName: prepared.replacementStagingName,
+    replacementStateVolumeName: prepared.replacementStateVolumeName,
+    replacementStateVolumeMountpoint: prepared.replacementStateVolumeMountpoint,
+    replacementImageContentId: prepared.replacementImageContentId,
+    replacementSpecFingerprint: prepared.replacementSpecFingerprint,
     watcherLeaseId: input.watcherLease.record.leaseId,
     startedAt: (deps.now ?? (() => new Date()))().toISOString(),
   });
@@ -426,6 +600,8 @@ export function startPodmanBootstrapImageTransaction(
 export function awaitPodmanBootstrapImageTransaction(
   input: {
     readonly engine: BootstrapEngine;
+    readonly journalStore: Pick<PodmanBootstrapJournalStore, "load">;
+    readonly prepared: PodmanBootstrapPreparedReplacement;
     readonly watcherLease: PodmanGatewayWatcherLease;
     readonly transaction: PodmanBootstrapImageTransaction;
     readonly timeoutSecs: number;
@@ -443,8 +619,26 @@ export function awaitPodmanBootstrapImageTransaction(
   exactWatcherLease(input.watcherLease, transaction.watcherLeaseId);
   exactSha256(transaction.bootstrapIdentity, "bootstrap identity");
   exactSha256(transaction.profileFingerprint, "profile fingerprint");
+  exactRuntimeId(transaction.originalRuntimeId);
   exactRuntimeId(transaction.replacementRuntimeId);
+  exactName(transaction.replacementStagingName, "replacement staging name");
+  exactName(transaction.replacementStateVolumeName, "replacement state-volume name");
+  exactMountpoint(transaction.replacementStateVolumeMountpoint);
   exactImageContentId(transaction.replacementImageContentId);
+  exactSha256(transaction.replacementSpecFingerprint, "replacement specification fingerprint");
+  const prepared = exactPreparedAuthority(input);
+  if (
+    transaction.bootstrapIdentity !== prepared.bootstrapIdentity ||
+    transaction.originalRuntimeId !== prepared.originalRuntimeId ||
+    transaction.replacementRuntimeId !== prepared.replacementRuntimeId ||
+    transaction.replacementStagingName !== prepared.replacementStagingName ||
+    transaction.replacementStateVolumeName !== prepared.replacementStateVolumeName ||
+    transaction.replacementStateVolumeMountpoint !== prepared.replacementStateVolumeMountpoint ||
+    transaction.replacementImageContentId !== prepared.replacementImageContentId ||
+    transaction.replacementSpecFingerprint !== prepared.replacementSpecFingerprint
+  ) {
+    return fail("the started transaction does not match its prepared replacement authority");
+  }
   const timeoutMs = timeoutMilliseconds(input.timeoutSecs);
   const intervalMs = pollInterval(deps);
   const now = deps.now ?? (() => new Date());
@@ -454,12 +648,8 @@ export function awaitPodmanBootstrapImageTransaction(
 
   while (true) {
     exactWatcherLease(input.watcherLease, transaction.watcherLeaseId);
-    inspectStable(
-      input.engine,
-      transaction.replacementRuntimeId,
-      transaction.replacementImageContentId,
-      true,
-    );
+    exactPreparedAuthority(input);
+    inspectStable(input.engine, prepared, true);
     const copied = tryCopyCompletion(input.engine, transaction.replacementRuntimeId);
     lastCopyStatus = copied.status;
     if (copied.completion) {
@@ -471,18 +661,19 @@ export function awaitPodmanBootstrapImageTransaction(
       ) {
         return fail("the image completion does not match its exact transaction authority");
       }
-      inspectStable(
-        input.engine,
-        transaction.replacementRuntimeId,
-        transaction.replacementImageContentId,
-        true,
-      );
+      inspectStable(input.engine, prepared, true);
       exactWatcherLease(input.watcherLease, transaction.watcherLeaseId);
+      exactPreparedAuthority(input);
       return Object.freeze({
         ...completion,
         engineAuthorityId: transaction.engineAuthorityId,
+        originalRuntimeId: transaction.originalRuntimeId,
         replacementRuntimeId: transaction.replacementRuntimeId,
+        replacementStagingName: transaction.replacementStagingName,
+        replacementStateVolumeName: transaction.replacementStateVolumeName,
+        replacementStateVolumeMountpoint: transaction.replacementStateVolumeMountpoint,
         replacementImageContentId: transaction.replacementImageContentId,
+        replacementSpecFingerprint: transaction.replacementSpecFingerprint,
         watcherLeaseId: transaction.watcherLeaseId,
         completedAt: now().toISOString(),
       });
