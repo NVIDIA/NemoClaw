@@ -332,6 +332,24 @@ describe("managed clone provider transaction", () => {
     ).toBe(false);
   });
 
+  it("rejects a destination registered under another runtime provider", () => {
+    const profile = managedStartupE2eProfile("langchain-deepagents-code");
+    const source = entry("source", profile);
+    const destination = entry("destination", profile, { openshellDriver: "mxc" });
+    const runner = providerRunner();
+
+    expect(() =>
+      prepareManagedCloneProviderTransaction({
+        handoff: handoff(profile, source),
+        destination,
+        environment: {},
+        runOpenshell: runner.run,
+        transactionId: "8".repeat(32),
+      }),
+    ).toThrow(/destination registry authority uses a different runtime provider/u);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
   it("fails closed on indeterminate provider inspection with bounded diagnostics", () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
@@ -448,6 +466,34 @@ describe("managed clone provider transaction", () => {
       deletesBeforeRetry,
     );
     expect(runner.live.get(TOKEN_BINDING.providerName)?.providerType).toBe("other");
+  });
+
+  it("bounds provider creation before exact-result reconciliation", () => {
+    const { prepared, runner, source } = prepareWithBinding({});
+
+    provisionManagedCloneProviderTransaction(prepared, {
+      ...authorityDeps(source),
+      environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
+      runOpenshell: runner.run,
+    });
+
+    expect(runner.run).toHaveBeenCalledWith(
+      [
+        "provider",
+        "create",
+        "--name",
+        TOKEN_BINDING.providerName,
+        "--type",
+        TOKEN_BINDING.providerType,
+        "--credential",
+        TOKEN_BINDING.providerEnvKey,
+      ],
+      expect.objectContaining({
+        maxBuffer: 64 * 1024,
+        suppressOutput: true,
+        timeout: 30_000,
+      }),
+    );
   });
 
   it("rolls back confirmed providers when a later credential disappears", () => {
