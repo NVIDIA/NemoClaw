@@ -123,6 +123,30 @@ runtime mutation
 | **Credential rotation** — `configRotateToken` in `src/lib/sandbox/config.ts` | A session with `credentialEnv` selects the provider and binding. A non-null different `sandboxName` is rejected, but a legacy/null session name is accepted for the requested sandbox. The new value comes from a named environment variable, stdin, or a secret prompt; it is trimmed, then rejected when empty or still containing internal whitespace. | `saveCredential` first stages the value in the current process. OpenShell provider update is the first external mutation, with provider create as a fallback; audit follows. No sandbox deletion. | The logical binding is unchanged, so session and registry are not rewritten. The raw value exists only in process memory/environment and the gateway provider; audit records action/sandbox/reason without the value. | No rollback after a successful provider update; an audit failure can report failure after the credential is already active. Covered by the rotate-token cases in `test/config-set-nested-ssrf.test.ts`. Gap: a null-name legacy session is not strongly bound to the requested sandbox. |
 | **Config, policy, resource, port-forward, and runtime setup contributions** — `configSet`; `prepareInitialSandboxCreatePolicy`; `selectResourceProfileForSandbox`; manifest compiler/runtime appliers; dashboard and channel forward helpers | Config uses validated dotpaths and SSRF-safe URL rewriting. Create/rebuild contributions are assembled by `sandbox-create-plan.ts` and `MessagingWorkflowPlanner`: policy presets/keys, resource flags, package/build steps, `hostForward`, runtime node preloads, env aliases, and secret scans. | Config’s first effect is a compare-and-swap sandbox write. Build-time contributions inherit the enclosing create/recreate boundary. Forward helpers can stop an existing forward and start its replacement in place after readiness, without recreating the sandbox. | Durable owners are compact registry messaging/policy/inference metadata, current manifests used for plan rehydration, onboard session, sandbox config/hash, gateway provider state, and shields audit. An interrupted onboarding session records the selected resource values or an explicit OpenShell-default choice; the resolved create intent remains process-local. Logical bindings are serializable; raw provider values are not. | CAS rejects stale config writes; OpenClaw/Hermes commit config and integrity hashes together, while other agents may refresh a path hash afterward. Audit and optional restart are post-commit and forward-only. Forward recovery can re-establish declared forwards. Gaps: no cross-contribution effect transaction/checkpoint. |
 
+## Dormant Podman bootstrap watcher authority
+
+`createPodmanManagedGatewayWatcherController` is an internal, unregistered
+authority for a later native Podman bootstrap provider. It does not activate or
+advertise Podman support. The caller must resolve exactly one healthy watcher,
+its PID-reuse-safe process identity, and the managed lifecycle owner that can
+stop and resume the same launch identity. Ambiguous or externally supervised
+owners fail closed.
+
+The controller durably records an `acquiring` lease before the first stop
+request, proves the owner, process, and target listener absent, and then records
+the `stopped` phase. Release clears the lease only after the same owner and
+launch identity serve one independently healthy target watcher. Recovery treats
+both phases as unfinished: a healthy exact owner is accepted without spawning a
+duplicate, while a proven stopped owner is resumed and requalified.
+
+This authority is the prerequisite for preparing two immutable, final-labelled
+Podman container identities without exposing duplicate OpenShell watcher state.
+The later provider transaction must keep the watcher durably stopped until one
+authoritative managed container remains; this slice does not yet create,
+replace, or expose a workload. Crash-window, ambiguous-owner, durable-write,
+and compare-and-clear behavior is covered by
+`podman-watcher-lease.test.ts`.
+
 ## Durable resumed recreate journal
 
 A resumed same-name replacement writes a secret-free journal before the lower create path can delete the source sandbox.
