@@ -13,6 +13,8 @@ import {
   type HostLocalInferenceEndpointInput,
   type HostLocalInferenceMount,
   type HostLocalInferenceReceipt,
+  type HostLocalInferenceRouteAuthority,
+  type HostLocalInferenceRouteAuthorityStore,
   type HostLocalInferenceRuntime,
   type HostLocalManagedInferenceInput,
   type HostLocalManagedInferenceInspection,
@@ -33,6 +35,7 @@ export const PODMAN_INFERENCE_MANAGED_LABEL = "ai.nvidia.nemoclaw.inference.mana
 export const PODMAN_INFERENCE_PROVIDER_LABEL = "ai.nvidia.nemoclaw.inference.provider";
 export const PODMAN_INFERENCE_SERVICE_LABEL = "ai.nvidia.nemoclaw.inference.service";
 export const PODMAN_INFERENCE_SPEC_LABEL = "ai.nvidia.nemoclaw.inference.spec-sha256";
+export const PODMAN_INFERENCE_AUTHORITY_LABEL = "ai.nvidia.nemoclaw.inference.authority-sha256";
 
 const PROVIDER_ID = "podman";
 const HOST_GATEWAY_NAME = "host.containers.internal";
@@ -49,6 +52,7 @@ const STOP_GRACE_SECONDS = 30;
 export interface PodmanHostLocalInferenceRuntimeOptions {
   readonly engine: ContainerEngine;
   readonly authorityStore: PersistedEngineAuthorityStore;
+  readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly bindingSha256: string;
   readonly preflight: PodmanHostPreflightReceipt;
 }
@@ -199,6 +203,90 @@ function specDigest(value: object): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
+function managedAuthorityDigest(input: {
+  readonly providerId: string;
+  readonly service: "nim" | "vllm";
+  readonly endpoint: HostLocalInferenceEndpointAuthority;
+  readonly name: string;
+  readonly imageRef: string;
+  readonly specSha256: string;
+  readonly gpuDevices: readonly string[];
+}): string {
+  return specDigest({
+    providerId: input.providerId,
+    service: input.service,
+    endpoint: input.endpoint,
+    name: input.name,
+    imageRef: input.imageRef,
+    specSha256: input.specSha256,
+    gpu: { vendor: "nvidia", devices: input.gpuDevices },
+  });
+}
+
+function managedSpecAuthorityDigest(spec: ManagedSpec): string {
+  return managedAuthorityDigest({
+    providerId: PROVIDER_ID,
+    service: spec.service,
+    endpoint: spec.endpoint,
+    name: spec.containerName,
+    imageRef: spec.imageRef,
+    specSha256: spec.specSha256,
+    gpuDevices: spec.gpuDevices,
+  });
+}
+
+function managedReceiptAuthorityDigest(receipt: HostLocalInferenceReceipt): string {
+  if (receipt.runtime.kind !== "container" || receipt.service === "ollama") {
+    throw new Error("Podman managed inference authority requires a container receipt.");
+  }
+  return managedAuthorityDigest({
+    providerId: receipt.providerId,
+    service: receipt.service,
+    endpoint: receipt.endpoint,
+    name: receipt.runtime.name,
+    imageRef: receipt.runtime.imageRef,
+    specSha256: receipt.runtime.specSha256,
+    gpuDevices: receipt.runtime.gpu.devices,
+  });
+}
+
+function ollamaRouteAuthority(
+  receipt: HostLocalInferenceReceipt,
+): HostLocalInferenceRouteAuthority {
+  if (receipt.service !== "ollama" || receipt.runtime.kind !== "host") {
+    throw new Error("Podman Ollama route authority requires a host-process receipt.");
+  }
+  return Object.freeze({
+    schemaVersion: 1 as const,
+    providerId: receipt.providerId,
+    service: "ollama" as const,
+    authorityId: receipt.engineAuthority.authorityId,
+    receiptSha256: specDigest({
+      providerId: receipt.providerId,
+      service: receipt.service,
+      engineAuthority: receipt.engineAuthority,
+      endpoint: receipt.endpoint,
+      runtime: receipt.runtime,
+    }),
+  });
+}
+
+function requireOllamaRouteAuthority(
+  actual: HostLocalInferenceRouteAuthority | null,
+  expected: HostLocalInferenceRouteAuthority,
+): HostLocalInferenceRouteAuthority {
+  if (
+    actual?.schemaVersion !== 1 ||
+    actual.providerId !== expected.providerId ||
+    actual.service !== expected.service ||
+    actual.authorityId !== expected.authorityId ||
+    actual.receiptSha256 !== expected.receiptSha256
+  ) {
+    throw new Error("Podman Ollama route does not match its protected provider authority.");
+  }
+  return actual;
+}
+
 function normalizeManagedSpec(
   input: HostLocalManagedInferenceInput,
   availableCdiDevices: readonly string[],
@@ -296,6 +384,7 @@ function requireManagedIdentity(
     readonly imageRef: string;
     readonly service: "nim" | "vllm";
     readonly specSha256: string;
+    readonly authoritySha256: string;
   },
 ): ManagedContainer {
   if (
@@ -305,7 +394,8 @@ function requireManagedIdentity(
     container.labels[PODMAN_INFERENCE_MANAGED_LABEL] !== "true" ||
     container.labels[PODMAN_INFERENCE_PROVIDER_LABEL] !== PROVIDER_ID ||
     container.labels[PODMAN_INFERENCE_SERVICE_LABEL] !== expected.service ||
-    container.labels[PODMAN_INFERENCE_SPEC_LABEL] !== expected.specSha256
+    container.labels[PODMAN_INFERENCE_SPEC_LABEL] !== expected.specSha256 ||
+    container.labels[PODMAN_INFERENCE_AUTHORITY_LABEL] !== expected.authoritySha256
   ) {
     throw new Error("Podman inference container does not match its exact managed authority.");
   }
@@ -383,6 +473,8 @@ function runArguments(spec: ManagedSpec): readonly string[] {
     `${PODMAN_INFERENCE_SERVICE_LABEL}=${spec.service}`,
     "--label",
     `${PODMAN_INFERENCE_SPEC_LABEL}=${spec.specSha256}`,
+    "--label",
+    `${PODMAN_INFERENCE_AUTHORITY_LABEL}=${managedSpecAuthorityDigest(spec)}`,
     "--network",
     spec.endpoint.networkName,
     "--publish",
@@ -429,9 +521,16 @@ function probeOllama(
 export function createPodmanHostLocalInferenceRuntime(
   options: PodmanHostLocalInferenceRuntimeOptions,
 ): HostLocalInferenceRuntime {
-  const { engine, authorityStore, bindingSha256, preflight } = options;
+  const { engine, authorityStore, routeAuthorityStore, bindingSha256, preflight } = options;
   if (engine.operation !== "host-local-inference" || engine.engineId !== PROVIDER_ID) {
     throw new Error("Podman host-local inference requires an operation-scoped Podman engine.");
+  }
+  if (
+    !routeAuthorityStore ||
+    typeof routeAuthorityStore.load !== "function" ||
+    typeof routeAuthorityStore.record !== "function"
+  ) {
+    throw new Error("Podman host-local inference requires a protected route-authority store.");
   }
   if (preflight.providerId !== PROVIDER_ID || preflight.authorityId !== engine.authorityId) {
     throw new Error("Podman host-local inference preflight has a different endpoint authority.");
@@ -460,6 +559,12 @@ export function createPodmanHostLocalInferenceRuntime(
     }
     authorize(false);
     requirePersistedEngineAuthority(normalized.engineAuthority, PROVIDER_ID, engine, bindingSha256);
+    if (normalized.service === "ollama") {
+      requireOllamaRouteAuthority(
+        routeAuthorityStore.load("ollama"),
+        ollamaRouteAuthority(normalized),
+      );
+    }
     return normalized;
   };
   const inspectReceipt = (
@@ -477,6 +582,7 @@ export function createPodmanHostLocalInferenceRuntime(
         imageRef: normalized.runtime.imageRef,
         service: normalized.service,
         specSha256: normalized.runtime.specSha256,
+        authoritySha256: managedReceiptAuthorityDigest(normalized),
       },
     );
     return { receipt: normalized, container };
@@ -509,6 +615,8 @@ export function createPodmanHostLocalInferenceRuntime(
       });
       if (receipt.runtime.kind !== "host") throw new Error("Ollama receipt normalization failed.");
       probeOllama(engine, receipt.endpoint, receipt.runtime.probeImageRef);
+      const routeAuthority = ollamaRouteAuthority(receipt);
+      requireOllamaRouteAuthority(routeAuthorityStore.record(routeAuthority), routeAuthority);
       return receipt;
     },
     startManaged(input: HostLocalManagedInferenceInput) {
@@ -522,6 +630,7 @@ export function createPodmanHostLocalInferenceRuntime(
           imageRef: spec.imageRef,
           service: spec.service,
           specSha256: spec.specSha256,
+          authoritySha256: managedSpecAuthorityDigest(spec),
         });
         if (!container.running) {
           if (!AT_REST_STATES.has(container.status)) {
@@ -539,6 +648,7 @@ export function createPodmanHostLocalInferenceRuntime(
             imageRef: spec.imageRef,
             service: spec.service,
             specSha256: spec.specSha256,
+            authoritySha256: managedSpecAuthorityDigest(spec),
           });
           if (!container.running) {
             throw new Error("Podman inference start did not leave the exact container running.");
@@ -560,6 +670,7 @@ export function createPodmanHostLocalInferenceRuntime(
           imageRef: spec.imageRef,
           service: spec.service,
           specSha256: spec.specSha256,
+          authoritySha256: managedSpecAuthorityDigest(spec),
         });
         if (!container.running) {
           throw new Error("Podman inference start did not leave the exact container running.");

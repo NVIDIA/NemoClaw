@@ -8,6 +8,7 @@ import {
   foreignContainer,
   IMAGE_REF,
   managedInput,
+  memoryRouteAuthorityStore,
   memoryStore,
   PROBE_IMAGE_REF,
   runtimeHarness,
@@ -171,6 +172,86 @@ describe("Podman host-local inference runtime", () => {
 
     expect(() => host.runtime.preserveForRebuild(tampered)).toThrow("canonical host");
     expect(host.capture).toHaveBeenCalledTimes(callsBeforeRejection);
+  });
+
+  it.each([
+    [
+      "port",
+      (receipt: ReturnType<ReturnType<typeof runtimeHarness>["runtime"]["qualifyOllama"]>) => ({
+        ...receipt,
+        endpoint: { ...receipt.endpoint, port: 11435 },
+      }),
+    ],
+    [
+      "network",
+      (receipt: ReturnType<ReturnType<typeof runtimeHarness>["runtime"]["qualifyOllama"]>) => ({
+        ...receipt,
+        endpoint: { ...receipt.endpoint, networkName: "other-network" },
+      }),
+    ],
+  ] as const)("rejects Ollama %s drift before another provider probe", (_field, tamper) => {
+    const host = runtimeHarness();
+    const receipt = host.runtime.qualifyOllama({
+      networkName: "openshell",
+      hostPort: 11434,
+      probeImageRef: PROBE_IMAGE_REF,
+    });
+    const callsBeforeRejection = host.capture.mock.calls.length;
+
+    expect(() => host.runtime.preserveForRebuild(tamper(receipt))).toThrow(
+      "protected provider authority",
+    );
+    expect(host.capture).toHaveBeenCalledTimes(callsBeforeRejection);
+  });
+
+  it.each([
+    [
+      "port",
+      (receipt: ReturnType<ReturnType<typeof runtimeHarness>["runtime"]["startManaged"]>) => ({
+        ...receipt,
+        endpoint: { ...receipt.endpoint, port: receipt.endpoint.port + 1 },
+      }),
+    ],
+    [
+      "network",
+      (receipt: ReturnType<ReturnType<typeof runtimeHarness>["runtime"]["startManaged"]>) => ({
+        ...receipt,
+        endpoint: { ...receipt.endpoint, networkName: "other-network" },
+      }),
+    ],
+    [
+      "GPU",
+      (receipt: ReturnType<ReturnType<typeof runtimeHarness>["runtime"]["startManaged"]>) => ({
+        ...receipt,
+        runtime:
+          receipt.runtime.kind === "container"
+            ? { ...receipt.runtime, gpu: { ...receipt.runtime.gpu, devices: ["nvidia.com/gpu=0"] } }
+            : receipt.runtime,
+      }),
+    ],
+  ] as const)("rejects managed %s drift against the immutable authority label", (_field, tamper) => {
+    const host = runtimeHarness();
+    const receipt = host.runtime.startManaged(managedInput("vllm"));
+
+    expect(() => host.runtime.inspectManaged(tamper(receipt))).toThrow(
+      "does not match its exact managed authority",
+    );
+  });
+
+  it("rejects Ollama recovery when protected route authority is absent", () => {
+    const routeAuthorityStore = memoryRouteAuthorityStore();
+    const original = runtimeHarness(AUTHORITY_ID, memoryStore(), routeAuthorityStore);
+    const receipt = original.runtime.qualifyOllama({
+      networkName: "openshell",
+      hostPort: 11434,
+      probeImageRef: PROBE_IMAGE_REF,
+    });
+    const replacement = runtimeHarness(AUTHORITY_ID, original.store, memoryRouteAuthorityStore());
+
+    expect(() => replacement.runtime.preserveForRebuild(receipt)).toThrow(
+      "protected provider authority",
+    );
+    expect(replacement.capture).not.toHaveBeenCalled();
   });
 
   it("rejects endpoint authority drift before receipt lifecycle commands", () => {
