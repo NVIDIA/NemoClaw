@@ -133,6 +133,18 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
   });
 
   it.each([
+    "--continue",
+    "--resume",
+  ])("passes an explicit managed command after %s through without translating across its boundary (#8011)", (flag) => {
+    const argv = [flag, "daily", "chat", "--oneshot", "Repeat the latest turn"];
+
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
+  it.each([
     [
       ["-p", "work"],
       ["--profile", "work"],

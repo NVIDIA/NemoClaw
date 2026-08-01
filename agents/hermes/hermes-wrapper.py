@@ -414,7 +414,11 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
                     parts.append(argv[cursor])
                     cursor += 1
                     if coalesce_session and command is None:
-                        while cursor < len(argv) and not argv[cursor].startswith("-"):
+                        while (
+                            cursor < len(argv)
+                            and not argv[cursor].startswith("-")
+                            and argv[cursor] not in adapter["managed_commands"]
+                        ):
                             parts.append(argv[cursor])
                             cursor += 1
                 if not parts and arity == "session":
