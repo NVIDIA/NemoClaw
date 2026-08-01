@@ -759,6 +759,20 @@ export async function executePersistedEngineLifecycle<T>(
   }
   const authorized = input.lifecycleStore.authorizeMutation(input.transactionId);
   const result = await mutate(authorizedScope(input, authorized));
-  const completed = input.lifecycleStore.complete(input.transactionId, result.resultSha256);
-  return Object.freeze({ record: completed, value: result.value });
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    Object.keys(result).sort().join(",") !== "resultSha256,value"
+  ) {
+    throw new Error("Persisted lifecycle mutation returned an invalid completion result.");
+  }
+  const resultSha256 = exactSha256(result.resultSha256, "completion result digest");
+  const value = result.value;
+  const after = requireExpectedLifecycle(input);
+  if (after.phase !== "mutation-authorized") {
+    throw new Error("Persisted lifecycle mutation authority changed before completion.");
+  }
+  const completed = input.lifecycleStore.complete(input.transactionId, resultSha256);
+  return Object.freeze({ record: completed, value });
 }

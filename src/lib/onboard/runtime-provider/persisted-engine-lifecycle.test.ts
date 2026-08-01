@@ -311,6 +311,29 @@ describe("persisted engine lifecycle", () => {
     expect(runtime.lifecycleStore.load(TRANSACTION_ID)?.phase).toBe("mutation-authorized");
   });
 
+  it("revalidates persisted engine authority before publishing completion", async () => {
+    const runtime = harness({ action: "backup" });
+    preparePersistedEngineLifecycle(runtime.input);
+    let reads = 0;
+    const engineAuthorityStore: PersistedEngineAuthorityStore = {
+      record: runtime.engineAuthorityStore.record,
+      load: () => {
+        reads += 1;
+        return reads <= 2
+          ? runtime.authority
+          : { ...runtime.authority, authorityId: `mxc-endpoint:${"8".repeat(64)}` };
+      },
+    };
+
+    await expect(
+      executePersistedEngineLifecycle({ ...runtime.input, engineAuthorityStore }, () => ({
+        resultSha256: RESULT_SHA256,
+        value: undefined,
+      })),
+    ).rejects.toThrow(/authority changed|endpoint does not match/u);
+    expect(runtime.lifecycleStore.load(TRANSACTION_ID)?.phase).toBe("mutation-authorized");
+  });
+
   it("retains and then retires the exact completion receipt durably", async () => {
     const runtime = harness({ action: "backup" });
     preparePersistedEngineLifecycle(runtime.input);
