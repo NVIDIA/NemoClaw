@@ -104,33 +104,34 @@ function providerRunner() {
   const live = new Map<string, { type: string; credential: string }>();
   const createCredentials = new Map<string, string>();
   const run = vi.fn((args: string[], options: { env?: NodeJS.ProcessEnv } = {}) => {
-    if (args[0] === "provider" && args[1] === "get") {
-      const name = args[2] ?? "";
-      const binding = live.get(name);
-      return binding
-        ? {
-            status: 0,
-            stdout: providerMetadata(name, binding.type, binding.credential),
-            stderr: "",
-          }
-        : { status: 1, stdout: "", stderr: `provider '${name}' not found` };
+    switch (args.slice(0, 2).join(" ")) {
+      case "provider get": {
+        const name = args[2] ?? "";
+        const binding = live.get(name);
+        return binding
+          ? {
+              status: 0,
+              stdout: providerMetadata(name, binding.type, binding.credential),
+              stderr: "",
+            }
+          : { status: 1, stdout: "", stderr: `provider '${name}' not found` };
+      }
+      case "provider create": {
+        const name = args[3] ?? "";
+        const type = args[5] ?? "";
+        const credential = args[7] ?? "";
+        live.set(name, { type, credential });
+        createCredentials.set(name, options.env?.[credential] ?? "");
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      case "provider delete":
+        live.delete(args[2] ?? "");
+        return { status: 0, stdout: "", stderr: "" };
+      default:
+        return args.slice(0, 3).join(" ") === "sandbox provider detach"
+          ? { status: 0, stdout: "", stderr: "" }
+          : { status: 1, stdout: "", stderr: "unsupported test command" };
     }
-    if (args[0] === "provider" && args[1] === "create") {
-      const name = args[3] ?? "";
-      const type = args[5] ?? "";
-      const credential = args[7] ?? "";
-      live.set(name, { type, credential });
-      createCredentials.set(name, options.env?.[credential] ?? "");
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    if (args[0] === "provider" && args[1] === "delete") {
-      live.delete(args[2] ?? "");
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    return { status: 1, stdout: "", stderr: "unsupported test command" };
   });
   return { createCredentials, live, run };
 }

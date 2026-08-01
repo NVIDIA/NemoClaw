@@ -160,32 +160,37 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
   let failDelete = false;
   const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
-    if (args[0] === "provider" && args[1] === "get") {
-      const name = args[2] ?? "";
-      const binding = live.get(name);
-      return binding
-        ? { status: 0, stdout: providerMetadata(binding), stderr: "" }
-        : { status: 1, stdout: "", stderr: `provider '${name}' not found` };
+    switch (args.slice(0, 2).join(" ")) {
+      case "provider get": {
+        const name = args[2] ?? "";
+        const binding = live.get(name);
+        return binding
+          ? { status: 0, stdout: providerMetadata(binding), stderr: "" }
+          : { status: 1, stdout: "", stderr: `provider '${name}' not found` };
+      }
+      case "provider create": {
+        const binding = {
+          providerName: args[3] ?? "",
+          providerType: args[5] ?? "",
+          providerEnvKey: args[7] ?? "",
+        };
+        const outcome = createBehavior?.(binding) ?? { status: 0, materialize: binding };
+        (outcome.materialize === undefined ? [] : [outcome.materialize]).forEach((materialized) =>
+          live.set(binding.providerName, { ...materialized }),
+        );
+        return { status: outcome.status, stdout: "", stderr: "" };
+      }
+      case "provider delete": {
+        (failDelete ? [] : [args[2] ?? ""]).forEach((name) => live.delete(name));
+        return failDelete
+          ? { status: 1, stdout: "", stderr: "gateway unavailable" }
+          : { status: 0, stdout: "", stderr: "" };
+      }
+      default:
+        return args.slice(0, 3).join(" ") === "sandbox provider detach"
+          ? { status: 0, stdout: "", stderr: "" }
+          : { status: 1, stdout: "", stderr: "unsupported test command" };
     }
-    if (args[0] === "provider" && args[1] === "create") {
-      const binding = {
-        providerName: args[3] ?? "",
-        providerType: args[5] ?? "",
-        providerEnvKey: args[7] ?? "",
-      };
-      const outcome = createBehavior?.(binding) ?? { status: 0, materialize: binding };
-      if (outcome.materialize) live.set(binding.providerName, { ...outcome.materialize });
-      return { status: outcome.status, stdout: "", stderr: "" };
-    }
-    if (args[0] === "provider" && args[1] === "delete") {
-      if (failDelete) return { status: 1, stdout: "", stderr: "gateway unavailable" };
-      live.delete(args[2] ?? "");
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    return { status: 1, stdout: "", stderr: "unsupported test command" };
   });
   return {
     commands,

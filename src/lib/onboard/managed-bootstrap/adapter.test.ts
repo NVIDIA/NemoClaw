@@ -281,18 +281,19 @@ function adapterFor(agent: ManagedStartupAgent): Fixture {
     }),
     finalizeBootstrap: vi.fn(async (input) => {
       order.push(input.outcome);
-      if (input.outcome === "rollback") return rolledBackReceipt(input.handle, input.snapshot);
-      return {
-        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-        sandbox: input.handle.sandbox,
-        bootstrapIdentity: IDENTITY,
-        outcome: "committed" as const,
-        restoredRuntimeId: null,
-        restoredSpecHash: null,
-        heldWorkloadRemoved: false,
-        alreadyRolledBack: false,
-        finalizedAt: "2026-07-29T12:03:00.000Z",
-      };
+      return input.outcome === "rollback"
+        ? rolledBackReceipt(input.handle, input.snapshot)
+        : {
+            schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+            sandbox: input.handle.sandbox,
+            bootstrapIdentity: IDENTITY,
+            outcome: "committed" as const,
+            restoredRuntimeId: null,
+            restoredSpecHash: null,
+            heldWorkloadRemoved: false,
+            alreadyRolledBack: false,
+            finalizedAt: "2026-07-29T12:03:00.000Z",
+          };
     }),
   };
   return { adapter, order, raw };
@@ -445,35 +446,40 @@ describe("managed bootstrap adapter contract", () => {
   ] as const)("runs exact incomplete-create cleanup when create %s", async (failureMode) => {
     const fixture = adapterFor("langchain-deepagents-code");
     const original = fixture.adapter.createHeldWorkload;
-    if (failureMode === "throws") {
-      vi.mocked(original).mockImplementationOnce(async (input) => {
-        await input.launch({
-          heldWorkloadArgv: renderManagedBootstrapHeldCommand(
-            input.request,
-            input.bootstrapIdentity as string,
-            input.plan.intendedWorkloadArgv,
-          ),
-          bootstrapIdentity: input.bootstrapIdentity as string,
+    switch (failureMode) {
+      case "throws":
+        vi.mocked(original).mockImplementationOnce(async (input) => {
+          await input.launch({
+            heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+              input.request,
+              input.bootstrapIdentity as string,
+              input.plan.intendedWorkloadArgv,
+            ),
+            bootstrapIdentity: input.bootstrapIdentity as string,
+          });
+          throw new Error("create failed after materialization");
         });
-        throw new Error("create failed after materialization");
-      });
-    } else if (failureMode === "returns without launch") {
-      vi.mocked(original).mockResolvedValueOnce(handleFor(requestFor("langchain-deepagents-code")));
-    } else {
-      vi.mocked(original).mockImplementationOnce(async (input) => {
-        const receipt = await input.launch({
-          heldWorkloadArgv: renderManagedBootstrapHeldCommand(
-            input.request,
-            input.bootstrapIdentity as string,
-            input.plan.intendedWorkloadArgv,
-          ),
-          bootstrapIdentity: input.bootstrapIdentity as string,
+        break;
+      case "returns without launch":
+        vi.mocked(original).mockResolvedValueOnce(
+          handleFor(requestFor("langchain-deepagents-code")),
+        );
+        break;
+      default:
+        vi.mocked(original).mockImplementationOnce(async (input) => {
+          const receipt = await input.launch({
+            heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+              input.request,
+              input.bootstrapIdentity as string,
+              input.plan.intendedWorkloadArgv,
+            ),
+            bootstrapIdentity: input.bootstrapIdentity as string,
+          });
+          return {
+            ...handleFor(requestFor("langchain-deepagents-code"), receipt),
+            sandbox: { ...receipt.sandbox, sandboxId: "wrong-owner" },
+          };
         });
-        return {
-          ...handleFor(requestFor("langchain-deepagents-code"), receipt),
-          sandbox: { ...receipt.sandbox, sandboxId: "wrong-owner" },
-        };
-      });
     }
 
     const failure = await captureFailure(
