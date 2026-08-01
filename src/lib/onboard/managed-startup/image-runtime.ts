@@ -35,7 +35,9 @@ import {
 } from "./root-apply";
 import {
   beginManagedStartupSharedStateTransaction,
+  clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
+  getManagedStartupSharedStateTransactionStatus,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   rollbackManagedStartupSharedStateTransaction,
 } from "./shared-state-transaction";
@@ -1540,7 +1542,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1550,6 +1552,14 @@ function readCliFingerprint(argv: readonly string[]): string {
   const index = argv.indexOf("--profile-fingerprint");
   if (index < 0 || index + 1 >= argv.length) {
     fail("managed startup profile fingerprint argument is missing");
+  }
+  return argv[index + 1] as string;
+}
+
+function readCliBootstrapIdentity(argv: readonly string[]): string {
+  const index = argv.indexOf("--bootstrap-identity");
+  if (index < 0 || index + 1 >= argv.length || !SHA256_RE.test(String(argv[index + 1] ?? ""))) {
+    fail("managed bootstrap identity argument is missing or invalid");
   }
   return argv[index + 1] as string;
 }
@@ -1600,27 +1610,56 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (
-    argv.length === 4 &&
+    (argv.length === 4 || argv.length === 6) &&
     argv[0] === "--rollback-shared-state-transaction" &&
-    argv[3] === "--read-only-receipt"
+    argv[argv.length - 1] === "--read-only-receipt"
   ) {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 4));
+    const agent = exactAgent(readCliAgent(argv, argv.length));
     const rolledBack = rollbackManagedStartupSharedStateTransaction(agent, {
       transactionDirectory: MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
       readOnlyReceipt: true,
+      bootstrapIdentity: argv.length === 6 ? readCliBootstrapIdentity(argv) : null,
     });
     if (!rolledBack) fail("read-only shared-state rollback receipt is missing");
     console.log(`[managed-startup] verified and restored ${agent} shared state`);
     return;
   }
-  if (argv.length === 3 && argv[0] === "--commit-shared-state-transaction") {
+  if ((argv.length === 3 || argv.length === 5) && argv[0] === "--commit-shared-state-transaction") {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 3));
-    if (!commitManagedStartupSharedStateTransaction(agent)) {
+    const agent = exactAgent(readCliAgent(argv, argv.length));
+    if (
+      !commitManagedStartupSharedStateTransaction(agent, {
+        bootstrapIdentity: argv.length === 5 ? readCliBootstrapIdentity(argv) : null,
+      })
+    ) {
       fail("managed startup transaction is missing at commit");
     }
     console.log(`[managed-startup] committed ${agent} shared state`);
+    return;
+  }
+  if (argv.length === 5 && argv[0] === "--clear-shared-state-commit-receipt") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    if (!clearManagedStartupSharedStateCommitReceipt(agent, { bootstrapIdentity })) {
+      fail("managed startup durable commit receipt is missing at cleanup");
+    }
+    console.log(`[managed-startup] cleared ${agent} durable shared-state commit receipt`);
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--shared-state-transaction-status") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 7));
+    const profileFingerprint = readCliFingerprint(argv);
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    process.stdout.write(
+      `${getManagedStartupSharedStateTransactionStatus({
+        agent,
+        profileFingerprint,
+        bootstrapIdentity,
+      })}\n`,
+    );
     return;
   }
   const result = await applyManagedStartupImageProfile(readCliAgent(argv));

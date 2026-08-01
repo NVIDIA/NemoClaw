@@ -44,6 +44,11 @@ records containing the provider and sandbox identities, plan and profile
 fingerprints, exact original and replacement IDs, rollback target, and phase.
 Exact commit and cleanup receipts are durable terminal records, so adapter
 recreation does not depend on process-local transaction sets or tombstone maps.
+The image-owned shared-state transaction uses the same identity-bound model: a
+commit atomically moves its pending manifest and backups into a durable receipt
+namespace, compacts that state to an exact commit receipt, and rejects rollback
+after a restart. The provider may retire that receipt only after it proves the
+external rollback backup is gone, leaving the next bootstrap attempt unblocked.
 Enumeration reconstructs only unfinished records; the following recovery slice
 owns phase reconciliation and cross-surface resume or rollback. Mutable
 OpenShell names are read only to detect ownership reuse, and unsafe name-only
