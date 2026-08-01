@@ -2712,7 +2712,7 @@ async function createSandboxWithBaseImageResolution(
   recreateRuntime.advance("creating");
   const {
     createResult,
-    dockerGpuCreatePatch,
+    runtimePatch,
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
@@ -2768,20 +2768,33 @@ async function createSandboxWithBaseImageResolution(
   }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
-      effectiveSandboxGpuConfig,
-      provider,
-      {
-        sandboxName,
-        dockerDriverGateway,
-        selectedRoute: selectedGpuRoute,
-        verifyDirectSandboxGpu,
-        verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
-        selectedMode: dockerGpuCreatePatch.selectedMode,
-        runCaptureOpenshell,
-        log: console.log,
-      },
-    );
+    try {
+      dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
+        effectiveSandboxGpuConfig,
+        provider,
+        {
+          sandboxName,
+          dockerDriverGateway,
+          selectedRoute: selectedGpuRoute,
+          verifyDirectSandboxGpu,
+          verifyGpuOrExit: runtimePatch.verifyGpuOrExit,
+          selectedMode: runtimePatch.selectedMode,
+          runCaptureOpenshell,
+          log: console.log,
+        },
+      );
+      await runtimePatch.commitAfterReady();
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      try {
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+      } catch (rollbackError) {
+        (
+          failure as Error & { managedBootstrapRollbackError?: unknown }
+        ).managedBootstrapRollbackError = rollbackError;
+      }
+      throw failure;
+    }
   }
 
   let actualDashboardPort = 0;

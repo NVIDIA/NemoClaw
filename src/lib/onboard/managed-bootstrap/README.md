@@ -1,8 +1,9 @@
 # Managed bootstrap protocol
 
-This directory defines a dormant, driver-neutral transaction contract and its
-first driver adapter. It does not register a runtime provider or change sandbox
-creation, onboarding, snapshot, clone, or restore behavior.
+This directory defines a dormant, driver-neutral transaction contract, its
+first driver adapter, and an injectable sandbox-create lifecycle. Production
+runtime bundles still report bootstrap as unsupported, so this integration does
+not change onboarding, snapshot, clone, or restore behavior.
 
 The protocol binds one random bootstrap identity to:
 
@@ -27,8 +28,9 @@ root-owned request, verifies an identity-bound completion, clears its private
 bootstrap variables and file descriptors, and then uses `exec "$@"` to preserve
 the captured supervisor argument boundaries.
 
-The trampoline is intentionally not an entrypoint, and no production TypeScript
-module imports this protocol or the Docker adapter.
+The trampoline is intentionally not an entrypoint. The launch renderer can
+produce its identity-bound hold command only when a caller supplies a managed
+startup request.
 
 The Docker adapter creates and validates a stopped replacement under an
 identity-derived staging name while the original remains running. It stages the
@@ -45,10 +47,16 @@ adapter assumes the protocol's single coordinator; multi-process
 lease/arbitration remains an explicit production-activation gate. Activation
 must also inject the selected gateway's canonical state root.
 
+The runtime-provider bundle is the only bootstrap registration boundary. The
+candidate Docker surface owns create routing, replacement construction,
+native-to-compatibility fallback evidence, and deferred commit or rollback.
+Central onboarding accepts that provider-neutral surface without a Docker or
+Podman selection branch. Tests register an MXC-style surface through the same
+bundle and render held launches for OpenClaw, Hermes, and DCode.
+
 The current image definitions still do not package
 `nemoclaw-managed-startup-hold`, `managed-startup-image-runtime.cjs`, or the
-shared-state bootstrap modes consumed by this adapter. A later activation slice
-must add those prerequisites and wire the coordinator into Docker create as one
-boundary. The same contract is exercised for OpenClaw, Hermes, and DCode without
-a provider-specific central switch. Until that complete boundary lands, every
-registered runtime provider keeps bootstrap unsupported.
+shared-state bootstrap modes consumed by this adapter. Later persistence and
+qualification slices must add those prerequisites and provide the canonical
+durable authority store. Until that complete boundary passes protected E2E,
+every production runtime provider keeps bootstrap unsupported.
