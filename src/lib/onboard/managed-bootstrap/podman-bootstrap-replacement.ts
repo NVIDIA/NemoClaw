@@ -143,7 +143,7 @@ interface ExactContainerExpectation {
   readonly name: string;
   readonly imageContentId: string;
   readonly labels: Readonly<Record<string, string>>;
-  readonly running: boolean;
+  readonly running?: boolean;
   readonly entrypointArgv?: readonly string[];
   readonly commandArgv?: readonly string[];
   readonly environment?: readonly string[];
@@ -465,7 +465,7 @@ function inspectExactContainer(
     actualRuntimeId !== runtimeId ||
     name !== expected.name ||
     actualImageContentId !== expected.imageContentId ||
-    state.Running !== expected.running ||
+    (expected.running !== undefined && state.Running !== expected.running) ||
     !sameMap(labels, exactStringMap(expected.labels, "Expected Podman labels"))
   ) {
     return failure("Podman bootstrap container identity or state changed after it was pinned.");
@@ -605,7 +605,7 @@ function assertJournalAuthority(
 function expectedOriginal(
   journal: PodmanBootstrapJournal,
   held: PodmanHeldWorkloadObservation,
-  running: boolean,
+  running?: boolean,
 ): ExactContainerExpectation {
   if (
     held.runtimeId !== journal.originalRuntimeId ||
@@ -789,7 +789,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
     "rollback-authorized",
   ]);
   assertJournalAuthority(input, current);
-  expectedOriginal(current, input.heldWorkload, current.phase !== "original-stopped");
+  expectedOriginal(current, input.heldWorkload);
   const journal = input.journalStore.authorizeRollback(input.bootstrapIdentity, [
     "preparing-replacement",
     "replacement-created",
@@ -823,7 +823,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
 
   const originalWasRunning = inspectStableContainer(
     input,
-    expectedOriginal(journal, input.heldWorkload, current.phase !== "original-stopped"),
+    expectedOriginal(journal, input.heldWorkload),
   ).running;
   let originalStarted = false;
   if (!originalWasRunning) {
