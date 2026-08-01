@@ -117,9 +117,9 @@ function normalizeArchitecture(value: string): "amd64" | "arm64" | null {
   return null;
 }
 
-function collectNvidiaCdiDevices(value: unknown, devices: Set<string>): void {
+function collectNvidiaCdiDevices(value: unknown, devices: string[]): void {
   if (typeof value === "string") {
-    if (value.startsWith("nvidia.com/gpu=")) devices.add(value);
+    if (value.startsWith("nvidia.com/gpu=")) devices.push(value);
     return;
   }
   if (Array.isArray(value)) {
@@ -129,7 +129,7 @@ function collectNvidiaCdiDevices(value: unknown, devices: Set<string>): void {
   const source = record(value);
   if (!source) return;
   for (const [key, entry] of Object.entries(source)) {
-    if (key.startsWith("nvidia.com/gpu=")) devices.add(key);
+    if (key.startsWith("nvidia.com/gpu=")) devices.push(key);
     collectNvidiaCdiDevices(entry, devices);
   }
 }
@@ -242,10 +242,10 @@ export function qualifyPodmanHost(
   }
   requireSubordinateIdMappings(engine);
 
-  const cdiDevices = new Set<string>();
+  const cdiDevices: string[] = [];
   collectNvidiaCdiDevices(host, cdiDevices);
-  for (const device of options.additionalCdiDevices ?? []) cdiDevices.add(device);
-  const qualifiedCdiDevices = normalizePodmanCdiInventory([...cdiDevices]);
+  cdiDevices.push(...(options.additionalCdiDevices ?? []));
+  const qualifiedCdiDevices = normalizePodmanCdiInventory(cdiDevices);
 
   return Object.freeze({
     providerId: "podman",
