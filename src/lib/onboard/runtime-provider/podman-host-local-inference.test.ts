@@ -3,188 +3,15 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { ContainerEngine } from "../../adapters/container-engine";
-import type { HostLocalManagedInferenceInput } from "./host-local-inference";
-import type {
-  PersistedEngineAuthority,
-  PersistedEngineAuthorityStore,
-} from "./persisted-engine-authority";
 import {
-  createPodmanHostLocalInferenceRuntime,
-  PODMAN_INFERENCE_MANAGED_LABEL,
-} from "./podman-host-local-inference";
-import type { PodmanHostPreflightReceipt } from "./podman-preflight";
-
-const AUTHORITY_ID = "test:podman-inference";
-const BINDING_SHA256 = "a".repeat(64);
-const IMAGE_REF = `nvcr.io/nvidia/inference@sha256:${"b".repeat(64)}`;
-const PROBE_IMAGE_REF = `quay.io/curl/curl@sha256:${"c".repeat(64)}`;
-
-interface ContainerState {
-  readonly id: string;
-  readonly name: string;
-  readonly imageRef: string;
-  readonly labels: Record<string, string>;
-  running: boolean;
-  status: string;
-}
-
-function memoryStore(): PersistedEngineAuthorityStore {
-  let value: PersistedEngineAuthority | null = null;
-  return {
-    load: () => value,
-    record: (authority) => {
-      if (value && JSON.stringify(value) !== JSON.stringify(authority)) {
-        throw new Error("authority conflict");
-      }
-      value = authority;
-      return authority;
-    },
-  };
-}
-
-function preflight(authorityId = AUTHORITY_ID): PodmanHostPreflightReceipt {
-  return {
-    providerId: "podman",
-    authorityId,
-    clientVersion: "5.6.2",
-    serverVersion: "5.6.2",
-    rootless: true,
-    cgroupVersion: "v2",
-    os: "linux",
-    architecture: "amd64",
-    networkBackend: "netavark",
-    cdiDevices: ["nvidia.com/gpu=all", "nvidia.com/gpu=0"],
-  };
-}
-
-function optionValue(args: readonly string[], option: string): string {
-  const index = args.indexOf(option);
-  if (index < 0 || args[index + 1] === undefined) throw new Error(`missing ${option}`);
-  return String(args[index + 1]);
-}
-
-function engineHarness(authorityId = AUTHORITY_ID) {
-  const containers = new Map<string, ContainerState>();
-  let counter = 1;
-  let inspectImageOverride: string | null = null;
-  const capture = vi.fn((args: readonly string[]) => {
-    if (args[0] === "run" && args.includes("--rm")) {
-      return { status: 0, stdout: "{}", stderr: "" };
-    }
-    if (args[0] === "run") {
-      const id = counter.toString(16).padStart(64, "0");
-      counter += 1;
-      const imageRef = args.find((value) => value.includes("@sha256:")) ?? "";
-      const labels: Record<string, string> = {};
-      for (let index = 0; index < args.length; index += 1) {
-        if (args[index] !== "--label") continue;
-        const [key, ...value] = String(args[index + 1]).split("=");
-        labels[key] = value.join("=");
-      }
-      containers.set(id, {
-        id,
-        name: optionValue(args, "--name"),
-        imageRef,
-        labels,
-        running: true,
-        status: "running",
-      });
-      return { status: 0, stdout: `${id}\n`, stderr: "" };
-    }
-    if (args[0] === "ps") {
-      const filter = optionValue(args, "--filter");
-      const name = filter.replace(/^name=\^/u, "").replace(/\$$/u, "");
-      const matches = [...containers.values()].filter((container) => container.name === name);
-      return {
-        status: 0,
-        stdout: matches.map((container) => `${container.id}\t${container.name}`).join("\n"),
-        stderr: "",
-      };
-    }
-    if (args[0] === "container" && args[1] === "inspect") {
-      const container = containers.get(String(args[2]));
-      if (!container) return { status: 125, stdout: "", stderr: "not found" };
-      return {
-        status: 0,
-        stdout: JSON.stringify([
-          {
-            Id: container.id,
-            Name: container.name,
-            ImageName: inspectImageOverride ?? container.imageRef,
-            Config: { Image: container.imageRef, Labels: container.labels },
-            State: { Running: container.running, Status: container.status },
-          },
-        ]),
-        stderr: "",
-      };
-    }
-    if (args[0] === "start") {
-      const container = containers.get(String(args[1]));
-      if (!container) return { status: 125, stdout: "", stderr: "not found" };
-      container.running = true;
-      container.status = "running";
-      return { status: 0, stdout: container.id, stderr: "" };
-    }
-    if (args[0] === "stop") {
-      const container = containers.get(String(args.at(-1)));
-      if (!container) return { status: 125, stdout: "", stderr: "not found" };
-      container.running = false;
-      container.status = "exited";
-      return { status: 0, stdout: container.id, stderr: "" };
-    }
-    if (args[0] === "rm") {
-      containers.delete(String(args.at(-1)));
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    return { status: 125, stdout: "", stderr: `unexpected ${args.join(" ")}` };
-  });
-  const engine: ContainerEngine = {
-    operation: "host-local-inference",
-    engineId: "podman",
-    displayName: "Podman",
-    authorityId,
-    capture,
-    captureHost: vi.fn(),
-  };
-  return {
-    capture,
-    containers,
-    engine,
-    setInspectImageOverride(value: string | null) {
-      inspectImageOverride = value;
-    },
-  };
-}
-
-function managedInput(service: "nim" | "vllm"): HostLocalManagedInferenceInput {
-  return {
-    service,
-    containerName: `nemoclaw-${service}-alpha`,
-    networkName: "openshell",
-    hostPort: service === "nim" ? 8001 : 8002,
-    containerPort: 8000,
-    imageRef: IMAGE_REF,
-    probeImageRef: PROBE_IMAGE_REF,
-    gpuDevices: ["all"],
-    environment: service === "nim" ? ["NIM_NGC_API_KEY", "NGC_API_KEY"] : ["HF_TOKEN"],
-    mounts: [{ source: "/var/lib/nemoclaw/models", target: "/models", readOnly: true }],
-    sharedMemory: "16g",
-    ipc: "private",
-    command: ["--model", service],
-  };
-}
-
-function runtimeHarness(authorityId = AUTHORITY_ID, store = memoryStore()) {
-  const host = engineHarness(authorityId);
-  const runtime = createPodmanHostLocalInferenceRuntime({
-    engine: host.engine,
-    authorityStore: store,
-    bindingSha256: BINDING_SHA256,
-    preflight: preflight(authorityId),
-  });
-  return { ...host, runtime, store };
-}
+  AUTHORITY_ID,
+  foreignContainer,
+  IMAGE_REF,
+  managedInput,
+  memoryStore,
+  PROBE_IMAGE_REF,
+  runtimeHarness,
+} from "./podman-host-local-inference-test-harness";
 
 describe("Podman host-local inference runtime", () => {
   it("qualifies and re-proves host Ollama through the exact runtime network", () => {
@@ -274,14 +101,7 @@ describe("Podman host-local inference runtime", () => {
   it("rejects foreign name ownership and unavailable CDI devices before mutation", () => {
     const host = runtimeHarness();
     const foreignId = "f".repeat(64);
-    host.containers.set(foreignId, {
-      id: foreignId,
-      name: "nemoclaw-vllm-alpha",
-      imageRef: IMAGE_REF,
-      labels: { [PODMAN_INFERENCE_MANAGED_LABEL]: "false" },
-      running: true,
-      status: "running",
-    });
+    host.containers.set(foreignId, foreignContainer(foreignId, "nemoclaw-vllm-alpha"));
     expect(() => host.runtime.startManaged(managedInput("vllm"))).toThrow(
       "does not match its exact managed authority",
     );
