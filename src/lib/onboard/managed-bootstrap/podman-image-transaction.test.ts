@@ -76,50 +76,66 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   let running = options.startsRunning ?? false;
   let completionAttempts = 0;
   let stagedEnvelope = "";
+  const inspect = (): ContainerEngineCommandResult =>
+    result({
+      stdout: JSON.stringify([
+        {
+          Id: options.inspectRuntimeId ?? RUNTIME_ID,
+          Image: options.inspectImage ?? IMAGE_ID,
+          State: { Dead: false, Paused: false, Restarting: false, Running: running },
+        },
+      ]),
+    });
+  const start = (): ContainerEngineCommandResult => {
+    running = true;
+    return result({ stdout: RUNTIME_ID });
+  };
+  const stageEnvelope = (source: string): ContainerEngineCommandResult => {
+    stagedEnvelope = fs.readFileSync(source, "utf8");
+    return result();
+  };
+  const publishCompletion = (destination: string): ContainerEngineCommandResult => {
+    fs.writeFileSync(
+      destination,
+      serializeManagedBootstrapImageCompletion({
+        agent: options.completionAgent ?? agent,
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        profileFingerprint: request.profileFingerprint,
+        transactionPending: true,
+      }),
+      { flag: "wx", mode: options.completionMode ?? 0o444 },
+    );
+    fs.chmodSync(destination, options.completionMode ?? 0o444);
+    return result();
+  };
+  const copyCompletion = (destination: string): ContainerEngineCommandResult => {
+    completionAttempts += 1;
+    return completionAttempts <= (options.completionUnavailableCount ?? 0)
+      ? result({ status: 1, stderr: "completion not found" })
+      : publishCompletion(destination);
+  };
+  const copy = (args: readonly string[]): ContainerEngineCommandResult => {
+    const source = args[2] as string;
+    const destination = args[3] as string;
+    return source.startsWith(`${RUNTIME_ID}:`)
+      ? copyCompletion(destination)
+      : stageEnvelope(source);
+  };
+  const handlers: Readonly<
+    Record<string, (args: readonly string[]) => ContainerEngineCommandResult>
+  > = {
+    "container cp": copy,
+    "container inspect": inspect,
+    "container start": start,
+  };
   const capture = vi.fn(
     (args: readonly string[], timeoutMs = 15_000): ContainerEngineCommandResult => {
       commands.push([...args]);
       timeouts.push(timeoutMs);
-      if (args[0] === "container" && args[1] === "inspect") {
-        return result({
-          stdout: JSON.stringify([
-            {
-              Id: options.inspectRuntimeId ?? RUNTIME_ID,
-              Image: options.inspectImage ?? IMAGE_ID,
-              State: { Dead: false, Paused: false, Restarting: false, Running: running },
-            },
-          ]),
-        });
-      }
-      if (args[0] === "container" && args[1] === "start") {
-        running = true;
-        return result({ stdout: RUNTIME_ID });
-      }
-      if (args[0] === "container" && args[1] === "cp") {
-        const source = args[2] as string;
-        const destination = args[3] as string;
-        if (!source.startsWith(`${RUNTIME_ID}:`)) {
-          stagedEnvelope = fs.readFileSync(source, "utf8");
-          return result();
-        }
-        completionAttempts += 1;
-        if (completionAttempts <= (options.completionUnavailableCount ?? 0)) {
-          return result({ status: 1, stderr: "completion not found" });
-        }
-        fs.writeFileSync(
-          destination,
-          serializeManagedBootstrapImageCompletion({
-            agent: options.completionAgent ?? agent,
-            bootstrapIdentity: BOOTSTRAP_IDENTITY,
-            profileFingerprint: request.profileFingerprint,
-            transactionPending: true,
-          }),
-          { flag: "wx", mode: options.completionMode ?? 0o444 },
-        );
-        fs.chmodSync(destination, options.completionMode ?? 0o444);
-        return result();
-      }
-      return result({ status: 127, stderr: "unexpected command" });
+      return (
+        handlers[`${args[0] ?? ""} ${args[1] ?? ""}`]?.(args) ??
+        result({ status: 127, stderr: "unexpected command" })
+      );
     },
   );
   const engine = {
