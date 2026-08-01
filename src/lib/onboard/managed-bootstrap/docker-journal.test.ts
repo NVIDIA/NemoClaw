@@ -27,6 +27,7 @@ const journal = Object.freeze({
   phase: "staged",
   bootstrapIdentity: IDENTITY,
   providerId: "docker",
+  agent: "hermes",
   sandbox: {
     sandboxName: "alpha",
     sandboxId: "sandbox-alpha",
@@ -64,6 +65,7 @@ const finalization = Object.freeze({
   phase: "committed",
   bootstrapIdentity: IDENTITY,
   providerId: "docker",
+  agent: journal.agent,
   sandbox: journal.sandbox,
   planFingerprint: journal.planFingerprint,
   profileFingerprint: journal.profileFingerprint,

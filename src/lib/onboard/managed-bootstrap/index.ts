@@ -10,7 +10,9 @@ export {
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapExpectedPlan,
   type ManagedBootstrapPreparedTransaction,
+  type ManagedBootstrapRecoveryReceipt,
   prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
 } from "./adapter";
 export {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
