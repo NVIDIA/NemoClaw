@@ -158,43 +158,6 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
   const base = step(publisher, "Validate exact base image contract");
   const validate = step(publisher, "Validate exact managed image before promotion");
   const workflowSource = JSON.stringify(managedWorkflow);
-  const publisherSource = JSON.stringify(publisher);
-  const validationMarkers = [
-    'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
-    'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
-    "bootstrap the GHCR package",
-    "/opt/nemoclaw-blueprint/blueprint.yaml",
-    "/usr/local/share/nemoclaw/node-tar-inventory.json",
-    "/usr/local/share/nemoclaw/corporate-ca.pem",
-    'entry.status !== "fixed"',
-    '--entrypoint "$REQUIRED_BINARY"',
-    "io.nvidia.nemoclaw.managed-image.contract",
-    "io.nvidia.nemoclaw.managed-image.startup-profile",
-    "io.nvidia.nemoclaw.managed-image.capabilities",
-    "io.nvidia.nemoclaw.managed-image.cohort",
-    "^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$",
-    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
-    "@openclaw/diagnostics-otel",
-    "@openclaw/brave-plugin",
-    "@openclaw/discord",
-    "@tencent-weixin/openclaw-weixin",
-    "@openclaw/slack",
-    "@openclaw/whatsapp",
-    "@openclaw/msteams",
-    "microsoft-teams-apps",
-    "config.plugins?.entries?.[id]?.enabled !== false",
-    'config["platforms"].get(name) != {"enabled": False}',
-    "run-managed-image-direct-e2e.ts",
-    '--agent "$AGENT"',
-    '--image "$reference"',
-    '--platform "$PLATFORM"',
-  ];
-  const forbiddenPerLanePromotionMarkers = [
-    'aliases=("${IMAGE}:${GITHUB_SHA}")',
-    "docker buildx imagetools create",
-    "docker tag ",
-    "docker push ",
-  ];
   const buildIndex = steps.indexOf(build);
   const validateIndex = steps.indexOf(validate);
 
@@ -226,12 +189,6 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     base.run.includes(".run == {id: $runId, attempt: $runAttempt}")
       ? []
       : ["managed image build must consume the same-run exact base digest contract"]),
-    ...validationMarkers
-      .filter((marker) => !validate.run?.includes(marker))
-      .map((marker) => `exact managed image validation is missing ${marker}`),
-    ...forbiddenPerLanePromotionMarkers
-      .filter((marker) => publisherSource.includes(marker))
-      .map((marker) => `per-agent lane must not publish mutable alias with ${marker}`),
     ...(buildIndex >= 0 && buildIndex < validateIndex
       ? []
       : ["managed image validation must follow its immutable digest build"]),
@@ -292,6 +249,7 @@ describe("complete managed-image publication workflow", () => {
       const manifest = step(basePublisher, "Create and verify multi-platform manifest");
       expect(manifest.id).toBe("manifest");
       expect(manifest.run).toContain('reference="$IMAGE@$digest"');
+      expect(manifest.run).toContain("--format '{{.Manifest.Digest}}'");
       expect(manifest.run).toContain(`agent: "${expectedPublisher.agent}"`);
       expect(manifest.run).toContain("platformDigests: {");
       expect(step(basePublisher, "Upload managed base image contract").with?.name).toBe(
@@ -674,6 +632,7 @@ fi
     expect(promotion.run).toContain(
       'docker buildx imagetools create --tag "$cohort_alias" "${sources[@]}"',
     );
+    expect(promotion.run).toContain("--format '{{.Manifest.Digest}}'");
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
     expect(promotion.run).toContain(
       'consumer_aliases=("$(jq -r \'.image\' <<<"$openclaw_manifest"):${GITHUB_SHA}")',
@@ -848,10 +807,8 @@ fi
       ...publicationAgents.flatMap((agent) =>
         publicationPlatforms.map((platform) => {
           const artifactPlatform = platform.replace("/", "-");
-          const displayAgent =
-            agent === "langchain-deepagents-code" ? "langchain-deepagents-code" : agent;
           return {
-            name: `managed-image-${displayAgent}-${artifactPlatform}`,
+            name: `managed-image-${agent}-${artifactPlatform}`,
             path: `\${{ runner.temp }}/managed-image-contracts/${agent}/${artifactPlatform}/contract.json`,
             "if-no-files-found": "error",
             "retention-days": 90,

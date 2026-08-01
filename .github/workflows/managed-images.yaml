@@ -1083,16 +1083,14 @@ jobs:
               echo "ERROR: staged cohort alias is not exactly linux/amd64 plus linux/arm64: $cohort_alias" >&2
               exit 1
             fi
-            cohort_inspect="$(docker buildx imagetools inspect "$cohort_alias")"
-            mapfile -t cohort_digests < <(
-              printf '%s\n' "$cohort_inspect" |
-                sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-            )
-            if [ "${#cohort_digests[@]}" -ne 1 ]; then
+            cohort_digest="$(
+              docker buildx imagetools inspect "$cohort_alias" \
+                --format '{{.Manifest.Digest}}'
+            )"
+            if [[ ! "$cohort_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
               echo "ERROR: staged cohort alias did not resolve to one exact digest: $cohort_alias" >&2
               exit 1
             fi
-            cohort_digest="${cohort_digests[0]}"
             cohort_reference="${image}@${cohort_digest}"
             exact_raw="$RUNNER_TEMP/managed-image-${agent}-cohort-exact.raw"
             docker buildx imagetools inspect "$cohort_reference" --raw > "$exact_raw"

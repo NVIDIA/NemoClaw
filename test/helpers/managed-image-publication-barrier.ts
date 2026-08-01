@@ -170,6 +170,8 @@ if [ -n "\${FAIL_COHORT_AGENT:-}" ] &&
 fi
 if [[ "$*" == *"imagetools inspect"* ]] && [[ "$*" == *"--raw"* ]]; then
   printf '%s' '${raw}'
+elif [[ "$*" == *"imagetools inspect"* ]] && [[ "$*" == *"--format"* ]]; then
+  printf '%s' '${digest}'
 elif [[ "$*" == *"imagetools inspect"* ]]; then
   printf 'Name: fake\\nMediaType: application/vnd.oci.image.index.v1+json\\nDigest: ${digest}\\n'
 fi
