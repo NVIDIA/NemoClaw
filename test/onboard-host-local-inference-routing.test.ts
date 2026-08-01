@@ -109,7 +109,11 @@ describe("setupInference host-local runtime integration", () => {
       "ollama-local",
       "qwen3.5:9b",
     );
-    const reservation = harness.updateSandbox.mock.calls.at(-1)?.[1];
+    const reservation = (
+      harness.updateSandbox.mock.calls.at(-1) as unknown as
+        | [string, { hostLocalInferenceReceipt?: string }]
+        | undefined
+    )?.[1];
     expect(reservation?.hostLocalInferenceReceipt).toEqual(expect.any(String));
     expect(
       parseHostLocalInferenceReceipt(reservation?.hostLocalInferenceReceipt ?? ""),
