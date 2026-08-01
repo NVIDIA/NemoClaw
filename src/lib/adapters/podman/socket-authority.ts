@@ -35,6 +35,11 @@ export interface PodmanSocketAuthorityDeps {
   readonly uid?: number;
 }
 
+// A rootless Podman service and its client intentionally share one Unix UID,
+// which is the trust principal for this boundary. The captured authority
+// excludes path control by other principals and detects endpoint rotation; it
+// does not claim isolation from another process already running as that UID.
+
 function integerIdentity(value: bigint | number, label: string): string {
   if (typeof value === "bigint") {
     if (value >= 0n) return value.toString(10);
