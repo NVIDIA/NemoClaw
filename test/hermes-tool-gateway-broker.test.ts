@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import crypto from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
@@ -246,6 +247,86 @@ describe("Hermes managed-tool gateway broker", () => {
       }),
     ).toBe(false);
     expect(unlinkState).not.toHaveBeenCalled();
+  });
+
+  it("creates the private state directory before a broad runtime credential scan", ({
+    resources,
+  }) => {
+    const previousHome = process.env.HOME;
+    const home = resources.temporaryDirectory("nemoclaw-hermes-empty-state-");
+    try {
+      process.env.HOME = home;
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+      const broker = require(BROKER_WRAPPER);
+
+      expect(fs.existsSync(broker.HERMES_TOOL_GATEWAY_STATE_DIR)).toBe(false);
+      expect(broker.registerHermesToolGatewayRuntimeCredential("test-only-refresh")).toBe(false);
+      expect(fs.statSync(broker.HERMES_TOOL_GATEWAY_STATE_DIR).mode & 0o777).toBe(0o700);
+    } finally {
+      previousHome === undefined
+        ? Reflect.deleteProperty(process.env, "HOME")
+        : Reflect.set(process.env, "HOME", previousHome);
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+    }
+  });
+
+  it("restores a prior destination broker binding and reports cleanup failure", () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const previousState = {
+      sandbox: "destination",
+      provider_name: "destination-hermes-tool-gateway",
+      inference_provider_name: "destination-hermes-inference",
+      broker_token: "prior-broker-token",
+      refresh_token_sha256: sha256("prior-refresh-token"),
+    };
+    const stagedBinding = {
+      activationToken: `nc_activate_${"a".repeat(32)}`,
+      brokerToken: "next-broker-token",
+    };
+    const writeState = vi.fn();
+    const removeState = vi.fn(() => true);
+    const persistence = () => ({
+      file: "/test-only/destination.json",
+      brokerToken: stagedBinding.brokerToken,
+    });
+
+    expect(() =>
+      broker.activateHermesToolGatewayCloneBinding(
+        "destination",
+        "next-refresh-token",
+        stagedBinding,
+        {
+          readState: () => previousState,
+          persistState: persistence,
+          controlRequest: () => ({ state: "staged" }),
+          writeState,
+          removeState,
+        },
+      ),
+    ).toThrow("could not activate destination credentials");
+    expect(writeState).toHaveBeenCalledExactlyOnceWith(
+      "/test-only/destination.json",
+      previousState,
+    );
+    expect(removeState).not.toHaveBeenCalled();
+
+    expect(() =>
+      broker.activateHermesToolGatewayCloneBinding(
+        "new-destination",
+        "next-refresh-token",
+        stagedBinding,
+        {
+          readState: () => null,
+          persistState: () => ({
+            file: "/test-only/new-destination.json",
+            brokerToken: stagedBinding.brokerToken,
+          }),
+          controlRequest: () => ({ state: "discarded" }),
+          removeState: () => false,
+        },
+      ),
+    ).toThrow("activation cleanup failed");
   });
 
   it("removes broker state only for the exact registry identity", () => {
@@ -586,6 +667,7 @@ describe("Hermes managed-tool gateway broker", () => {
     // exceed that limit before the socket name is appended.
     const socketDir = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-broker-"));
     const controlSocket = path.join(socketDir, "control.sock");
+    fs.chmodSync(socketDir, 0o777);
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     fs.mkdirSync(binDir, { recursive: true });
     const openshellLog = path.join(tmp, "openshell.log");
@@ -694,7 +776,8 @@ describe("Hermes managed-tool gateway broker", () => {
         return (
           response.status === 200 &&
           fs.existsSync(controlSocket) &&
-          (fs.statSync(controlSocket).mode & 0o777) === 0o600
+          (fs.statSync(controlSocket).mode & 0o777) === 0o600 &&
+          (fs.statSync(socketDir).mode & 0o777) === 0o700
         );
       },
     );
@@ -766,6 +849,7 @@ describe("Hermes managed-tool gateway broker", () => {
       "/credentials/stage",
       discardedPayload,
     );
+    expect(discardedStage.status, `${discardedStage.body}\n${output}`).toBe(200);
     const discarded = JSON.parse(discardedStage.body) as { activation_token: string };
     await expect(
       controlRequest(controlSocket, "/credentials/discard", {
@@ -833,5 +917,35 @@ describe("Hermes managed-tool gateway broker", () => {
     );
     expect(output).not.toContain("source-refresh-token");
     expect(output).not.toContain("destination-refresh-token");
+
+    const openIncompleteControlRequest = async (): Promise<net.Socket> => {
+      const socket = net.createConnection(controlSocket);
+      await once(socket, "connect");
+      socket.write(
+        [
+          "POST /credentials/register HTTP/1.1",
+          "Host: localhost",
+          "Content-Type: application/json",
+          "Content-Length: 200",
+          "Connection: keep-alive",
+          "",
+          '{"sandbox":"destination"',
+        ].join("\r\n"),
+      );
+      return socket;
+    };
+
+    const timedOutRequest = await openIncompleteControlRequest();
+    const requestTimeoutStartedAt = Date.now();
+    await once(timedOutRequest, "close", { signal: AbortSignal.timeout(3_000) });
+    expect(Date.now() - requestTimeoutStartedAt).toBeLessThan(3_000);
+
+    const shutdownRequest = await openIncompleteControlRequest();
+    const childExit = once(child, "exit", { signal: AbortSignal.timeout(3_000) });
+    const shutdownStartedAt = Date.now();
+    child.kill("SIGTERM");
+    await childExit;
+    shutdownRequest.destroy();
+    expect(Date.now() - shutdownStartedAt).toBeLessThan(3_000);
   });
 });

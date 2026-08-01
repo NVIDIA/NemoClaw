@@ -16,7 +16,7 @@ import { listSandboxes } from "../state/registry";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
-/** Resolve the exact portable inference route shared by managed rebuild and clone paths. */
+/** Resolve the exact portable inference route used by managed clone preparation. */
 export function resolveManagedStartupInferenceRoute(
   agentName: string,
   provider: string,
