@@ -82,6 +82,8 @@ export interface HostLocalManagedInferenceInspection {
 
 export interface HostLocalInferenceRuntime {
   readonly providerId: string;
+  /** Exact opaque endpoint identity shared with the operation-scoped engine. */
+  readonly authorityId: string;
   readonly services: readonly HostLocalInferenceService[];
   translateContainerArgs(args: readonly string[]): readonly string[];
   qualifyOllama(input: HostLocalInferenceEndpointInput): HostLocalInferenceReceipt;

@@ -96,6 +96,7 @@ export function createPodmanRuntimeProviderBundle(
     if (
       hostLocalInferenceEngine.authorityId !== hostDoctor.authorityId ||
       hostLocalInference.providerId !== providerId ||
+      hostLocalInference.authorityId !== hostLocalInferenceEngine.authorityId ||
       [...hostLocalInference.services].sort().join(",") !== "nim,ollama,vllm"
     ) {
       throw new Error(

@@ -4,10 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type HostLocalInferenceReceipt,
   normalizeHostLocalInferenceReceipt,
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
-  type HostLocalInferenceReceipt,
 } from "./host-local-inference";
 
 const ENGINE_AUTHORITY = {
