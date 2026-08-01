@@ -152,6 +152,10 @@ type FixtureOptions = {
   sharedState?: "committed" | "none" | "pending";
 };
 
+function failFixture(message: string): never {
+  throw new Error(message);
+}
+
 function fixture(options: FixtureOptions = {}) {
   let original = originalInspect(agentInputs(options.agent));
   let replacement: DockerContainerInspect | null = null;
@@ -167,37 +171,46 @@ function fixture(options: FixtureOptions = {}) {
     create(value) {
       journal = structuredClone(value);
       events.push("journal:staged");
-      if (loseCreateAck) {
-        loseCreateAck = false;
-        throw new DockerManagedBootstrapJournalAcknowledgementLostError(
-          "lost journal create acknowledgement",
-        );
+      switch (loseCreateAck) {
+        case true:
+          loseCreateAck = false;
+          throw new DockerManagedBootstrapJournalAcknowledgementLostError(
+            "lost journal create acknowledgement",
+          );
       }
     },
     load: () => copyJournal(),
     transition(_identity, expected, next) {
-      if (!journal || journal.phase !== expected) throw new Error("stale journal transition");
-      journal = { ...journal, phase: next };
+      const current =
+        journal !== null && journal.phase === expected
+          ? journal
+          : failFixture("stale journal transition");
+      journal = { ...current, phase: next };
       events.push(`journal:${next}`);
-      if (next === "cutover" && options.failAfterCutoverFence) {
-        throw new Error("injected crash after durable cutover fence");
+      switch (true) {
+        case next === "cutover" && options.failAfterCutoverFence === true:
+          throw new Error("injected crash after durable cutover fence");
+        case options.lostAcks === true && lostTransitions.delete(next):
+          throw new DockerManagedBootstrapJournalAcknowledgementLostError(
+            "lost journal transition acknowledgement",
+          );
+        default:
+          return structuredClone(journal);
       }
-      if (options.lostAcks && lostTransitions.delete(next)) {
-        throw new DockerManagedBootstrapJournalAcknowledgementLostError(
-          "lost journal transition acknowledgement",
-        );
-      }
-      return structuredClone(journal);
     },
     remove(_identity, expected) {
-      if (!journal || !expected.includes(journal.phase)) throw new Error("stale journal remove");
+      const current = journal;
+      void (current !== null && expected.includes(current.phase)
+        ? current
+        : failFixture("stale journal remove"));
       journal = null;
       events.push("journal:removed");
-      if (loseRemoveAck) {
-        loseRemoveAck = false;
-        throw new DockerManagedBootstrapJournalAcknowledgementLostError(
-          "lost journal remove acknowledgement",
-        );
+      switch (loseRemoveAck) {
+        case true:
+          loseRemoveAck = false;
+          throw new DockerManagedBootstrapJournalAcknowledgementLostError(
+            "lost journal remove acknowledgement",
+          );
       }
     },
   };
@@ -209,93 +222,104 @@ function fixture(options: FixtureOptions = {}) {
       (value) =>
         value.Id === reference || String(value.Name ?? "").replace(/^\/+/u, "") === reference,
     );
-    if (!found) throw new Error(`No such container: ${reference}`);
-    return structuredClone(found);
+    return found ? structuredClone(found) : failFixture(`No such container: ${reference}`);
   };
   const dockerCapture: NonNullable<DockerManagedBootstrapDeps["dockerCapture"]> = vi.fn((args) => {
-    if (args[0] === "image") {
-      return JSON.stringify([{ Id: CONFIG_ID, RepoDigests: [IMAGE] }]);
+    switch (args[0]) {
+      case "image":
+        return JSON.stringify([{ Id: CONFIG_ID, RepoDigests: [IMAGE] }]);
+      default:
+        return JSON.stringify([inspect(String(args[3] ?? ""))]);
     }
-    return JSON.stringify([inspect(String(args[3] ?? ""))]);
   });
   const dockerRun: NonNullable<DockerManagedBootstrapDeps["dockerRun"]> = vi.fn(
     (args: readonly string[]) => {
-      if (args[0] === "create") {
-        events.push("create:replacement");
-        const name = String(args[args.indexOf("--name") + 1] ?? "");
-        const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
-        const imageIndex = args.indexOf(IMAGE);
-        const env: string[] = [];
-        args.forEach((value, index) => {
-          if (value === "--env") env.push(String(args[index + 1] ?? ""));
-        });
-        replacement = {
-          ...structuredClone(original),
-          Id: NEW_ID,
-          Name: `/${name}`,
-          Config: {
-            ...structuredClone(original.Config),
-            Image: IMAGE,
-            Env: env,
-            Entrypoint: [entrypoint],
-            Cmd: args.slice(imageIndex + 1),
-          },
-          State: { Running: false, Paused: false, Restarting: false, Dead: false },
-        };
-        return options.lostAcks
-          ? { status: 1, stdout: "", stderr: "lost create acknowledgement" }
-          : ok(NEW_ID);
-      }
-      if (args[0] === "ps") return ok(original ? OLD_ID : "");
-      if (args[0] === "inspect") {
-        const id = String(args[3] ?? "");
-        try {
-          inspect(id);
-          return ok(`[{"Id":"${id}"}]`);
-        } catch {
-          return { status: 1, stderr: `Error response from daemon: No such container: ${id}` };
+      switch (args[0]) {
+        case "create": {
+          events.push("create:replacement");
+          const name = String(args[args.indexOf("--name") + 1] ?? "");
+          const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
+          const imageIndex = args.indexOf(IMAGE);
+          const env = args.flatMap((value, index) =>
+            value === "--env" ? [String(args[index + 1] ?? "")] : [],
+          );
+          replacement = {
+            ...structuredClone(original),
+            Id: NEW_ID,
+            Name: `/${name}`,
+            Config: {
+              ...structuredClone(original.Config),
+              Image: IMAGE,
+              Env: env,
+              Entrypoint: [entrypoint],
+              Cmd: args.slice(imageIndex + 1),
+            },
+            State: { Running: false, Paused: false, Restarting: false, Dead: false },
+          };
+          return options.lostAcks
+            ? { status: 1, stdout: "", stderr: "lost create acknowledgement" }
+            : ok(NEW_ID);
         }
-      }
-      if (args[0] === "cp") {
-        const sourceIndex = args[1] === "-a" ? 2 : 1;
-        const source = String(args[sourceIndex] ?? "");
-        const destination = String(args[sourceIndex + 1] ?? "");
-        if (!source.includes(":")) {
-          events.push("stage:envelope");
-          expect(fs.statSync(source).mode & 0o777).toBe(0o400);
-          expect(
-            parseManagedBootstrapEnvelope(fs.readFileSync(source, "utf8")).bootstrapIdentity,
-          ).toBe(IDENTITY);
-          return ok();
+        case "ps":
+          return ok(original ? OLD_ID : "");
+        case "inspect": {
+          const id = String(args[3] ?? "");
+          try {
+            inspect(id);
+            return ok(`[{"Id":"${id}"}]`);
+          } catch {
+            return { status: 1, stderr: `Error response from daemon: No such container: ${id}` };
+          }
         }
-        const receipt = source.split(":")[1];
-        const expected = receipt?.includes("shared-state-commit") ? "committed" : "pending";
-        if (sharedState === expected) {
-          fs.mkdirSync(destination, { recursive: true });
-          return ok();
+        case "cp": {
+          const sourceIndex = args[1] === "-a" ? 2 : 1;
+          const source = String(args[sourceIndex] ?? "");
+          const destination = String(args[sourceIndex + 1] ?? "");
+          const copyIntoContainer = () => {
+            events.push("stage:envelope");
+            expect(fs.statSync(source).mode & 0o777).toBe(0o400);
+            expect(
+              parseManagedBootstrapEnvelope(fs.readFileSync(source, "utf8")).bootstrapIdentity,
+            ).toBe(IDENTITY);
+            return ok();
+          };
+          const copyFromContainer = () => {
+            const receipt = source.split(":")[1];
+            const expected = receipt?.includes("shared-state-commit") ? "committed" : "pending";
+            return sharedState === expected
+              ? (() => {
+                  fs.mkdirSync(destination, { recursive: true });
+                  return ok();
+                })()
+              : {
+                  status: 1,
+                  stderr: `Error response from daemon: Could not find the file ${receipt} in container ${NEW_ID}`,
+                };
+          };
+          return source.includes(":") ? copyFromContainer() : copyIntoContainer();
         }
-        return {
-          status: 1,
-          stderr: `Error response from daemon: Could not find the file ${receipt} in container ${NEW_ID}`,
-        };
-      }
-      if (args[0] === "run" && args.includes("--shared-state-transaction-status")) {
-        return ok(`${sharedState}\n`);
-      }
-      if (args[0] === "run" && args.includes("--rollback-shared-state-transaction")) {
-        sharedState = "none";
-        events.push("shared:rollback");
-        return ok();
-      }
-      if (args[0] === "exec" && args.includes("--commit-shared-state-transaction")) {
-        sharedState = "committed";
-        events.push("shared:commit");
-        return ok();
-      }
-      if (args[0] === "exec" && args.includes("--clear-shared-state-commit-receipt")) {
-        sharedState = "none";
-        events.push("shared:clear");
-        return ok();
+        case "run":
+          switch (true) {
+            case args.includes("--shared-state-transaction-status"):
+              return ok(`${sharedState}\n`);
+            case args.includes("--rollback-shared-state-transaction"):
+              sharedState = "none";
+              events.push("shared:rollback");
+              return ok();
+          }
+          break;
+        case "exec":
+          switch (true) {
+            case args.includes("--commit-shared-state-transaction"):
+              sharedState = "committed";
+              events.push("shared:commit");
+              return ok();
+            case args.includes("--clear-shared-state-commit-receipt"):
+              sharedState = "none";
+              events.push("shared:clear");
+              return ok();
+          }
+          break;
       }
       throw new Error(`unexpected Docker command: ${args.join(" ")}`);
     },
@@ -307,21 +331,34 @@ function fixture(options: FixtureOptions = {}) {
     dockerStop: vi.fn((id) => {
       events.push(`stop:${id}`);
       const target = id === OLD_ID ? original : replacement;
-      if (target?.State) target.State = { ...target.State, Running: false };
+      [target]
+        .filter((value): value is DockerContainerInspect => value?.State !== undefined)
+        .forEach((value) => {
+          value.State = { ...value.State, Running: false };
+        });
       return options.lostAcks ? { status: 1, stderr: "lost stop acknowledgement" } : ok();
     }),
     dockerRename: vi.fn((id, name) => {
       events.push(`rename:${id}:${name}`);
       const target = id === OLD_ID ? original : replacement;
-      if (target) target.Name = `/${name}`;
+      [target]
+        .filter((value): value is DockerContainerInspect => value !== null)
+        .forEach((value) => {
+          value.Name = `/${name}`;
+        });
       return options.lostAcks ? { status: 1, stderr: "lost rename acknowledgement" } : ok();
     }),
     dockerStart: vi.fn((id) => {
       events.push(`start:${id}`);
       const target = id === OLD_ID ? original : replacement;
-      if (target?.State && !(id === NEW_ID && options.failStart)) {
-        target.State = { ...target.State, Running: true };
-      }
+      [target]
+        .filter(
+          (value): value is DockerContainerInspect =>
+            value?.State !== undefined && !(id === NEW_ID && options.failStart),
+        )
+        .forEach((value) => {
+          value.State = { ...value.State, Running: true };
+        });
       return id === NEW_ID && options.failStart
         ? { status: 1, stderr: "injected start failure" }
         : options.lostAcks
@@ -330,8 +367,14 @@ function fixture(options: FixtureOptions = {}) {
     }),
     dockerRm: vi.fn((id) => {
       events.push(`rm:${id}`);
-      if (id === OLD_ID) original = null as unknown as DockerContainerInspect;
-      if (id === NEW_ID) replacement = null;
+      switch (id) {
+        case OLD_ID:
+          original = null as unknown as DockerContainerInspect;
+          break;
+        case NEW_ID:
+          replacement = null;
+          break;
+      }
       return options.lostAcks ? { status: 1, stderr: "lost rm acknowledgement" } : ok();
     }),
     runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
