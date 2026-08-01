@@ -6,18 +6,22 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("managed snapshot clone handoff activation boundary", () => {
-  it("keeps the PR3.9 contract unwired while production restore stays fail-closed", () => {
+  it("exposes the PR3.9 dependency seam while production restore stays fail-closed", () => {
     const dependencies = readFileSync(
       new URL("./snapshot/dependencies.ts", import.meta.url),
       "utf8",
     );
     const productionAction = readFileSync(new URL("./snapshot.ts", import.meta.url), "utf8");
 
-    expect(dependencies).not.toContain("prepareManagedWorkloadCloneHandoff");
-    expect(dependencies).not.toContain("ManagedWorkloadCloneHandoff");
+    expect(dependencies).toContain("prepareManagedWorkloadCloneHandoff");
+    expect(dependencies).toContain("prepareManagedCloneProviderTransaction");
+    expect(dependencies).toContain("revalidateManagedCloneMutationAuthority");
     expect(productionAction).toContain("rejectManagedSnapshotCloneUntilRebind");
     expect(productionAction).not.toContain("prepareManagedWorkloadCloneHandoff");
     expect(productionAction).not.toContain("ManagedWorkloadCloneHandoff");
+    expect(productionAction).not.toContain("prepareManagedCloneProviderTransaction");
+    expect(productionAction).not.toContain("provisionManagedCloneProviderTransaction");
+    expect(productionAction).not.toContain("revalidateManagedCloneMutationAuthority");
     expect(productionAction).not.toContain("prepareManagedCloneProviders");
     expect(productionAction).not.toContain("provisionManagedCloneProviders");
   });
