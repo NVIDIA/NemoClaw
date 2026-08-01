@@ -14,6 +14,7 @@ import {
   isValidExtraProviderName,
   readExtraProviders,
 } from "./extra-providers";
+import { cloneSandboxHostLocalInferenceReceipt } from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
@@ -111,6 +112,12 @@ export function registerSandbox(entry: SandboxEntry): void {
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
       data.defaultSandbox = null;
     }
+    const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+      entry.hostLocalInferenceReceipt,
+    );
+    if (entry.hostLocalInferenceReceipt !== undefined && hostLocalInferenceReceipt === undefined) {
+      throw new Error("Cannot register a sandbox with an invalid host-local inference receipt");
+    }
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -165,6 +172,7 @@ export function registerSandbox(entry: SandboxEntry): void {
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -197,6 +205,7 @@ type SandboxInferenceRouteReservation = Pick<
 > & {
   gatewayName: string;
   reservationSessionId?: string;
+  hostLocalInferenceReceipt?: string | null;
 };
 
 /**
@@ -222,6 +231,7 @@ export function reserveSandboxInferenceRoute(
       endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
+      hostLocalInferenceReceipt: route.hostLocalInferenceReceipt ?? null,
       gatewayName: route.gatewayName,
       gatewayPort: undefined,
     };

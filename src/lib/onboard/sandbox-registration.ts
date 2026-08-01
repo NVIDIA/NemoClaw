@@ -16,20 +16,21 @@ import type {
   SandboxMessagingState,
 } from "../state/registry";
 import * as registry from "../state/registry";
+import { cloneSandboxHostLocalInferenceReceipt } from "../state/registry/host-local-inference";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
-  CURRENT_RUNTIME_PROVIDER_BUNDLES,
-  RuntimeProviderBundleRegistry,
-  requireRuntimeProviderBundleForSandbox,
-  requireRuntimeProviderMutationAuthority,
-  RuntimeProviderSelectionError,
-} from "./runtime-provider/access";
-import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderMutationAuthority,
+} from "./runtime-provider/access";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 
 export type CreatedSandboxRuntimeFields = Pick<
@@ -52,6 +53,7 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   workload?: SandboxEntry["workload"];
+  hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
@@ -182,6 +184,14 @@ export function buildCreatedSandboxRegistryEntry(
       "Sandbox workload ownership receipt failed closed validation.",
     );
   }
+  const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+    input.hostLocalInferenceReceipt,
+  );
+  if (input.hostLocalInferenceReceipt !== undefined && hostLocalInferenceReceipt === undefined) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox host-local inference receipt failed closed validation.",
+    );
+  }
 
   return {
     name: input.sandboxName,
@@ -190,6 +200,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     workload,
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
