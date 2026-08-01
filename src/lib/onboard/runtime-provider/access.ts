@@ -28,6 +28,17 @@ export {
   createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
+export type {
+  RuntimeProviderInstallerArtifactReceipt,
+  RuntimeProviderInstallerQualificationReceipt,
+  RuntimeProviderInstallerQualificationTarget,
+} from "./installer-qualification";
+export {
+  normalizeRuntimeProviderInstallerQualificationReceipt,
+  RUNTIME_PROVIDER_INSTALLER_QUALIFICATION_SCHEMA_VERSION,
+  RuntimeProviderInstallerQualificationError,
+  runtimeProviderInstallerQualificationTargets,
+} from "./installer-qualification";
 export type { RuntimeProviderDestructiveCleanupAuthority } from "./registry";
 export {
   normalizeRuntimeProviderIdentity,
