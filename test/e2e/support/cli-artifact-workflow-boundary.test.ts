@@ -70,8 +70,61 @@ type RestoreFixtureOptions = {
   preexistingDist?: boolean;
 };
 
+type ArchiveFixtureContext = {
+  buildIdentitySha: string;
+  payload: string;
+  payloadRoot: string;
+};
+
 function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function writeDistArchive(
+  context: ArchiveFixtureContext,
+  customizeDist: (dist: string) => void,
+): void {
+  const dist = path.join(context.payloadRoot, "dist");
+  fs.mkdirSync(dist);
+  fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("nemoclaw v0.0.0");\n');
+  fs.writeFileSync(
+    path.join(dist, "build-identity.json"),
+    `${JSON.stringify({
+      nemoclawVersion: "0.0.0",
+      sourceRevision: context.buildIdentitySha,
+    })}\n`,
+  );
+  customizeDist(dist);
+  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "dist"]);
+}
+
+function writeValidArchive(context: ArchiveFixtureContext): void {
+  writeDistArchive(context, () => undefined);
+}
+
+function writeLinkArchive(context: ArchiveFixtureContext): void {
+  writeDistArchive(context, (dist) => {
+    fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
+  });
+}
+
+function writeNonDistArchive(context: ArchiveFixtureContext): void {
+  fs.writeFileSync(path.join(context.payloadRoot, "outside.txt"), "outside dist\n");
+  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "outside.txt"]);
+}
+
+const ARCHIVE_FIXTURE_WRITERS = {
+  link: writeLinkArchive,
+  "non-dist": writeNonDistArchive,
+  valid: writeValidArchive,
+} satisfies Record<
+  NonNullable<RestoreFixtureOptions["archive"]>,
+  (context: ArchiveFixtureContext) => void
+>;
+
+function createPreexistingDist(workspace: string): void {
+  fs.mkdirSync(path.join(workspace, "dist"));
+  fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
 
 function runRestoreValidation(options: RestoreFixtureOptions = {}) {
@@ -119,25 +172,11 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   }).trim();
 
   const payload = path.join(artifactDirectory, "nemoclaw-cli.tar");
-  if (options.archive === "non-dist") {
-    fs.writeFileSync(path.join(payloadRoot, "outside.txt"), "outside dist\n");
-    execFileSync("tar", ["-cf", payload, "-C", payloadRoot, "outside.txt"]);
-  } else {
-    const dist = path.join(payloadRoot, "dist");
-    fs.mkdirSync(dist);
-    fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("nemoclaw v0.0.0");\n');
-    fs.writeFileSync(
-      path.join(dist, "build-identity.json"),
-      `${JSON.stringify({
-        nemoclawVersion: "0.0.0",
-        sourceRevision: options.buildIdentitySha ?? candidateSha,
-      })}\n`,
-    );
-    if (options.archive === "link") {
-      fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
-    }
-    execFileSync("tar", ["-cf", payload, "-C", payloadRoot, "dist"]);
-  }
+  ARCHIVE_FIXTURE_WRITERS[options.archive ?? "valid"]({
+    buildIdentitySha: options.buildIdentitySha ?? candidateSha,
+    payload,
+    payloadRoot,
+  });
 
   const actualPayloadSha256 = sha256File(payload);
   const expectedPayloadSha256 = options.expectedPayloadSha256 ?? actualPayloadSha256;
@@ -172,10 +211,10 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
-  if (options.preexistingDist) {
-    fs.mkdirSync(path.join(workspace, "dist"));
-    fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
-  }
+  const prepareWorkspace = options.preexistingDist
+    ? createPreexistingDist
+    : (_workspace: string) => undefined;
+  prepareWorkspace(workspace);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const result = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
