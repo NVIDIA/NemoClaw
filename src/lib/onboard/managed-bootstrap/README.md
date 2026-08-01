@@ -94,3 +94,16 @@ recovery work can use it. The record does not persist an executable, endpoint,
 environment, or credential, does not activate an engine, and has no production
 consumer yet. Its contract is provider-neutral; tests use an MXC-style engine
 to ensure central persistence does not gain a Podman-specific selection branch.
+
+Snapshot creation, clone, rebuild, backup, restore, and recovery can now prepare
+an inert provider-neutral lifecycle ledger against that exact injected engine.
+Each record binds the action, source and target runtime handles, and a digest of
+opaque runtime and acceleration state before it publishes mutation authority.
+After a process restart, the caller must reconstruct the same provider, engine,
+endpoint authority, binding, runtime handles, and state digest. Commands execute
+only when they contain one persisted runtime handle exactly once; a mutable
+sandbox name is never sufficient destructive authority. Successful work leaves
+an exact durable completion receipt, and retirement publishes a tombstone before
+removing phase records so a transaction identity cannot be reused. This boundary
+does not select a provider, activate Podman, or interpret GPU/CDI state; later
+provider and GPU slices must supply and qualify those injected dependencies.
