@@ -237,6 +237,10 @@ function exactArgv(value: unknown, label: string, allowEmpty = true): readonly s
   );
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function exactStringMap(value: unknown, label: string): Readonly<Record<string, string>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return failure(`${label} must be an object.`, false);
@@ -244,7 +248,7 @@ function exactStringMap(value: unknown, label: string): Readonly<Record<string, 
   return Object.freeze(
     Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => compareCodeUnits(left, right))
         .map(([key, entry]) => [
           safeString(key, `${label} key`),
           safeString(entry, `${label}.${key}`, true),
@@ -268,22 +272,39 @@ function canonicalLabels(
   return labels;
 }
 
-function environmentEntries(value: unknown): readonly string[] {
-  const entries = exactArgv(value, "Podman replacement environment");
+function environmentEntries(
+  value: unknown,
+  label = "Podman replacement environment",
+): readonly string[] {
+  const entries = exactArgv(value, label);
   const keys = new Set<string>();
   for (const entry of entries) {
     const separator = entry.indexOf("=");
     const key = separator > 0 ? entry.slice(0, separator) : "";
     if (!SAFE_ENVIRONMENT_KEY.test(key) || keys.has(key)) {
-      return failure("Podman replacement environment contains an invalid or duplicate key.", false);
+      return failure(`${label} contains an invalid or duplicate key.`, false);
     }
     keys.add(key);
   }
   const serialized = `${entries.join("\n")}\n`;
   if (Buffer.byteLength(serialized, "utf8") > MAX_ENVIRONMENT_BYTES) {
-    return failure("Podman replacement environment exceeds its private file transport.", false);
+    return failure(`${label} exceeds its private file transport.`, false);
   }
   return entries;
+}
+
+function environmentMap(value: unknown, label: string): Readonly<Record<string, string>> {
+  const entries = environmentEntries(value, label);
+  return Object.freeze(
+    Object.fromEntries(
+      entries
+        .map((entry) => {
+          const separator = entry.indexOf("=");
+          return [entry.slice(0, separator), entry.slice(separator + 1)] as const;
+        })
+        .sort(([left], [right]) => compareCodeUnits(left, right)),
+    ),
+  );
 }
 
 function exactAbsolutePath(value: unknown, label: string): string {
@@ -299,17 +320,28 @@ function pathsOverlap(left: string, right: string): boolean {
 }
 
 function assertMountDoesNotShadowState(specification: string): void {
-  const destination = specification
-    .split(",")
-    .map((entry) => entry.split("=", 2))
-    .find(([key]) => ["destination", "dst", "target"].includes(key))?.[1];
-  if (!destination) return;
-  const normalized = exactAbsolutePath(destination, "Podman runtime mount destination");
-  if (pathsOverlap(normalized, PODMAN_BOOTSTRAP_STATE_DIRECTORY)) {
-    failure(
-      `Podman replacement runtime arguments cannot shadow ${PODMAN_BOOTSTRAP_STATE_DIRECTORY}.`,
-      false,
-    );
+  const destinations = specification.split(",").flatMap((entry) => {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) return [];
+    const key = entry.slice(0, separator);
+    return ["dest", "destination", "dst", "target"].includes(key)
+      ? [entry.slice(separator + 1)]
+      : [];
+  });
+  if (destinations.length === 0) {
+    return failure("Podman replacement --mount requires one destination.", false);
+  }
+  for (const destination of destinations) {
+    const normalized = exactAbsolutePath(destination, "Podman runtime mount destination");
+    if (pathsOverlap(normalized, PODMAN_BOOTSTRAP_STATE_DIRECTORY)) {
+      failure(
+        `Podman replacement runtime arguments cannot shadow ${PODMAN_BOOTSTRAP_STATE_DIRECTORY}.`,
+        false,
+      );
+    }
+  }
+  if (destinations.length !== 1) {
+    return failure("Podman replacement --mount requires exactly one destination.", false);
   }
 }
 
@@ -614,7 +646,6 @@ function exactContainerStateMount(
     mount.Driver !== "local" ||
     mount.RW !== true ||
     !["", "rprivate"].includes(propagation) ||
-    !modeTokens.has("z") ||
     modeTokens.has("Z") ||
     modeTokens.has("ro") ||
     options.some((option) => option === "ro" || option === "readonly")
@@ -691,7 +722,11 @@ function inspectExactContainer(
   if (
     (expected.entrypointArgv && !sameArray(entrypointArgv, expected.entrypointArgv)) ||
     (expected.commandArgv && !sameArray(commandArgv, expected.commandArgv)) ||
-    (expected.environment && !sameArray(environment, expected.environment)) ||
+    (expected.environment &&
+      !sameMap(
+        environmentMap(environment, "Podman inspected environment"),
+        environmentMap(expected.environment, "Expected Podman environment"),
+      )) ||
     (expected.supervisorArgv &&
       !sameArray([...entrypointArgv, ...commandArgv], expected.supervisorArgv))
   ) {
@@ -932,12 +967,9 @@ function listStagingRuntimeIds(
   if (!Array.isArray(entries)) failure("Podman bootstrap staging discovery must return an array.");
   const ids = entries.map((entry, index) => {
     const candidate = record(entry, `Podman staging discovery entry ${String(index)}`);
-    return fullRuntimeId(
-      candidate.Id ?? candidate.ID,
-      `Podman staging discovery entry ${String(index)} ID`,
-    );
+    return fullRuntimeId(candidate.Id, `Podman staging discovery entry ${String(index)} ID`);
   });
-  if (ids.length > 1 || new Set(ids).size !== ids.length) {
+  if (ids.length > 1) {
     failure("Podman bootstrap staging discovery returned ambiguous replacement identities.");
   }
   return Object.freeze(ids);

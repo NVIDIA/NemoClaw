@@ -568,7 +568,11 @@ export function createFilePodmanBootstrapJournalStore(
       }
       const updated = normalizePodmanBootstrapJournal({ ...current, phase: "original-stopped" });
       atomicWrite(directory, target, serializePodmanBootstrapJournal(updated), false);
-      return updated;
+      const persisted = load(bootstrapIdentity);
+      if (!persisted || !sameJournal(persisted, updated)) {
+        fail("original stop was not durably re-readable");
+      }
+      return persisted;
     },
     authorizeRollback(
       bootstrapIdentity: string,

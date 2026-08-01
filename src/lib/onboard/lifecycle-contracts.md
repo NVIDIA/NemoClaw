@@ -167,7 +167,9 @@ labels, environment, entrypoint, command, and stopped state.
 `stopExactPodmanBootstrapOriginal` re-proves both identities before stopping
 the original and records that boundary only after the original is stably
 stopped while the replacement remains exact and stopped. A failure before the
-later commit boundary must call `rollbackPodmanBootstrapBeforeCommit`.
+later commit boundary requires `rollbackPodmanBootstrapBeforeCommit` only when
+`PodmanBootstrapPreparationError.rollbackRequired` is true; pre-mutation
+validation failures leave no journal and require no rollback.
 Rollback first records an exclusive durable decision, reconciles one exact
 staging candidate when the create acknowledgement was lost, removes only the
 exact stopped replacement and owned state volume, restarts and re-proves the
