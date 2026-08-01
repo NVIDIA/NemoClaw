@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RuntimeProviderBundle, RuntimeProviderBundleRegistry } from "./contract";
+import {
+  composeActivatedRuntimeProviderBundles,
+  type RuntimeProviderActivationRegistration,
+} from "./activation";
 import { createDockerRuntimeProviderBundle, createKubernetesRuntimeProviderBundle } from "./docker";
 import { createRuntimeProviderBundleRegistry, requireRuntimeProviderBundle } from "./registry";
 
@@ -10,11 +14,20 @@ import { createRuntimeProviderBundleRegistry, requireRuntimeProviderBundle } fro
  * providers NemoClaw already ships. Future providers must land as one complete
  * bundle and separately pass their activation gate.
  */
-export const CURRENT_RUNTIME_PROVIDER_BUNDLES: RuntimeProviderBundleRegistry =
+const ESTABLISHED_RUNTIME_PROVIDER_BUNDLES: RuntimeProviderBundleRegistry =
   createRuntimeProviderBundleRegistry([
     ["docker", createDockerRuntimeProviderBundle()],
     ["kubernetes", createKubernetesRuntimeProviderBundle()],
   ]);
+
+export function createCurrentRuntimeProviderBundles(
+  activations: readonly RuntimeProviderActivationRegistration[] = [],
+): RuntimeProviderBundleRegistry {
+  return composeActivatedRuntimeProviderBundles(ESTABLISHED_RUNTIME_PROVIDER_BUNDLES, activations);
+}
+
+export const CURRENT_RUNTIME_PROVIDER_BUNDLES: RuntimeProviderBundleRegistry =
+  createCurrentRuntimeProviderBundles();
 
 export function resolveCurrentRuntimeProviderBundle(
   platform: NodeJS.Platform = process.platform,

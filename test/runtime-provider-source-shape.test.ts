@@ -41,6 +41,7 @@ describe("runtime provider central source boundary", () => {
       "onboard/workload/runtime.ts": read("src/lib/onboard/workload/runtime.ts"),
     };
     const providerContract = {
+      activation: read("src/lib/onboard/runtime-provider/activation.ts"),
       contract: read("src/lib/onboard/runtime-provider/contract.ts"),
       current: read("src/lib/onboard/runtime-provider/current.ts"),
       docker: read("src/lib/onboard/runtime-provider/docker.ts"),
@@ -74,6 +75,10 @@ describe("runtime provider central source boundary", () => {
       [providerContract.current, providerContract.docker, providerContract.registry].join("\n"),
     ).not.toMatch(/managed-bootstrap/u);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
+    expect(providerContract.activation).not.toMatch(/\b(?:podman|mxc)\b/iu);
+    expect(providerContract.activation).not.toMatch(
+      /(?:providerId|driverName)\s*(?:===|!==)\s*["'][^"']+["']/u,
+    );
   });
 
   // source-shape-contract: security -- The bootstrap protocol and image-owned trampoline must remain dormant until a later provider slice supplies runtime packaging and exact activation
@@ -162,6 +167,7 @@ describe("runtime provider central source boundary", () => {
     ]);
     expect(providerPaths).toEqual([
       "src/lib/onboard/runtime-provider/access.ts",
+      "src/lib/onboard/runtime-provider/activation.ts",
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker.ts",

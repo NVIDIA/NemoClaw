@@ -114,3 +114,23 @@ receipt, and retirement publishes a tombstone before removing phase records so
 a transaction identity cannot be reused. This boundary does not select a
 provider, activate Podman, or interpret GPU/CDI state; later provider and GPU
 slices must supply and qualify those injected dependencies.
+
+The dormant activation catalog is the final provider-neutral composition gate
+for a new production-selectable runtime. One declaration carries the complete
+all-agent, multi-architecture, CPU, NVIDIA CDI, local-inference, lifecycle,
+installer, and protected-E2E requirement set. Registration additionally
+requires every bundle surface, destructive mutation authority, managed-image
+contract, snapshot/restore capability, and operation-scoped engine identity to
+be complete. Tests may pass a socket-free provider through this seam, but the
+current production composition passes no activation contribution, so this
+contract alone does not activate or advertise another runtime.
+
+The dormant activation catalog is the final provider-neutral composition gate
+for a new production-selectable runtime. One declaration carries the complete
+all-agent, multi-architecture, CPU, NVIDIA CDI, local-inference, lifecycle,
+installer, and protected-E2E requirement set. Registration additionally
+requires every bundle surface, destructive mutation authority, managed-image
+contract, snapshot/restore capability, and operation-scoped engine identity to
+be complete. Tests may pass a socket-free provider through this seam, but the
+current production composition passes no activation contribution, so this
+contract alone does not activate or advertise another runtime.
