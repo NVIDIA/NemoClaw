@@ -67,6 +67,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
     expect(restoredClone).toContain("sync_approved_clone_device_auth");
     expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
+    expect(restoredClone).toContain("getattr(os, 'O_PATH', os.O_RDONLY)");
     expect(restoredClone).toContain("dir_fd=clone_state_dir_fd");
     expect(restoredClone).toContain("clone_devices_dir_fd,");
     expect(restoredClone).toContain("clone_identity_dir_fd,");

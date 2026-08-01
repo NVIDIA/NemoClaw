@@ -380,6 +380,12 @@ for required_flag in ('O_DIRECTORY', 'O_NOFOLLOW'):
 clone_directory_flags = (
     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
 )
+clone_path_flags = (
+    getattr(os, 'O_PATH', os.O_RDONLY)
+    | os.O_DIRECTORY
+    | os.O_NOFOLLOW
+    | getattr(os, 'O_CLOEXEC', 0)
+)
 clone_file_flags = (
     os.O_RDONLY
     | os.O_NOFOLLOW
@@ -400,14 +406,17 @@ def validate_clone_json_descriptor(fd):
         raise CloneStateEntryRotated('clone state entry was replaced after open')
 
 def open_clone_state_root():
-    root_fd = os.open(os.sep, clone_directory_flags)
+    # Ancestors such as / are traversal boundaries, not state directories.
+    # OpenShell's restored-clone policy permits path traversal but intentionally
+    # denies a read-directory handle for the whole filesystem root.
+    root_fd = os.open(os.sep, clone_path_flags)
     try:
         for component in (part for part in state_dir.split(os.sep) if part):
             if component in ('.', '..'):
                 raise OSError('unsafe clone state root')
             next_fd = os.open(
                 component,
-                clone_directory_flags,
+                clone_path_flags,
                 dir_fd=root_fd,
             )
             os.close(root_fd)

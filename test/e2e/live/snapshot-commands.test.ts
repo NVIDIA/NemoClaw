@@ -150,107 +150,6 @@ openclaw agent --agent main --json -m "ping" \
   return sessionId;
 }
 
-async function captureRestoredCloneStateRootLayout(
-  sandbox: SandboxClient,
-  sandboxName: string,
-): Promise<void> {
-  const result = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(`
-set -eu
-PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
-[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
-python3 -I - <<'PY'
-import json
-import os
-import stat
-
-KNOWN_PATHS = ('/', '/sandbox', '/sandbox/.openclaw')
-
-def path_metadata(path):
-    try:
-        value = os.lstat(path)
-    except OSError as error:
-        return {'errno': error.errno}
-    return {
-        'device': value.st_dev,
-        'gid': value.st_gid,
-        'inode': value.st_ino,
-        'is_directory': stat.S_ISDIR(value.st_mode),
-        'is_mount': os.path.ismount(path),
-        'is_symlink': stat.S_ISLNK(value.st_mode),
-        'mode': f'{stat.S_IMODE(value.st_mode):04o}',
-        'nlink': value.st_nlink,
-        'uid': value.st_uid,
-    }
-
-def mount_type(path):
-    selected = None
-    with open('/proc/self/mountinfo', encoding='utf-8') as handle:
-        for line in handle:
-            fields = line.split()
-            separator = fields.index('-')
-            mount_point = fields[4].replace('\\040', ' ')
-            if path == mount_point or path.startswith(mount_point.rstrip('/') + '/'):
-                if selected is None or len(mount_point) > len(selected[0]):
-                    selected = (mount_point, fields[separator + 1])
-    if selected is None:
-        return None
-    mount_point, filesystem = selected
-    scope = next((known for known in reversed(KNOWN_PATHS) if mount_point == known), 'ancestor')
-    return {'filesystem': filesystem, 'scope': scope}
-
-state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
-report = {
-    'execution': {
-        'gid': os.getgid(),
-        'groups': sorted(os.getgroups()),
-        'uid': os.getuid(),
-    },
-    'paths': {
-        path: {**path_metadata(path), 'mount': mount_type(path)} for path in KNOWN_PATHS
-    },
-    'state_dir_contract': 'expected' if state_dir == '/sandbox/.openclaw' else 'unexpected',
-}
-
-flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
-descriptor = -1
-try:
-    descriptor = os.open(os.sep, flags)
-    components = [part for part in state_dir.split(os.sep) if part]
-    for index, component in enumerate(components):
-        boundary = 'leaf' if index + 1 == len(components) else f'ancestor-{index + 1}'
-        try:
-            next_descriptor = os.open(component, flags, dir_fd=descriptor)
-        except OSError as error:
-            report['descriptor_walk'] = {'boundary': boundary, 'errno': error.errno}
-            break
-        os.close(descriptor)
-        descriptor = next_descriptor
-    else:
-        report['descriptor_walk'] = {
-            'boundary': 'complete',
-            'device': os.fstat(descriptor).st_dev,
-            'inode': os.fstat(descriptor).st_ino,
-        }
-except OSError as error:
-    report['descriptor_walk'] = {'boundary': 'filesystem-root', 'errno': error.errno}
-finally:
-    if descriptor >= 0:
-        os.close(descriptor)
-
-print(json.dumps(report, sort_keys=True))
-PY
-`),
-    {
-      artifactName: "phase-4-restored-clone-state-root-layout",
-      env: commandEnv(undefined, sandboxName),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-}
-
 async function expectSandboxSessionPresence(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -633,10 +532,6 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     },
   );
   const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
-  expect(["restored", "restored-pairing-unverified"]).toContain(cloneRestoreResult);
-  if (cloneRestoreResult === "restored-pairing-unverified") {
-    await captureRestoredCloneStateRootLayout(sandbox, CLONE_SANDBOX_NAME);
-  }
   progress.phase("verify the restored clone state and gateway pairing");
   expect(cloneRestoreResult).toBe("restored");
   await expectSandboxFileContent(
