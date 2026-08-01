@@ -21,7 +21,7 @@ It also improves onboarding recovery, lifecycle cleanup, Hermes image builds, ru
 - `rebuild` and same-name onboarding replacement now record a transaction before the first destructive mutation.
   Recovery binds the source, replacement, registry generation, and OpenShell gateway, then continues the recorded operation or fails closed when those identities drift.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
-- Compatible-endpoint onboarding now limits the Responses API streaming-event probe to 12 seconds while preserving the Chat Completions API fallback.
+- Compatible-endpoint onboarding now limits the Responses API streaming-event probe to 5 seconds while preserving the Chat Completions API fallback.
   Host interruptions during an active onboarding step produce the existing resumable recovery path instead of an invalid state transition.
   DGX Station Express also preserves its owner-only resume receipt when automatic dual-Station discovery selects the single-Station fallback.
   For more information, refer to [Choose a Compatible Inference API](/user-guide/openclaw/inference/custom-endpoints/choose-compatible-inference-api), [Quickstart](/user-guide/openclaw/get-started/quickstart), and [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).

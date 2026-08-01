@@ -108,10 +108,10 @@ export function getValidationProbeCurlArgs(opts?: ValidationProbeOptions): strin
   );
 }
 
-// Dedicated short deadline for the /responses streaming probe. It only needs the
-// first output_text.delta, and its failure falls back to chat completions, so a
-// stalled stream must not spend the full validation budget (up to 60s). See #7792.
-export const STREAMING_EVENT_PROBE_MAX_SECONDS = 12;
+// The calibrated inference phase has 5 seconds of headroom above its observed
+// p95. Keep a stalled stream inside that headroom so it cannot consume the
+// complete 6-second phase budget before Chat Completions fallback. See #7792.
+export const STREAMING_EVENT_PROBE_MAX_SECONDS = 5;
 
 // Cap the streaming probe's --max-time only (min, never lengthen); connect-timeout
 // stays and --max-time bounds the whole call. See #7792.
