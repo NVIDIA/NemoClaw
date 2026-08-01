@@ -50,7 +50,13 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
   const writes: PodmanGatewayWatcherLeaseRecord[] = [];
   const store = {
     read: vi.fn(() => durable),
-    write: vi.fn((value: PodmanGatewayWatcherLeaseRecord) => {
+    acquire: vi.fn((value: PodmanGatewayWatcherLeaseRecord) => {
+      if (durable !== null) throw new Error("lease already exists");
+      durable = value;
+      writes.push(value);
+    }),
+    advance: vi.fn((expectedLeaseId: string, value: PodmanGatewayWatcherLeaseRecord) => {
+      if (durable?.leaseId !== expectedLeaseId) throw new Error("lease compare-and-swap failed");
       durable = value;
       writes.push(value);
     }),
@@ -174,15 +180,26 @@ describe("durable Podman OpenShell watcher lease", () => {
     });
 
     expect(() => fake.controller.quiesceAndProve()).toThrow("exactly one target-bound");
-    expect(fake.store.write).not.toHaveBeenCalled();
+    expect(fake.store.acquire).not.toHaveBeenCalled();
     expect(fake.stopExactOwner).not.toHaveBeenCalled();
+  });
+
+  it("does not stop when atomic acquisition detects a competing lease", () => {
+    const fake = harness();
+    fake.store.acquire.mockImplementation(() => {
+      fake.setDurable({ ...record(), leaseId: OTHER_LEASE_ID });
+      throw new Error("lease already exists");
+    });
+
+    expect(() => fake.controller.quiesceAndProve()).toThrow("lease already exists");
+    expect(fake.stopExactOwner).not.toHaveBeenCalled();
+    expect(fake.durable()?.leaseId).toBe(OTHER_LEASE_ID);
   });
 
   it("restores the watcher when the stopped-phase durable write fails", () => {
     const fake = harness();
-    fake.store.write.mockImplementation((value: PodmanGatewayWatcherLeaseRecord) => {
-      if (value.phase === "stopped") throw new Error("fsync failed");
-      fake.setDurable(value);
+    fake.store.advance.mockImplementation(() => {
+      throw new Error("fsync failed");
     });
 
     expect(() => fake.controller.quiesceAndProve()).toThrow(

@@ -47,8 +47,10 @@ export interface PodmanGatewayWatcherLeaseRecord extends PodmanGatewayWatcherSna
 export interface PodmanGatewayWatcherLeaseStore {
   /** Read one exact record. Corrupt or ambiguous storage must throw. */
   readonly read: () => PodmanGatewayWatcherLeaseRecord | null;
-  /** Atomically replace the record and durably flush it before returning. */
-  readonly write: (record: PodmanGatewayWatcherLeaseRecord) => void;
+  /** Atomically create the record only when no lease exists, then durably flush it. */
+  readonly acquire: (record: PodmanGatewayWatcherLeaseRecord) => void;
+  /** Atomically replace only the expected record, then durably flush it. */
+  readonly advance: (expectedLeaseId: string, record: PodmanGatewayWatcherLeaseRecord) => void;
   /** Atomically clear only the expected record and durably flush the removal. */
   readonly clear: (expectedLeaseId: string) => void;
 }
@@ -432,12 +434,6 @@ export function createPodmanManagedGatewayWatcherController(
     recoverUnfinishedLease,
     quiesceAndProve: () => {
       recoverUnfinishedLease();
-      if (readLease(deps) !== null) {
-        throw new PodmanGatewayWatcherLeaseError(
-          "A previous durable Podman OpenShell watcher lease is still present.",
-          true,
-        );
-      }
 
       const captured = normalizeSnapshot(deps.captureCurrent());
       requireExclusiveCurrent(captured, deps);
@@ -451,7 +447,7 @@ export function createPodmanManagedGatewayWatcherController(
         leaseId,
         phase: "acquiring" as const,
       });
-      deps.store.write(acquiring);
+      deps.store.acquire(acquiring);
 
       try {
         deps.stopExactOwner(captured);
@@ -477,7 +473,7 @@ export function createPodmanManagedGatewayWatcherController(
 
       const stopped = Object.freeze({ ...acquiring, phase: "stopped" as const });
       try {
-        deps.store.write(stopped);
+        deps.store.advance(leaseId, stopped);
       } catch (error) {
         try {
           resumeAndProve(stopped, deps);
