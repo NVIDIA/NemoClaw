@@ -38,7 +38,7 @@ interface ReplacedSandboxWorkloadCleanupDeps {
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
 }
 
-/** Retire an owned source image only after the journaled replacement is registered. */
+/** Remove an owned source image only after the journaled replacement is registered. */
 export function retireReplacedSandboxWorkload(
   sandboxName: string,
   targetGeneration: string,

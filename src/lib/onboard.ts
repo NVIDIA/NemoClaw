@@ -4394,6 +4394,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         agentSupportsWebSearch,
         agentSupportsWebSearchProvider,
         note,
+        cliName,
         updateSession: onboardSession.updateSession,
         getStoredMessagingChannelConfig,
         hydrateMessagingChannelConfig,

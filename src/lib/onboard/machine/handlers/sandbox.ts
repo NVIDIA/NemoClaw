@@ -180,6 +180,7 @@ export interface SandboxStateOptions<
       rootDir: string,
     ): boolean;
     note(message: string): void;
+    cliName(): string;
     updateSession(mutator: (session: Session) => Session | void): Session;
     getStoredMessagingChannelConfig(
       sandboxName: string | null,
@@ -1383,7 +1384,7 @@ class SandboxStateFlow<
       this.deps.note(`  Removed obsolete ${retired.engineDisplayName} image ${retired.reference}`);
     } else if (retired.status === "failed") {
       this.deps.note(
-        `  Warning: failed to remove obsolete ${retired.engineDisplayName} image ${retired.reference}; run 'nemoclaw gc' to clean up.`,
+        `  Warning: failed to remove obsolete ${retired.engineDisplayName} image ${retired.reference}; run '${this.deps.cliName()} gc' to clean up.`,
       );
     }
   }

@@ -199,6 +199,7 @@ function createPhases(
       resolvePath: (value) => value,
       agentSupportsWebSearch: () => true,
       note: vi.fn(),
+      cliName: () => "nemoclaw",
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,

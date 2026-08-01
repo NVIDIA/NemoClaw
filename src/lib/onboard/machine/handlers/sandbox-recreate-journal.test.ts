@@ -82,6 +82,11 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     currentEntry = replacementEntry;
     return "saved";
   });
+  const retireReplacedSandboxWorkload = vi.fn(() => ({
+    status: "failed" as const,
+    engineDisplayName: "Docker",
+    reference: sourceEntry.imageTag,
+  }));
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "not_ready",
@@ -89,6 +94,8 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
       getSandboxRegistryEntry: () => currentEntry,
       updateSession,
       createSandbox,
+      retireReplacedSandboxWorkload,
+      cliName: () => "nemohermes",
     },
     session,
   );
@@ -112,15 +119,16 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     },
   });
   expect(getSandboxRecreateObservation).toHaveBeenCalledWith("saved");
-  expect(calls.retireReplacedSandboxWorkload).toHaveBeenCalledExactlyOnceWith(
+  expect(retireReplacedSandboxWorkload).toHaveBeenCalledExactlyOnceWith(
     "saved",
     replacementEntry.lifecycleGeneration,
     sourceEntry,
     replacementEntry,
   );
   expect(createSandbox.mock.invocationCallOrder[0]).toBeLessThan(
-    calls.retireReplacedSandboxWorkload.mock.invocationCallOrder[0],
+    retireReplacedSandboxWorkload.mock.invocationCallOrder[0],
   );
+  expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("run 'nemohermes gc'"));
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
   expect(orderedPhases).toEqual([null, "planned", "registry_committing", "completed", null]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();

@@ -202,6 +202,7 @@ export function createDeps(
       resolvePath: (value: string) => `/abs/${value}`,
       agentSupportsWebSearch: () => true,
       note: calls.note,
+      cliName: () => "nemoclaw",
       updateSession: calls.updateSession,
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
