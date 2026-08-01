@@ -12,8 +12,8 @@ import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "../openshell-docker-sandbox-containers";
 import {
-  RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
+  RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
   type RuntimeProviderCommandCapture,
   type RuntimeProviderManagedProfileRestoreAuthority,
   type RuntimeProviderRuntimeReceipt,
@@ -327,6 +327,7 @@ function parseDockerLifecycle(
   const status = fields[1].trim().toLowerCase();
   let state: RuntimeProviderSnapshotLifecycleState;
   if (status === "running") state = fields[2] ? "paused" : "running";
+  else if (status === "paused" && fields[2] === true) state = "paused";
   else if (["created", "exited", "dead"].includes(status) && fields[2] === false) state = "stopped";
   else {
     throw new RuntimeProviderSnapshotError(
