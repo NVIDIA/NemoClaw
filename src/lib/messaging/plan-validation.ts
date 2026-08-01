@@ -103,6 +103,18 @@ export function parseSandboxMessagingPlan(
     normalizedChannelIds.add(normalizedChannelId);
   }
   if (!value.disabledChannels.every(isCanonicalMessagingChannelId)) return null;
+  const disabledChannelIds = new Set(value.disabledChannels as string[]);
+  if (
+    disabledChannelIds.size !== value.disabledChannels.length ||
+    [...disabledChannelIds].some((channelId) => !normalizedChannelIds.has(channelId)) ||
+    value.channels.some(
+      (channel) =>
+        isObjectRecord(channel) &&
+        (channel.disabled === true) !== disabledChannelIds.has(String(channel.channelId)),
+    )
+  ) {
+    return null;
+  }
   if (
     !hasCanonicalChannelReferences(value.credentialBindings) ||
     !hasCanonicalChannelReferences(value.agentRender) ||
