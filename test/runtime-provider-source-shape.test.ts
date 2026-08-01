@@ -86,11 +86,18 @@ describe("runtime provider central source boundary", () => {
       "Dockerfile",
       "Dockerfile.base",
     );
-    const bootstrapProtocolPaths = productionPaths.filter(
+    const bootstrapSourcePaths = productionPaths.filter(
       (path) =>
         path.startsWith("src/lib/onboard/managed-bootstrap/") &&
         path.endsWith(".ts") &&
         !path.endsWith(".test.ts"),
+    );
+    const bootstrapProtocolPaths = bootstrapSourcePaths.filter((path) =>
+      [
+        "src/lib/onboard/managed-bootstrap/adapter.ts",
+        "src/lib/onboard/managed-bootstrap/envelope.ts",
+        "src/lib/onboard/managed-bootstrap/index.ts",
+      ].includes(path),
     );
     const activationPaths = productionPaths.filter(
       (path) =>
@@ -121,8 +128,13 @@ describe("runtime provider central source boundary", () => {
     const packagedBootstrapAsset =
       /(?:nemoclaw-managed-bootstrap|managed-bootstrap-trampoline|managed-startup-image-runtime\.cjs|nemoclaw-managed-startup-hold)/u;
 
-    expect(bootstrapProtocolPaths).toEqual([
+    expect(bootstrapSourcePaths).toEqual([
       "src/lib/onboard/managed-bootstrap/adapter.ts",
+      "src/lib/onboard/managed-bootstrap/docker-journal.ts",
+      "src/lib/onboard/managed-bootstrap/docker-shared-state.ts",
+      "src/lib/onboard/managed-bootstrap/docker-spec.ts",
+      "src/lib/onboard/managed-bootstrap/docker-test-fixture.ts",
+      "src/lib/onboard/managed-bootstrap/docker.ts",
       "src/lib/onboard/managed-bootstrap/envelope.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
     ]);
