@@ -920,6 +920,7 @@ describe("Hermes managed-tool gateway broker", () => {
 
     const openIncompleteControlRequest = async (): Promise<net.Socket> => {
       const socket = net.createConnection(controlSocket);
+      socket.on("error", () => {});
       await once(socket, "connect");
       socket.write(
         [
