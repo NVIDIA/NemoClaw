@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
+import { clearDockerDriverGatewayRuntimeMarker } from "../../onboard/docker-driver-gateway-runtime-marker";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
@@ -28,8 +31,32 @@ export type DestroyRunOpenshell = (
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 export interface CleanupGatewayDeps {
+  clearGatewayRuntimeFiles?: (stateDir: string, pidFile: string) => void;
+  isGatewayPortFree?: (port: number) => boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
+}
+
+function isGatewayPortFree(port: number): boolean {
+  const script =
+    "const net = require('node:net');" +
+    "const server = net.createServer();" +
+    "let done = false;" +
+    "const finish = (code) => { if (!done) { done = true; process.exit(code); } };" +
+    "server.once('error', () => finish(1));" +
+    `server.listen(${String(port)}, '127.0.0.1', () => server.close(() => finish(0)));`;
+  try {
+    return (
+      spawnSync(process.execPath, ["-e", script], { stdio: "ignore", timeout: 2_000 }).status === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function clearGatewayRuntimeFiles(stateDir: string, pidFile: string): void {
+  fs.rmSync(pidFile, { force: true });
+  clearDockerDriverGatewayRuntimeMarker(stateDir);
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -107,14 +134,19 @@ export function cleanupGatewayAfterLastSandbox(
   // ports the live openshell tracks; this catches orphans whose openshell
   // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
+  let packagedServiceFallbackReason: string | null = null;
   if (!externallySupervised && owner.source === "packaged-service") {
     const stopService = deps.stopOpenShellGatewayUserService ?? stopOpenShellGatewayUserService;
     const serviceStop = stopService();
     if (serviceStop.attempted && !serviceStop.stopped) {
-      throw new Error(
-        `Failed to stop the packaged OpenShell gateway service '${serviceStop.serviceName}' that owns gateway '${gatewayName}': ${serviceStop.reason}. ` +
-          `Check: ${serviceStop.statusCommand}. Stop the service, then rerun destroy.`,
-      );
+      if (serviceStop.standaloneFallbackAllowed) {
+        packagedServiceFallbackReason = serviceStop.reason ?? "user service manager unavailable";
+      } else {
+        throw new Error(
+          `Failed to stop the packaged OpenShell gateway service '${serviceStop.serviceName}' that owns gateway '${gatewayName}': ${serviceStop.reason}. ` +
+            `Check: ${serviceStop.statusCommand}. Stop the service, then rerun destroy.`,
+        );
+      }
     }
   }
   if (!externallySupervised && (process.platform === "linux" || process.platform === "darwin")) {
@@ -132,6 +164,7 @@ export function cleanupGatewayAfterLastSandbox(
       openShellGatewayPort?: number;
       preserveRuntimeFilesOnNonMatching: true;
       usePgrepFallback: false;
+      clearRuntimeFiles?: boolean;
       stateDir?: string;
       pidFile?: string;
     } = {
@@ -142,6 +175,13 @@ export function cleanupGatewayAfterLastSandbox(
     stopOptions.pidFile = path.join(perGatewayState.stateDir, "openshell-gateway.pid");
     stopOptions.openShellGatewayName = gatewayName;
     stopOptions.openShellGatewayPort = perGatewayState.port;
+    if (packagedServiceFallbackReason !== null) {
+      // A package can be installed even when its user manager is unavailable.
+      // In that exact start fallback, the standalone launcher wrote this
+      // per-gateway PID evidence. Preserve it until every later cleanup step
+      // succeeds so a retry can prove the same ownership again.
+      stopOptions.clearRuntimeFiles = false;
+    }
     const stopResult = stopHostGatewayProcesses({}, stopOptions);
     const unverifiablePids = [...new Set(stopResult.skippedNonMatchingPids)];
     if (unverifiablePids.length > 0) {
@@ -158,6 +198,23 @@ export function cleanupGatewayAfterLastSandbox(
       throw new Error(
         `Failed to stop the owned host gateway process(es) for '${gatewayName}': ${failedPids.join(", ")}.${remediation}`,
       );
+    }
+    if (packagedServiceFallbackReason !== null) {
+      const ownedStandalonePidProven =
+        stopResult.stopped.length > 0 || stopResult.skippedDeadPids.length > 0;
+      if (!ownedStandalonePidProven) {
+        throw new Error(
+          `Failed to stop the packaged OpenShell gateway service for '${gatewayName}' because ${packagedServiceFallbackReason}, and no recorded standalone gateway process proved ownership. ` +
+            "Restore the user service manager or stop the verified gateway listener, then rerun destroy.",
+        );
+      }
+      const portFree = deps.isGatewayPortFree ?? isGatewayPortFree;
+      if (!portFree(perGatewayState.port)) {
+        throw new Error(
+          `Refusing cleanup because gateway port ${String(perGatewayState.port)} remains occupied after the recorded standalone gateway process for '${gatewayName}' was stopped. ` +
+            "Inspect the remaining listener, stop only the matching gateway process, then rerun destroy.",
+        );
+      }
     }
   }
   /**
@@ -206,4 +263,11 @@ export function cleanupGatewayAfterLastSandbox(
   dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
     ignoreError: true,
   });
+  if (packagedServiceFallbackReason !== null) {
+    const clearRuntimeFiles = deps.clearGatewayRuntimeFiles ?? clearGatewayRuntimeFiles;
+    clearRuntimeFiles(
+      perGatewayState.stateDir,
+      path.join(perGatewayState.stateDir, "openshell-gateway.pid"),
+    );
+  }
 }

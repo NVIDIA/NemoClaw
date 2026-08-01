@@ -50,6 +50,7 @@ export interface OpenShellGatewayUserServiceStartResult {
 
 export interface OpenShellGatewayUserServiceStopResult {
   attempted: boolean;
+  standaloneFallbackAllowed: boolean;
   manager?: "homebrew" | "systemd";
   reason?: string;
   serviceName?: string;
@@ -666,17 +667,31 @@ export function stopOpenShellGatewayUserService(
 ): OpenShellGatewayUserServiceStopResult {
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux" && platform !== "darwin") {
-    return { attempted: false, stopped: false, reason: "unsupported platform" };
+    return {
+      attempted: false,
+      standaloneFallbackAllowed: false,
+      stopped: false,
+      reason: "unsupported platform",
+    };
   }
   const env = opts.env ?? process.env;
   const home = effectiveHome(opts.home, opts.env);
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const service = resolveOpenShellGatewayUserService({ ...opts, env, home });
-  if (!service) return { attempted: false, stopped: false, reason: "service not installed" };
+  if (!service) {
+    return {
+      attempted: false,
+      standaloneFallbackAllowed: false,
+      stopped: false,
+      reason: "service not installed",
+    };
+  }
 
   const describe = (stopped: boolean, reason?: string): OpenShellGatewayUserServiceStopResult => ({
     attempted: true,
+    standaloneFallbackAllowed:
+      !stopped && service.manager === "systemd" && userManagerLooksUnavailable(reason ?? ""),
     manager: service.manager,
     serviceName: service.serviceName,
     statusCommand: service.statusCommand,
