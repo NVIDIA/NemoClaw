@@ -24,6 +24,9 @@ Use the error location to select the correct setting.
 
 The readiness timeout does not govern inference requests or provider validation.
 
+Set each value to a whole number of seconds; a fractional value is rounded.
+NemoClaw falls back to the default shown above for any value it cannot use, including a negative one — a negative budget is treated as an invalid setting rather than as a request to give up immediately.
+
 ## Increase the OpenClaw Request Timeout
 
 <AgentOnly variant="openclaw">
