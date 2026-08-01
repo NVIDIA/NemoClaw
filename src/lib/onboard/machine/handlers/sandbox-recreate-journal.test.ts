@@ -42,6 +42,23 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     hermesAuthMethod: null,
     gatewayName: "nemoclaw-31818",
     gatewayPort: 31818,
+    imageTag: "openshell/sandbox-from:old",
+    workload: {
+      schemaVersion: 1 as const,
+      kind: "legacy-dockerfile" as const,
+      reference: "openshell/sandbox-from:old",
+      shared: false as const,
+    },
+  };
+  let replacementEntry = {
+    ...sourceEntry,
+    imageTag: "openshell/sandbox-from:new",
+    workload: {
+      ...sourceEntry.workload,
+      reference: "openshell/sandbox-from:new",
+    },
+    lifecycleGeneration: "replacement-generation",
+    lifecycleLiveIdentityFingerprint: "replacement-identity",
   };
   const phases: Array<string | null> = [];
   const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
@@ -56,12 +73,20 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
         liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
       }) as const,
   );
-  const createSandbox = vi.fn(async () => "saved");
+  let currentEntry = sourceEntry;
+  const createSandbox = vi.fn(async () => {
+    replacementEntry = {
+      ...replacementEntry,
+      lifecycleGeneration: session.checkpoint?.sandboxRecreate?.targetGeneration ?? "missing",
+    };
+    currentEntry = replacementEntry;
+    return "saved";
+  });
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation,
-      getSandboxRegistryEntry: () => sourceEntry,
+      getSandboxRegistryEntry: () => currentEntry,
       updateSession,
       createSandbox,
     },
@@ -87,6 +112,15 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     },
   });
   expect(getSandboxRecreateObservation).toHaveBeenCalledWith("saved");
+  expect(calls.retireReplacedSandboxWorkload).toHaveBeenCalledExactlyOnceWith(
+    "saved",
+    replacementEntry.lifecycleGeneration,
+    sourceEntry,
+    replacementEntry,
+  );
+  expect(createSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+    calls.retireReplacedSandboxWorkload.mock.invocationCallOrder[0],
+  );
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
   expect(orderedPhases).toEqual([null, "planned", "registry_committing", "completed", null]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();

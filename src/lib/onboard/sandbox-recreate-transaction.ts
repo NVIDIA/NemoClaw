@@ -12,6 +12,12 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+  type RuntimeProviderWorkloadCleanupResult,
+  requireRuntimeProviderDestructiveCleanupAuthority,
+} from "./runtime-provider/access";
 import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
@@ -23,6 +29,57 @@ const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
   "registry_committing",
   "completed",
 ];
+
+export type ReplacedSandboxWorkloadCleanupResult =
+  | RuntimeProviderWorkloadCleanupResult
+  | { readonly status: "skipped"; readonly reason: "replacement-unproven" | "image-reused" };
+
+interface ReplacedSandboxWorkloadCleanupDeps {
+  readonly runtimeProviders?: RuntimeProviderBundleRegistry;
+}
+
+/** Retire an owned source image only after the journaled replacement is registered. */
+export function retireReplacedSandboxWorkload(
+  sandboxName: string,
+  targetGeneration: string,
+  source: SandboxEntry,
+  replacement: SandboxEntry | null,
+  deps: ReplacedSandboxWorkloadCleanupDeps = {},
+): ReplacedSandboxWorkloadCleanupResult {
+  if (
+    source.name !== sandboxName ||
+    replacement?.name !== sandboxName ||
+    replacement.lifecycleGeneration !== targetGeneration ||
+    !replacement.lifecycleLiveIdentityFingerprint
+  ) {
+    return { status: "skipped", reason: "replacement-unproven" };
+  }
+
+  const providers = deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES;
+  let authority;
+  try {
+    authority = requireRuntimeProviderDestructiveCleanupAuthority(sandboxName, source, providers);
+  } catch {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  const plan = authority.provider.cleanup.planOwnedWorkloadCleanup({
+    sandbox: source,
+    sandboxName,
+  });
+  if (plan.action === "retain") {
+    return { status: "skipped", reason: plan.reason };
+  }
+  if (plan.action !== "remove") {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  if (
+    replacement.imageTag === plan.reference ||
+    replacement.workload?.reference === plan.reference
+  ) {
+    return { status: "skipped", reason: "image-reused" };
+  }
+  return authority.provider.cleanup.removeOwnedWorkload({ sandbox: source, sandboxName });
+}
 
 function canonicalJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJsonValue);

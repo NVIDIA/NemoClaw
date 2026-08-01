@@ -84,6 +84,8 @@ import {
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
+  type ReplacedSandboxWorkloadCleanupResult,
+  retireReplacedSandboxWorkload as retireReplacedSandboxWorkloadDefault,
   type SandboxRecreateObservation,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
@@ -195,6 +197,12 @@ export interface SandboxStateOptions<
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
+    retireReplacedSandboxWorkload?(
+      sandboxName: string,
+      targetGeneration: string,
+      source: SandboxEntry,
+      replacement: SandboxEntry | null,
+    ): ReplacedSandboxWorkloadCleanupResult;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): SandboxRemovalReceipt | null;
@@ -389,6 +397,7 @@ type SandboxRecreateRepairMetadata = {
 };
 type SandboxRecreatePreparation = {
   readonly transaction: CheckpointSandboxRecreateTransaction | null;
+  readonly sourceEntry: SandboxEntry | null;
   readonly effectiveCreateIntent: CompleteSandboxCreateIntent;
   readonly repairMetadata: SandboxRecreateRepairMetadata | null;
   readonly removalReceipt: SandboxRemovalReceipt | null;
@@ -1204,6 +1213,7 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
+    sourceEntry: SandboxEntry | null,
   ): CheckpointSandboxRecreateTransaction | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
     if (!this.options.resume && !existing) return null;
@@ -1222,7 +1232,6 @@ class SandboxStateFlow<
       );
     }
     if (!gateway) return null;
-    const sourceEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (!existing && !sourceEntry) return null;
     const observation = this.deps.getSandboxRecreateObservation(sandboxName);
     const updated = this.deps.updateSession((current) => {
@@ -1276,7 +1285,13 @@ class SandboxStateFlow<
     createIntent: CompleteSandboxCreateIntent,
     decision: SandboxCreationDecision,
   ): Promise<SandboxRecreatePreparation> {
-    const transaction = this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent);
+    const sourceEntry = this.deps.getSandboxRegistryEntry(requestedSandboxName);
+    const transaction = this.beginSandboxRecreateJournal(
+      state,
+      requestedSandboxName,
+      createIntent,
+      sourceEntry,
+    );
     const repairMetadata: SandboxRecreateRepairMetadata | null =
       decision.kind === "repair-and-recreate"
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
@@ -1284,6 +1299,7 @@ class SandboxStateFlow<
     if (!transaction) {
       return {
         transaction,
+        sourceEntry: null,
         effectiveCreateIntent: createIntent,
         repairMetadata,
         removalReceipt: await applySandboxResumeDecision(decision, state.sandboxName, this.deps),
@@ -1309,7 +1325,13 @@ class SandboxStateFlow<
     } else if (decision.kind === "recreate") {
       this.deps.note(decision.note);
     }
-    return { transaction, effectiveCreateIntent, repairMetadata, removalReceipt: null };
+    return {
+      transaction,
+      sourceEntry,
+      effectiveCreateIntent,
+      repairMetadata,
+      removalReceipt: null,
+    };
   }
 
   private async recordSandboxRecreateRepairFailure(
@@ -1341,6 +1363,29 @@ class SandboxStateFlow<
   ): void {
     if (!transaction || transaction.phase === "completed") return;
     this.recordSandboxRecreatePhase(transaction, "registry_committing");
+  }
+
+  private retireSandboxRecreateSourceWorkload(
+    transaction: CheckpointSandboxRecreateTransaction | null,
+    sourceEntry: SandboxEntry | null,
+    sandboxName: string,
+  ): void {
+    if (!transaction || !sourceEntry) return;
+    const retired = (
+      this.deps.retireReplacedSandboxWorkload ?? retireReplacedSandboxWorkloadDefault
+    )(
+      sandboxName,
+      transaction.targetGeneration,
+      sourceEntry,
+      this.deps.getSandboxRegistryEntry(sandboxName),
+    );
+    if (retired.status === "removed") {
+      this.deps.note(`  Removed obsolete ${retired.engineDisplayName} image ${retired.reference}`);
+    } else if (retired.status === "failed") {
+      this.deps.note(
+        `  Warning: failed to remove obsolete ${retired.engineDisplayName} image ${retired.reference}; run 'nemoclaw gc' to clean up.`,
+      );
+    }
   }
 
   private recordSandboxCreateEffects(
@@ -1414,7 +1459,7 @@ class SandboxStateFlow<
         requestedSandboxName,
         createIntent.resolved.policy.options.baselineExclusions,
       );
-      const { transaction, effectiveCreateIntent, repairMetadata, removalReceipt } =
+      const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata, removalReceipt } =
         await this.prepareSandboxRecreate(state, requestedSandboxName, createIntent, decision);
       let rollbackArmed = removalReceipt !== null;
       const restoreRemovedRegistryEntry = () => {
@@ -1466,6 +1511,7 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
+      this.retireSandboxRecreateSourceWorkload(transaction, sourceEntry, sandboxName);
       await this.recordSandboxRecreateRepairSuccess(transaction, repairMetadata);
       this.recordSandboxRecreateRegistryCommit(transaction);
       // createSandbox() owns the build fingerprint. In particular, reusing an
