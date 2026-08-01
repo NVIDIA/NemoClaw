@@ -171,6 +171,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/host-local-inference-routing.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/installer-qualification.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
