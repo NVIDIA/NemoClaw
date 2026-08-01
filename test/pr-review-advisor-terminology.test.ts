@@ -165,6 +165,50 @@ describe("PR review advisor terminology evidence", () => {
     });
   });
 
+  it("traces selected terms in non-ASCII paths when Git path quoting is enabled", async () => {
+    const fixture = fixtureRepository();
+    const filename = "glossary-ä.md";
+    fs.writeFileSync(path.join(fixture.directory, filename), "review-bound evidence\n");
+    git(fixture.directory, ["add", filename]);
+    git(fixture.directory, [
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "-m",
+      "non-ASCII terminology path",
+    ]);
+    git(fixture.directory, ["config", "core.quotePath", "true"]);
+    const head = git(fixture.directory, ["rev-parse", "HEAD"]);
+
+    const trace = await traceTerminology({
+      term: "review-bound",
+      baseRef: fixture.base,
+      headRef: head,
+      cwd: fixture.directory,
+    });
+
+    expect(trace.changedLocations).toContainEqual({
+      file: filename,
+      line: 1,
+      text: "review-bound evidence",
+    });
+  });
+
+  it("surfaces a failure when neither changed-line diff can produce evidence", async () => {
+    const fixture = fixtureRepository();
+    git(fixture.directory, ["config", "diff.external", "false"]);
+
+    await expect(
+      traceTerminology({
+        term: "review-bound",
+        baseRef: fixture.base,
+        headRef: fixture.head,
+        cwd: fixture.directory,
+      }),
+    ).rejects.toThrow("Terminology evidence command failed: git diff:");
+  });
+
   it("rejects a justified term without a concrete contrast and commits the corrected replacement decision", async () => {
     const fixture = fixtureRepository();
     const ledger = createTerminologyLedger(fixture.head);

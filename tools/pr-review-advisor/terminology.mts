@@ -433,16 +433,37 @@ async function changedTermLocations(
 ): Promise<TerminologyLocation[]> {
   const mergeBaseDiff = await streamChangedTermLocations(
     variants,
-    ["diff", "--find-renames", "--unified=0", `${baseRef}...${headRef}`],
+    [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "--find-renames",
+      "--unified=0",
+      "--default-prefix",
+      `${baseRef}...${headRef}`,
+    ],
     cwd,
   );
   if (mergeBaseDiff.succeeded && mergeBaseDiff.hadOutput) return mergeBaseDiff.locations;
   const directDiff = await streamChangedTermLocations(
     variants,
-    ["diff", "--find-renames", "--unified=0", `${baseRef}..${headRef}`],
+    [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "--find-renames",
+      "--unified=0",
+      "--default-prefix",
+      `${baseRef}..${headRef}`,
+    ],
     cwd,
   );
-  return directDiff.succeeded ? directDiff.locations : [];
+  if (directDiff.succeeded) return directDiff.locations;
+  const reason =
+    directDiff.exitCode === null
+      ? "terminated before reporting an exit status"
+      : `exited with status ${directDiff.exitCode}`;
+  throw new Error(`Terminology evidence command failed: git diff: ${reason}`);
 }
 
 async function streamChangedTermLocations(
@@ -452,6 +473,7 @@ async function streamChangedTermLocations(
 ): Promise<{
   succeeded: boolean;
   hadOutput: boolean;
+  exitCode: number | null;
   locations: TerminologyLocation[];
 }> {
   const parser = createChangedLocationParser(variants);
@@ -460,7 +482,7 @@ async function streamChangedTermLocations(
   child.stderr.resume();
   const exit = new Promise<number | null>((resolve, reject) => {
     child.once("error", (error) => {
-      reject(new Error(`Terminology evidence command failed: git ${args[0]}: ${error.message}`));
+      reject(new Error(`Terminology evidence command failed: git diff: ${error.message}`));
     });
     child.once("close", resolve);
   });
@@ -470,9 +492,9 @@ async function streamChangedTermLocations(
   const [code] = await Promise.all([exit, read()]);
   const locations = parser.finish();
   if (code === 0) {
-    return { succeeded: true, hadOutput: parser.hadOutput(), locations };
+    return { succeeded: true, hadOutput: parser.hadOutput(), exitCode: code, locations };
   }
-  return { succeeded: false, hadOutput: parser.hadOutput(), locations: [] };
+  return { succeeded: false, hadOutput: parser.hadOutput(), exitCode: code, locations: [] };
 }
 
 function createChangedLocationParser(variants: readonly string[]): {
