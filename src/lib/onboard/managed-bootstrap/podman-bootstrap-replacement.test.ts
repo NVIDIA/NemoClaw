@@ -195,100 +195,126 @@ class PodmanHarness {
 
   private capture(args: readonly string[]): ContainerEngineCommandResult {
     this.calls.push([...args]);
-    if (args[0] === "volume" && args[1] === "exists") {
-      return this.result("", { status: args[2] === this.stateVolume?.name ? 0 : 1 });
-    }
-    if (args[0] === "volume" && args[1] === "create") {
-      if (this.stateVolume) return this.result("", { status: 125 });
-      this.stateVolume = {
-        name: STATE_VOLUME_NAME,
-        mountpoint: STATE_VOLUME_MOUNTPOINT,
-        labels: STATE_VOLUME_LABELS,
-      };
-      return this.result(`${STATE_VOLUME_NAME}\n`);
-    }
-    if (args[0] === "volume" && args[1] === "inspect") {
-      return args[2] === this.stateVolume?.name
-        ? this.result(this.volumeInspectOutput(this.stateVolume))
-        : this.result("", { status: 125 });
-    }
-    if (args[0] === "volume" && args[1] === "rm") {
-      if (args[2] !== this.stateVolume?.name || this.replacement) {
-        return this.result("", { status: 125 });
+    switch (`${String(args[0])}:${String(args[1])}`) {
+      case "volume:exists":
+        return this.result("", { status: args[2] === this.stateVolume?.name ? 0 : 1 });
+      case "volume:create":
+        return this.createStateVolume();
+      case "volume:inspect":
+        return args[2] === this.stateVolume?.name
+          ? this.result(this.volumeInspectOutput(this.stateVolume))
+          : this.result("", { status: 125 });
+      case "volume:rm":
+        return this.removeStateVolume(args);
+      case "container:create":
+        return this.createContainer(args);
+      case "container:inspect":
+        return this.inspectContainer(args);
+      case "container:stop":
+        expect(args[2]).toBe(this.original.id);
+        this.original.running = false;
+        return this.result(this.original.id);
+      case "container:start":
+        expect(args[2]).toBe(this.original.id);
+        this.original.running = true;
+        return this.result(this.original.id);
+      case "container:rm":
+        expect(args[2]).toBe(this.replacement?.id);
+        this.replacement = null;
+        return this.result();
+      case "container:exists": {
+        const exists = args[2] === this.original.id || args[2] === this.replacement?.id;
+        return this.result("", { status: exists ? 0 : 1 });
       }
-      this.stateVolume = null;
-      return this.result();
+      case "container:ls": {
+        const ids = [...(this.replacement ? [this.replacement.id] : []), ...this.extraStagingIds];
+        return this.result(JSON.stringify(ids.map((Id) => ({ Id }))));
+      }
+      default:
+        throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
     }
-    if (args[0] !== "container") throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
-    if (args[1] === "create") {
-      const environmentFileIndex = args.indexOf("--env-file") + 1;
-      const environmentFile = args[environmentFileIndex] as string;
-      this.capturedEnvironmentFile = environmentFile;
-      this.capturedEnvironmentContents = fs.readFileSync(environmentFile, "utf8");
-      this.capturedEnvironmentMode = fs.statSync(environmentFile).mode & 0o777;
-      if (this.createResult) return this.createResult;
-      this.replacement = {
-        id: REPLACEMENT_RUNTIME_ID,
-        name: STAGING_NAME,
-        image: REPLACEMENT_IMAGE_ID,
-        labels: LABELS,
-        entrypoint: ENTRYPOINT_ARGV,
-        command: COMMAND_ARGV,
-        environment: ENVIRONMENT,
-        mounts: [
-          {
-            Destination: PODMAN_BOOTSTRAP_STATE_DIRECTORY,
-            Driver: "local",
-            Mode: "z",
-            Name: STATE_VOLUME_NAME,
-            Options: ["rw"],
-            Propagation: "",
-            RW: true,
-            Source: STATE_VOLUME_MOUNTPOINT,
-            Type: "volume",
-          },
-        ],
-        running: this.replacementStartsOnCreate,
-      };
-      return this.result(`${REPLACEMENT_RUNTIME_ID}\n`);
+  }
+
+  private createStateVolume(): ContainerEngineCommandResult {
+    switch (this.stateVolume) {
+      case null:
+        this.stateVolume = {
+          name: STATE_VOLUME_NAME,
+          mountpoint: STATE_VOLUME_MOUNTPOINT,
+          labels: STATE_VOLUME_LABELS,
+        };
+        return this.result(`${STATE_VOLUME_NAME}\n`);
+      default:
+        return this.result("", { status: 125 });
     }
-    if (args[1] === "inspect") {
-      const runtimeId = args[2];
-      if (runtimeId === this.replacement?.id && this.failReplacementInspectOnce) {
+  }
+
+  private removeStateVolume(args: readonly string[]): ContainerEngineCommandResult {
+    const removable = args[2] === this.stateVolume?.name && this.replacement === null;
+    switch (removable) {
+      case true:
+        this.stateVolume = null;
+        return this.result();
+      default:
+        return this.result("", { status: 125 });
+    }
+  }
+
+  private createContainer(args: readonly string[]): ContainerEngineCommandResult {
+    const environmentFileIndex = args.indexOf("--env-file") + 1;
+    const environmentFile = args[environmentFileIndex] as string;
+    this.capturedEnvironmentFile = environmentFile;
+    this.capturedEnvironmentContents = fs.readFileSync(environmentFile, "utf8");
+    this.capturedEnvironmentMode = fs.statSync(environmentFile).mode & 0o777;
+    const configuredResult = this.createResult;
+    switch (configuredResult) {
+      case null:
+        this.replacement = {
+          id: REPLACEMENT_RUNTIME_ID,
+          name: STAGING_NAME,
+          image: REPLACEMENT_IMAGE_ID,
+          labels: LABELS,
+          entrypoint: ENTRYPOINT_ARGV,
+          command: COMMAND_ARGV,
+          environment: ENVIRONMENT,
+          mounts: [
+            {
+              Destination: PODMAN_BOOTSTRAP_STATE_DIRECTORY,
+              Driver: "local",
+              Mode: "z",
+              Name: STATE_VOLUME_NAME,
+              Options: ["rw"],
+              Propagation: "",
+              RW: true,
+              Source: STATE_VOLUME_MOUNTPOINT,
+              Type: "volume",
+            },
+          ],
+          running: this.replacementStartsOnCreate,
+        };
+        return this.result(`${REPLACEMENT_RUNTIME_ID}\n`);
+      default:
+        return configuredResult;
+    }
+  }
+
+  private inspectContainer(args: readonly string[]): ContainerEngineCommandResult {
+    const runtimeId = args[2];
+    const failOnce = runtimeId === this.replacement?.id && this.failReplacementInspectOnce;
+    switch (failOnce) {
+      case true:
         this.failReplacementInspectOnce = false;
         return this.result("", { status: 125, error: new Error("inspect interrupted") });
-      }
-      const container =
-        runtimeId === this.original.id
-          ? this.original
-          : runtimeId === this.replacement?.id
-            ? this.replacement
-            : null;
-      return container
-        ? this.result(this.inspectOutput(container))
-        : this.result("", { status: 125, error: new Error("container absent") });
     }
-    if (args[1] === "stop" && args[2] === this.original.id) {
-      this.original.running = false;
-      return this.result(this.original.id);
-    }
-    if (args[1] === "start" && args[2] === this.original.id) {
-      this.original.running = true;
-      return this.result(this.original.id);
-    }
-    if (args[1] === "rm" && args[2] === this.replacement?.id) {
-      this.replacement = null;
-      return this.result();
-    }
-    if (args[1] === "exists") {
-      const exists = args[2] === this.original.id || args[2] === this.replacement?.id;
-      return this.result("", { status: exists ? 0 : 1 });
-    }
-    if (args[1] === "ls") {
-      const ids = [...(this.replacement ? [this.replacement.id] : []), ...this.extraStagingIds];
-      return this.result(JSON.stringify(ids.map((Id) => ({ Id }))));
-    }
-    throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+    const container =
+      runtimeId === this.original.id
+        ? this.original
+        : runtimeId === this.replacement?.id
+          ? this.replacement
+          : null;
+    return container
+      ? this.result(this.inspectOutput(container))
+      : this.result("", { status: 125, error: new Error("container absent") });
   }
 }
 
