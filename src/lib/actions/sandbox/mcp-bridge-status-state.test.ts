@@ -12,6 +12,8 @@ const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
   .join(" ");
+const subprocessTimeoutMs = 15_000;
+const subprocessTestTimeoutMs = subprocessTimeoutMs + 5_000;
 const tempHomes = new Set<string>();
 
 function createTempHome(prefix: string): string {
@@ -25,7 +27,7 @@ afterEach(() => {
   tempHomes.clear();
 });
 
-describe("cross-agent MCP status state", () => {
+describe("cross-agent MCP status state", { timeout: subprocessTestTimeoutMs }, () => {
   it("rejects duplicate static credential keys across bridges in one sandbox", () => {
     const home = createTempHome("nemoclaw-mcp-env-key-");
     const script = `
@@ -62,6 +64,7 @@ bridge.addMcpBridge("openclaw-sandbox", {
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);
@@ -101,6 +104,7 @@ process.stdout.write(JSON.stringify(markers.map((_, index) => registry.getSandbo
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);
@@ -165,6 +169,7 @@ const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -207,6 +212,7 @@ registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);
@@ -296,6 +302,7 @@ status.statusMcpBridge("persisted-status").then(
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);

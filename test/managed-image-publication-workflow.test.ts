@@ -456,7 +456,6 @@ fi
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const builder = managedBuilder(workflow);
-    const promoter = managedPromoter(workflow);
 
     expect(Object.keys(workflow.on ?? {}).sort()).toEqual(["pull_request", "workflow_call"]);
     expect(workflow.permissions).toEqual({
