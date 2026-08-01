@@ -7,32 +7,30 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  ContainerEngineCommandResult,
-} from "../../adapters/container-engine";
+import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   createFilePodmanBootstrapJournalStore,
   type PodmanBootstrapJournalStore,
 } from "./podman-bootstrap-journal";
 import {
-  type PodmanHeldWorkloadObservation,
-  PODMAN_MANAGED_LABEL,
-  PODMAN_SANDBOX_ID_LABEL,
-  PODMAN_SANDBOX_NAME_LABEL,
-  PODMAN_SANDBOX_NAMESPACE_LABEL,
-} from "./podman-held-workload";
-import {
   type AuthorityBoundPodmanBootstrapEngine,
+  PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION,
   type PodmanBootstrapPreparedReplacement,
   type PodmanBootstrapReplacementPlan,
-  PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION,
   prepareStoppedPodmanBootstrapReplacement,
   rollbackPodmanBootstrapBeforeCommit,
   stopExactPodmanBootstrapOriginal,
 } from "./podman-bootstrap-replacement";
 import {
-  type PodmanGatewayWatcherLease,
+  PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_ID_LABEL,
+  PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE_LABEL,
+  type PodmanHeldWorkloadObservation,
+} from "./podman-held-workload";
+import {
   PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+  type PodmanGatewayWatcherLease,
 } from "./podman-watcher-lease";
 
 const BOOTSTRAP_IDENTITY = "1".repeat(64);
@@ -215,10 +213,7 @@ class PodmanHarness {
       return this.result("", { status: exists ? 0 : 1 });
     }
     if (args[1] === "ls") {
-      const ids = [
-        ...(this.replacement ? [this.replacement.id] : []),
-        ...this.extraStagingIds,
-      ];
+      const ids = [...(this.replacement ? [this.replacement.id] : []), ...this.extraStagingIds];
       return this.result(JSON.stringify(ids.map((Id) => ({ Id }))));
     }
     throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
