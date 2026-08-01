@@ -294,7 +294,6 @@ function exactStateVolume(
     mount.Driver !== "local" ||
     mount.RW !== true ||
     !["", "rprivate"].includes(propagation) ||
-    !modeTokens.has("z") ||
     modeTokens.has("Z") ||
     modeTokens.has("ro") ||
     options.some((option) => option === "ro" || option === "readonly")

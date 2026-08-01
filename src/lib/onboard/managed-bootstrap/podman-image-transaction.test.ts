@@ -119,6 +119,7 @@ interface HarnessOptions {
   readonly inspectName?: string;
   readonly inspectRuntimeId?: string;
   readonly inspectStateVolumeMountpoint?: string;
+  readonly inspectStateVolumeMode?: string;
   readonly inspectStateVolumeName?: string;
   readonly journal?: PodmanBootstrapJournal | null;
   readonly startsRunning?: boolean;
@@ -144,7 +145,7 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
             {
               Destination: PODMAN_BOOTSTRAP_STATE_DIRECTORY,
               Driver: "local",
-              Mode: "z",
+              Mode: options.inspectStateVolumeMode ?? "z",
               Name: options.inspectStateVolumeName ?? STATE_VOLUME_NAME,
               Options: ["rw"],
               Propagation: "",
@@ -422,6 +423,15 @@ describe("Podman image-owned bootstrap transaction", () => {
       /replacement (runtime, image, or name identity|state-volume authority) changed/u,
     );
     expect(fake.commands.every((command) => command[1] !== "cp")).toBe(true);
+  });
+
+  it("accepts an empty non-authoritative Podman state-volume mount mode", () => {
+    const fake = harness("openclaw", { inspectStateVolumeMode: "" });
+
+    const transaction = startPodmanBootstrapImageTransaction(startInput("openclaw", fake));
+
+    expect(transaction.replacementStateVolumeName).toBe(STATE_VOLUME_NAME);
+    expect(fake.commands).toContainEqual(["container", "start", RUNTIME_ID]);
   });
 
   it("rejects a copied completion that is not protected mode 0444", () => {
