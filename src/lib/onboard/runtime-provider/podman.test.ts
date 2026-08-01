@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { describe, expect, it, vi } from "vitest";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
@@ -211,7 +213,7 @@ describe("dormant Podman runtime provider", () => {
     const surface = candidate.providers.podman?.hostLocalInference;
 
     expect(surface).toMatchObject({ providerId: "podman", supported: true });
-    if (surface?.supported !== true) throw new Error("expected supported inference surface");
+    assert(surface?.supported === true, "expected supported inference surface");
     expect(surface.runtime.services).toEqual(["ollama", "nim", "vllm"]);
     expect(surface.runtime).not.toHaveProperty("agent");
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
