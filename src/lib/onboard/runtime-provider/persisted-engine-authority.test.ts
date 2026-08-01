@@ -15,8 +15,8 @@ import {
   createFilePersistedEngineAuthorityStore,
   createPersistedEngineAuthority,
   normalizePersistedEngineAuthority,
-  parsePersistedEngineAuthority,
   PERSISTED_ENGINE_AUTHORITY_DIRECTORY,
+  parsePersistedEngineAuthority,
   persistedEngineAuthorityPath,
   requirePersistedEngineAuthority,
   serializePersistedEngineAuthority,
@@ -82,8 +82,15 @@ describe("persisted engine authority", () => {
     const directory = path.join(root, PERSISTED_ENGINE_AUTHORITY_DIRECTORY);
     const target = persistedEngineAuthorityPath(root, "sandbox-lifecycle");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
-    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(target, "utf8")).toBe(serializePersistedEngineAuthority(authority));
+    const descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(descriptor, "utf8")).toBe(
+        serializePersistedEngineAuthority(authority),
+      );
+    } finally {
+      fs.closeSync(descriptor);
+    }
   });
 
   it.each([
