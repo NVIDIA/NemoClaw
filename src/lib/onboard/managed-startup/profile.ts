@@ -107,6 +107,8 @@ export type ManagedStartupDeviceAuthOptOutSource = "operator" | "managed-onboard
 export const MANAGED_STARTUP_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 export type ManagedStartupAgent = (typeof MANAGED_STARTUP_AGENTS)[number];
+export const MANAGED_STARTUP_MESSAGING_AGENTS = ["openclaw", "hermes"] as const;
+export type ManagedStartupMessagingAgent = (typeof MANAGED_STARTUP_MESSAGING_AGENTS)[number];
 
 export type ManagedStartupJsonScalar = string | number | boolean | null;
 export type ManagedStartupJsonValue =
@@ -328,12 +330,6 @@ export interface ManagedStartupAgentCapabilities {
  * does not advertise the requested semantic capability is rejected instead of
  * silently dropping a field.
  */
-const VALIDATED_INFERENCE_APIS_BY_AGENT = Object.freeze({
-  openclaw: Object.freeze([...MANAGED_STARTUP_INFERENCE_APIS]),
-  hermes: Object.freeze([...MANAGED_STARTUP_INFERENCE_APIS]),
-  "langchain-deepagents-code": Object.freeze(["openai-completions"] as const),
-}) satisfies Readonly<Record<ManagedStartupAgent, readonly ManagedStartupInferenceApi[]>>;
-
 function freezeAgentCapabilities(
   capabilities: ManagedStartupAgentCapabilities,
 ): Readonly<ManagedStartupAgentCapabilities> {
@@ -350,7 +346,7 @@ function freezeAgentCapabilities(
 
 const PROFILE_CAPABILITIES = {
   openclaw: {
-    inferenceApis: [...VALIDATED_INFERENCE_APIS_BY_AGENT.openclaw],
+    inferenceApis: [...MANAGED_STARTUP_INFERENCE_APIS],
     dashboardModes: ["loopback", "remote"],
     inputModalities: ["text", "image"],
     webSearchProviders: ["brave", "tavily"],
@@ -369,7 +365,7 @@ const PROFILE_CAPABILITIES = {
     supportsMinimalBootstrap: true,
   },
   hermes: {
-    inferenceApis: [...VALIDATED_INFERENCE_APIS_BY_AGENT.hermes],
+    inferenceApis: [...MANAGED_STARTUP_INFERENCE_APIS],
     dashboardModes: ["disabled", "loopback-forwarded"],
     inputModalities: [],
     webSearchProviders: ["tavily"],
@@ -842,9 +838,7 @@ const DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
-const INFERENCE_API_SET = new Set<string>(MANAGED_STARTUP_INFERENCE_APIS);
 const REASONING_EFFORT_SET = new Set<string>(MANAGED_STARTUP_REASONING_EFFORTS);
-const HERMES_GATEWAY_SET = new Set<string>(MANAGED_STARTUP_HERMES_TOOL_GATEWAYS);
 const HERMES_RESERVED_API_PORTS = new Set([8642, 18_642]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -914,6 +908,14 @@ function containsUrlWithCredentialMaterial(value: string): boolean {
 
 function invalid(reason: string): never {
   throw new ManagedStartupProfileError(reason);
+}
+
+function payloadPath(path: readonly string[]): string {
+  return path.reduce(
+    (result, segment) =>
+      segment.startsWith("[") ? `${result}${segment}` : `${result}${result ? "." : ""}${segment}`,
+    "",
+  );
 }
 
 function mapArrayByIndex<T, U>(values: readonly T[], mapper: (value: T, index: number) => U): U[] {
@@ -1243,7 +1245,9 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         !isMessagingCredentialPlaceholder(current.path, current.value) &&
         valueLooksLikeSecret(current.value)
       ) {
-        invalid("payload contains credential-shaped string data");
+        invalid(
+          `payload field ${payloadPath(current.path)} contains credential-shaped string data`,
+        );
       }
       if (
         RAW_CA_PEM_RE.test(current.value) ||
@@ -1251,10 +1255,14 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         RAW_CA_DER_BASE64_RE.test(current.value) ||
         RAW_CA_DATA_URI_RE.test(current.value)
       ) {
-        invalid("payload contains raw certificate data; provide only the CA SHA-256 digest");
+        invalid(
+          `payload field ${payloadPath(current.path)} contains raw certificate data; provide only the CA SHA-256 digest`,
+        );
       }
       if (containsUrlWithCredentialMaterial(current.value)) {
-        invalid("payload contains a URL with embedded credentials");
+        invalid(
+          `payload field ${payloadPath(current.path)} contains a URL with embedded credentials`,
+        );
       }
       continue;
     }
@@ -1281,7 +1289,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         pending.push({
           value: descriptor?.value,
           depth,
-          path: current.path,
+          path: [...current.path, `[${String(index)}]`],
         });
       }
       continue;
@@ -1319,7 +1327,9 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         }
         const child = descriptor.value;
         if (isCredentialShapedName(key) && !isMessagingCredentialPlaceholder(current.path, child)) {
-          invalid("payload contains a credential-shaped field name");
+          invalid(
+            `payload field ${payloadPath([...current.path, key])} has a credential-shaped field name`,
+          );
         }
         pending.push({
           value: child,
@@ -1359,7 +1369,7 @@ function validateWebSearch(value: unknown, agent: "openclaw" | "hermes"): Manage
   rejectUnknownKeys(webSearch, WEB_SEARCH_KEYS, "agentConfig.webSearch");
   const provider = requireStringEnum<ManagedStartupWebSearchProvider>(
     webSearch.provider,
-    new Set(agent === "openclaw" ? ["brave", "tavily"] : ["tavily"]),
+    new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].webSearchProviders),
     "agentConfig.webSearch.provider",
   );
   return {
@@ -1486,7 +1496,7 @@ function validateDashboard(
     rejectUnknownKeys(dashboard, OPENCLAW_DASHBOARD_KEYS, "dashboard");
     const mode = requireStringEnum<"loopback" | "remote">(
       dashboard.mode,
-      new Set(["loopback", "remote"]),
+      new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].dashboardModes),
       "dashboard.mode",
     );
     const url = requireHttpUrl(dashboard.url, "dashboard.url");
@@ -1519,7 +1529,7 @@ function validateDashboard(
     rejectUnknownKeys(dashboard, HERMES_DASHBOARD_KEYS, "dashboard");
     const mode = requireStringEnum<"disabled" | "loopback-forwarded">(
       dashboard.mode,
-      new Set(["disabled", "loopback-forwarded"]),
+      new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].dashboardModes),
       "dashboard.mode",
     );
     const url = requireHttpUrl(dashboard.url, "dashboard.url");
@@ -1578,17 +1588,9 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
-    INFERENCE_API_SET,
+    new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].inferenceApis),
     "inference.api",
   );
-  const supportedInferenceApis = VALIDATED_INFERENCE_APIS_BY_AGENT[agent];
-  let apiSupported = false;
-  for (let index = 0; index < supportedInferenceApis.length; index += 1) {
-    if (supportedInferenceApis[index] === api) apiSupported = true;
-  }
-  if (!apiSupported) {
-    invalid(`inference.api is not supported by ${agent}`);
-  }
   const upstreamEndpointUrl =
     inference.upstreamEndpointUrl === null
       ? null
@@ -1607,7 +1609,7 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
       ? null
       : requireEnumList<ManagedStartupInputModality>(
           inference.inputModalities,
-          new Set(["text", "image"]),
+          new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].inputModalities),
           "inference.inputModalities",
           { allowEmpty: false },
         );
@@ -1679,13 +1681,10 @@ function validateTools(value: unknown, agent: ManagedStartupAgent): ManagedStart
   rejectUnknownKeys(tools, TOOLS_KEYS, "tools");
   const enabledGateways = requireEnumList<ManagedStartupHermesToolGateway>(
     tools.enabledGateways,
-    HERMES_GATEWAY_SET,
+    new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].toolGateways),
     "tools.enabledGateways",
     { allowEmpty: true },
   );
-  if (agent !== "hermes" && enabledGateways.length > 0) {
-    invalid("tools.enabledGateways is supported only by hermes");
-  }
   return {
     disclosure: requireStringEnum<ManagedStartupToolDisclosure>(
       tools.disclosure,

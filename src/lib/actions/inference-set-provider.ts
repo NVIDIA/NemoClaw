@@ -7,11 +7,30 @@ import {
   parseGatewayProviderMetadata,
 } from "../onboard/gateway-provider-metadata";
 import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  requireRuntimeProviderBundleForSandbox,
+  requireRuntimeProviderMutationAuthority,
+} from "../onboard/runtime-provider/access";
+import type { SandboxEntry } from "../state/registry";
+import {
   InferenceSetError,
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
+
+export type { RuntimeProviderBundleRegistry };
+export { RuntimeProviderSelectionError };
+
+export function requireInferenceSetRuntimeAuthority(
+  entry: SandboxEntry,
+  providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
+): void {
+  const runtimeProvider = requireRuntimeProviderBundleForSandbox(entry, providers);
+  requireRuntimeProviderMutationAuthority(runtimeProvider, "inference-set");
+}
 
 type CaptureProviderCommand = (
   args: string[],

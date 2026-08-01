@@ -116,10 +116,11 @@ describe("buildManagedStartupImageActionPlan", () => {
       { action: "messaging-post-agent-install", runAs: "sandbox" },
     ]);
     expect(plan[0]?.argv).toContain("runtime-setup");
+    expect(plan[0]?.argv).toContain("apply");
     expect(plan[0]?.argv).not.toContain("--managed-startup-runtime");
     expect(plan[2]?.argv).toContain("post-agent-install");
+    expect(plan[2]?.argv).toContain("apply");
     expect(plan[2]?.argv).toContain("--managed-startup-runtime");
-    expect(plan.some((command) => command.argv.includes("agent-install"))).toBe(false);
     expect(
       plan.some((command) =>
         command.argv.some((argument) => /^(?:npm|npx|pip|pip3|uv)$/u.test(argument)),
@@ -156,8 +157,17 @@ describe("buildManagedStartupImageActionPlan", () => {
     expect(command?.argv.at(-1)).toBe(generator);
   });
 
-  it("constructs the same reviewed commands for apply and clear messaging intent", () => {
-    expect(buildManagedStartupImageActionPlan(actionInput("openclaw", "clear"))).toEqual(
+  it.each([
+    "apply",
+    "clear",
+  ] as const)("passes explicit %s intent to both messaging phases", (mode) => {
+    const plan = buildManagedStartupImageActionPlan(actionInput("openclaw", mode));
+    expect(plan[0]?.argv).toEqual(expect.arrayContaining(["--mode", mode]));
+    expect(plan[2]?.argv).toEqual(expect.arrayContaining(["--mode", mode]));
+  });
+
+  it("keeps apply and clear as distinct reviewed commands", () => {
+    expect(buildManagedStartupImageActionPlan(actionInput("openclaw", "clear"))).not.toEqual(
       buildManagedStartupImageActionPlan(actionInput("openclaw", "apply")),
     );
   });
@@ -257,6 +267,51 @@ describe("buildManagedStartupImageActionPlan", () => {
         ],
       },
       /unsupported managed startup construction action/,
+    ],
+    [
+      "missing dashboard",
+      {
+        ...actionInput("openclaw"),
+        actions: actionInput("openclaw").actions.filter(
+          (action) => action.kind !== "configure-dashboard",
+        ),
+      },
+      /exactly one dashboard construction action/,
+    ],
+    [
+      "duplicate dashboard",
+      {
+        ...actionInput("hermes"),
+        actions: [...actionInput("hermes").actions, actionInput("hermes").actions.at(-1)!],
+      },
+      /exactly one dashboard construction action/,
+    ],
+    [
+      "mismatched dashboard",
+      {
+        ...actionInput("openclaw"),
+        actions: actionInput("openclaw").actions.map((action) =>
+          action.kind === "configure-dashboard"
+            ? { ...action, dashboard: dashboard("hermes") }
+            : action,
+        ),
+      },
+      /dashboard for hermes cannot be used by openclaw/,
+    ],
+    [
+      "unknown image agent",
+      { ...actionInput("openclaw"), agent: "unknown-agent" },
+      /unsupported agent "unknown-agent"/,
+    ],
+    [
+      "invalid messaging mode",
+      {
+        ...actionInput("openclaw"),
+        actions: actionInput("openclaw").actions.map((action) =>
+          action.kind === "apply-messaging-plan" ? { ...action, mode: "replace" } : action,
+        ),
+      },
+      /messaging intent must be apply or clear/,
     ],
   ])("fails closed for an incomplete or mismatched construction contract: %s", (_name, input, message) => {
     expect(() =>
@@ -443,6 +498,29 @@ describe("managed startup image runtime", () => {
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "NaN",
       }),
     ).rejects.toThrow(/finite positive seconds/u);
+    expect(lstat).not.toHaveBeenCalled();
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unknown live agent", "unknown-agent", "openclaw", /unsupported agent "unknown-agent"/u],
+    [
+      "configured and live agent mismatch",
+      "hermes",
+      "openclaw",
+      /managed startup profile targets openclaw, expected hermes/u,
+    ],
+  ] as const)("rejects %s before filesystem or coordinator mutation", async (_label, expectedAgent, profileAgent, message) => {
+    const profile = managedStartupE2eProfile(profileAgent);
+    const lstat = vi.spyOn(fs, "lstatSync");
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+
+    await expect(
+      applyManagedStartupImageProfile(expectedAgent, {
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+        [MANAGED_STARTUP_PROFILE_ENV]: encodeManagedStartupProfile(profile),
+      }),
+    ).rejects.toThrow(message);
     expect(lstat).not.toHaveBeenCalled();
     expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
   });

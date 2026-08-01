@@ -1864,7 +1864,8 @@ export function expectedSignalShards(
   workflowPath = ".github/workflows/e2e.yaml",
   targetIds: readonly string[] = [],
 ): Record<string, string[]> {
-  const selections = [...jobIds, ...targetIds];
+  const expandedJobIds = expandPrGateJobSelections(jobIds);
+  const selections = [...expandedJobIds, ...targetIds];
   if (new Set(selections).size !== selections.length) {
     throw new Error("E2E evidence jobs and targets must be unique");
   }
@@ -1877,7 +1878,7 @@ export function expectedSignalShards(
   const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const jobShards = Object.fromEntries(
-    jobIds.map((jobId) => {
+    expandedJobIds.map((jobId) => {
       const executionJobId = inventory.targetToJob.get(jobId) ?? jobId;
       if (!isObjectRecord(jobs[executionJobId])) {
         throw new Error(`E2E workflow does not define ${executionJobId} for ${jobId}`);
@@ -1941,6 +1942,14 @@ export function expectedSignalShards(
     ...jobShards,
     ...Object.fromEntries(targetIds.map((targetId) => [targetId, ["default"]])),
   };
+}
+
+export function expandPrGateJobSelections(jobIds: readonly string[]): string[] {
+  const jobs = [...jobIds];
+  if (jobs.includes("mcp-bridge") && !jobs.includes("openshell-credential-generation-window")) {
+    jobs.push("openshell-credential-generation-window");
+  }
+  return jobs;
 }
 
 function validateMainReference(value: unknown): string {
@@ -2550,7 +2559,7 @@ async function dispatchSelectedPrGate(options: {
   expectedCheckTitle: string;
   paths: ControllerPaths;
 }): Promise<void> {
-  const jobs = riskPlanRequiredJobIds(options.plan);
+  const jobs = expandPrGateJobSelections(riskPlanRequiredJobIds(options.plan));
   const targets = riskPlanRequiredTargetIds(options.plan);
   const expectedShards = expectedSignalShards(jobs, E2E_WORKFLOW_PATH, targets);
   const correlationId = randomUUID();

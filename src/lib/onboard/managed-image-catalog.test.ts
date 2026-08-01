@@ -68,6 +68,27 @@ function jsonResponse(body: Buffer, digestHeader?: `sha256:${string}`): Response
 }
 
 function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtureOptions = {}) {
+  const oversizedRootStream = {
+    cancelled: false,
+    contentLength: null as string | null,
+    pulls: 0,
+  };
+  const oversizedRootResponse = (): Response => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          oversizedRootStream.cancelled = true;
+        },
+        pull(controller) {
+          oversizedRootStream.pulls += 1;
+          controller.enqueue(new Uint8Array(1024 * 1024).fill(0x20));
+        },
+      }),
+      { headers: { "docker-content-digest": rootDigest } },
+    );
+    oversizedRootStream.contentLength = response.headers.get("content-length");
+    return response;
+  };
   const platform = options.platform ?? TEST_PLATFORM;
   const architecture = platform.slice("linux/".length);
   const repository = MANAGED_IMAGE_REPOSITORIES[agent].replace(/^ghcr\.io\//u, "");
@@ -155,18 +176,14 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
           },
         });
       case url.pathname === `${manifestPrefix}${rootReference}` && Boolean(authorization): {
-        switch (true) {
-          case options.missingRoot === true:
-            return new Response("not found", { status: 404 });
-          case options.oversizedRootBody === true:
-            return new Response(Buffer.alloc(2 * 1024 * 1024 + 1, 0x20), {
-              headers: { "docker-content-digest": rootDigest },
-            });
-        }
         const deliveredRootBody = options.rootBodyMismatch
           ? Buffer.concat([rootBody, Buffer.from(" ", "utf8")])
           : rootBody;
-        return jsonResponse(deliveredRootBody, rootDigest);
+        return options.missingRoot === true
+          ? new Response("not found", { status: 404 })
+          : options.oversizedRootBody === true
+            ? oversizedRootResponse()
+            : jsonResponse(deliveredRootBody, rootDigest);
       }
       case url.pathname === `${manifestPrefix}${platformDigest}` && Boolean(authorization):
         return jsonResponse(imageManifestBody, platformDigest);
@@ -185,27 +202,33 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
         url.pathname === `/ghcrblobs13/blobs/${configDigest}`:
         expect(authorization).toBeNull();
         expect(init?.redirect).toBe("manual");
-        switch (options.secondBlobRedirect) {
-          case true:
-            return new Response(null, {
+        return options.secondBlobRedirect === true
+          ? new Response(null, {
               status: 307,
               headers: {
                 location: `https://pkg-containers.githubusercontent.com/ghcrblobs14/blobs/${configDigest}?sig=second`,
               },
-            });
-        }
-        return jsonResponse(
-          options.configBodyMismatch
-            ? Buffer.concat([configBody, Buffer.from(" ", "utf8")])
-            : configBody,
-        );
+            })
+          : jsonResponse(
+              options.configBodyMismatch
+                ? Buffer.concat([configBody, Buffer.from(" ", "utf8")])
+                : configBody,
+            );
       default:
         return new Response("not found", { status: 404 });
     }
   });
   const fetchImpl = fetchMock as unknown as typeof fetch;
 
-  return { configDigest, fetchImpl, fetchMock, platform, platformDigest, rootDigest };
+  return {
+    configDigest,
+    fetchImpl,
+    fetchMock,
+    oversizedRootStream,
+    platform,
+    platformDigest,
+    rootDigest,
+  };
 }
 
 function catalogFixture(
@@ -322,6 +345,12 @@ describe("managed image GHCR catalog", () => {
         fetchImpl: fixture.fetchImpl,
       }),
     ).rejects.toThrow(/GHCR manifest exceeds the registry response limit/);
+    expect(fixture.oversizedRootStream).toMatchObject({
+      cancelled: true,
+      contentLength: null,
+    });
+    expect(fixture.oversizedRootStream.pulls).toBeGreaterThanOrEqual(3);
+    expect(fixture.oversizedRootStream.pulls).toBeLessThan(5);
   });
 
   it("rejects image-config bytes that do not match the manifest descriptor digest", async () => {
