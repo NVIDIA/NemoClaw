@@ -88,6 +88,7 @@ esac
       executable(
         supervisor,
         `#!/bin/sh
+set -e
 test ! -e "$REQUEST"
 test "$#" -eq 3
 test "$1" = "supervise"

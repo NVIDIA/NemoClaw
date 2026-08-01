@@ -1317,6 +1317,13 @@ async function runSnapshotRestoreUnlocked(
     } else {
       console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
+    if (Boolean(snapshotRestoreAuthority) !== Boolean(validateManagedRestoreBeforeMutation)) {
+      console.error(
+        `  Cannot restore managed snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
+      );
+      console.error(`  Destination '${targetSandbox}' was not changed.`);
+      snapshotExit(1);
+    }
     const result =
       snapshotRestoreAuthority && validateManagedRestoreBeforeMutation
         ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {

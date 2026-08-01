@@ -1551,7 +1551,7 @@ function hashSnapshotTree(backupPath: string): string {
   const hash = createHash("sha256");
   const visit = (directory: string, relativeDirectory: string): void => {
     const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
-      left.name.localeCompare(right.name),
+      left.name === right.name ? 0 : left.name < right.name ? -1 : 1,
     );
     for (const entry of entries) {
       const fullPath = path.join(directory, entry.name);
@@ -1559,26 +1559,25 @@ function hashSnapshotTree(backupPath: string): string {
         relativeDirectory.split(path.sep).join(path.posix.sep),
         entry.name,
       );
-      const stat = lstatSync(fullPath);
-      if (stat.isDirectory()) {
+      if (entry.isDirectory()) {
         hash.update(JSON.stringify(["directory", relativePath]), "utf8");
         visit(fullPath, relativePath);
         continue;
       }
-      if (stat.isSymbolicLink()) {
+      if (entry.isSymbolicLink()) {
         hash.update(JSON.stringify(["symlink", relativePath, readlinkSync(fullPath)]), "utf8");
         continue;
       }
-      if (!stat.isFile()) {
+      if (!entry.isFile()) {
         throw new Error(`snapshot contains unsupported entry '${relativePath}'`);
       }
-      hash.update(JSON.stringify(["file", relativePath, stat.size]), "utf8");
       const descriptor = openSync(fullPath, openFlags);
       try {
         const opened = fstatSync(descriptor);
-        if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino) {
+        if (!opened.isFile()) {
           throw new Error(`snapshot entry '${relativePath}' changed while it was opened`);
         }
+        hash.update(JSON.stringify(["file", relativePath, opened.size]), "utf8");
         const buffer = Buffer.allocUnsafe(64 * 1024);
         for (;;) {
           const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, null);

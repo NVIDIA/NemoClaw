@@ -41,6 +41,24 @@ class RuntimeRefreshCredentialStore {
     return this.register(state, nextRefreshToken);
   }
 
+  replace(state, nextRefreshToken) {
+    const sandbox = String(state?.sandbox || "").trim();
+    if (!sandbox) return null;
+    const hadPrevious = this.credentials.has(sandbox);
+    const previous = this.credentials.get(sandbox);
+    if (!this.register(state, nextRefreshToken)) return null;
+    const replacement = this.credentials.get(sandbox);
+    let pending = true;
+    return () => {
+      if (!pending) return false;
+      pending = false;
+      if (this.credentials.get(sandbox) !== replacement) return false;
+      if (hadPrevious) this.credentials.set(sandbox, previous);
+      else this.credentials.delete(sandbox);
+      return true;
+    };
+  }
+
   unregister(sandboxName) {
     const sandbox = String(sandboxName || "").trim();
     return sandbox ? this.credentials.delete(sandbox) : false;
