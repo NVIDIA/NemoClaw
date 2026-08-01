@@ -77,6 +77,17 @@ export type CheckpointSandboxRecreatePhase =
   | "registry_committing"
   | "completed";
 
+/** Secret-free runtime ownership fields needed to remove one replaced image. */
+export interface CheckpointSandboxRecreateSourceWorkload {
+  readonly openshellDriver: string | null;
+  readonly imageTag: string;
+  readonly workload: {
+    readonly kind: "legacy-dockerfile";
+    readonly reference: string | null;
+    readonly shared: boolean;
+  } | null;
+}
+
 /**
  * Secret-free journal for one same-name sandbox replacement. The containing
  * checkpoint supplies the session identity; the generation stamped into the
@@ -91,6 +102,7 @@ export interface CheckpointSandboxRecreateTransaction {
   readonly gatewayPort: number;
   readonly sourceRegistryFingerprint: string;
   readonly sourceLiveIdentityFingerprint: string | null;
+  readonly sourceWorkload: CheckpointSandboxRecreateSourceWorkload | null;
   readonly targetIntentFingerprint: string;
   readonly targetGeneration: string;
   readonly targetLiveIdentityFingerprint: string | null;
