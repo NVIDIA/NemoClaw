@@ -20,7 +20,7 @@ function stat(
   return {
     dev: overrides.dev ?? 8n,
     ino: overrides.ino ?? 9001n,
-    mode: overrides.mode ?? 0o700n,
+    mode: overrides.mode ?? 0o600n,
     uid: overrides.uid ?? 1000n,
     isDirectory: () => overrides.directory ?? false,
     isSocket: () => overrides.socket ?? true,
@@ -57,6 +57,7 @@ describe("Podman socket authority", () => {
     expect(authority).toMatchObject({
       device: "8",
       inode: "9001",
+      mode: "384",
       ownerUid: "1000",
       socketPath: SOCKET_PATH,
     });
@@ -84,6 +85,15 @@ describe("Podman socket authority", () => {
     ).toThrow("writable by another user or group");
   });
 
+  it.each([0o660n, 0o666n])("rejects another-user-writable socket mode %s", (mode) => {
+    expect(() =>
+      capturePodmanSocketAuthority(SOCKET_PATH, {
+        lstat: secureLstat({ mode }),
+        uid: 1000,
+      }),
+    ).toThrow("socket authority is writable by another user or group");
+  });
+
   it("rejects socket and directory replacement after qualification", () => {
     const expected = capturePodmanSocketAuthority(SOCKET_PATH, {
       lstat: secureLstat(),
@@ -93,6 +103,12 @@ describe("Podman socket authority", () => {
     expect(() =>
       assertPodmanSocketAuthority(expected, {
         lstat: secureLstat({ ino: 9002n }),
+        uid: 1000,
+      }),
+    ).toThrow("changed after it was qualified");
+    expect(() =>
+      assertPodmanSocketAuthority(expected, {
+        lstat: secureLstat({ mode: 0o400n }),
         uid: 1000,
       }),
     ).toThrow("changed after it was qualified");

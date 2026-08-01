@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import {
   type ContainerEngine,
   type ContainerEngineCommandCapture,
@@ -24,10 +26,28 @@ export interface PodmanContainerEngineOptions {
   ) => void;
 }
 
+function podmanAuthorityId(authority: PodmanSocketAuthority): string {
+  const canonical = JSON.stringify({
+    socketPath: authority.socketPath,
+    device: authority.device,
+    inode: authority.inode,
+    mode: authority.mode,
+    ownerUid: authority.ownerUid,
+    directoryChain: authority.directoryChain.map(({ device, inode, mode, ownerUid, path }) => ({
+      device,
+      inode,
+      mode,
+      ownerUid,
+      path,
+    })),
+  });
+  return `podman-sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
+}
+
 /**
  * Bind one Podman API socket to one provider operation. Callers inject the
- * returned value directly; unlike the retired donor prototype, this never
- * changes how Docker-named helpers behave in the rest of the process.
+ * returned value directly. The adapter never changes process-wide engine
+ * selection or how Docker-named helpers behave elsewhere in the process.
  */
 export function createPodmanContainerEngine(
   options: PodmanContainerEngineOptions,
@@ -37,6 +57,7 @@ export function createPodmanContainerEngine(
     operation: options.operation,
     engineId: "podman",
     displayName: "Podman",
+    authorityId: podmanAuthorityId(options.socketAuthority),
     executable: options.executable ?? "podman",
     endpointArgs: ["--url", `unix://${options.socketAuthority.socketPath}`],
     capture: options.capture,

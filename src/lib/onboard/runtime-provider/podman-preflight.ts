@@ -11,7 +11,8 @@ export const MINIMUM_PODMAN_VERSION = "5.0.0";
 
 export interface PodmanHostPreflightReceipt {
   readonly providerId: "podman";
-  readonly version: string;
+  readonly clientVersion: string;
+  readonly serverVersion: string;
   readonly rootless: true;
   readonly cgroupVersion: "v2";
   readonly os: "linux";
@@ -77,6 +78,16 @@ export function isPodmanVersionSupported(
   return true;
 }
 
+function requireSupportedVersion(value: string, subject: "client" | "server"): string {
+  const version = dottedVersion(value)?.join(".") ?? "";
+  if (!isPodmanVersionSupported(version)) {
+    throw new PodmanHostPreflightError(
+      `Podman ${MINIMUM_PODMAN_VERSION} or newer is required on the ${subject}; detected '${version || "unavailable"}'`,
+    );
+  }
+  return version;
+}
+
 function commandDetail(result: ContainerEngineCommandResult): string {
   return (result.stderr || result.stdout || result.error?.message || "unavailable")
     .replace(/\s+/gu, " ")
@@ -139,16 +150,26 @@ export function qualifyPodmanHost(
     );
   }
 
-  const versionResult = requireSuccessful(
-    "version inspection",
+  const clientVersionResult = requireSuccessful(
+    "client version inspection",
     engine.captureHost(["--version"], 10_000),
   );
-  const version = dottedVersion(versionResult.stdout)?.join(".") ?? "";
-  if (!isPodmanVersionSupported(version)) {
-    throw new PodmanHostPreflightError(
-      `Podman ${MINIMUM_PODMAN_VERSION} or newer is required; detected '${version || "unavailable"}'`,
-    );
+  const clientVersion = requireSupportedVersion(clientVersionResult.stdout, "client");
+
+  const serverVersionResult = requireSuccessful(
+    "server version inspection",
+    engine.capture(["version", "--format", "json"], 10_000),
+  );
+  let versionInfo: unknown;
+  try {
+    versionInfo = JSON.parse(serverVersionResult.stdout);
+  } catch {
+    throw new PodmanHostPreflightError("the Podman API returned unreadable version information");
   }
+  const serverVersion = requireSupportedVersion(
+    textField(field(versionInfo, "Server", "server"), "Version", "version"),
+    "server",
+  );
 
   const infoResult = requireSuccessful(
     "rootless API inspection",
@@ -200,7 +221,8 @@ export function qualifyPodmanHost(
 
   return Object.freeze({
     providerId: "podman",
-    version,
+    clientVersion,
+    serverVersion,
     rootless: true,
     cgroupVersion: "v2",
     os: "linux",
@@ -219,7 +241,7 @@ export function inspectPodmanHost(
       group: "Host",
       label: "Podman runtime",
       status: "ok",
-      detail: `rootless ${receipt.version}, cgroups v2, ${receipt.os}/${receipt.architecture}`,
+      detail: `rootless server ${receipt.serverVersion} (client ${receipt.clientVersion}), cgroups v2, ${receipt.os}/${receipt.architecture}`,
     };
   } catch (error) {
     const detail = (error instanceof Error ? error.message : String(error))

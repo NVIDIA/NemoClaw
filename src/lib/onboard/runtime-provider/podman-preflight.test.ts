@@ -24,15 +24,28 @@ const INFO = JSON.stringify({
 function engine(
   overrides: Partial<ContainerEngine> & {
     readonly info?: string;
+    readonly serverVersion?: string;
     readonly version?: string;
     readonly idMap?: string;
   } = {},
 ): ContainerEngine {
-  const capture = vi.fn((args: readonly string[]) => ({
-    status: 0,
-    stdout: args[0] === "info" ? (overrides.info ?? INFO) : "",
-    stderr: "",
-  }));
+  const capture = vi.fn((args: readonly string[]) => {
+    switch (args[0]) {
+      case "info":
+        return { status: 0, stdout: overrides.info ?? INFO, stderr: "" };
+      case "version":
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            Client: { Version: overrides.version ?? "5.6.2" },
+            Server: { Version: overrides.serverVersion ?? "5.6.2" },
+          }),
+          stderr: "",
+        };
+      default:
+        return { status: 125, stdout: "", stderr: "unexpected command" };
+    }
+  });
   const captureHost = vi.fn((args: readonly string[]) => ({
     status: 0,
     stdout:
@@ -45,6 +58,7 @@ function engine(
     operation: overrides.operation ?? "host-doctor",
     engineId: overrides.engineId ?? "podman",
     displayName: overrides.displayName ?? "Podman",
+    authorityId: overrides.authorityId ?? "test:podman-socket",
     capture: overrides.capture ?? capture,
     captureHost: overrides.captureHost ?? captureHost,
   };
@@ -66,7 +80,8 @@ describe("Podman host preflight", () => {
 
     expect(qualifyPodmanHost(runtime, { platform: "linux", architecture: "x64" })).toEqual({
       providerId: "podman",
-      version: "5.6.2",
+      clientVersion: "5.6.2",
+      serverVersion: "5.6.2",
       rootless: true,
       cgroupVersion: "v2",
       os: "linux",
@@ -74,6 +89,7 @@ describe("Podman host preflight", () => {
       networkBackend: "netavark",
     });
     expect(runtime.capture).toHaveBeenCalledWith(["info", "--format", "json"], 15_000);
+    expect(runtime.capture).toHaveBeenCalledWith(["version", "--format", "json"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledWith(["--version"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledWith(
       ["unshare", "cat", "/proc/self/uid_map"],
@@ -99,6 +115,15 @@ describe("Podman host preflight", () => {
     expect(() => qualifyPodmanHost(engine(), { platform: "linux", architecture: "arm64" })).toThrow(
       "does not match host 'arm64'",
     );
+  });
+
+  it("rejects an old API service even when the local client is supported", () => {
+    expect(() =>
+      qualifyPodmanHost(engine({ version: "5.6.2", serverVersion: "4.9.9" }), {
+        platform: "linux",
+        architecture: "x64",
+      }),
+    ).toThrow("required on the server");
   });
 
   it.each([
@@ -162,7 +187,7 @@ describe("Podman host preflight", () => {
       group: "Host",
       label: "Podman runtime",
       status: "fail",
-      detail: "Podman preflight failed: version inspection: runtime unavailable",
+      detail: "Podman preflight failed: client version inspection: runtime unavailable",
       hint: "start a rootless Podman 5 API service on Linux and retry",
     });
   });

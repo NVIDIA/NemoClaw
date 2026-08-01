@@ -9,6 +9,7 @@ const AUTHORITY = {
   directoryChain: [],
   device: "8",
   inode: "9001",
+  mode: "384",
   ownerUid: "1000",
   socketPath: "/run/user/1000/podman/podman.sock",
 } as const satisfies PodmanSocketAuthority;
@@ -39,6 +40,24 @@ describe("Podman container engine command adapter", () => {
       operation: "sandbox-lifecycle",
       engineId: "podman",
       displayName: "Podman",
+      authorityId: expect.stringMatching(/^podman-sha256:[0-9a-f]{64}$/u),
     });
+  });
+
+  it("gives different socket authorities different opaque identities", () => {
+    const first = createPodmanContainerEngine({
+      operation: "host-doctor",
+      socketAuthority: AUTHORITY,
+      assertAuthority: vi.fn(),
+      capture: vi.fn(),
+    });
+    const second = createPodmanContainerEngine({
+      operation: "sandbox-lifecycle",
+      socketAuthority: { ...AUTHORITY, inode: "9002" },
+      assertAuthority: vi.fn(),
+      capture: vi.fn(),
+    });
+
+    expect(first.authorityId).not.toBe(second.authorityId);
   });
 });
