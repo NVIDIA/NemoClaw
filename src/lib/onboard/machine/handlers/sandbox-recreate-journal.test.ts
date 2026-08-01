@@ -188,10 +188,14 @@ it("removes the journaled source image after resuming a registered replacement",
     lifecycleGeneration: "missing",
     lifecycleLiveIdentityFingerprint: targetIdentity,
   };
-  const createSandbox = vi.fn(async () => {
-    if (!replacementRegistered) {
-      const transaction = session.checkpoint?.sandboxRecreate;
-      if (!transaction) throw new Error("missing recreate transaction");
+  const createSandbox = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      const transaction =
+        session.checkpoint?.sandboxRecreate ??
+        (() => {
+          throw new Error("missing recreate transaction");
+        })();
       advanceSandboxRecreateTransaction(session, transaction.id, "deleting");
       advanceSandboxRecreateTransaction(session, transaction.id, "deleted");
       advanceSandboxRecreateTransaction(session, transaction.id, "creating");
@@ -204,9 +208,9 @@ it("removes the journaled source image after resuming a registered replacement",
         state: "ready",
         liveIdentityFingerprint: targetIdentity,
       });
-    }
-    return "saved";
-  });
+      return "saved";
+    })
+    .mockResolvedValue("saved");
   const retireReplacedSandboxWorkload = vi
     .fn()
     .mockImplementationOnce(() => {
