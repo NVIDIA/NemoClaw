@@ -152,14 +152,17 @@ and compare-and-clear behavior is covered by
 `prepareStoppedPodmanBootstrapReplacement` is the next internal, unregistered
 bootstrap primitive. It requires the authority-bound Podman engine and a
 durable stopped-watcher lease from the preceding slice. Before its first
-container mutation, it writes a private, secret-free journal that binds the
+runtime mutation, it writes a private, secret-free journal that binds the
 bootstrap identity, engine authority, watcher lease, exact running original,
-and intended replacement specification. The replacement is created under a
-deterministic staging name with final managed labels, an immutable image
-content ID, and image-owned entrypoint and command arguments. Environment
-values travel only through a mode-`0600` temporary file. The primitive accepts
-the replacement only after two stable inspections prove its full runtime ID,
-name, image, labels, environment, entrypoint, command, and stopped state.
+and intended replacement specification. It then creates and records one
+deterministic, labelled, Podman-managed local volume for image-transaction
+state at `/var/lib/nemoclaw`. The replacement is created under a deterministic
+staging name with final managed labels, an immutable image content ID, and
+image-owned entrypoint and command arguments. Environment values travel only
+through a mode-`0600` temporary file. The primitive accepts the replacement
+only after stable volume and container inspections prove the volume driver,
+labels, mountpoint, writable shared relabel, full runtime ID, name, image,
+labels, environment, entrypoint, command, and stopped state.
 
 `stopExactPodmanBootstrapOriginal` re-proves both identities before stopping
 the original and records that boundary only after the original is stably
@@ -167,10 +170,11 @@ stopped while the replacement remains exact and stopped. A failure before the
 later commit boundary must call `rollbackPodmanBootstrapBeforeCommit`.
 Rollback first records an exclusive durable decision, reconciles one exact
 staging candidate when the create acknowledgement was lost, removes only the
-exact stopped replacement, restarts and re-proves the exact original, and then
-clears the journal. Ambiguous candidates, changed identities, changed engine
-authority, and premature replacement startup fail closed. The caller keeps the
-watcher lease stopped throughout and owns its later release.
+exact stopped replacement and owned state volume, restarts and re-proves the
+exact original, and then clears the journal. Ambiguous candidates, changed
+identities, changed volume ownership, changed engine authority, and premature
+replacement startup fail closed. The caller keeps the watcher lease stopped
+throughout and owns its later release.
 
 This slice neither starts the replacement nor changes registry, agent state,
 or user-visible runtime selection. Commit, all-agent bootstrap, durable resume,
