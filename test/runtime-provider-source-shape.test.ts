@@ -56,4 +56,54 @@ describe("runtime provider central source boundary", () => {
     expect(Object.values(providerContract).join("\n")).not.toMatch(/managed-bootstrap/u);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
   });
+
+  // source-shape-contract: security -- The bootstrap protocol and image-owned trampoline must remain dormant until a later provider slice supplies runtime packaging and exact activation
+  it("keeps managed bootstrap provider-neutral, image-owned, and dormant", () => {
+    const bootstrapProtocol = [
+      readFileSync(join(repoRoot, "src/lib/onboard/managed-bootstrap/adapter.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/managed-bootstrap/envelope.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/managed-bootstrap/index.ts"), "utf8"),
+    ];
+    const activationSources = [
+      readFileSync(join(repoRoot, "src/lib/onboard.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/docker-gpu-sandbox-create.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-create-launch.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-create-step.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-gpu-create-flow.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-gpu-create-run-attempt.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/contract.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/current.ts"), "utf8"),
+      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/registry.ts"), "utf8"),
+    ];
+    const dockerProvider = readFileSync(
+      join(repoRoot, "src/lib/onboard/runtime-provider/docker.ts"),
+      "utf8",
+    );
+    const managedDockerfiles = [
+      readFileSync(join(repoRoot, "Dockerfile"), "utf8"),
+      readFileSync(join(repoRoot, "agents/hermes/Dockerfile"), "utf8"),
+      readFileSync(join(repoRoot, "agents/langchain-deepagents-code/Dockerfile"), "utf8"),
+    ];
+
+    expect(bootstrapProtocol.join("\n")).not.toMatch(
+      /from\s+["'][^"']*(?:docker|podman)[^"']*["']/iu,
+    );
+    expect(bootstrapProtocol.join("\n")).not.toMatch(
+      /(?:driverId|providerId)\s*(?:===|!==)\s*["'](?:docker|podman)["']/iu,
+    );
+    expect(bootstrapProtocol.join("\n")).not.toMatch(/\b(?:docker|podman|openshell|mxc)\b/iu);
+    expect(activationSources.join("\n")).not.toMatch(
+      /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
+    );
+    expect(dockerProvider).not.toMatch(
+      /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
+    );
+    expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
+
+    for (const dockerfile of managedDockerfiles) {
+      expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
+      expect(dockerfile).not.toContain("managed-startup-image-runtime.cjs");
+      expect(dockerfile).not.toContain("nemoclaw-managed-startup-hold");
+    }
+  });
 });
