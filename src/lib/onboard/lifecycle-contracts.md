@@ -181,11 +181,37 @@ replacement startup fail closed. The caller keeps the watcher lease stopped
 throughout and owns its later release.
 
 This slice neither starts the replacement nor changes registry, agent state,
-or user-visible runtime selection. Commit, all-agent bootstrap, durable resume,
-and activation remain separate work in epic
+or user-visible runtime selection. Commit, durable resume, and activation
+remain separate work in epic
 [#7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Journal and exact
 rollback behavior is covered by `podman-bootstrap-journal.test.ts` and
 `podman-bootstrap-replacement.test.ts`.
+
+## Dormant Podman image-owned bootstrap transaction
+
+`startPodmanBootstrapImageTransaction` is the internal, unregistered
+continuation of the exact prepared replacement. It requires the
+`PodmanBootstrapPreparedReplacement`, the same authority-bound engine and
+journal store, and the same stopped-watcher lease. Before request staging and
+around each mutation, it reloads the journal and requires the exact
+`original-stopped` phase. Stable inspections revalidate the full runtime ID,
+immutable image ID, staging name, state-volume name and mountpoint, and
+writable state-volume mount.
+
+The transaction stages one root-apply envelope for the selected agent from a
+mode-`0400` host temporary file into the stopped replacement. It does not use
+`container exec` or a `--user` override. It then starts that exact replacement.
+`awaitPodmanBootstrapImageTransaction` retains the same journal, engine,
+watcher, runtime, and volume authority while polling. It accepts only a
+bounded, stable mode-`0444` completion that authenticates the selected agent,
+bootstrap identity, and managed-startup profile.
+
+When staging, startup, or completion fails after the original stop, this slice
+does not compensate. In the unresolved state, the original is stopped, the
+replacement may remain running, the journal remains in `original-stopped`, and
+the watcher remains stopped. Later slices own compensation, durable resume,
+commit, watcher release, and user-visible activation. Coverage is in
+`podman-image-transaction.test.ts`.
 
 ## Durable resumed recreate journal
 
