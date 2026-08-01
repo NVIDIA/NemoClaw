@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
-} from "./channels";
+import { createBuiltInChannelManifestRegistry } from "./channels/built-ins";
+import { createBuiltInRenderTemplateResolver } from "./channels/template-resolver";
 import { planCredentialBindings } from "./compiler/engines/credential-binding-engine";
 import { planHostForward } from "./compiler/engines/host-forward-engine";
 import type { ManifestCompilerContext } from "./compiler/types";
