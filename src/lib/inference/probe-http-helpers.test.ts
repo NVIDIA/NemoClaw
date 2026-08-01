@@ -7,6 +7,8 @@ const {
   buildValidationProbeTimingProfile,
   getKimiK26ValidationProbeCurlArgs,
   getValidationProbeCurlArgs,
+  getStreamingEventProbeCurlArgs,
+  STREAMING_EVENT_PROBE_MAX_SECONDS,
 } = require("./probe-http-helpers");
 
 afterEach(() => {
@@ -70,6 +72,34 @@ describe("validation probe curl timing helpers", () => {
       "10",
       "--max-time",
       "300",
+    ]);
+  });
+
+  // Streaming probe carries its own short deadline so a stall can't hang onboard (#7792).
+  it("caps the streaming event probe max-time below the standard budget (#7792)", () => {
+    expect(getStreamingEventProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "5",
+    ]);
+    expect(STREAMING_EVENT_PROBE_MAX_SECONDS).toBe(5);
+    // Non-stream standard budget stays at the full 15s for comparison.
+    expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "15",
+    ]);
+  });
+
+  it("keeps the streaming event probe bounded even when the env raises the budget (#7792)", () => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "300");
+    expect(getStreamingEventProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "5",
     ]);
   });
 });

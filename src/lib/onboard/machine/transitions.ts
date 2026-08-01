@@ -84,6 +84,20 @@ export class InvalidOnboardMachineTransitionError extends Error {
   }
 }
 
+export class OnboardInterruptedError extends Error {
+  readonly state: OnboardMachineState;
+  readonly step: string | null;
+
+  constructor(state: OnboardMachineState, step: string | null, next: OnboardMachineState) {
+    super(
+      `Onboarding recorded ${state}${step ? ` during the ${step} step` : ""} before it could continue to ${next}. Resume to retry that step.`,
+    );
+    this.name = "OnboardInterruptedError";
+    this.state = state;
+    this.step = step;
+  }
+}
+
 export function isOnboardMachineState(value: unknown): value is OnboardMachineState {
   return typeof value === "string" && ONBOARD_MACHINE_STATES.includes(value as OnboardMachineState);
 }
@@ -116,6 +130,21 @@ export function getOnboardMachineTransition(
       (transition) => transition.from === from && transition.to === to,
     ) ?? null
   );
+}
+
+export interface OnboardInterruptionMarker {
+  step: string | null;
+  interrupted?: boolean;
+}
+
+export function assertOnboardNotInterrupted(
+  from: OnboardMachineState,
+  next: OnboardMachineState,
+  failure: OnboardInterruptionMarker | null = null,
+): void {
+  if (from !== "failed") return;
+  if (!failure?.interrupted) return;
+  throw new OnboardInterruptedError(from, failure.step, next);
 }
 
 export function assertValidOnboardMachineTransition(
