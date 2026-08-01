@@ -34,6 +34,8 @@ export interface ContainerEngine {
   readonly operation: ContainerEngineOperationScope;
   readonly engineId: string;
   readonly displayName: string;
+  /** Opaque identity for the exact endpoint authority bound to this command. */
+  readonly authorityId: string;
   readonly capture: (args: readonly string[], timeoutMs?: number) => ContainerEngineCommandResult;
   readonly captureHost: (
     args: readonly string[],
@@ -45,6 +47,7 @@ export interface ContainerEngineCommandOptions {
   readonly operation: ContainerEngineOperationScope;
   readonly engineId: string;
   readonly displayName: string;
+  readonly authorityId: string;
   readonly executable: string;
   readonly endpointArgs?: readonly string[];
   readonly capture?: ContainerEngineCommandCapture;
@@ -56,6 +59,7 @@ const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const ENGINE_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
+const AUTHORITY_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const EXECUTABLE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
@@ -174,6 +178,9 @@ export function createContainerEngineCommand(
   if (!ENGINE_ID_PATTERN.test(options.engineId)) {
     throw new Error("Container engine identity is invalid.");
   }
+  if (!AUTHORITY_ID_PATTERN.test(options.authorityId)) {
+    throw new Error("Container engine authority identity is invalid.");
+  }
   const executable = normalizedExecutable(options.executable);
   const displayName = boundedText(options.displayName, "Container engine display name");
   const endpointArgs = normalizedArguments(
@@ -193,6 +200,7 @@ export function createContainerEngineCommand(
     operation: options.operation,
     engineId: options.engineId,
     displayName,
+    authorityId: options.authorityId,
     capture: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS) =>
       run(args, timeoutMs, true),
     captureHost: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS) =>
