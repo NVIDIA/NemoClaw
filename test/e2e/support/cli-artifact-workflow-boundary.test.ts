@@ -284,6 +284,16 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(runIdentityValidation(overrides).status).not.toBe(0);
   });
 
+  it.each([
+    ["workflow SHA", { workflowSha: "e".repeat(40) }, "consumer and producer workflow SHAs differ"],
+    ["run ID", { runId: "98766" }, "consumer and producer workflow run identities differ"],
+    ["run attempt", { runAttempt: "2" }, "consumer and producer workflow run identities differ"],
+  ])("rejects a mismatched %s before artifact download", (_case, overrides, expectedError) => {
+    const result = runIdentityValidation(overrides);
+    expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(expectedError);
+  });
+
   it("restores a payload whose compiled identity matches the candidate commit (#7915)", () => {
     const fixture = runRestoreValidation();
     try {
