@@ -54,6 +54,33 @@ export interface SetupMessagingChannelsDeps {
   readonly selectionCompleted?: boolean;
 }
 
+export interface CreateSetupMessagingChannelsDeps {
+  readonly step: NonNullable<SetupMessagingChannelsDeps["step"]>;
+  readonly note: NonNullable<SetupMessagingChannelsDeps["note"]>;
+  readonly isNonInteractive: NonNullable<SetupMessagingChannelsDeps["isNonInteractive"]>;
+  readonly prompt: NonNullable<GooglechatTunnelRuntimeDeps["prompt"]>;
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
+}
+
+export function createSetupMessagingChannels(deps: CreateSetupMessagingChannelsDeps) {
+  return (
+    agent: AgentDefinition | null = null,
+    existingChannels: string[] | null = null,
+    sandboxName: string | null = null,
+    options: { readonly selectionCompleted?: boolean } = {},
+  ): Promise<string[]> =>
+    setupMessagingChannels(agent, existingChannels, {
+      step: deps.step,
+      note: deps.note,
+      isNonInteractive: deps.isNonInteractive,
+      sandboxName,
+      selectionCompleted: options.selectionCompleted,
+      googlechatTunnelRuntime: deps.googlechatTunnelRuntime
+        ? { ...deps.googlechatTunnelRuntime, prompt: deps.prompt }
+        : undefined,
+    });
+}
+
 const getMessagingToken = (envKey: string): string | null =>
   normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
 

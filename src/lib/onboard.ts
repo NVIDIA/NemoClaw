@@ -136,13 +136,14 @@ const {
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
 const {
-  setupMessagingChannels: setupMessagingChannelsImpl,
+  createSetupMessagingChannels,
   readMessagingPlanFromEnv,
   writePlanToEnv,
   clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
-} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+} =
+  require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const { applySessionRecovery } =
   require("./onboard/session-recovery") as typeof import("./onboard/session-recovery");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") = require("./onboard/bedrock-runtime");
@@ -3694,26 +3695,12 @@ function getRecordedMessagingChannelsForResume(
   });
 }
 
-async function setupMessagingChannels(
-  agent: AgentDefinition | null = null,
-  existingChannels: string[] | null = null,
-  sandboxName: string | null = null,
-  options: {
-    readonly selectionCompleted?: boolean;
-    readonly googlechatTunnelRuntime?: OnboardOptions["googlechatTunnelRuntime"];
-  } = {},
-): Promise<string[]> {
-  return setupMessagingChannelsImpl(agent, existingChannels, {
-    step,
-    note,
-    isNonInteractive,
-    sandboxName,
-    selectionCompleted: options.selectionCompleted,
-    googlechatTunnelRuntime: options.googlechatTunnelRuntime
-      ? { ...options.googlechatTunnelRuntime, prompt }
-      : undefined,
-  });
-}
+const setupMessagingChannels = createSetupMessagingChannels({
+  step,
+  note,
+  isNonInteractive,
+  prompt,
+});
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
@@ -4422,11 +4409,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         startRecordedStep,
         getRecordedMessagingChannelsForResume,
         showMessagingStage: () => step(5, 8, "Messaging channels"),
-        setupMessagingChannels: (agent, existingChannels, sandboxName, options) =>
-          setupMessagingChannels(agent, existingChannels, sandboxName, {
-            ...options,
-            googlechatTunnelRuntime: opts.googlechatTunnelRuntime,
-          }),
+        setupMessagingChannels: createSetupMessagingChannels({
+          step,
+          note,
+          isNonInteractive,
+          prompt,
+          googlechatTunnelRuntime: opts.googlechatTunnelRuntime,
+        }),
         readMessagingPlanFromEnv,
         writePlanToEnv,
         clearPlanEnv,
