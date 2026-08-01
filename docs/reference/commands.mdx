@@ -839,6 +839,8 @@ Use `--no-sandbox-gpu`, `--no-gpu`, or `NEMOCLAW_SANDBOX_GPU=0` when you want to
 
 List all registered sandboxes with their model, provider, and policy presets.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
+Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+The row does not include the former derived `connected` boolean.
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 <AgentOnly variant="openclaw,hermes">
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
@@ -1409,7 +1411,7 @@ When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the las
 It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access.
 Failed proofs include remediation guidance for the detected platform.
 
-A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
+An `SSH sessions` line reports how many active SSH sessions the sandbox has, or `none`; the line is omitted when the session probe is unavailable.
 <AgentOnly variant="openclaw,hermes">
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
 </AgentOnly>
@@ -3164,7 +3166,7 @@ For gateway-based messaging agents, it also reports messaging overlap warnings.
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
-For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
+For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
