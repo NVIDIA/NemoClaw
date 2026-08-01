@@ -98,7 +98,7 @@ describe("PR review advisor terminology evidence", () => {
     expect(trace.headSamples.join("\n")).not.toContain("well-known");
   });
 
-  it("commits traced semantic decisions and rejects an unsupported justified modifier", async () => {
+  it("rejects a justified term without a concrete contrast and commits the corrected replacement decision", async () => {
     const fixture = fixtureRepository();
     const ledger = createTerminologyLedger(fixture.head);
     const controller = createTerminologyToolController({
