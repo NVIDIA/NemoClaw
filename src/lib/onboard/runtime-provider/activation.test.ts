@@ -3,8 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
-import { MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION } from "../managed-image/contract";
-import { MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION } from "../managed-image/contract";
+import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+} from "../managed-image/contract";
 import {
   composeActivatedRuntimeProviderBundles,
   createRuntimeProviderActivationCatalog,
@@ -130,6 +132,14 @@ describe("runtime provider activation catalog", () => {
     const bundle = completeBundle();
     const incomplete = {
       ...bundle,
+      ...(surface === "cleanup"
+        ? {
+            capabilities: {
+              ...bundle.capabilities,
+              workloadImageCleanup: false,
+            },
+          }
+        : {}),
       [surface]: {
         providerId: PROVIDER_ID,
         supported: false,

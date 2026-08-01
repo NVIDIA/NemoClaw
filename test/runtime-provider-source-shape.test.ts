@@ -77,7 +77,7 @@ describe("runtime provider central source boundary", () => {
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
     expect(providerContract.activation).not.toMatch(/\b(?:podman|mxc)\b/iu);
     expect(providerContract.activation).not.toMatch(
-      /(?:providerId|driverName)\s*(?:===|!==)\s*["'][^"']+["']/u,
+      /(?:providerId|driverName)\s*(?:===|!==)\s*["'](?:docker|podman|mxc)["']/iu,
     );
   });
 

@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type {
+  RuntimeProviderActivationCatalog,
+  RuntimeProviderActivationDeclaration,
+  RuntimeProviderActivationRegistration,
+} from "./activation";
+export {
+  composeActivatedRuntimeProviderBundles,
+  createRuntimeProviderActivationCatalog,
+  RuntimeProviderActivationError,
+} from "./activation";
+export type {
   RuntimeProviderBundle,
   RuntimeProviderBundleRegistry,
   RuntimeProviderChannelStopTransport,
@@ -16,16 +26,6 @@ export {
   createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
-export type {
-  RuntimeProviderActivationCatalog,
-  RuntimeProviderActivationDeclaration,
-  RuntimeProviderActivationRegistration,
-} from "./activation";
-export {
-  composeActivatedRuntimeProviderBundles,
-  createRuntimeProviderActivationCatalog,
-  RuntimeProviderActivationError,
-} from "./activation";
 export type { RuntimeProviderDestructiveCleanupAuthority } from "./registry";
 export {
   normalizeRuntimeProviderIdentity,
