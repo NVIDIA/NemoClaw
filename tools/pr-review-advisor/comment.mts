@@ -595,12 +595,13 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
 }
 
 function trustedCoverageIds(
-  items: unknown[] | undefined,
+  items: unknown,
   inventory: TrustedE2eRecommendationInventory,
 ): string[] {
   const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
   const seen = new Set<string>();
-  return (items ?? []).flatMap((item) => {
+  const entries = Array.isArray(items) ? items : [];
+  return entries.flatMap((item) => {
     if (!isRecord(item)) return [];
     const id = item.id;
     if (typeof id !== "string" || !allowedIds.has(id) || seen.has(id)) return [];
@@ -610,20 +611,24 @@ function trustedCoverageIds(
 }
 
 function trustedTargetIds(
-  items: unknown[] | undefined,
+  items: unknown,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,
 ): string[] {
   const allowedJobs = new Set(inventory.allowedJobIds);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
+  const allowedSelectorTypes = new Set<string>(inventory.selectorTypes);
   const seen = new Set<string>();
-  return (items ?? []).flatMap((item) => {
+  const entries = Array.isArray(items) ? items : [];
+  return entries.flatMap((item) => {
     if (!isRecord(item)) return [];
     const id = item.id;
     const selectorType = item.selectorType;
     if (
       typeof id !== "string" ||
+      typeof selectorType !== "string" ||
+      !allowedSelectorTypes.has(selectorType) ||
       item.workflow !== inventory.workflow ||
       item.required !== required
     )

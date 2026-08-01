@@ -57,6 +57,7 @@ NemoClaw still excludes credential-like paths such as `.env*`, `.ssh/`, `.aws/`,
 
 NemoClaw sends user-supplied `--from` contexts to the OpenShell gateway builder and reserves its host-side local BuildKit prebuild for contexts that NemoClaw generates itself.
 On a local Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and the custom image build continues through the gateway.
+The managed Hermes Dockerfile keeps image probes in a checked-in runner so OpenShell gateway builders without Dockerfile heredoc support execute the same assertions.
 
 ```text
 my-hermes-plugin-sandbox/

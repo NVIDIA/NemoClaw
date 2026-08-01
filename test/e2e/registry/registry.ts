@@ -43,6 +43,10 @@ export function listTargets(): TargetDefinition[] {
   return [...registry.targets].sort((a, b) => a.id.localeCompare(b.id));
 }
 
+export function hasRegisteredRuntimeProfile(profileId: string): boolean {
+  return registry.targets.some((target) => target.runtimeCase?.profileId === profileId);
+}
+
 export function getTarget(id: string): TargetDefinition | undefined {
   return registry.byId.get(id);
 }
