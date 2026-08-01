@@ -161,6 +161,7 @@ type RemoteModelValidatorDeps = {
     model: string,
     credentialEnv: string,
     helpUrl: string | null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ) => Promise<ValidationResult>;
   validateCustomAnthropicSelection: (
     label: string,
@@ -260,6 +261,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
+          state.inferenceCapabilityCache,
         );
         if (validation.ok) {
           if (validation.pinnedAddresses)
