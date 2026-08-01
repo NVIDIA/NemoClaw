@@ -161,11 +161,11 @@ Provider inputs are detached and deeply frozen at the extension boundary, and ce
 Docker lifecycle inspection and GPU inspection remain inside the Docker provider adapter.
 The provider-neutral receipt can represent another provider, including an MXC-style implementation, without adding provider switches to snapshot or rebuild orchestration.
 
-Legacy and custom-image snapshots retain their state-only backup and restore path until the
-[incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744) completes managed
-create finalization, clone/rebind, recovery, and activation for every supported agent. The path can
-retire only after those slices prove managed authority before mutation and exact recovery across
-OpenClaw, Hermes, and Deep Agents Code while legacy/custom-image restores keep parity coverage.
+Legacy and custom-image snapshots retain their state-only backup and restore path. The managed
+authority path may become the default for managed images only after the
+[incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744) completes create
+finalization, clone/rebind, recovery, and activation for every supported agent with authority proven
+before mutation. Any later consolidation must preserve legacy and custom-image restore parity.
 This contract does not activate another runtime provider or managed-image onboarding path.
 Ordinary onboard recreation and create finalization remain deferred under
 [#7744](https://github.com/NVIDIA/NemoClaw/issues/7744) because the replacement target is not
