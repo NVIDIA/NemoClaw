@@ -464,7 +464,7 @@ export async function verifyGpuSandboxAccessAfterReady(
 export function verifyGpuSandboxLocalInferenceAfterReady(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
-  options: GpuSandboxAfterReadyOptions,
+  options: Omit<GpuSandboxAfterReadyOptions, "verifyGpuOrExit" | "selectedMode">,
 ): void {
   if (options.selectedRoute !== "compatibility") return;
   const verification = verifyDockerGpuSandboxLocalInference(config, provider, {
@@ -492,5 +492,35 @@ export function verifyGpuSandboxLocalInferenceAfterReady(
     throw new Error(
       `GPU sandbox local inference reachability failed for ${verification.endpoint}.`,
     );
+  }
+}
+
+/**
+ * Keep the managed create transaction reversible until the sandbox's real
+ * local-inference route is proven. Rollback failures are attached to the
+ * original verification failure so callers retain both pieces of evidence.
+ */
+export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+  config: DockerGpuLocalInferenceConfig,
+  provider: string | null | undefined,
+  options: Omit<GpuSandboxAfterReadyOptions, "verifyGpuOrExit" | "selectedMode">,
+  runtimePatch: Pick<
+    ManagedBootstrapRuntimePatch,
+    "commitAfterReady" | "rollbackManagedStartupAfterCreateFailure"
+  >,
+): Promise<void> {
+  try {
+    verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
+    await runtimePatch.commitAfterReady();
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+    } catch (rollbackError) {
+      (
+        failure as Error & { managedBootstrapRollbackError?: unknown }
+      ).managedBootstrapRollbackError = rollbackError;
+    }
+    throw failure;
   }
 }

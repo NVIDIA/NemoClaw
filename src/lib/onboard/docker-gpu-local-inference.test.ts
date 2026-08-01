@@ -11,6 +11,7 @@ import {
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
+  verifyGpuSandboxLocalInferenceAndCommitAfterReady,
 } from "./docker-gpu-local-inference";
 
 const HOST_NETWORK_ENV = {
@@ -374,6 +375,55 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(logError).toHaveBeenCalledWith(
       expect.stringContaining("Local inference reachability check failed"),
     );
+  });
+});
+
+describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
+  function options() {
+    return {
+      ...gpuPatchOptions(),
+      verifyDirectSandboxGpu: vi.fn(),
+      runCaptureOpenshell: vi.fn(() => ""),
+      log: vi.fn(),
+    };
+  }
+
+  it("commits only after the runtime inference route is proven", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    await verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+      GPU_CONFIG,
+      "ollama-local",
+      {
+        ...options(),
+        deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
+      },
+      runtimePatch,
+    );
+    expect(runtimePatch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+  });
+
+  it("rolls back before propagating an inference verification failure", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    await expect(
+      verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        {
+          ...options(),
+          deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
+        },
+        runtimePatch,
+      ),
+    ).rejects.toThrow("GPU sandbox local inference reachability failed");
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
   });
 });
 
