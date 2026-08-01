@@ -228,6 +228,7 @@ function brokerControlRequest(route, payload) {
 function registerHermesToolGatewayRuntimeCredential(refreshToken, exactSandboxName = null) {
   const digest = hashRefreshToken(refreshToken);
   let matched = false;
+  if (exactSandboxName === null) ensurePrivateDir(HERMES_TOOL_GATEWAY_STATE_DIR);
   const stateNames =
     exactSandboxName === null
       ? fs.readdirSync(HERMES_TOOL_GATEWAY_STATE_DIR)
@@ -366,7 +367,12 @@ function stageHermesToolGatewayCloneBinding(sandboxName, refreshToken, options =
   return Object.freeze({ activationToken, brokerToken, requestId });
 }
 
-function activateHermesToolGatewayCloneBinding(sandboxName, refreshToken, stagedBinding) {
+function activateHermesToolGatewayCloneBinding(
+  sandboxName,
+  refreshToken,
+  stagedBinding,
+  deps = {},
+) {
   const sandbox = validateName(sandboxName, "sandbox name");
   const normalized = String(refreshToken || "").trim();
   const activationToken = String(stagedBinding?.activationToken || "").trim();
@@ -374,23 +380,33 @@ function activateHermesToolGatewayCloneBinding(sandboxName, refreshToken, staged
   if (!normalized || !isValidActivationToken(activationToken) || !brokerToken) {
     throw new Error("Hermes staged destination credential binding is incomplete");
   }
-  const state = persistHermesToolGatewayProviderState(
+  const previousState = (deps.readState ?? readHermesToolGatewayProviderState)(sandbox);
+  const previousStateSnapshot = previousState ? structuredClone(previousState) : null;
+  const state = (deps.persistState ?? persistHermesToolGatewayProviderState)(
     sandbox,
     normalized,
     brokerToken,
     getHermesInferenceProviderName(sandbox),
   );
-  const response = brokerControlJsonRequest("credentials/activate", {
+  const response = (deps.controlRequest ?? brokerControlJsonRequest)("credentials/activate", {
     sandbox,
     activation_token: activationToken,
     deadline_at_ms: newControlDeadline(),
   });
-  const reconciled = response ?? brokerControlStatus({ activation_token: activationToken });
+  const reconciled =
+    response ?? (deps.controlStatus ?? brokerControlStatus)({ activation_token: activationToken });
   if (reconciled?.state === "activated") {
     return state;
   }
   if (reconciled?.state === "discarded" || reconciled?.state === "staged") {
-    removeHermesToolGatewayProviderState(sandbox);
+    if (previousStateSnapshot) {
+      (deps.writeState ?? atomicWriteJson)(state.file, previousStateSnapshot);
+    } else if (!(deps.removeState ?? removeHermesToolGatewayProviderState)(sandbox)) {
+      throw Object.assign(
+        new Error("Hermes managed-tool gateway broker activation cleanup failed"),
+        { code: "hermes_clone_activation_cleanup_failed" },
+      );
+    }
   } else {
     throw Object.assign(
       new Error("Hermes managed-tool gateway broker activation outcome is unknown"),
@@ -837,6 +853,7 @@ module.exports = {
   getHermesToolGatewayBrokerToken,
   persistHermesToolGatewayProviderState,
   removeHermesToolGatewayProviderState,
+  registerHermesToolGatewayRuntimeCredential,
   registerHermesToolGatewayRefreshProvider,
   probeHermesToolGatewayBrokerStart,
   preflightHermesToolGatewayCloneBinding,

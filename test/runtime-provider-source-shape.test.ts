@@ -1,16 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = join(import.meta.dirname, "..");
+const byCodeUnit = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+function trackedPaths(...pathspecs: readonly string[]): string[] {
+  return execFileSync("git", ["ls-files", "-z", "--", ...pathspecs], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter(Boolean)
+    .sort(byCodeUnit);
+}
+
+const read = (relativePath: string): string => readFileSync(join(repoRoot, relativePath), "utf8");
 
 describe("runtime provider central source boundary", () => {
   // source-shape-contract: compatibility -- Migrated lifecycle and mutation consumers must stay provider-neutral while production selection excludes unqualified future providers and driver-specific bootstrap dependencies
   it("keeps migrated provider identities and implementations behind the one bundle composition", () => {
-    const read = (relativePath: string) => readFileSync(join(repoRoot, relativePath), "utf8");
     const driverNeutralActions = {
       "actions/inference-set.ts": read("src/lib/actions/inference-set.ts"),
       "actions/sandbox/destroy-execution.ts": read("src/lib/actions/sandbox/destroy-execution.ts"),
@@ -64,35 +78,89 @@ describe("runtime provider central source boundary", () => {
 
   // source-shape-contract: security -- The bootstrap protocol and image-owned trampoline must remain dormant until a later provider slice supplies runtime packaging and exact activation
   it("keeps managed bootstrap provider-neutral, image-owned, and dormant", () => {
-    const bootstrapProtocol = [
-      readFileSync(join(repoRoot, "src/lib/onboard/managed-bootstrap/adapter.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/managed-bootstrap/envelope.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/managed-bootstrap/index.ts"), "utf8"),
-    ];
-    const activationSources = [
-      readFileSync(join(repoRoot, "src/lib/onboard.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/docker-gpu-sandbox-create.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-create-launch.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-create-step.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-gpu-create-flow.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/sandbox-gpu-create-run-attempt.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/contract.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/current.ts"), "utf8"),
-      readFileSync(join(repoRoot, "src/lib/onboard/runtime-provider/registry.ts"), "utf8"),
-    ];
     const dockerProvider = readFileSync(
       join(repoRoot, "src/lib/onboard/runtime-provider/docker.ts"),
       "utf8",
     );
-    const dockerBootstrapAdapter = readFileSync(
-      join(repoRoot, "src/lib/onboard/managed-bootstrap/docker.ts"),
-      "utf8",
+    const productionPaths = trackedPaths(
+      "src/lib/onboard.ts",
+      "src/lib/onboard",
+      "scripts",
+      "agents",
+      ".github/workflows",
+      "Dockerfile",
+      "Dockerfile.base",
     );
-    const managedDockerfiles = [
-      readFileSync(join(repoRoot, "Dockerfile"), "utf8"),
-      readFileSync(join(repoRoot, "agents/hermes/Dockerfile"), "utf8"),
-      readFileSync(join(repoRoot, "agents/langchain-deepagents-code/Dockerfile"), "utf8"),
-    ];
+    const bootstrapSourcePaths = productionPaths.filter(
+      (path) =>
+        path.startsWith("src/lib/onboard/managed-bootstrap/") &&
+        path.endsWith(".ts") &&
+        !path.endsWith(".test.ts"),
+    );
+    const bootstrapProtocolPaths = bootstrapSourcePaths.filter((path) =>
+      [
+        "src/lib/onboard/managed-bootstrap/adapter.ts",
+        "src/lib/onboard/managed-bootstrap/envelope.ts",
+        "src/lib/onboard/managed-bootstrap/index.ts",
+      ].includes(path),
+    );
+    const activationPaths = productionPaths.filter(
+      (path) =>
+        (path === "src/lib/onboard.ts" || path.startsWith("src/lib/onboard/")) &&
+        path.endsWith(".ts") &&
+        !path.endsWith(".test.ts") &&
+        !path.startsWith("src/lib/onboard/managed-bootstrap/"),
+    );
+    const providerPaths = activationPaths.filter((path) =>
+      path.startsWith("src/lib/onboard/runtime-provider/"),
+    );
+    const dockerfilePaths = productionPaths.filter((path) =>
+      /(?:^|\/)Dockerfile(?:\.base)?$/u.test(path),
+    );
+    const packagingPaths = productionPaths.filter(
+      (path) =>
+        dockerfilePaths.includes(path) ||
+        path.startsWith("scripts/") ||
+        path.startsWith("agents/") ||
+        path.startsWith(".github/workflows/"),
+    );
+    const bootstrapProtocol = bootstrapProtocolPaths.map(read);
+    const activationSources = activationPaths.map(read);
+    const providerImplementationSources = providerPaths
+      .filter((path) => path !== "src/lib/onboard/runtime-provider/contract.ts")
+      .map(read);
+    const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
+    const packagedBootstrapAsset =
+      /(?:nemoclaw-managed-bootstrap|managed-bootstrap-trampoline|managed-startup-image-runtime\.cjs|nemoclaw-managed-startup-hold)/u;
+
+    expect(bootstrapSourcePaths).toEqual([
+      "src/lib/onboard/managed-bootstrap/adapter.ts",
+      "src/lib/onboard/managed-bootstrap/docker-journal.ts",
+      "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
+      "src/lib/onboard/managed-bootstrap/docker-shared-state.ts",
+      "src/lib/onboard/managed-bootstrap/docker-spec.ts",
+      "src/lib/onboard/managed-bootstrap/docker-test-fixture.ts",
+      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/managed-bootstrap/envelope.ts",
+      "src/lib/onboard/managed-bootstrap/index.ts",
+      "src/lib/onboard/managed-bootstrap/runtime-create.ts",
+    ]);
+    expect(providerPaths).toEqual([
+      "src/lib/onboard/runtime-provider/access.ts",
+      "src/lib/onboard/runtime-provider/contract.ts",
+      "src/lib/onboard/runtime-provider/current.ts",
+      "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/registry.ts",
+      "src/lib/onboard/runtime-provider/snapshot.ts",
+    ]);
+    expect(dockerfilePaths).toEqual([
+      "Dockerfile",
+      "Dockerfile.base",
+      "agents/hermes/Dockerfile",
+      "agents/hermes/Dockerfile.base",
+      "agents/langchain-deepagents-code/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile.base",
+    ]);
 
     expect(bootstrapProtocol.join("\n")).not.toMatch(
       /from\s+["'][^"']*(?:docker|podman)[^"']*["']/iu,
@@ -107,18 +175,20 @@ describe("runtime provider central source boundary", () => {
     expect(dockerProvider).not.toMatch(
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
     );
+    expect(providerImplementationSources.join("\n")).not.toMatch(/managed-bootstrap/iu);
     expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
-    expect(dockerBootstrapAdapter).toContain('"rollback-authorized"');
-    expect(dockerBootstrapAdapter).toContain('"shared-state-committed"');
-    expect(bootstrapProtocol[2]).not.toMatch(/from\s+["'][^"']*docker/u);
-
-    for (const dockerfile of managedDockerfiles) {
-      expect(dockerfile).toContain("nemoclaw-managed-bootstrap");
-      expect(dockerfile).toContain("managed-startup-image-runtime.cjs");
-      expect(dockerfile).toContain("nemoclaw-managed-startup-hold");
-      expect(dockerfile).not.toMatch(
-        /(?:driverId|providerId)\s*(?:===|!==)\s*["'](?:docker|podman)["']/u,
-      );
-    }
+    expect(
+      packagingSources
+        .filter(([, source]) => packagedBootstrapAsset.test(source))
+        .map(([path]) => path),
+    ).toEqual([
+      ".github/workflows/managed-images.yaml",
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
+      "scripts/checks/run-managed-image-direct-e2e.ts",
+      "scripts/managed-bootstrap-trampoline.sh",
+      "scripts/managed-startup-hold.sh",
+    ]);
   });
 });

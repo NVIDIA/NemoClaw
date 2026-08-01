@@ -1203,6 +1203,7 @@ const fs = require("node:fs");
 
 const commands = [];
 let sandboxListCalls = 0;
+let dockerPsCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
   _deleted = _deleted || _n(command).includes("sandbox delete");
@@ -1210,6 +1211,10 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
+  if (_n(command).startsWith("docker ps -a --no-trunc ")) {
+    dockerPsCalls += 1;
+    if (dockerPsCalls === 1) return "a".repeat(64);
+  }
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) {
     sandboxListCalls += 1;

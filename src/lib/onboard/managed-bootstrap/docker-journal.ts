@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import type { ManagedStartupAgent } from "../managed-startup/profile";
 import type {
   ManagedBootstrapCompletionReceipt,
   ManagedBootstrapDurablePreparationReceipt,
@@ -11,9 +11,9 @@ import type {
   ManagedBootstrapSandboxIdentity,
 } from "./adapter";
 
-export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION = 2 as const;
+export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION = 3 as const;
 export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY = "managed-bootstrap";
-export const DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION = 1 as const;
+export const DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION = 2 as const;
 
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -36,6 +36,7 @@ export interface DockerManagedBootstrapJournal {
   readonly phase: DockerManagedBootstrapJournalPhase;
   readonly bootstrapIdentity: string;
   readonly providerId: string;
+  readonly agent: ManagedStartupAgent;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly planFingerprint: string;
   readonly profileFingerprint: string;
@@ -59,6 +60,7 @@ export interface DockerManagedBootstrapFinalizationRecord {
   readonly phase: "committed" | "rolled-back";
   readonly bootstrapIdentity: string;
   readonly providerId: string;
+  readonly agent: ManagedStartupAgent;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly planFingerprint: string;
   readonly profileFingerprint: string;
@@ -94,6 +96,15 @@ export class DockerManagedBootstrapJournalAcknowledgementLostError extends Error
   constructor(message: string) {
     super(message);
     this.name = "DockerManagedBootstrapJournalAcknowledgementLostError";
+  }
+}
+
+class DockerManagedBootstrapJournalExistsError extends Error {
+  constructor() {
+    super(
+      "Managed bootstrap Docker journal is invalid: journal already exists for this bootstrap identity",
+    );
+    this.name = "DockerManagedBootstrapJournalExistsError";
   }
 }
 
@@ -136,6 +147,13 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
   return value as DockerManagedBootstrapJournalPhase;
 }
 
+function exactAgent(value: unknown): ManagedStartupAgent {
+  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(String(value))) {
+    fail("agent is unsupported");
+  }
+  return value as ManagedStartupAgent;
+}
+
 function exactSandbox(value: unknown): ManagedBootstrapSandboxIdentity {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail("sandbox identity must be an object");
@@ -159,6 +177,7 @@ export function normalizeDockerManagedBootstrapJournal(
   }
   const journal = value as Record<string, unknown>;
   const expectedKeys = [
+    "agent",
     "backupName",
     "bootstrapIdentity",
     "commitReceipt",
@@ -191,6 +210,7 @@ export function normalizeDockerManagedBootstrapJournal(
     phase: exactPhase(journal.phase),
     bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
     providerId: exactString(journal.providerId, "provider ID"),
+    agent: exactAgent(journal.agent),
     sandbox: exactSandbox(journal.sandbox),
     planFingerprint: exactSha256(journal.planFingerprint, "plan fingerprint"),
     profileFingerprint: exactSha256(journal.profileFingerprint, "profile fingerprint"),
@@ -450,6 +470,7 @@ export function normalizeDockerManagedBootstrapFinalizationRecord(
   }
   const record = value as Record<string, unknown>;
   const expectedKeys = [
+    "agent",
     "bootstrapIdentity",
     "cleanupReceipt",
     "commitReceipt",
@@ -478,6 +499,7 @@ export function normalizeDockerManagedBootstrapFinalizationRecord(
     phase,
     bootstrapIdentity: exactSha256(record.bootstrapIdentity, "finalization bootstrap identity"),
     providerId: exactString(record.providerId, "finalization provider ID"),
+    agent: exactAgent(record.agent),
     sandbox,
     planFingerprint: exactSha256(record.planFingerprint, "finalization plan fingerprint"),
     profileFingerprint: exactSha256(record.profileFingerprint, "finalization profile fingerprint"),
@@ -557,25 +579,64 @@ function finalizationPath(target: string): string {
   return `${target}.finalized`;
 }
 
+function sameStableMetadata(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
 function readPrivateFile(target: string, label: string): string | null {
-  let stat: fs.Stats;
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    fail(`cannot safely open ${label} because O_NOFOLLOW is unavailable`);
+  }
+  const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  let descriptor: number;
   try {
-    stat = fs.lstatSync(target);
+    descriptor = fs.openSync(target, fs.constants.O_RDONLY | noFollow | nonblock);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      fail(`${label} file ownership boundary is invalid`);
+    }
     throw error;
   }
-  if (
-    !stat.isFile() ||
-    stat.isSymbolicLink() ||
-    stat.nlink !== 1 ||
-    (stat.mode & 0o077) !== 0 ||
-    stat.size <= 0 ||
-    stat.size > MAX_JOURNAL_BYTES
-  ) {
-    fail(`${label} file ownership boundary is invalid`);
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      (before.mode & 0o077n) !== 0n ||
+      before.size <= 0n ||
+      before.size > BigInt(MAX_JOURNAL_BYTES)
+    ) {
+      fail(`${label} file ownership boundary is invalid`);
+    }
+    const contents = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < contents.length) {
+      const count = fs.readSync(descriptor, contents, offset, contents.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    const overflow = Buffer.alloc(1);
+    const overflowCount = fs.readSync(descriptor, overflow, 0, 1, offset);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (offset !== contents.length || overflowCount !== 0 || !sameStableMetadata(before, after)) {
+      fail(`${label} file changed during its stable read`);
+    }
+    return contents.toString("utf8");
+  } finally {
+    fs.closeSync(descriptor);
   }
-  return fs.readFileSync(target, "utf8");
 }
 
 function fsyncDirectory(directory: string): void {
@@ -598,6 +659,7 @@ function atomicWrite(
     `.${path.basename(target)}.${process.pid}.${Date.now().toString(16)}.tmp`,
   );
   let descriptor: number | null = null;
+  let primaryFailure: { readonly error: unknown } | null = null;
   try {
     descriptor = fs.openSync(temporary, "wx", JOURNAL_FILE_MODE);
     fs.writeFileSync(descriptor, contents, "utf8");
@@ -609,7 +671,7 @@ function atomicWrite(
         fs.linkSync(temporary, target);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-          fail("journal already exists for this bootstrap identity");
+          throw new DockerManagedBootstrapJournalExistsError();
         }
         throw error;
       }
@@ -619,14 +681,26 @@ function atomicWrite(
     }
     fs.chmodSync(target, JOURNAL_FILE_MODE);
     fsyncDirectory(directory);
-  } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
+  } catch (error) {
+    primaryFailure = { error };
+  }
+  let cleanupFailure: { readonly error: unknown } | null = null;
+  if (descriptor !== null) {
     try {
-      fs.unlinkSync(temporary);
+      fs.closeSync(descriptor);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      cleanupFailure = { error };
     }
   }
+  try {
+    fs.unlinkSync(temporary);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && cleanupFailure === null) {
+      cleanupFailure = { error };
+    }
+  }
+  if (primaryFailure !== null) throw primaryFailure.error;
+  if (cleanupFailure !== null) throw cleanupFailure.error;
 }
 
 function sameSerializedJournal(
@@ -709,14 +783,11 @@ export function createFileDockerManagedBootstrapJournalStore(
         fail(`journal directory contains an unsupported entry: ${name}`);
       }
       return Object.freeze(
-        identities
-          .sort()
-          .filter((identity) => loadFinalization(identity) === null)
-          .map((identity) => {
-            const journal = load(identity);
-            if (!journal) fail(`enumerated journal ${identity} disappeared`);
-            return journal;
-          }),
+        identities.sort().map((identity) => {
+          const journal = load(identity);
+          if (!journal) fail(`enumerated journal ${identity} disappeared`);
+          return journal;
+        }),
       );
     },
     transition(
@@ -741,9 +812,7 @@ export function createFileDockerManagedBootstrapJournalStore(
           atomicWrite(directory, decision, `${next}\n`, true);
         } catch (error) {
           if (
-            !(error instanceof Error) ||
-            error.message !==
-              "Managed bootstrap Docker journal is invalid: journal already exists for this bootstrap identity" ||
+            !(error instanceof DockerManagedBootstrapJournalExistsError) ||
             readPrivateFile(decision, "decision") !== `${next}\n`
           ) {
             throw error;
