@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -11,9 +11,15 @@ export const TERMINOLOGY_TRACE_TOOL = "pr_review_trace_term";
 export const TERMINOLOGY_UPDATE_TOOL = "pr_review_update_terminology";
 export const TERMINOLOGY_READ_TOOL = "pr_review_read_terminology";
 
-const CHANGES = ["introduced", "expanded", "redefined"] as const;
-const DISPOSITIONS = ["established", "justified", "define", "replace", "conflict"] as const;
-const SEMANTIC_IMPACTS = [
+export const TERMINOLOGY_CHANGES = ["introduced", "expanded", "redefined"] as const;
+export const TERMINOLOGY_DISPOSITIONS = [
+  "established",
+  "justified",
+  "define",
+  "replace",
+  "conflict",
+] as const;
+export const TERMINOLOGY_SEMANTIC_IMPACTS = [
   "none",
   "behavior",
   "security",
@@ -27,10 +33,11 @@ const DECISION_LIMIT = 20;
 const TRACE_LIMIT = 20;
 const LOCATION_LIMIT = 40;
 const SAMPLE_LIMIT = 20;
+const GREP_SAMPLE_BUFFER_BYTES = 256 * 1024;
 
-type TerminologyChange = (typeof CHANGES)[number];
-type TerminologyDisposition = (typeof DISPOSITIONS)[number];
-type TerminologySemanticImpact = (typeof SEMANTIC_IMPACTS)[number];
+type TerminologyChange = (typeof TERMINOLOGY_CHANGES)[number];
+type TerminologyDisposition = (typeof TERMINOLOGY_DISPOSITIONS)[number];
+type TerminologySemanticImpact = (typeof TERMINOLOGY_SEMANTIC_IMPACTS)[number];
 
 export type TerminologyLocation = Readonly<{
   file: string;
@@ -46,6 +53,8 @@ export type TerminologyTrace = Readonly<{
   headSha: string;
   baseOccurrences: number;
   headOccurrences: number;
+  baseEvidenceTruncated: boolean;
+  headEvidenceTruncated: boolean;
   changedLocations: readonly TerminologyLocation[];
   baseSamples: readonly string[];
   headSamples: readonly string[];
@@ -124,12 +133,12 @@ export class TerminologyLedger {
         throw new Error(`Terminology trace ${trace.id} is not bound to the current PR SHA`);
       }
       const term = normalizeTerm(candidate.term);
-      if (!CHANGES.includes(candidate.change))
+      if (!TERMINOLOGY_CHANGES.includes(candidate.change))
         throw new Error(`Unsupported change ${candidate.change}`);
-      if (!DISPOSITIONS.includes(candidate.disposition)) {
+      if (!TERMINOLOGY_DISPOSITIONS.includes(candidate.disposition)) {
         throw new Error(`Unsupported disposition ${candidate.disposition}`);
       }
-      if (!SEMANTIC_IMPACTS.includes(candidate.semanticImpact)) {
+      if (!TERMINOLOGY_SEMANTIC_IMPACTS.includes(candidate.semanticImpact)) {
         throw new Error(`Unsupported semanticImpact ${candidate.semanticImpact}`);
       }
       if (term.toLocaleLowerCase() !== trace.term.toLocaleLowerCase()) {
@@ -195,12 +204,12 @@ const nullableTextSchema = Type.Union([text, Type.Null()]);
 const decisionSchema = Type.Object(
   {
     term: Type.String({ minLength: 1, maxLength: TERM_LIMIT }),
-    change: Type.Union(CHANGES.map((value) => Type.Literal(value))),
-    disposition: Type.Union(DISPOSITIONS.map((value) => Type.Literal(value))),
+    change: Type.Union(TERMINOLOGY_CHANGES.map((value) => Type.Literal(value))),
+    disposition: Type.Union(TERMINOLOGY_DISPOSITIONS.map((value) => Type.Literal(value))),
     meaning: text,
     contrast: nullableTextSchema,
     existingTerm: nullableTextSchema,
-    semanticImpact: Type.Union(SEMANTIC_IMPACTS.map((value) => Type.Literal(value))),
+    semanticImpact: Type.Union(TERMINOLOGY_SEMANTIC_IMPACTS.map((value) => Type.Literal(value))),
     recommendation: text,
     traceId: Type.String({ minLength: 1, maxLength: 80 }),
     source: Type.Object(
@@ -337,11 +346,13 @@ export function traceTerminology({
     variants: Object.freeze(variants),
     baseSha,
     headSha,
-    baseOccurrences: baseMatches.length,
-    headOccurrences: headMatches.length,
+    baseOccurrences: baseMatches.occurrences,
+    headOccurrences: headMatches.occurrences,
+    baseEvidenceTruncated: baseMatches.truncated,
+    headEvidenceTruncated: headMatches.truncated,
     changedLocations: Object.freeze(changedLocations.slice(0, LOCATION_LIMIT)),
-    baseSamples: Object.freeze(baseMatches.slice(0, SAMPLE_LIMIT)),
-    headSamples: Object.freeze(headMatches.slice(0, SAMPLE_LIMIT)),
+    baseSamples: Object.freeze(baseMatches.samples),
+    headSamples: Object.freeze(headMatches.samples),
     firstCommitSha,
   });
 }
@@ -350,18 +361,67 @@ function resolveCommit(ref: string, cwd: string): string {
   return git(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], false, cwd).trim();
 }
 
-function grepRef(variants: readonly string[], ref: string, cwd: string): string[] {
-  const matches = new Set<string>();
-  for (const variant of variants) {
-    for (const line of git(
-      ["grep", "-n", "-I", "-i", "-F", "-e", variant, ref, "--"],
-      true,
-      cwd,
-    ).split(/\r?\n/u)) {
-      if (line) matches.add(line);
+function grepRef(
+  variants: readonly string[],
+  ref: string,
+  cwd: string,
+): { occurrences: number; samples: string[]; truncated: boolean } {
+  const patterns = variants.flatMap((variant) => ["-e", variant]);
+  const counts = boundedGit(["grep", "-c", "-I", "-i", "-F", ...patterns, ref, "--"], cwd);
+  const sampleOutput = boundedGit(
+    ["grep", "-n", "-I", "-i", "-F", ...patterns, ref, "--"],
+    cwd,
+    GREP_SAMPLE_BUFFER_BYTES,
+  );
+  const occurrences = completeLines(counts)
+    .map((line) => line.match(/:(\d+)$/u))
+    .reduce((total, match) => total + (match ? Number(match[1]) : 0), 0);
+  const samples = [...new Set(completeLines(sampleOutput).filter(Boolean))]
+    .sort()
+    .slice(0, SAMPLE_LIMIT);
+  return {
+    occurrences,
+    samples,
+    truncated: counts.truncated || sampleOutput.truncated,
+  };
+}
+
+type BoundedGitResult = { output: string; truncated: boolean };
+
+function boundedGit(args: string[], cwd: string, maxBuffer = 4 * 1024 * 1024): BoundedGitResult {
+  try {
+    return {
+      output: execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer }),
+      truncated: false,
+    };
+  } catch (error: unknown) {
+    const status = errorProperty(error, "status");
+    const code = errorProperty(error, "code");
+    if (code === "ENOBUFS") {
+      return { output: errorOutput(error), truncated: true };
     }
+    if (typeof status === "number") return { output: "", truncated: false };
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Terminology evidence command failed: git ${args[0]}: ${reason}`);
   }
-  return [...matches].sort();
+}
+
+function completeLines(result: BoundedGitResult): string[] {
+  const lines = result.output.split(/\r?\n/u);
+  if (result.truncated && !/\r?\n$/u.test(result.output)) lines.pop();
+  return lines;
+}
+
+function errorProperty(error: unknown, property: "status" | "code" | "stdout"): unknown {
+  return typeof error === "object" && error !== null && property in error
+    ? (error as Record<string, unknown>)[property]
+    : undefined;
+}
+
+function errorOutput(error: unknown): string {
+  const output = errorProperty(error, "stdout");
+  if (typeof output === "string") return output;
+  return output instanceof Uint8Array ? Buffer.from(output).toString("utf8") : "";
 }
 
 function changedTermLocations(

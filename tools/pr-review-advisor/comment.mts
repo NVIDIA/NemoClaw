@@ -630,6 +630,7 @@ function countDifference(difference: number, label: string): string {
 }
 
 function renderTerminologyDetails(result?: ReviewAdvisorResult): string {
+  if (typeof result?.headSha !== "string") return "";
   const decisions = Array.isArray(result?.terminologyReview?.decisions)
     ? result.terminologyReview.decisions.filter(
         (decision) =>
@@ -817,6 +818,7 @@ function trustedLaneStructure(
       confidence?: "low" | "medium" | "high";
       fingerprints: LaneFingerprints;
       e2e: LaneE2eRecommendations;
+      terminology: TrustedLaneTerminologyDecision[];
     }
   | undefined {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.findings)) return undefined;
@@ -832,12 +834,12 @@ function trustedLaneStructure(
   const confidence = trustedLaneConfidence(summary?.confidence);
   const e2e = trustedLaneE2eRecommendations(value as ReviewAdvisorResult);
   const terminology = trustedLaneTerminology(value.terminologyReview, value.headSha);
-  if (value.terminologyReview !== undefined && !terminology) return undefined;
+  if (!terminology) return undefined;
   return {
     counts,
     ...(confidence ? { confidence } : {}),
     e2e,
-    ...(terminology ? { terminology } : {}),
+    terminology,
     fingerprints: {
       findings: opaqueFingerprint(normalizedFindingRecords(value.findings)),
       e2e: opaqueFingerprint(e2eDecisionSets(value.e2e)),
@@ -877,6 +879,8 @@ function trustedLaneTerminology(
       !/^T-[0-9]+$/u.test(decision.id) ||
       ids.has(decision.id) ||
       !boundedText(decision.term, 80) ||
+      // Keep this trusted-publisher inventory independent from analyzer code. The
+      // publisher runs from the base SHA and validates untrusted lane artifacts.
       !oneOf(decision.change, ["introduced", "expanded", "redefined"] as const) ||
       !oneOf(disposition, ["established", "justified", "define", "replace", "conflict"] as const) ||
       !boundedText(decision.meaning) ||

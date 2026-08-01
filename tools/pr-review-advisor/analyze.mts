@@ -65,7 +65,10 @@ import {
 import {
   createTerminologyLedger,
   createTerminologyToolController,
+  TERMINOLOGY_CHANGES,
+  TERMINOLOGY_DISPOSITIONS,
   TERMINOLOGY_READ_TOOL,
+  TERMINOLOGY_SEMANTIC_IMPACTS,
   TERMINOLOGY_TRACE_TOOL,
   TERMINOLOGY_UPDATE_TOOL,
   type TerminologyLedger,
@@ -159,23 +162,6 @@ const SOURCE_OF_TRUTH_STATUSES = [
 ] as const;
 const SIMPLIFICATION_TAGS = ["delete", "stdlib", "native", "yagni", "shrink"] as const;
 const TERMINOLOGY_STATUSES = ["clear", "candidates", "limited"] as const;
-const TERMINOLOGY_CHANGES = ["introduced", "expanded", "redefined"] as const;
-const TERMINOLOGY_DISPOSITIONS = [
-  "established",
-  "justified",
-  "define",
-  "replace",
-  "conflict",
-] as const;
-const TERMINOLOGY_IMPACTS = [
-  "none",
-  "behavior",
-  "security",
-  "support",
-  "evidence",
-  "test",
-  "release",
-] as const;
 
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
@@ -388,13 +374,16 @@ async function main(): Promise<void> {
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   writeDeterministicContextArtifacts(artifacts, deterministic, diff);
-  const systemPrompt = buildSystemPrompt();
-  const promptTurns = buildPromptTurns({ metadata, diff, schema });
   const findingLedger = createReviewFindingLedger();
   const terminologyLedger = createTerminologyLedger(headSha);
-  writeJson(artifacts.findingLedger, findingLedger.snapshot());
-  writeJson(artifacts.terminologyLedger, terminologyLedger.snapshot());
-  writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
+  const { systemPrompt, promptTurns } = preparePromptArtifacts({
+    artifacts,
+    metadata,
+    diff,
+    schema,
+    findingLedger,
+    terminologyLedger,
+  });
 
   const writeFailure = (reason: string): void =>
     writeFailureArtifacts(
@@ -529,7 +518,42 @@ async function main(): Promise<void> {
   console.log(summary);
 }
 
-function artifactPaths(outDir: string): ArtifactPaths {
+export function preparePromptArtifacts({
+  artifacts,
+  metadata,
+  diff,
+  schema,
+  findingLedger,
+  terminologyLedger,
+}: {
+  artifacts: ArtifactPaths;
+  metadata: ReviewMetadata;
+  diff: string;
+  schema: Record<string, unknown>;
+  findingLedger: ReviewFindingLedger;
+  terminologyLedger: TerminologyLedger;
+}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[] } {
+  writeJson(artifacts.findingLedger, findingLedger.snapshot());
+  writeJson(artifacts.terminologyLedger, terminologyLedger.snapshot());
+  try {
+    const systemPrompt = buildSystemPrompt();
+    const promptTurns = buildPromptTurns({ metadata, diff, schema });
+    writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
+    return { systemPrompt, promptTurns };
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    writeFailureArtifacts(
+      artifacts,
+      metadata,
+      reason,
+      findingLedger.snapshot(),
+      terminologyLedger.snapshot(),
+    );
+    throw error;
+  }
+}
+
+export function artifactPaths(outDir: string): ArtifactPaths {
   return {
     promptDir: path.join(outDir, "prompts"),
     turnDir: path.join(outDir, "turns"),
@@ -778,7 +802,7 @@ export function terminologyReviewConsistencyIssues(
   result: ReviewAdvisorResult,
   snapshot: TerminologyLedgerSnapshot,
 ): string[] {
-  return JSON.stringify(result.terminologyReview) === JSON.stringify(snapshot.review)
+  return stableJson(result.terminologyReview) === stableJson(snapshot.review)
     ? []
     : ["final terminologyReview diverges from the canonical terminology receipt"];
 }
@@ -795,17 +819,26 @@ export function canonicalRetryFallback(
   snapshot: ReviewFindingLedgerSnapshot,
   terminologySnapshot?: TerminologyLedgerSnapshot,
 ): ReviewAdvisorResult | null {
+  const issues = [
+    ...reviewLedgerConsistencyIssues(result, snapshot),
+    ...(terminologySnapshot ? terminologyReviewConsistencyIssues(result, terminologySnapshot) : []),
+  ];
+  if (issues.length > 0) return null;
   const findingsCanonical = withCanonicalReviewLedgerFindings(result, snapshot);
-  const canonical = terminologySnapshot
+  return terminologySnapshot
     ? withCanonicalTerminologyReview(findingsCanonical, terminologySnapshot)
     : findingsCanonical;
-  const issues = [
-    ...reviewLedgerConsistencyIssues(canonical, snapshot),
-    ...(terminologySnapshot
-      ? terminologyReviewConsistencyIssues(canonical, terminologySnapshot)
-      : []),
-  ];
-  return issues.length === 0 ? canonical : null;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isObjectRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export function partialLedgerFailureResult(
@@ -2332,7 +2365,7 @@ function sanitizeTerminologyReview(value: unknown, headSha: string): Terminology
         meaning: stringOrDefault(item.meaning, "Meaning was not supplied."),
         contrast: contrast ?? null,
         existingTerm: existingTerm ?? null,
-        semanticImpact: enumValue(item.semanticImpact, TERMINOLOGY_IMPACTS, "none"),
+        semanticImpact: enumValue(item.semanticImpact, TERMINOLOGY_SEMANTIC_IMPACTS, "none"),
         recommendation: stringOrDefault(item.recommendation, "Clarify the term."),
         traceId: stringOrDefault(item.traceId, "missing-trace"),
         source: {

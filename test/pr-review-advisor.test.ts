@@ -1457,5 +1457,44 @@ diff --git a/test/example.test.ts b/test/example.test.ts
 
     expect(schema["SPDX-License-Identifier"]).toBe("Apache-2.0");
     expect(validate(result)).toBe(true);
+
+    const decision = {
+      id: "T-001",
+      term: "review-bound",
+      change: "introduced",
+      disposition: "replace",
+      meaning: "Evidence for one revision.",
+      contrast: null,
+      existingTerm: "PR SHA",
+      semanticImpact: "evidence",
+      recommendation: "Use PR SHA.",
+      traceId: "term-valid",
+      source: { file: "WRITING.md", line: 12, headSha: "a".repeat(40) },
+    };
+    const invalidReceipts = [
+      {
+        status: "clear",
+        decisions: [],
+        noChangesReason: "No candidates.\nInjected text.",
+      },
+      {
+        status: "candidates",
+        decisions: [{ ...decision, term: "review-bound\ninjected" }],
+        noChangesReason: null,
+      },
+      {
+        status: "candidates",
+        decisions: [{ ...decision, recommendation: "Use PR SHA.\nInjected text." }],
+        noChangesReason: null,
+      },
+      {
+        status: "candidates",
+        decisions: [{ ...decision, source: { ...decision.source, headSha: "abc123" } }],
+        noChangesReason: null,
+      },
+    ];
+    for (const terminologyReview of invalidReceipts) {
+      expect(validate({ ...result, terminologyReview })).toBe(false);
+    }
   });
 });

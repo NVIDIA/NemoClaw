@@ -90,12 +90,43 @@ describe("PR review advisor terminology evidence", () => {
     expect(trace.variants).toEqual(["review-bound", "review bound"]);
     expect(trace.baseOccurrences).toBe(0);
     expect(trace.headOccurrences).toBe(1);
+    expect(trace.baseEvidenceTruncated).toBe(false);
+    expect(trace.headEvidenceTruncated).toBe(false);
     expect(trace.changedLocations).toEqual([
       { file: "guide.md", line: 4, text: "Review-bound evidence is required." },
     ]);
     expect(trace.headSamples[0]).toContain("guide.md:4:Review-bound evidence is required.");
     expect(trace.firstCommitSha).toBe(fixture.head);
     expect(trace.headSamples.join("\n")).not.toContain("well-known");
+  });
+
+  it("bounds samples while preserving matching-line counts for a frequent selected term", () => {
+    const fixture = fixtureRepository();
+    fs.writeFileSync(
+      path.join(fixture.directory, "frequent.md"),
+      `${Array.from({ length: 5000 }, (_, index) => `review-bound occurrence ${index}`).join("\n")}\n`,
+    );
+    git(fixture.directory, ["add", "frequent.md"]);
+    git(fixture.directory, [
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "-m",
+      "frequent term",
+    ]);
+    const head = git(fixture.directory, ["rev-parse", "HEAD"]);
+
+    const trace = traceTerminology({
+      term: "review-bound",
+      baseRef: fixture.base,
+      headRef: head,
+      cwd: fixture.directory,
+    });
+
+    expect(trace.headOccurrences).toBe(5001);
+    expect(trace.headSamples).toHaveLength(20);
+    expect(trace.headEvidenceTruncated).toBe(true);
   });
 
   it("rejects a justified term without a concrete contrast and commits the corrected replacement decision", async () => {
@@ -107,8 +138,28 @@ describe("PR review advisor terminology evidence", () => {
       headRef: fixture.head,
       cwd: fixture.directory,
     });
+    const traceTool = tool(controller.tools, TERMINOLOGY_TRACE_TOOL);
+    const update = tool(controller.tools, TERMINOLOGY_UPDATE_TOOL);
+    await expect(
+      traceTool.execute(
+        "trace-wrong-stage",
+        { term: "review-bound" },
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow("available only during terminology analysis");
+    await expect(
+      update.execute(
+        "update-wrong-stage",
+        { decisions: [], noChangesReason: "No candidates." },
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow("available only during terminology commit");
     controller.setStage("terminology-review-analysis");
-    const traced = await tool(controller.tools, TERMINOLOGY_TRACE_TOOL).execute(
+    const traced = await traceTool.execute(
       "trace-1",
       { term: "review-bound" },
       undefined,
@@ -117,7 +168,6 @@ describe("PR review advisor terminology evidence", () => {
     );
     const trace = contentJson(traced) as { id: string; changedLocations: Array<{ line: number }> };
     controller.setStage("terminology-review");
-    const update = tool(controller.tools, TERMINOLOGY_UPDATE_TOOL);
     const decision = {
       term: "review-bound",
       change: "introduced",

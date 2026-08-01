@@ -19,6 +19,14 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
+function clearTerminologyReview() {
+  return {
+    status: "clear" as const,
+    decisions: [],
+    noChangesReason: "No semantic terminology candidates were selected.",
+  };
+}
+
 describe("PR review advisor comment CLI", () => {
   it("reports E2E recommendations that do not fit", () => {
     const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
@@ -61,6 +69,29 @@ describe("PR review advisor comment CLI", () => {
       `<summary>${E2E_RENDER_LIMIT + 1} optional E2E recommendations</summary>`,
     );
     expect(comment).toContain("- _1 more._");
+  });
+
+  it("does not render terminology without a PR-SHA binding", () => {
+    const comment = buildComment({
+      summary: "unused",
+      result: {
+        terminologyReview: {
+          status: "candidates",
+          noChangesReason: null,
+          decisions: [
+            {
+              term: "review-bound",
+              disposition: "replace",
+              recommendation: "Use PR SHA.",
+              source: { file: "guide.md", line: 4 },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(comment).not.toContain("semantic terminology decision");
+    expect(comment).not.toContain("review-bound");
   });
 
   it("ignores malformed E2E collections and selectors outside the trusted inventory", () => {
@@ -193,6 +224,7 @@ describe("PR review advisor comment CLI", () => {
         { severity: "suggestion", title: "three" },
         { severity: "invalid", title: "ignored" },
       ],
+      terminologyReview: clearTerminologyReview(),
       e2e: {
         coverage: {
           requiredTests: [{ id: "security-posture", reason: "not fingerprinted" }],
@@ -261,6 +293,53 @@ describe("PR review advisor comment CLI", () => {
       status: "unavailable",
       partial: false,
     });
+    expect(
+      normalizeAdvisorLaneReport(
+        finalResult,
+        { ...finalResult, terminologyReview: undefined },
+        headSha,
+      ),
+    ).toEqual({ status: "unavailable", partial: false });
+    const validDecision = {
+      id: "T-001",
+      term: "review-bound",
+      change: "introduced",
+      disposition: "replace",
+      meaning: "Evidence for one revision.",
+      contrast: null,
+      existingTerm: "PR SHA",
+      semanticImpact: "evidence",
+      recommendation: "Use PR SHA.",
+      traceId: "term-valid",
+      source: { file: "guide.md", line: 4, headSha },
+    };
+    const duplicateTerminology = {
+      ...finalResult,
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [validDecision, validDecision],
+      },
+    };
+    expect(normalizeAdvisorLaneReport(finalResult, duplicateTerminology, headSha)).toEqual({
+      status: "unavailable",
+      partial: false,
+    });
+    const oversizedTerminology = {
+      ...finalResult,
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: Array.from({ length: 21 }, (_, index) => ({
+          ...validDecision,
+          id: `T-${index + 1}`,
+        })),
+      },
+    };
+    expect(normalizeAdvisorLaneReport(finalResult, oversizedTerminology, headSha)).toEqual({
+      status: "unavailable",
+      partial: false,
+    });
     const wrongHeadTerminology = {
       ...finalResult,
       terminologyReview: {
@@ -268,16 +347,7 @@ describe("PR review advisor comment CLI", () => {
         noChangesReason: null,
         decisions: [
           {
-            id: "T-001",
-            term: "review-bound",
-            change: "introduced",
-            disposition: "replace",
-            meaning: "Evidence for one revision.",
-            contrast: null,
-            existingTerm: "PR SHA",
-            semanticImpact: "evidence",
-            recommendation: "Use PR SHA.",
-            traceId: "term-wrong-head",
+            ...validDecision,
             source: { file: "guide.md", line: 4, headSha: "b".repeat(40) },
           },
         ],
@@ -300,6 +370,7 @@ describe("PR review advisor comment CLI", () => {
       headSha,
       summary: { confidence: "medium" },
       findings: [],
+      terminologyReview: clearTerminologyReview(),
     };
     fs.writeFileSync(primaryAnalysis, `${JSON.stringify(primaryResult)}\n`);
     fs.writeFileSync(
@@ -313,6 +384,7 @@ describe("PR review advisor comment CLI", () => {
         headSha,
         summary: { confidence: "low", oneLine: "untrusted secondary prose" },
         findings: [{ severity: "warning", title: "secondary finding prose" }],
+        terminologyReview: clearTerminologyReview(),
       })}\n`,
     );
 

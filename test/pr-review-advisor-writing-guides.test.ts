@@ -10,7 +10,7 @@ import {
 } from "../tools/pr-review-advisor/analyze.mts";
 
 describe("PR review advisor writing guides", () => {
-  it("loads the checked-in review guides into the advisor prompt", () => {
+  it("loads and embeds the checked-in review guides", () => {
     const skill = readTrustedSecurityReviewSkill();
     const writingGuide = readTrustedWritingGuide();
     const controlledWords = readTrustedControlledWords();
@@ -24,6 +24,15 @@ describe("PR review advisor writing guides", () => {
     expect(controlledWords).toContain("| `PR SHA` | Technical noun |");
     expect(prompt).toContain("Trusted security review skill from main checkout");
     expect(prompt).toContain("Trusted NemoClaw writing guide from workflow checkout");
+    expect(prompt).toContain("# Security Code Review");
+    expect(prompt).toContain("Category 1: Secrets and Credentials");
+    expect(prompt).toContain("# NemoClaw Writing Guide");
+    expect(prompt).toContain("Use one term for one concept");
+  });
+
+  it("includes terminology and review-scope policy", () => {
+    const prompt = buildSystemPrompt();
+
     expect(prompt).toContain("Apply its review policy when you evaluate changed explanatory text");
     expect(prompt).toContain("Do not request unrelated language cleanup");
     expect(prompt).toContain("For NemoClaw PRs, check SSRF bypasses");
@@ -41,6 +50,12 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain(
       "compare it with the current diff and decide whether prior code-review findings were addressed",
     );
+    expect(prompt).toContain("PR-description or template compliance");
+  });
+
+  it("documents finding eligibility, severity, and evidence rules", () => {
+    const prompt = buildSystemPrompt();
+
     expect(prompt).toContain(
       "any unmet binding acceptance clause or security fail/warning must be represented as a finding",
     );
@@ -72,9 +87,13 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("Proposed designs, implementation ideas, investigation notes");
     expect(prompt).toContain("author_association is OWNER, MEMBER, or COLLABORATOR");
     expect(prompt).toContain("A Refs, Related, or Follow-up link does not commit the PR");
-    expect(prompt).toContain("PR-description or template compliance");
     expect(prompt).toContain("When several symptoms or locations share one root cause and remedy");
     expect(prompt).toContain("suggestion renders as 'Suggestion'");
+  });
+
+  it("documents the same-session conversation contract", () => {
+    const prompt = buildSystemPrompt();
+
     expect(prompt).toContain("multi-turn conversation");
     expect(prompt).toContain(
       "The immediately following validation turn stays in the same agent session",
