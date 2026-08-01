@@ -7,6 +7,16 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  MANAGED_BOOTSTRAP_COMPLETION_FILE,
+  MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
+  MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
+  MANAGED_BOOTSTRAP_REQUEST_FILE,
+  type ManagedBootstrapImageCompletion,
+  parseManagedBootstrapEnvelope,
+  parseManagedBootstrapImageCompletion,
+  serializeManagedBootstrapImageCompletion,
+} from "../managed-bootstrap/envelope";
+import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
   type ManagedStartupApplicationRuntimePlan,
@@ -133,6 +143,11 @@ export interface ManagedStartupImageApplyResult {
 
 export interface ManagedStartupRootApplyResult extends ManagedStartupImageApplyResult {
   readonly transactionPending: boolean;
+}
+
+export interface ManagedStartupRootApplyOptions {
+  /** One-attempt identity for managed bootstrap; null keeps the direct root-apply contract. */
+  readonly bootstrapIdentity?: string | null;
 }
 
 export interface ManagedStartupCompletionMarker {
@@ -1421,6 +1436,7 @@ function completionAlreadyPublished(request: ManagedStartupRootApplyRequest): bo
 export async function applyManagedStartupRootRequest(
   request: ManagedStartupRootApplyRequest,
   env: Environment = process.env,
+  options: ManagedStartupRootApplyOptions = {},
 ): Promise<ManagedStartupRootApplyResult> {
   requireRoot();
   const profile = decodeManagedStartupProfile(request.encodedProfile);
@@ -1445,12 +1461,127 @@ export async function applyManagedStartupRootRequest(
   // these non-fingerprinted application-runtime values.
   mapManagedStartupProfileToAgentEnvironment(profile, imageEnvironment);
   const alreadyPublished = completionAlreadyPublished(request);
+  const bootstrapIdentity = options.bootstrapIdentity ?? null;
+  const transactionStatus =
+    alreadyPublished && bootstrapIdentity !== null
+      ? getManagedStartupSharedStateTransactionStatus({
+          agent: request.agent,
+          profileFingerprint: request.profileFingerprint,
+          bootstrapIdentity,
+        })
+      : null;
+  if (transactionStatus === "none") {
+    fail("completed startup profile has no shared-state authority for this bootstrap attempt");
+  }
   if (!alreadyPublished) {
     ensureRootOwnedDirectory(ROOT_STATE_PARENT);
-    beginManagedStartupSharedStateTransaction(profile);
+    beginManagedStartupSharedStateTransaction(profile, { bootstrapIdentity });
   }
   const result = await applyManagedStartupImageProfile(request.agent, imageEnvironment);
-  return { ...result, transactionPending: !alreadyPublished };
+  return {
+    ...result,
+    transactionPending: !alreadyPublished || transactionStatus === "pending",
+  };
+}
+
+export function consumeManagedBootstrapEnvelope(
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly profileFingerprint: string;
+    readonly bootstrapIdentity: string;
+  },
+  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
+): ManagedStartupRootApplyRequest {
+  requireRoot();
+  const { bytes, stat } = readStableRegularFileSnapshot(
+    requestFile,
+    MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
+  );
+  if (
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o400
+  ) {
+    fail("managed bootstrap envelope must be root:root mode 0400 with one link");
+  }
+  const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
+  if (
+    envelope.bootstrapIdentity !== expected.bootstrapIdentity ||
+    envelope.rootApplyRequest.agent !== expected.agent ||
+    envelope.rootApplyRequest.profileFingerprint !== expected.profileFingerprint
+  ) {
+    fail("managed bootstrap envelope identity does not match the replacement");
+  }
+  fs.unlinkSync(requestFile);
+  return envelope.rootApplyRequest;
+}
+
+export async function applyManagedBootstrapEnvelope(
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly profileFingerprint: string;
+    readonly bootstrapIdentity: string;
+  },
+  env: Environment = process.env,
+  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
+  completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
+): Promise<ManagedStartupRootApplyResult> {
+  const request = consumeManagedBootstrapEnvelope(expected, requestFile);
+  const result = await applyManagedStartupRootRequest(request, env, {
+    bootstrapIdentity: expected.bootstrapIdentity,
+  });
+  atomicWriteRootFile(
+    completionFile,
+    serializeManagedBootstrapImageCompletion({
+      agent: result.agent,
+      bootstrapIdentity: expected.bootstrapIdentity,
+      profileFingerprint: result.fingerprint,
+      transactionPending: result.transactionPending,
+    }),
+    0o444,
+  );
+  return result;
+}
+
+export function verifyManagedBootstrapImageCompletion(
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly profileFingerprint: string;
+    readonly bootstrapIdentity: string;
+  },
+  completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
+  startupCompletionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
+  runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
+): ManagedBootstrapImageCompletion {
+  requireRoot();
+  const { bytes, stat } = readStableRegularFileSnapshot(
+    completionFile,
+    MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
+  );
+  if (
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o444
+  ) {
+    fail("managed bootstrap completion must be root:root mode 0444 with one link");
+  }
+  const completion = parseManagedBootstrapImageCompletion(bytes.toString("utf8"));
+  if (
+    completion.agent !== expected.agent ||
+    completion.profileFingerprint !== expected.profileFingerprint ||
+    completion.bootstrapIdentity !== expected.bootstrapIdentity
+  ) {
+    fail("managed bootstrap completion identity does not match the replacement");
+  }
+  verifyManagedStartupImageCompletion(
+    expected.agent,
+    expected.profileFingerprint,
+    startupCompletionFile,
+    runtimeEnvironmentFile,
+  );
+  return completion;
 }
 
 function readBoundedRootApplyStdin(): string {
@@ -1542,7 +1673,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--apply-bootstrap-file|--verify-bootstrap-completion|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1584,6 +1715,32 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       result.transactionPending
         ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
         : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
+    );
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--apply-bootstrap-file") {
+    const expected = {
+      agent: exactAgent(readCliAgent(argv, 7)),
+      profileFingerprint: readCliFingerprint(argv),
+      bootstrapIdentity: readCliBootstrapIdentity(argv),
+    } as const;
+    const result = await applyManagedBootstrapEnvelope(expected);
+    console.log(
+      result.transactionPending
+        ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
+        : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
+    );
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--verify-bootstrap-completion") {
+    const expected = {
+      agent: exactAgent(readCliAgent(argv, 7)),
+      profileFingerprint: readCliFingerprint(argv),
+      bootstrapIdentity: readCliBootstrapIdentity(argv),
+    } as const;
+    verifyManagedBootstrapImageCompletion(expected);
+    console.log(
+      `[managed-startup] verified ${expected.agent} profile ${expected.profileFingerprint} bootstrap ${expected.bootstrapIdentity}`,
     );
     return;
   }

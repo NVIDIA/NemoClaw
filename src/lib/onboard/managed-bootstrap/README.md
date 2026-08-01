@@ -65,9 +65,12 @@ Central onboarding accepts that provider-neutral surface without a Docker or
 Podman selection branch. Tests register an MXC-style surface through the same
 bundle and render held launches for OpenClaw, Hermes, and DCode.
 
-The current image definitions still do not package
-`nemoclaw-managed-startup-hold`, `managed-startup-image-runtime.cjs`, or the
-shared-state bootstrap modes consumed by this adapter. Later persistence and
-qualification slices must add those prerequisites and provide the canonical
-durable authority store. Until that complete boundary passes protected E2E,
-every production runtime provider keeps bootstrap unsupported.
+The image runtime now has dormant modes that consume the protected bootstrap
+envelope, bind shared-state authority to the exact attempt, publish an
+identity-bound completion, and authenticate that completion together with the
+ordinary startup handoff. The current image definitions still do not package
+`nemoclaw-managed-startup-hold`, `nemoclaw-managed-bootstrap`, or
+`managed-startup-image-runtime.cjs`; no production provider can invoke these
+modes yet. Later packaging and qualification slices must add those artifacts.
+Until that complete boundary passes protected E2E, every production runtime
+provider keeps bootstrap unsupported.

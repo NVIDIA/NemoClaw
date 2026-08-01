@@ -43,6 +43,7 @@ import {
   validateManagedStartupProfile,
 } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
+import * as sharedStateTransaction from "./managed-startup/shared-state-transaction";
 
 function dashboard(agent: ManagedStartupAgent): ManagedStartupDashboard {
   switch (agent) {
@@ -570,6 +571,87 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["pending", true],
+    ["committed", false],
+  ] as const)("binds a completed profile replay to its %s bootstrap transaction", async (status, transactionPending) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    mockRootReplayFilesystem([]);
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+    await applyManagedStartupImageProfile("openclaw", {
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
+    });
+    const statusProbe = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue(status);
+
+    const result = await applyManagedStartupRootRequest(
+      createManagedStartupRootApplyRequest({ agent: profile.agent, encodedProfile }),
+      {},
+      { bootstrapIdentity },
+    );
+
+    expect(result).toMatchObject({ fingerprint, transactionPending });
+    expect(statusProbe).toHaveBeenCalledWith({
+      agent: "openclaw",
+      profileFingerprint: fingerprint,
+      bootstrapIdentity,
+    });
+  });
+
+  it("rejects a completed profile that has no authority for the bootstrap attempt", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    mockRootReplayFilesystem([]);
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+    await applyManagedStartupImageProfile("openclaw", {
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
+    });
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("none");
+
+    await expect(
+      applyManagedStartupRootRequest(
+        createManagedStartupRootApplyRequest({ agent: profile.agent, encodedProfile }),
+        {},
+        { bootstrapIdentity: "b".repeat(64) },
+      ),
+    ).rejects.toThrow(/no shared-state authority/u);
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(1);
   });
 
   function writeCompletionFixture(
