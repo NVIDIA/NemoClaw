@@ -195,6 +195,7 @@ describe("OpenShell policy boundary package contract", () => {
         isValidName: (value: unknown) => boolean;
       };
     expect(controlContract.isValidName("packaged-hermes-sandbox")).toBe(true);
+    expect(controlContract.isValidName("../packaged-hermes-sandbox")).toBe(false);
   });
 
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 90_000 }, () => {
