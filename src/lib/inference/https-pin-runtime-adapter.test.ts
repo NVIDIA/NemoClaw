@@ -1125,6 +1125,7 @@ describe("adapter recovery lock (#6141)", () => {
       lockModule.__test.revokeRouteLocked("a".repeat(64), {
         loadPid: () => null,
         readControlToken: () => "persisted-control-token",
+        readAllowedSourceCidrs: () => ["172.18.0.0/16"],
         probeHealth: async () => true,
         deleteRoute,
         isAdapterProcess: () => false,
@@ -1145,6 +1146,7 @@ describe("adapter recovery lock (#6141)", () => {
       lockModule.__test.revokeRouteLocked("a".repeat(64), {
         loadPid: () => null,
         readControlToken: () => "persisted-control-token",
+        readAllowedSourceCidrs: () => ["172.18.0.0/16"],
         probeHealth: async () => true,
         deleteRoute: async () => {
           throw new Error("delete failed");

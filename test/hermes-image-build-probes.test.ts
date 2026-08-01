@@ -21,6 +21,7 @@ const commands = [
   "discord-create",
   "discord-recovery-source",
   "discord-reopen",
+  "gateway-process-identity",
   "gateway-runtime-metadata",
   "langfuse-credentials",
   "profile-policy",
