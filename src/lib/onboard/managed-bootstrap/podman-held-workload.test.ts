@@ -179,6 +179,24 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     expect(() => inspect(fake.engine)).toThrow("exact OpenShell ownership");
   });
 
+  it("rejects a label value that exceeds the bounded inspect contract", () => {
+    const fake = engineWith([
+      result(listOutput()),
+      result(
+        inspectOutput({
+          labels: {
+            [PODMAN_MANAGED_LABEL]: "true",
+            [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
+            [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
+            [PODMAN_SANDBOX_NAMESPACE_LABEL]: "x".repeat(64 * 1024 + 1),
+          },
+        }),
+      ),
+    ]);
+
+    expect(() => inspect(fake.engine)).toThrow("must be a bounded string");
+  });
+
   it("rejects an inspect response whose full runtime identity changed", () => {
     const fake = engineWith([result(listOutput()), result(inspectOutput({ id: "6".repeat(64) }))]);
 

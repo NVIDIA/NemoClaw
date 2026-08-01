@@ -19,6 +19,7 @@ const FULL_ID = /^(?:sha256:)?([0-9a-f]{64})$/iu;
 const BOOTSTRAP_IDENTITY = /^[0-9a-f]{64}$/u;
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
+const MAX_STRING_BYTES = 64 * 1024;
 const MAX_ARGV_BYTES = 128 * 1024;
 
 type JsonRecord = Record<string, unknown>;
@@ -61,6 +62,7 @@ function safeString(value: unknown, label: string, allowEmpty = false): string {
   if (
     typeof value !== "string" ||
     (!allowEmpty && value.length === 0) ||
+    Buffer.byteLength(value, "utf8") > MAX_STRING_BYTES ||
     value !== value.trim() ||
     value.includes("\0") ||
     CONTROL_CHARACTER.test(value)
