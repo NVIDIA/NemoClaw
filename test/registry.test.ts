@@ -961,6 +961,43 @@ describe("registry", () => {
     expect(fs.existsSync(regFile)).toBe(false);
   });
 
+  it("round-trips a canonical host-local inference receipt without rewriting it", () => {
+    const receipt = `${JSON.stringify({ schemaVersion: 1, providerId: "mxc" })}\n`;
+    registry.registerSandbox({
+      name: "host-local",
+      hostLocalInferenceReceipt: receipt,
+    });
+
+    expect(registry.getSandbox("host-local").hostLocalInferenceReceipt).toBe(receipt);
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes["host-local"].hostLocalInferenceReceipt).toBe(receipt);
+  });
+
+  it("rejects malformed host-local inference receipt transports on load and save", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: { name: "alpha", hostLocalInferenceReceipt: '{"providerId": "mxc"}\n' },
+        },
+      }),
+    );
+    expect(() => registry.getSandbox("alpha")).toThrow(/invalid host-local inference receipt/);
+
+    fs.rmSync(regFile, { force: true });
+    expect(() =>
+      registry.save({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: { name: "alpha", hostLocalInferenceReceipt: "not-json\n" },
+        },
+      }),
+    ).toThrow(/invalid host-local inference receipt/);
+    expect(fs.existsSync(regFile)).toBe(false);
+  });
+
   it("skips malformed sandbox entries while loading the registry", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(

@@ -6,6 +6,7 @@ import type {
   HostLocalInferenceReceipt,
   HostLocalInferenceRuntime,
 } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
+import { parseHostLocalInferenceReceipt } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
 import { createSetupInference } from "../src/lib/onboard/setup-inference.js";
 import { createDirectSetupInferenceHarnessFactory } from "./support/setup-inference-test-harness.js";
 
@@ -108,6 +109,15 @@ describe("setupInference host-local runtime integration", () => {
       "ollama-local",
       "qwen3.5:9b",
     );
+    const reservation = harness.updateSandbox.mock.calls.at(-1)?.[1];
+    expect(reservation?.hostLocalInferenceReceipt).toEqual(expect.any(String));
+    expect(
+      parseHostLocalInferenceReceipt(reservation?.hostLocalInferenceReceipt ?? ""),
+    ).toMatchObject({
+      providerId: "mxc",
+      service: "ollama",
+      endpoint: { port: 11434, networkName: "mxc-network" },
+    });
   });
 
   it("fails before gateway mutation when the selected provider does not match the startup service", async () => {

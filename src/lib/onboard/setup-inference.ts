@@ -50,7 +50,10 @@ import type {
 import * as inferenceProviders from "./inference-providers";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
-import type { HostLocalInferenceRuntime } from "./runtime-provider/host-local-inference";
+import {
+  type HostLocalInferenceRuntime,
+  serializeHostLocalInferenceReceipt,
+} from "./runtime-provider/host-local-inference";
 import {
   type HostLocalInferenceStartupRoute,
   prepareHostLocalInferenceStartup,
@@ -359,6 +362,7 @@ export function createSetupInference(
           gatewayName,
         );
         let routeReserved = false;
+        let hostLocalInferenceReceipt: string | null = null;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           const reserved = deps.updateSandbox(name, {
@@ -370,6 +374,7 @@ export function createSetupInference(
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
+            hostLocalInferenceReceipt,
           });
           routeReserved = reserved;
           return reserved;
@@ -409,6 +414,7 @@ export function createSetupInference(
               provider,
               options.hostLocalInference,
             );
+            hostLocalInferenceReceipt = serializeHostLocalInferenceReceipt(hostLocalRoute.receipt);
           } catch (error) {
             deps.error(`  ${error instanceof Error ? error.message : String(error)}`);
             return deps.exitProcess(1);
