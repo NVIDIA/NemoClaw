@@ -142,6 +142,13 @@ describe("Podman host preflight", () => {
         additionalCdiDevices: ["all"],
       }),
     ).toThrow("duplicate NVIDIA device");
+    expect(() =>
+      qualifyPodmanHost(engine(), {
+        platform: "linux",
+        architecture: "x64",
+        additionalCdiDevices: ["nvidia.com/gpu=0"],
+      }),
+    ).toThrow("duplicate NVIDIA device");
   });
 
   it("rejects an API service architecture that differs from the host", () => {
