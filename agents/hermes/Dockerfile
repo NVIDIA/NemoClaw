@@ -34,6 +34,7 @@ COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-confi
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
+COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
@@ -196,7 +197,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ab372bf8d92e8084a9f698b8130fb400ed2799cfe779319d6a342518b60d9b53
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=759e8e1466063692c5c89a0bbb60b77bedf16b0ad7e93d100463ba5ab2e49577
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -307,6 +308,23 @@ RUN /usr/bin/python3 -I \
         /opt/hermes/gateway/status.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py gateway-runtime-metadata
+
+# NemoClaw installs its wrapper as `hermes` and moves the real entrypoint to
+# `hermes.real`, so every managed gateway command line carries that basename.
+# Hermes only accepts `hermes`/`hermes.exe` as the entry token, which defeats
+# both the PID-file liveness re-check and the process-table fallback, so
+# `hermes status` reports a running foreground gateway as stopped (#7804).
+ARG NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256=1720f557e57c4755b9de47eece2c9c8ad182e1196c40d2783f1768fc5a426681
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-gateway-process-identity.py hash mismatch (update NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256)" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/hermes/gateway/status.py \
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py gateway-process-identity
 
 # Hermes v0.19.0 creates its writable cron execution-history database below
 # the high-risk directory that contains cron job definitions. When Shields up
