@@ -239,11 +239,7 @@ describe("base-image publication evidence", () => {
       "agents/**",
       "src/lib/messaging/**",
     ]);
-    expect(expanded).toEqual([
-      ":(glob)agents/**",
-      ":(glob)src/lib/messaging/**",
-      "Dockerfile",
-    ]);
+    expect(expanded).toEqual([":(glob)agents/**", ":(glob)src/lib/messaging/**", "Dockerfile"]);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
