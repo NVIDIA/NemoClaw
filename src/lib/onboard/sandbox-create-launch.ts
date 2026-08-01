@@ -151,11 +151,18 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
 
+  // Every sandbox needs to know its own name at runtime, not only the LangChain
+  // Deep Agents Code image. OpenShell exports OPENSHELL_SANDBOX as the boolean
+  // "1" to the processes it spawns inside the sandbox, so this injection is the
+  // only in-container source of the name. nemoclaw-start.sh bakes it into the
+  // connect-shell env so the in-sandbox hints can print a copyable host-side
+  // `nemoclaw <name> …` command instead of a `<name>` placeholder. (#7795)
+  const sandboxName = input.sandboxName;
+  if (sandboxName) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
+  }
+
   if (agent?.name === "langchain-deepagents-code") {
-    const sandboxName = input.sandboxName;
-    if (sandboxName) {
-      envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
-    }
     envArgs.push(
       formatEnvAssignment(
         "NEMOCLAW_OBSERVABILITY",
