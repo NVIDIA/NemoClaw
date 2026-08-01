@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { applyPreset, buildPolicyGetCommand, buildPolicySetCommand } from "../src/lib/policy";
+import {
+  applyPreset,
+  buildPolicyGetCommand,
+  buildPolicyGetFullCommand,
+  buildPolicySetCommand,
+} from "../src/lib/policy";
 
 type OnboardReadinessInternals = {
   hasStaleGateway: (output: string | null | undefined) => boolean;
@@ -126,6 +131,12 @@ describe("WSL sandbox name handling", () => {
   it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicyGetCommand("my-assistant");
     expect(cmd).toContain("my-assistant");
+  });
+
+  it("buildPolicyGetFullCommand preserves hyphenated sandbox name", () => {
+    const cmd = buildPolicyGetFullCommand("my-assistant");
+    expect(cmd).toContain("my-assistant");
+    expect(cmd).toContain("--full");
   });
 
   it("buildPolicySetCommand preserves multi-hyphen names", () => {

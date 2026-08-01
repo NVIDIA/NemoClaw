@@ -10,7 +10,14 @@ export function envInt(
   const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
+  // A negative override is invalid input, not a request for zero. Clamping it
+  // to 0 picked the most damaging reading available for these knobs -- an
+  // empty poll loop, a zero-second readiness budget, a timeout that expires
+  // before its first attempt -- while any other unparseable value already fell
+  // back to the caller's default. Treat both the same way, which is what the
+  // sibling `readNonNegativeNumberEnv` has always done (#7881).
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.round(n);
 }
 
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */

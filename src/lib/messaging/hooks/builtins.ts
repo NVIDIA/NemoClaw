@@ -3,6 +3,10 @@
 
 import type { ChannelStatusHealthHookOptions } from "../channels/channel-health";
 import { createDiscordHookRegistrations, type DiscordHookOptions } from "../channels/discord/hooks";
+import {
+  createGooglechatHookRegistrations,
+  type GooglechatHookOptions,
+} from "../channels/googlechat/hooks";
 import type { OpenClawBridgeHealthHookOptions } from "../channels/openclaw-bridge-health";
 import { createSlackHookRegistrations, type SlackHookOptions } from "../channels/slack/hooks";
 import { createTeamsHookRegistrations, type TeamsHookOptions } from "../channels/teams/hooks";
@@ -22,6 +26,7 @@ import type { MessagingHookRegistration } from "./types";
 export interface BuiltInMessagingHookOptions {
   readonly common?: CommonHookOptions;
   readonly discord?: DiscordHookOptions;
+  readonly googlechat?: GooglechatHookOptions;
   readonly openclawBridgeHealth?: OpenClawBridgeHealthHookOptions;
   readonly slack?: SlackHookOptions;
   readonly teams?: TeamsHookOptions;
@@ -41,6 +46,7 @@ export function createBuiltInMessagingHookRegistrations(
     ...createDiscordHookRegistrations(
       withOpenClawBridgeHealthOptions(options.discord, options.openclawBridgeHealth),
     ),
+    ...createGooglechatHookRegistrations(options.googlechat),
     ...createSlackHookRegistrations(
       withOpenClawBridgeHealthOptions(options.slack, options.openclawBridgeHealth),
     ),
