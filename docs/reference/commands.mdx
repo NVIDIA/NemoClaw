@@ -839,6 +839,8 @@ Use `--no-sandbox-gpu`, `--no-gpu`, or `NEMOCLAW_SANDBOX_GPU=0` when you want to
 
 List all registered sandboxes with their model, provider, and policy presets.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
+Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+The row does not include the former derived `connected` boolean.
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 <AgentOnly variant="openclaw,hermes">
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
