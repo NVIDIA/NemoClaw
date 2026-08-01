@@ -110,24 +110,22 @@ function truncateRedactedText(text: string, maxBytes: number): string {
 }
 
 function readRegularFileNoFollow(filePath: string): string | null {
-  const before = fs.lstatSync(filePath);
-  if (before.isSymbolicLink() || !before.isFile()) {
-    throw new Error(`diagnostic entry is not a regular file: ${filePath}`);
-  }
-  if (before.size > MANAGED_IMAGE_DIAGNOSTIC_EXPORT_LIMITS.maxSourceFileBytes) return null;
-
   const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
-  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new Error(`diagnostic entry is not a regular file: ${filePath}`);
+    }
+    throw error;
+  }
   try {
     const opened = fs.fstatSync(descriptor);
-    if (
-      !opened.isFile() ||
-      opened.dev !== before.dev ||
-      opened.ino !== before.ino ||
-      opened.size !== before.size
-    ) {
-      throw new Error(`diagnostic entry changed while being read: ${filePath}`);
+    if (!opened.isFile()) {
+      throw new Error(`diagnostic entry is not a regular file: ${filePath}`);
     }
+    if (opened.size > MANAGED_IMAGE_DIAGNOSTIC_EXPORT_LIMITS.maxSourceFileBytes) return null;
     return fs.readFileSync(descriptor, "utf8");
   } finally {
     fs.closeSync(descriptor);
