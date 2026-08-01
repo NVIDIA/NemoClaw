@@ -35,15 +35,33 @@ export type ReplacedSandboxWorkloadCleanupResult =
   | RuntimeProviderWorkloadCleanupResult
   | { readonly status: "skipped"; readonly reason: "replacement-unproven" | "image-reused" };
 
+export type ReplacedSandboxSourceEntry = Omit<SandboxEntry, "workload"> & {
+  readonly workload?:
+    | Extract<NonNullable<SandboxEntry["workload"]>, { readonly kind: "managed-image" }>
+    | {
+        readonly schemaVersion: 1;
+        readonly kind: "legacy-dockerfile";
+        readonly reference: string | null;
+        readonly shared: boolean;
+      };
+};
+
 interface ReplacedSandboxWorkloadCleanupDeps {
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
+}
+
+function providerCleanupSource(source: ReplacedSandboxSourceEntry): SandboxEntry {
+  const { workload, ...entry } = source;
+  if (!workload) return entry;
+  if (workload.kind === "managed-image") return { ...entry, workload };
+  return { ...entry, workload: { ...workload, shared: false } };
 }
 
 /** Remove an owned source image only after the journaled replacement is registered. */
 export function retireReplacedSandboxWorkload(
   sandboxName: string,
   targetGeneration: string,
-  source: SandboxEntry,
+  source: ReplacedSandboxSourceEntry,
   replacement: SandboxEntry | null,
   deps: ReplacedSandboxWorkloadCleanupDeps = {},
 ): ReplacedSandboxWorkloadCleanupResult {
@@ -55,17 +73,25 @@ export function retireReplacedSandboxWorkload(
   ) {
     return { status: "skipped", reason: "replacement-unproven" };
   }
+  if (source.workload?.shared === true) {
+    return { status: "skipped", reason: "shared-image" };
+  }
 
+  const cleanupSource = providerCleanupSource(source);
   const providers = deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES;
   let authority;
   try {
-    authority = requireRuntimeProviderDestructiveCleanupAuthority(sandboxName, source, providers);
+    authority = requireRuntimeProviderDestructiveCleanupAuthority(
+      sandboxName,
+      cleanupSource,
+      providers,
+    );
   } catch (error) {
     if (!(error instanceof RuntimeProviderSelectionError)) throw error;
     return { status: "skipped", reason: "authority-unproven" };
   }
   const plan = authority.provider.cleanup.planOwnedWorkloadCleanup({
-    sandbox: source,
+    sandbox: cleanupSource,
     sandboxName,
   });
   if (plan.action === "retain") {
@@ -80,7 +106,7 @@ export function retireReplacedSandboxWorkload(
   ) {
     return { status: "skipped", reason: "image-reused" };
   }
-  return authority.provider.cleanup.removeOwnedWorkload({ sandbox: source, sandboxName });
+  return authority.provider.cleanup.removeOwnedWorkload({ sandbox: cleanupSource, sandboxName });
 }
 
 function canonicalJsonValue(value: unknown): unknown {
@@ -103,14 +129,18 @@ function checkpointSourceWorkload(
     imageTag: source.imageTag,
     workload:
       source.workload?.kind === "legacy-dockerfile"
-        ? { kind: "legacy-dockerfile", reference: source.workload.reference }
+        ? {
+            kind: "legacy-dockerfile",
+            reference: source.workload.reference,
+            shared: source.workload.shared,
+          }
         : null,
   };
 }
 
 export function sandboxRecreateSourceWorkloadEntry(
   transaction: CheckpointSandboxRecreateTransaction,
-): SandboxEntry | null {
+): ReplacedSandboxSourceEntry | null {
   const source = transaction.sourceWorkload;
   if (!source) return null;
   return {
@@ -123,7 +153,7 @@ export function sandboxRecreateSourceWorkloadEntry(
             schemaVersion: 1,
             kind: "legacy-dockerfile" as const,
             reference: source.workload.reference,
-            shared: false as const,
+            shared: source.workload.shared,
           },
         }
       : {}),

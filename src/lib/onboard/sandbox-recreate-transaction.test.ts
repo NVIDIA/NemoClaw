@@ -14,6 +14,8 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
@@ -24,6 +26,7 @@ import {
   fingerprintSandboxRegistryEntry,
   matchingSandboxRecreateTransaction,
   planSandboxRecreateRecovery,
+  retireReplacedSandboxWorkload,
   type SandboxRecreateObservation,
   sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
@@ -89,6 +92,7 @@ function transactionAt(
       workload: {
         kind: "legacy-dockerfile",
         reference: "openshell/sandbox-from:old",
+        shared: false,
       },
     },
     targetIntentFingerprint: TARGET_INTENT,
@@ -126,6 +130,47 @@ describe("sandbox recreate journal", () => {
     const serialized = JSON.stringify(transaction);
     expect(serialized).not.toContain("NVIDIA_API_KEY");
     expect(serialized).not.toContain("model-a");
+  });
+
+  it("retains a shared source image after reconstructing an interrupted replacement", () => {
+    const source = {
+      ...SOURCE_ENTRY,
+      workload: { ...SOURCE_ENTRY.workload, shared: true },
+    } as unknown as SandboxEntry;
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    const transaction = beginSandboxRecreateTransaction(session, {
+      ...beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+      sourceEntry: source,
+    });
+    const restoredSource = sandboxRecreateSourceWorkloadEntry(transaction);
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+    const replacement: SandboxEntry = {
+      ...SOURCE_ENTRY,
+      imageTag: "openshell/sandbox-from:new",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:new",
+        shared: false,
+      },
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    };
+
+    expect(restoredSource?.workload?.shared).toBe(true);
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        TARGET_GENERATION,
+        restoredSource ?? SOURCE_ENTRY,
+        replacement,
+        { runtimeProviders },
+      ),
+    ).toEqual({ status: "skipped", reason: "shared-image" });
+    expect(removeImage).not.toHaveBeenCalled();
   });
 
   it("starts at deleted when the source is already absent", () => {

@@ -61,6 +61,7 @@ function recreateTransaction(): CheckpointSandboxRecreateTransaction {
       workload: {
         kind: "legacy-dockerfile",
         reference: "openshell/sandbox-from:old",
+        shared: false,
       },
     },
     targetIntentFingerprint: "c".repeat(64),
@@ -239,6 +240,22 @@ describe("checkpoint schema inspection", () => {
       workload: {
         kind: "legacy-dockerfile",
         reference: "openshell/sandbox-from:different",
+        shared: false,
+      },
+    };
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects a source-workload cleanup receipt without a boolean sharing state", () => {
+    const serialized = serializedRecreateCheckpoint();
+    const transaction = serialized.sandboxRecreate as Record<string, unknown>;
+    transaction.sourceWorkload = {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
       },
     };
 

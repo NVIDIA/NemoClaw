@@ -84,6 +84,7 @@ export interface CheckpointSandboxRecreateSourceWorkload {
   readonly workload: {
     readonly kind: "legacy-dockerfile";
     readonly reference: string | null;
+    readonly shared: boolean;
   } | null;
 }
 

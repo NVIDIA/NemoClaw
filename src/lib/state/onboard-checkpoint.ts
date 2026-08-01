@@ -284,7 +284,13 @@ function parseSandboxRecreateSourceWorkload(
   if (!imageTag) return undefined;
   const rawWorkload = value.workload;
   if (rawWorkload === null) return { openshellDriver, imageTag, workload: null };
-  if (!isObjectRecord(rawWorkload) || rawWorkload.kind !== "legacy-dockerfile") return undefined;
+  if (
+    !isObjectRecord(rawWorkload) ||
+    rawWorkload.kind !== "legacy-dockerfile" ||
+    typeof rawWorkload.shared !== "boolean"
+  ) {
+    return undefined;
+  }
   const rawReference = rawWorkload.reference;
   const reference = rawReference === null ? null : readBoundedJournalString(rawReference, 4096);
   if (reference === null ? rawReference !== null : reference !== imageTag) {
@@ -293,7 +299,7 @@ function parseSandboxRecreateSourceWorkload(
   return {
     openshellDriver,
     imageTag,
-    workload: { kind: "legacy-dockerfile", reference },
+    workload: { kind: "legacy-dockerfile", reference, shared: rawWorkload.shared },
   };
 }
 

@@ -84,6 +84,7 @@ import {
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
+  type ReplacedSandboxSourceEntry,
   type ReplacedSandboxWorkloadCleanupResult,
   retireReplacedSandboxWorkload as retireReplacedSandboxWorkloadDefault,
   type SandboxRecreateObservation,
@@ -202,7 +203,7 @@ export interface SandboxStateOptions<
     retireReplacedSandboxWorkload?(
       sandboxName: string,
       targetGeneration: string,
-      source: SandboxEntry,
+      source: ReplacedSandboxSourceEntry,
       replacement: SandboxEntry | null,
     ): ReplacedSandboxWorkloadCleanupResult;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
@@ -399,7 +400,7 @@ type SandboxRecreateRepairMetadata = {
 };
 type SandboxRecreatePreparation = {
   readonly transaction: CheckpointSandboxRecreateTransaction | null;
-  readonly sourceEntry: SandboxEntry | null;
+  readonly sourceEntry: ReplacedSandboxSourceEntry | null;
   readonly effectiveCreateIntent: CompleteSandboxCreateIntent;
   readonly repairMetadata: SandboxRecreateRepairMetadata | null;
   readonly removalReceipt: SandboxRemovalReceipt | null;
@@ -1369,7 +1370,7 @@ class SandboxStateFlow<
 
   private retireSandboxRecreateSourceWorkload(
     transaction: CheckpointSandboxRecreateTransaction | null,
-    sourceEntry: SandboxEntry | null,
+    sourceEntry: ReplacedSandboxSourceEntry | null,
     sandboxName: string,
   ): void {
     if (!transaction || !sourceEntry) return;

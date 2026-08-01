@@ -244,14 +244,24 @@ it("removes the journaled source image after resuming a registered replacement",
   await expect(handleSandboxState(options)).rejects.toThrow(
     /interrupted after replacement registration/u,
   );
-  expect(session.checkpoint?.sandboxRecreate?.sourceWorkload?.imageTag).toBe(sourceEntry.imageTag);
+  const journal = session.checkpoint?.sandboxRecreate;
+  expect(journal?.sourceWorkload?.imageTag).toBe(sourceEntry.imageTag);
+  expect(journal?.id).toBeTruthy();
+  expect(journal?.targetGeneration).toBeTruthy();
 
   await handleSandboxState(options);
 
+  expect(createSandbox).toHaveBeenCalledTimes(2);
+  expect(createSandbox.mock.calls[1]?.at(-1)).toMatchObject({
+    recreateTransaction: {
+      id: journal?.id,
+      targetGeneration: journal?.targetGeneration,
+    },
+  });
   expect(retireReplacedSandboxWorkload).toHaveBeenNthCalledWith(
     2,
     "saved",
-    replacementEntry.lifecycleGeneration,
+    journal?.targetGeneration,
     expect.objectContaining({
       name: "saved",
       openshellDriver: "docker",
