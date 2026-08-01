@@ -26,6 +26,7 @@ filesystem_policy:
     # Runtime claims root-owned, sticky hard-link tokens here. The sandbox user
     # can consume a slot but DAC prevents deleting or replacing any used slot.
     - /usr/local/share/nemoclaw/dcode-validation-invocations
+    - /run/nemoclaw-dcode-mcp
     - /tmp
     - /dev/null
 
