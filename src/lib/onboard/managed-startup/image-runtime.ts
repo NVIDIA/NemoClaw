@@ -21,8 +21,10 @@ import {
   decodeManagedStartupProfile,
   fingerprintManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
+  MANAGED_STARTUP_MESSAGING_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupMessagingAgent,
   type ManagedStartupProfile,
 } from "./profile";
 import {
@@ -63,7 +65,6 @@ const MAX_MANAGED_STARTUP_COMPLETION_BYTES = 4096;
 const MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES = 512 * 1024;
 
 export type ManagedStartupImageIdentity = "root" | "sandbox";
-export type ManagedStartupMessagingAgent = "openclaw" | "hermes";
 
 export interface ManagedStartupGenerateConfigConstructionAction {
   readonly kind: "generate-agent-config";
@@ -523,6 +524,7 @@ function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
 function messagingCommand(
   agent: ManagedStartupMessagingAgent,
   phase: "runtime-setup" | "post-agent-install",
+  mode: "apply" | "clear",
 ): readonly string[] {
   return [
     "/usr/local/bin/node",
@@ -532,6 +534,8 @@ function messagingCommand(
     agent,
     "--phase",
     phase,
+    "--mode",
+    mode,
     ...(phase === "post-agent-install" ? ["--managed-startup-runtime"] : []),
   ];
 }
@@ -597,7 +601,7 @@ export function buildManagedStartupImageActionPlan(
           commands.push({
             action: "messaging-runtime-setup",
             runAs: action.runAs,
-            argv: messagingCommand(action.agent, action.phase),
+            argv: messagingCommand(action.agent, action.phase, action.mode),
           });
         } else if (action.phase === "post-agent-install") {
           if (action.runAs !== "sandbox") {
@@ -607,7 +611,7 @@ export function buildManagedStartupImageActionPlan(
           commands.push({
             action: "messaging-post-agent-install",
             runAs: action.runAs,
-            argv: messagingCommand(action.agent, action.phase),
+            argv: messagingCommand(action.agent, action.phase, action.mode),
           });
         } else {
           failActionPlan("unsupported messaging construction phase");
@@ -625,7 +629,10 @@ export function buildManagedStartupImageActionPlan(
   if (generateActions !== 1) {
     failActionPlan("exactly one agent config construction action is required");
   }
-  const expectedMessagingActions = inputAgent === "langchain-deepagents-code" ? 0 : 1;
+  const supportsMessaging = (MANAGED_STARTUP_MESSAGING_AGENTS as readonly string[]).includes(
+    inputAgent,
+  );
+  const expectedMessagingActions = supportsMessaging ? 1 : 0;
   if (
     runtimeMessagingActions !== expectedMessagingActions ||
     postMessagingActions !== expectedMessagingActions
@@ -634,10 +641,9 @@ export function buildManagedStartupImageActionPlan(
       `${inputAgent} requires ${String(expectedMessagingActions)} action for each messaging phase`,
     );
   }
-  const expectedOrder =
-    inputAgent === "langchain-deepagents-code"
-      ? ["generate-agent-config"]
-      : ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"];
+  const expectedOrder = supportsMessaging
+    ? ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"]
+    : ["generate-agent-config"];
   if (commands.some((command, index) => command.action !== expectedOrder[index])) {
     failActionPlan(`${inputAgent} image actions are not in the required construction order`);
   }
@@ -1625,7 +1631,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   );
 }
 
-if (require.main === module) {
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
