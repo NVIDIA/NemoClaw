@@ -132,6 +132,12 @@ _MCP_CHILD_BINDING_ENV = "NEMOCLAW_DCODE_MCP_BINDING"
 _MCP_SEALED_KIND = "sealed-memfd"
 _MCP_ANONYMOUS_KIND = "anonymous-otmpfile"
 _MCP_ANONYMOUS_DIRECTORY = Path("/tmp")
+_MCP_PRIVATE_ANONYMOUS_DIRECTORY = Path("/run/nemoclaw-dcode-mcp")
+_MCP_PRIVATE_ANONYMOUS_MAX_BYTES = 1_048_576
+_MCP_PRIVATE_ANONYMOUS_MODE = 0o1777
+_MCP_PRIVATE_ANONYMOUS_MOUNT_OPTIONS = frozenset(
+    {"rw", "noexec", "nosuid", "nodev"}
+)
 _MCP_FALLBACK_ERRNOS = {
     errno.EACCES,
     errno.EINVAL,
@@ -838,13 +844,16 @@ def _sealed_managed_mcp_snapshot(payload: bytes) -> int:
         raise
 
 
-def _anonymous_managed_mcp_snapshot(payload: bytes) -> int:
+def _anonymous_managed_mcp_snapshot_at(
+    payload: bytes,
+    directory: Path,
+) -> int:
     writer: int | None = None
     reader: int | None = None
     complete = False
     try:
         flags = os.O_TMPFILE | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC
-        writer = os.open(_MCP_ANONYMOUS_DIRECTORY, flags, 0o600)
+        writer = os.open(directory, flags, 0o600)
         remaining = memoryview(payload)
         while remaining:
             written = os.write(writer, remaining)
@@ -892,6 +901,82 @@ def _anonymous_managed_mcp_snapshot(payload: bytes) -> int:
             except OSError:
                 # Best-effort teardown must not replace the primary result or error.
                 pass
+
+
+def _validate_private_managed_mcp_tmpfs() -> None:
+    directory = _MCP_PRIVATE_ANONYMOUS_DIRECTORY
+    try:
+        metadata = os.lstat(directory)
+        filesystem = os.statvfs(directory)
+        mount_lines = Path("/proc/self/mountinfo").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError(
+            "managed MCP config requires a private bounded tmpfs"
+        ) from exc
+
+    matching_mount_options: list[set[str] | None] = []
+    for line in mount_lines:
+        fields = line.split()
+        if len(fields) <= 4 or fields[4] != str(directory):
+            continue
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            matching_mount_options.append(None)
+            continue
+        if len(fields) <= separator + 3 or fields[separator + 1] != "tmpfs":
+            matching_mount_options.append(None)
+            continue
+        matching_mount_options.append(set(fields[5].split(",")))
+
+    mount_options = (
+        matching_mount_options[0]
+        if len(matching_mount_options) == 1
+        else None
+    )
+
+    total_bytes = filesystem.f_blocks * filesystem.f_frsize
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != _MCP_PRIVATE_ANONYMOUS_MODE
+        or not os.path.ismount(directory)
+        or mount_options is None
+        or not _MCP_PRIVATE_ANONYMOUS_MOUNT_OPTIONS.issubset(mount_options)
+        or total_bytes <= 0
+        or total_bytes > _MCP_PRIVATE_ANONYMOUS_MAX_BYTES
+    ):
+        raise RuntimeError(
+            "managed MCP config requires a private bounded tmpfs"
+        )
+
+
+def _managed_mcp_tmpfile_fallback_allowed(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, AttributeError):
+            return True
+        if isinstance(current, OSError):
+            return current.errno == errno.EOPNOTSUPP
+        current = current.__cause__
+    return False
+
+
+def _anonymous_managed_mcp_snapshot(payload: bytes) -> int:
+    try:
+        return _anonymous_managed_mcp_snapshot_at(
+            payload,
+            _MCP_ANONYMOUS_DIRECTORY,
+        )
+    except RuntimeError as exc:
+        if not _managed_mcp_tmpfile_fallback_allowed(exc):
+            raise
+    _validate_private_managed_mcp_tmpfs()
+    return _anonymous_managed_mcp_snapshot_at(
+        payload,
+        _MCP_PRIVATE_ANONYMOUS_DIRECTORY,
+    )
 
 
 def _managed_mcp_fallback_allowed(exc: BaseException) -> bool:

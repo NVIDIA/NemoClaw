@@ -507,6 +507,11 @@
       "category": "security"
     },
     {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps migrated provider identities and implementations behind the one bundle composition",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-limit-policy.test.ts",
       "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
       "category": "compatibility"

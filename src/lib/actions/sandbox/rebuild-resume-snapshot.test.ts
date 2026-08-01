@@ -196,7 +196,16 @@ describe("rebuild resume snapshot repair", () => {
         stdout: "",
         stderr: "Error: sandbox alpha not found",
       } as never),
-      vi.spyOn(destroy, "removeSandboxRegistryEntry").mockReturnValue(true),
+      vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
+        entry: {
+          name: "alpha",
+          agent: null,
+        } as never,
+        wasDefault: true,
+        fallbackDefault: null,
+        postRemovalDefaultSelectionRevision: 1,
+      }),
+      vi.spyOn(registry, "restoreSandboxEntryIfMissing").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
       vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),

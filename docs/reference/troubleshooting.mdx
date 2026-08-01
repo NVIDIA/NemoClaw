@@ -134,6 +134,26 @@ docker info
 The managed default gateway service accepts `DOCKER_HOST` only as an absolute local `unix://` socket path.
 It rejects remote endpoints and relative socket paths before service startup.
 
+### Onboarding reports `invalid_docker_host`
+
+The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
+Remove the override to use Docker's default local socket:
+
+```bash
+unset DOCKER_HOST
+$$nemoclaw onboard
+```
+
+If your Docker daemon uses another local socket, set an absolute `unix://` path before you retry:
+
+```bash
+export DOCKER_HOST=unix:///var/run/docker.sock
+$$nemoclaw onboard
+```
+
+NemoClaw rejects TCP and SSH endpoints, relative socket paths, values that contain single quotes, and values that contain line breaks.
+Do not wrap the socket path in single quotes inside the variable value.
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -2716,8 +2736,11 @@ If the command succeeds because the dashboard profile is missing, the dashboard 
 
 ### Shields Reports Drift for the Hermes Configuration Root
 
-The Hermes configuration root holds the agent's top-level runtime state, not only its configuration: `auth.json`, the drain request, and the temporary files that back every atomic `gateway_state.json` and `gateway.pid` replace are created directly in `/sandbox/.hermes`.
-Lockdown therefore moves that directory to `root:sandbox` mode `3770`, keeping the set-id and sticky bits, so the gateway can still manage its own runtime files while the sticky bit stops the sandbox identity from unlinking or renaming the sealed root-owned configuration.
+The Hermes configuration root holds the agent's top-level runtime state, not only its configuration.
+The configuration root stores `auth.json`, the drain request, and temporary files for atomic `gateway_state.json` and `gateway.pid` replacement.
+Lockdown moves that directory to `root:sandbox` mode `3770`, which preserves the set-group-ID and sticky bits.
+The gateway can still manage its runtime files.
+The sticky bit prevents the sandbox identity from unlinking or renaming sealed root-owned configuration.
 Run the following command to inspect a locked root:
 
 ```bash
