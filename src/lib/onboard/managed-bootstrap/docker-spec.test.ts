@@ -36,6 +36,24 @@ describe("managed bootstrap Docker launch spec", () => {
     );
   });
 
+  it("orders durable launch keys by code unit across host locale settings", () => {
+    const inspect = createDockerGpuInspectFixture();
+    inspect.Config!.Labels = {
+      "com.nvidia.foo": "lower",
+      "com.nvidia.Foo": "upper",
+      "com.nvidia-foo": "punctuation",
+    };
+
+    const canonical = normalizeDockerManagedBootstrapLaunchSpec(inspect).canonicalJson;
+
+    expect(canonical.indexOf('"com.nvidia-foo"')).toBeLessThan(
+      canonical.indexOf('"com.nvidia.Foo"'),
+    );
+    expect(canonical.indexOf('"com.nvidia.Foo"')).toBeLessThan(
+      canonical.indexOf('"com.nvidia.foo"'),
+    );
+  });
+
   it.each([
     {
       name: "anonymous Config.Volumes whose data source cannot be proven",
