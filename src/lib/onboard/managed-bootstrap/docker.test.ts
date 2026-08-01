@@ -12,22 +12,25 @@ import { createManagedStartupRootApplyRequest } from "../managed-startup/root-ap
 import {
   createManagedBootstrapPreparedAuthority,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-  type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapDurablePreparationReceipt,
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapObservedSnapshot,
   ManagedBootstrapOwnerCleanupRequiredError,
   type ManagedBootstrapPreparedReplacementHandle,
-  type ManagedBootstrapReplacementHandle,
 } from "./adapter";
 import { createDockerManagedBootstrapAdapter, type DockerManagedBootstrapDeps } from "./docker";
 import type {
+  DockerManagedBootstrapFinalizationRecord,
   DockerManagedBootstrapJournal,
   DockerManagedBootstrapJournalStore,
 } from "./docker-journal";
 import { DockerManagedBootstrapJournalAcknowledgementLostError } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
-import { parseManagedBootstrapEnvelope } from "./envelope";
+import {
+  MANAGED_BOOTSTRAP_COMPLETION_FILE,
+  parseManagedBootstrapEnvelope,
+  serializeManagedBootstrapImageCompletion,
+} from "./envelope";
 
 const IDENTITY = "1".repeat(64);
 const OLD_ID = "2".repeat(64);
@@ -156,6 +159,7 @@ function fixture(options: FixtureOptions = {}) {
   let original = originalInspect(agentInputs(options.agent));
   let replacement: DockerContainerInspect | null = null;
   let journal: DockerManagedBootstrapJournal | null = null;
+  let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
   const events: string[] = [];
   const lostTransitions = new Set(["cutover", "shared-state-committed"]);
@@ -175,6 +179,7 @@ function fixture(options: FixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
+    listUnfinished: () => (journal && !finalization ? [structuredClone(journal)] : []),
     transition(_identity, expected, next) {
       if (!journal || journal.phase !== expected) throw new Error("stale journal transition");
       journal = { ...journal, phase: next };
@@ -189,6 +194,20 @@ function fixture(options: FixtureOptions = {}) {
       }
       return structuredClone(journal);
     },
+    recordCompletion(_identity, receipt) {
+      if (!journal || journal.phase !== "cutover") {
+        throw new Error("completion requires cutover journal");
+      }
+      if (
+        journal.commitReceipt !== null &&
+        JSON.stringify(journal.commitReceipt) !== JSON.stringify(receipt)
+      ) {
+        throw new Error("completion changed");
+      }
+      journal = { ...journal, commitReceipt: structuredClone(receipt) };
+      events.push("journal:completion");
+      return structuredClone(journal);
+    },
     remove(_identity, expected) {
       if (!journal || !expected.includes(journal.phase)) throw new Error("stale journal remove");
       journal = null;
@@ -200,6 +219,14 @@ function fixture(options: FixtureOptions = {}) {
         );
       }
     },
+    recordFinalization(value) {
+      if (finalization && JSON.stringify(finalization) !== JSON.stringify(value)) {
+        throw new Error("finalization changed");
+      }
+      finalization = structuredClone(value);
+      events.push(`finalization:${value.phase}`);
+    },
+    loadFinalization: () => (finalization ? structuredClone(finalization) : null),
   };
   const inspect = (reference: string): DockerContainerInspect => {
     const candidates = [original, replacement].filter(
@@ -266,6 +293,20 @@ function fixture(options: FixtureOptions = {}) {
           expect(
             parseManagedBootstrapEnvelope(fs.readFileSync(source, "utf8")).bootstrapIdentity,
           ).toBe(IDENTITY);
+          return ok();
+        }
+        if (source === `${NEW_ID}:${MANAGED_BOOTSTRAP_COMPLETION_FILE}`) {
+          fs.writeFileSync(
+            destination,
+            serializeManagedBootstrapImageCompletion({
+              bootstrapIdentity: IDENTITY,
+              agent: options.agent ?? "hermes",
+              profileFingerprint: agentInputs(options.agent).request.profileFingerprint,
+              transactionPending: sharedState === "pending",
+            }),
+            { mode: 0o444 },
+          );
+          fs.chmodSync(destination, 0o444);
           return ok();
         }
         const receipt = source.split(":")[1];
@@ -344,6 +385,9 @@ function fixture(options: FixtureOptions = {}) {
     get journal() {
       return journal;
     },
+    get finalization() {
+      return finalization;
+    },
     get original() {
       return original;
     },
@@ -353,24 +397,6 @@ function fixture(options: FixtureOptions = {}) {
     get sharedState() {
       return sharedState;
     },
-  };
-}
-
-function completion(
-  replacement: ManagedBootstrapReplacementHandle,
-): ManagedBootstrapCompletionReceipt {
-  return {
-    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-    sandbox,
-    runtimeId: replacement.replacementRuntimeId,
-    image: replacement.image,
-    runtimeImageContentId: replacement.runtimeImageContentId,
-    originalSpecHash: replacement.originalSpecHash,
-    replacementSpecHash: replacement.replacementSpecHash,
-    profileFingerprint: replacement.profileFingerprint,
-    bootstrapIdentity: replacement.bootstrapIdentity,
-    transactionPending: true,
-    completedAt: "2026-07-31T12:15:00.000Z",
   };
 }
 
@@ -420,23 +446,46 @@ describe("Docker managed bootstrap adapter", () => {
       replacementRuntimeId: NEW_ID,
     });
 
+    const commitReceipt = await adapter.awaitBootstrap({
+      handle,
+      snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
+    expect(fake.events.indexOf("journal:completion")).toBeGreaterThan(
+      fake.events.indexOf(`start:${NEW_ID}`),
+    );
+    const finalized = await adapter.finalizeBootstrap({
+      outcome: "commit",
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+      replacement,
+      completion: commitReceipt,
+    });
+    expect(finalized).toMatchObject({ outcome: "committed" });
+    expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
+      fake.events.indexOf(`rm:${OLD_ID}`),
+    );
+    expect(fake.journal).toBeNull();
+    expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
+    expect(fake.sharedState).toBe("none");
+    expect(fake.replacement?.Id).toBe(NEW_ID);
+
+    const eventCount = fake.events.length;
     await expect(
-      adapter.finalizeBootstrap({
+      createDockerManagedBootstrapAdapter(fake.deps).finalizeBootstrap({
         outcome: "commit",
         handle,
         snapshot,
         prepared,
         durablePreparation: durable,
         replacement,
-        completion: completion(replacement),
+        completion: commitReceipt,
       }),
-    ).resolves.toMatchObject({ outcome: "committed" });
-    expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
-      fake.events.indexOf(`rm:${OLD_ID}`),
-    );
-    expect(fake.journal).toBeNull();
-    expect(fake.sharedState).toBe("none");
-    expect(fake.replacement?.Id).toBe(NEW_ID);
+    ).resolves.toEqual(finalized);
+    expect(fake.events).toHaveLength(eventCount);
   });
 
   it("recovers a failed cutover after adapter restart from exact journal authority", async () => {

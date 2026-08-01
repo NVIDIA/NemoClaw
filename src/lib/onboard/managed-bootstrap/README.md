@@ -39,11 +39,17 @@ all three names, both launch-spec hashes, image identity, profile fingerprint,
 and sandbox ID and then enter the destructive cutover. Rollback publishes
 `rollback-authorized` before exact replacement deletion; commit publishes
 `shared-state-committed` before exact backup deletion. Cleanup is bound to full
-runtime IDs. Mutable OpenShell names are read only to detect ownership reuse,
-and unsafe name-only deletion returns a typed retention error. The dormant
-adapter assumes the protocol's single coordinator; multi-process
-lease/arbitration remains an explicit production-activation gate. Activation
-must also inject the selected gateway's canonical state root.
+runtime IDs. Its private state root now retains enumerable, versioned unfinished
+records containing the provider and sandbox identities, plan and profile
+fingerprints, exact original and replacement IDs, rollback target, and phase.
+Exact commit and cleanup receipts are durable terminal records, so adapter
+recreation does not depend on process-local transaction sets or tombstone maps.
+Enumeration reconstructs only unfinished records; the following recovery slice
+owns phase reconciliation and cross-surface resume or rollback. Mutable
+OpenShell names are read only to detect ownership reuse, and unsafe name-only
+deletion returns a typed retention error. Multi-process lease/arbitration remains
+an explicit production-activation gate. Activation must also inject the selected
+gateway's canonical state root.
 
 The current image definitions still do not package
 `nemoclaw-managed-startup-hold`, `managed-startup-image-runtime.cjs`, or the
