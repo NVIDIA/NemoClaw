@@ -25,6 +25,7 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
+const PROVIDER_CREATE_TIMEOUT_MS = 30_000;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const PROVIDER_TYPE_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/u;
 const PROVIDER_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/u;
@@ -375,6 +376,12 @@ export function prepareManagedCloneProviderTransaction(input: {
   if (input.destination && input.destination.name !== destinationSandboxName) {
     fail("destination registry authority names a different sandbox");
   }
+  const destinationProviderId = input.destination
+    ? normalizeRuntimeProviderIdentity(input.destination.openshellDriver)
+    : null;
+  if (destinationProviderId !== null && destinationProviderId !== input.handoff.providerId) {
+    fail("destination registry authority uses a different runtime provider");
+  }
   const desired = mergeBindings([
     ...applicationBindings({
       profile: input.handoff.rebound.profile,
@@ -416,11 +423,11 @@ export function prepareManagedCloneProviderTransaction(input: {
   }
 
   let destinationRegistryAuthority: SandboxRebuildAuthority | undefined;
-  if (input.destination) {
+  if (input.destination && destinationProviderId !== null) {
     try {
       destinationRegistryAuthority = captureSandboxRebuildAuthority(
         input.destination,
-        normalizeRuntimeProviderIdentity(input.destination.openshellDriver),
+        destinationProviderId,
       );
     } catch (error) {
       fail("destination has no exact managed registry authority", error);
@@ -561,8 +568,10 @@ export function provisionManagedCloneProviderTransaction(
           {
             ignoreError: true,
             env: { [provider.binding.providerEnvKey]: credential },
+            maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
             stdio: ["ignore", "pipe", "pipe"],
             suppressOutput: true,
+            timeout: PROVIDER_CREATE_TIMEOUT_MS,
           },
         );
       } catch (error) {

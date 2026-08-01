@@ -189,6 +189,10 @@ function assertUnsupportedDefaults(host: Record<string, unknown>): void {
   }
 }
 
+function byCodeUnit(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function normalizedNetworkSettings(
   value: DockerContainerInspect["NetworkSettings"],
 ): DockerContainerInspect["NetworkSettings"] {
@@ -196,7 +200,7 @@ function normalizedNetworkSettings(
   return {
     Networks: Object.fromEntries(
       Object.entries(networks)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => byCodeUnit(left, right))
         .map(([name, network]) => [
           name,
           {
@@ -212,7 +216,7 @@ function canonicalize(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => byCodeUnit(left, right))
       .map(([key, nested]) => [key, canonicalize(nested)]),
   );
 }

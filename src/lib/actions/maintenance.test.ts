@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
   openBackupShieldsWindow: vi.fn(),
   relockBackupShieldsWindow: vi.fn(),
+  withSandboxMutationLock: vi.fn(),
 }));
 
 vi.mock("../state/registry", () => ({
@@ -32,7 +33,7 @@ vi.mock("../state/sandbox", () => ({
   BackupResult: {},
 }));
 vi.mock("../state/mcp-lifecycle-lock", () => ({
-  withSandboxMutationLock: vi.fn((_name, callback) => callback()),
+  withSandboxMutationLock: mocks.withSandboxMutationLock,
 }));
 vi.mock("./sandbox/snapshot/backup-authority", () => ({
   backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
@@ -108,6 +109,7 @@ describe("backupAll", () => {
       wasLocked: false,
     }));
     mocks.relockBackupShieldsWindow.mockReturnValue(true);
+    mocks.withSandboxMutationLock.mockImplementation((_name, callback) => callback());
   });
 
   afterEach(() => {
@@ -223,6 +225,43 @@ describe("backupAll", () => {
     );
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     logSpy.mockRestore();
+  });
+
+  it("counts a mutation-lock acquisition failure and continues with later sandboxes", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    mocks.withSandboxMutationLock
+      .mockRejectedValueOnce(new Error("Timed out waiting for the sandbox mutation lock"))
+      .mockImplementationOnce((_name, callback) => callback());
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/beta/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.withSandboxMutationLock.mock.calls.map(([name]) => name)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(mocks.backupSandboxState).toHaveBeenCalledOnce();
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("beta");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("1 backed up, 1 failed, 0 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "alpha: backup failed (mutation lock: Timed out waiting for the sandbox mutation lock)",
+    );
   });
 
   it("does not back up when gateway preflight exits", async () => {

@@ -75,6 +75,8 @@ const UPSTREAM_REQUEST_TIMEOUT_MS = readPositiveIntEnv(
   1000,
 );
 const STAGED_CLONE_BINDING_TTL_MS = 5 * 60 * 1000;
+const CONTROL_REQUEST_TIMEOUT_MS = 1_000;
+const BROKER_SHUTDOWN_TIMEOUT_MS = 1_000;
 const DEFAULT_INFERENCE_BASE_URL = "https://inference-api.nousresearch.com/v1";
 const TRUSTED_INFERENCE_BASE_URLS = new Set([DEFAULT_INFERENCE_BASE_URL]);
 
@@ -296,13 +298,16 @@ function atomicWriteJson(file, value) {
   fs.chmodSync(file, 0o600);
 }
 
-function updateOpenshellRefreshProvider(state, refreshToken) {
+function updateOpenshellRefreshProvider(state) {
   const providerName = String(state.provider_name || "");
   if (!providerName) return;
   const providerCredential =
-    typeof state.broker_token === "string" && state.broker_token
-      ? state.broker_token
-      : refreshToken;
+    typeof state.broker_token === "string" ? state.broker_token.trim() : "";
+  if (!providerCredential) {
+    throw Object.assign(new Error("broker_credential_unavailable"), {
+      code: "broker_credential_unavailable",
+    });
+  }
   const result = spawnSync(
     OPENSHELL_BIN,
     ["provider", "update", providerName, "--credential", CREDENTIAL_ENV],
@@ -406,7 +411,7 @@ async function refreshAccessToken(refreshToken, loaded, deadlineAtMs = null) {
   });
 
   if (nextDigest !== digest) {
-    updateOpenshellRefreshProvider(loaded.state, nextRefreshToken);
+    updateOpenshellRefreshProvider(loaded.state);
     const nextState = {
       ...loaded.state,
       refresh_token_sha256: nextDigest,
@@ -609,7 +614,8 @@ function activateStagedCloneBinding(sandbox, activationToken, deadlineAtMs) {
     inference_agent_key_rotated_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  if (!runtimeRefreshCredentials.register(nextState, stagedRefreshToken)) {
+  const restoreRuntimeCredential = runtimeRefreshCredentials.replace(nextState, stagedRefreshToken);
+  if (!restoreRuntimeCredential) {
     throw Object.assign(new Error("staged_runtime_registration_failed"), {
       code: "staged_runtime_registration_failed",
     });
@@ -624,7 +630,7 @@ function activateStagedCloneBinding(sandbox, activationToken, deadlineAtMs) {
     atomicWriteJson(loaded.file, nextState);
     loaded.state = nextState;
   } catch (error) {
-    runtimeRefreshCredentials.unregister(sandbox);
+    restoreRuntimeCredential();
     throw error;
   }
   runtimeRefreshCredentials.unregister(staged.runtime_credential_state.sandbox);
@@ -781,9 +787,15 @@ function readControlJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    const timeout = setTimeout(() => {
+      reject(new Error("control_request_timeout"));
+      req.destroy();
+    }, CONTROL_REQUEST_TIMEOUT_MS);
+    timeout.unref?.();
     req.on("data", (chunk) => {
       size += chunk.length;
       if (size > 16_384) {
+        clearTimeout(timeout);
         reject(new Error("control_request_too_large"));
         req.destroy();
         return;
@@ -791,13 +803,17 @@ function readControlJson(req) {
       chunks.push(chunk);
     });
     req.on("end", () => {
+      clearTimeout(timeout);
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch {
         reject(new Error("control_request_invalid"));
       }
     });
-    req.on("error", reject);
+    req.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
   });
 }
 
@@ -873,14 +889,17 @@ async function handleControlRequest(req, res) {
   if (req.url === "/credentials/register") {
     const loaded = loadStateForSandbox(sandbox);
     const refreshToken = String(payload?.refresh_token || "").trim();
-    if (!loaded || !runtimeRefreshCredentials.register(loaded.state, refreshToken)) {
+    const restoreRuntimeCredential = loaded
+      ? runtimeRefreshCredentials.replace(loaded.state, refreshToken)
+      : null;
+    if (!loaded || !restoreRuntimeCredential) {
       sendText(res, 409, "credential does not match destination broker state");
       return;
     }
     try {
       await ensureInferenceAgentKey(loaded, refreshToken);
     } catch (error) {
-      runtimeRefreshCredentials.unregister(sandbox);
+      restoreRuntimeCredential();
       throw error;
     }
     sendJson(res, 200, { ok: true });
@@ -1076,7 +1095,9 @@ if (CONTROL_SOCKET_PATH) {
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  fs.mkdirSync(path.dirname(CONTROL_SOCKET_PATH), { recursive: true, mode: 0o700 });
+  const controlSocketDirectory = path.dirname(CONTROL_SOCKET_PATH);
+  fs.mkdirSync(controlSocketDirectory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(controlSocketDirectory, 0o700);
   controlServer = http.createServer((req, res) => {
     handleControlRequest(req, res).catch((error) => {
       console.error(`Hermes tool gateway control error: ${error?.message || error}`);
@@ -1084,11 +1105,18 @@ if (CONTROL_SOCKET_PATH) {
       else res.end();
     });
   });
-  controlServer.listen(CONTROL_SOCKET_PATH, () => {
-    fs.chmodSync(CONTROL_SOCKET_PATH, 0o600);
-    preflightControlReady = true;
-    maybeRunPreflightProbe();
-  });
+  controlServer.requestTimeout = CONTROL_REQUEST_TIMEOUT_MS;
+  controlServer.headersTimeout = CONTROL_REQUEST_TIMEOUT_MS;
+  const previousUmask = process.umask(0o177);
+  try {
+    controlServer.listen(CONTROL_SOCKET_PATH, () => {
+      fs.chmodSync(CONTROL_SOCKET_PATH, 0o600);
+      preflightControlReady = true;
+      maybeRunPreflightProbe();
+    });
+  } finally {
+    process.umask(previousUmask);
+  }
   if (PREFLIGHT_PROBE) controlServer.on("error", () => finishPreflightProbe(2));
 }
 
@@ -1119,8 +1147,17 @@ if (!PREFLIGHT_PROBE) {
   refreshTimer.unref?.();
 }
 
+let brokerClosing = false;
+
 function closeBroker() {
+  if (brokerClosing) return;
+  brokerClosing = true;
+  let exited = false;
+  let shutdownTimer;
   const exit = () => {
+    if (exited) return;
+    exited = true;
+    clearTimeout(shutdownTimer);
     if (CONTROL_SOCKET_PATH) {
       try {
         fs.unlinkSync(CONTROL_SOCKET_PATH);
@@ -1130,8 +1167,15 @@ function closeBroker() {
     }
     process.exit(0);
   };
-  if (controlServer) controlServer.close(() => server.close(exit));
-  else server.close(exit);
+  shutdownTimer = setTimeout(() => {
+    controlServer?.closeAllConnections();
+    server.closeAllConnections();
+    exit();
+  }, BROKER_SHUTDOWN_TIMEOUT_MS);
+  shutdownTimer.unref?.();
+  const closePublicServer = () => server.close(exit);
+  if (controlServer) controlServer.close(closePublicServer);
+  else closePublicServer();
 }
 
 process.on("SIGTERM", closeBroker);
