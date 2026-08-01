@@ -1527,10 +1527,15 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
-      const recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
-      this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
-      await this.recordSandboxRecreateRepairSuccess(recordedTransaction, repairMetadata);
-      this.recordSandboxRecreateRegistryCommit(recordedTransaction);
+      try {
+        const recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
+        this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
+        await this.recordSandboxRecreateRepairSuccess(recordedTransaction, repairMetadata);
+        this.recordSandboxRecreateRegistryCommit(recordedTransaction);
+      } catch (error) {
+        await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
+        throw error;
+      }
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
       const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =

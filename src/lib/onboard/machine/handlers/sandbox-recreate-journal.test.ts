@@ -163,6 +163,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
 it("removes the journaled source image after resuming a registered replacement", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
   session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
   session.checkpoint = {
     ...deriveCheckpointFromSession(session),
     sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
@@ -241,7 +242,7 @@ it("removes the journaled source image after resuming a registered replacement",
       engineDisplayName: "Docker",
       reference: sourceEntry.imageTag,
     });
-  const { deps } = createDeps(
+  const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation: () =>
@@ -264,6 +265,11 @@ it("removes the journaled source image after resuming a registered replacement",
   await expect(handleSandboxState(options)).rejects.toThrow(
     /interrupted after replacement registration/u,
   );
+  expect(calls.repairEvent).toHaveBeenLastCalledWith("state.repair.failed", {
+    state: "sandbox",
+    error: "interrupted after replacement registration",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
   const journal = session.checkpoint?.sandboxRecreate;
   expect(journal?.sourceWorkload?.imageTag).toBe(sourceEntry.imageTag);
   expect(journal?.id).toBeTruthy();
