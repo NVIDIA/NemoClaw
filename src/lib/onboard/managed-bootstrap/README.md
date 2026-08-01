@@ -51,25 +51,27 @@ commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
 after a restart. The provider may retire that receipt only after it proves the
 external rollback backup is gone, leaving the next bootstrap attempt unblocked.
-At lifecycle startup, the driver-neutral coordinator asks the selected provider
-to reconcile every unfinished record before a new sandbox create begins. The
-Docker provider then resumes the durable phase monotonically: pre-cutover work
-rolls back, rollback-authorized work completes exact restore and cleanup, and
-shared-state-committed work completes exact backup cleanup and commit. Recovery
-persists an identity-bound finalization receipt before removing the active
-journal, is idempotent across another interruption, and returns normalized,
-provider-owned receipts in stable identity order. Mutable OpenShell names are
-read only to detect ownership reuse, and unsafe name-only deletion returns a
-typed retention error. Multi-process lease/arbitration remains an explicit
-production-activation gate. Activation must also inject the selected gateway's
-canonical state root.
+At managed create-lifecycle startup, the driver-neutral coordinator asks the
+selected provider to reconcile every unfinished record before a new sandbox
+create begins. The Docker provider then resumes the durable phase monotonically:
+staged work rolls back without entering cutover; cutover work follows a proven
+image-owned commit forward or durably authorizes rollback; rollback-authorized
+work completes exact restore and cleanup; and shared-state-committed work
+completes exact backup cleanup and commit. Recovery persists an identity-bound
+finalization receipt before removing the active journal, is idempotent across
+another interruption, and returns normalized, provider-owned receipts in stable
+identity order. Mutable OpenShell names are read only to detect ownership reuse,
+and unsafe name-only deletion returns a typed retention error. Multi-process
+lease/arbitration remains an explicit production-activation gate. Activation
+must also inject the selected gateway's canonical state root.
 
 The runtime-provider bundle is the only bootstrap registration boundary. The
 candidate Docker surface owns create routing, replacement construction,
 native-to-compatibility fallback evidence, and deferred commit or rollback.
 Central onboarding accepts that provider-neutral surface without a Docker or
 Podman selection branch. Tests register an MXC-style surface through the same
-bundle and render held launches for OpenClaw, Hermes, and DCode.
+bundle, render held launches for OpenClaw, Hermes, and DCode, and exercise
+recovery phases across those three agents.
 
 The current image definitions still do not package
 `nemoclaw-managed-startup-hold`, `managed-startup-image-runtime.cjs`, or the

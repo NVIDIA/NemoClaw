@@ -722,14 +722,11 @@ export function createFileDockerManagedBootstrapJournalStore(
         fail(`journal directory contains an unsupported entry: ${name}`);
       }
       return Object.freeze(
-        identities
-          .sort()
-          .filter((identity) => loadFinalization(identity) === null)
-          .map((identity) => {
-            const journal = load(identity);
-            if (!journal) fail(`enumerated journal ${identity} disappeared`);
-            return journal;
-          }),
+        identities.sort().map((identity) => {
+          const journal = load(identity);
+          if (!journal) fail(`enumerated journal ${identity} disappeared`);
+          return journal;
+        }),
       );
     },
     transition(

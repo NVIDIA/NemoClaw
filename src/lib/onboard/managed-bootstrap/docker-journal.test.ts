@@ -168,6 +168,8 @@ describe("Docker managed bootstrap journal", () => {
     expect(first.listUnfinished()).toEqual([journal]);
 
     first.recordFinalization(finalization);
+    expect(first.listUnfinished()).toEqual([journal]);
+    first.remove(IDENTITY, ["staged"]);
     expect(first.listUnfinished()).toEqual([]);
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
     expect(restarted.loadFinalization(IDENTITY)).toEqual(finalization);

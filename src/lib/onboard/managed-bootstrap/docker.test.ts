@@ -152,6 +152,7 @@ type FixtureOptions = {
   failAfterRollbackFence?: boolean;
   failAfterSharedCommitFence?: boolean;
   failAfterStagedFence?: boolean;
+  failJournalRemoveOnce?: boolean;
   failRemoveOnce?: boolean;
   failStart?: boolean;
   lostAcks?: boolean;
@@ -173,6 +174,7 @@ function fixture(options: FixtureOptions = {}) {
   const lostTransitions = new Set(["cutover", "shared-state-committed"]);
   let loseCreateAck = options.lostAcks === true;
   let loseRemoveAck = options.lostAcks === true;
+  let failJournalRemoveOnce = options.failJournalRemoveOnce === true;
   let failRemoveOnce = options.failRemoveOnce === true;
   const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
   const copyJournal = () => (journal ? structuredClone(journal) : null);
@@ -180,11 +182,10 @@ function fixture(options: FixtureOptions = {}) {
     create(value) {
       journal = structuredClone(value);
       events.push("journal:staged");
-      if (options.failAfterStagedFence === true) {
-        throw new Error("injected crash after durable staged fence");
-      }
-      switch (loseCreateAck) {
-        case true:
+      switch (true) {
+        case options.failAfterStagedFence === true:
+          throw new Error("injected crash after durable staged fence");
+        case loseCreateAck:
           loseCreateAck = false;
           throw new DockerManagedBootstrapJournalAcknowledgementLostError(
             "lost journal create acknowledgement",
@@ -192,7 +193,7 @@ function fixture(options: FixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
-    listUnfinished: () => (journal && !finalization ? [structuredClone(journal)] : []),
+    listUnfinished: () => (journal ? [structuredClone(journal)] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
@@ -234,6 +235,11 @@ function fixture(options: FixtureOptions = {}) {
       void (current !== null && expected.includes(current.phase)
         ? current
         : failFixture("stale journal remove"));
+      switch (true) {
+        case failJournalRemoveOnce:
+          failJournalRemoveOnce = false;
+          throw new Error("injected crash before terminal journal removal");
+      }
       journal = null;
       events.push("journal:removed");
       switch (loseRemoveAck) {
@@ -420,9 +426,10 @@ function fixture(options: FixtureOptions = {}) {
     }),
     dockerRm: vi.fn((id) => {
       events.push(`rm:${id}`);
-      if (failRemoveOnce) {
-        failRemoveOnce = false;
-        throw new Error("injected crash before exact Docker removal");
+      switch (true) {
+        case failRemoveOnce:
+          failRemoveOnce = false;
+          throw new Error("injected crash before exact Docker removal");
       }
       switch (id) {
         case OLD_ID:
@@ -527,6 +534,9 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
       fake.events.indexOf(`rm:${OLD_ID}`),
     );
+    expect(fake.events.indexOf("finalization:committed")).toBeLessThan(
+      fake.events.indexOf("journal:removed"),
+    );
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
@@ -582,6 +592,9 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
     expect(fake.events.indexOf("journal:rollback-authorized")).toBeLessThan(
       fake.events.indexOf(`rm:${NEW_ID}`),
+    );
+    expect(fake.events.indexOf("finalization:rolled-back")).toBeLessThan(
+      fake.events.indexOf("journal:removed"),
     );
     expect(fake.journal).toBeNull();
     expect(fake.replacement).toBeNull();
@@ -679,6 +692,7 @@ describe("Docker managed bootstrap adapter", () => {
   it("finishes exact commit cleanup after a process restart at the durable commit fence", async () => {
     const fake = fixture({
       agent: "langchain-deepagents-code",
+      failJournalRemoveOnce: true,
       failRemoveOnce: true,
       sharedState: "pending",
     });
@@ -718,7 +732,14 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.sharedState).toBe("committed");
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
-    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject([
+    await expect(restarted.recoverUnfinishedTransactions()).rejects.toThrow(
+      "crash before terminal journal removal",
+    );
+    expect(fake.journal?.phase).toBe("shared-state-committed");
+    expect(fake.finalization?.phase).toBe("committed");
+
+    const resumed = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(resumed.recoverUnfinishedTransactions()).resolves.toMatchObject([
       { sourcePhase: "shared-state-committed", outcome: "committed" },
     ]);
     expect(fake.journal).toBeNull();
