@@ -92,6 +92,7 @@ export interface NativeRuntimeQualificationCase {
 export interface NativeRuntimeQualificationDefinition {
   id: string;
   repository: string;
+  protectedWorkflow: string;
   provider: ExecutionProviderId;
   cases: readonly NativeRuntimeQualificationCase[];
 }
@@ -99,6 +100,7 @@ export interface NativeRuntimeQualificationDefinition {
 export interface CompiledNativeRuntimeQualification {
   id: string;
   repository: string;
+  protectedWorkflow: string;
   provider: ExecutionProviderId;
   cases: readonly Readonly<NativeRuntimeQualificationCase>[];
 }
@@ -305,6 +307,10 @@ export function compileNativeRuntimeQualification(
   if (!REPOSITORY_PATTERN.test(repository)) {
     throw new Error(`Native runtime qualification repository '${repository}' must be owner/name`);
   }
+  const protectedWorkflow = assertSingleLine(
+    input.protectedWorkflow,
+    "Native runtime qualification protected workflow",
+  );
   const cases = input.cases.map((entry) => compileCase(input, entry));
   const casesByCoverage = new Map<string, Readonly<NativeRuntimeQualificationCase>>();
   for (const entry of cases) {
@@ -330,6 +336,7 @@ export function compileNativeRuntimeQualification(
   const compiled = Object.freeze({
     id,
     repository,
+    protectedWorkflow,
     provider: input.provider,
     cases: Object.freeze([...cases].sort((left, right) => compareCodeUnits(left.id, right.id))),
   });
@@ -368,7 +375,9 @@ function assertCaseEvidence(
   if (evidence.protectedRun.repository !== definition.repository) {
     throw new Error(`Qualification evidence '${evidence.caseId}' belongs to the wrong repository`);
   }
-  assertSingleLine(evidence.protectedRun.workflow, "Protected run workflow");
+  if (evidence.protectedRun.workflow !== definition.protectedWorkflow) {
+    throw new Error(`Qualification evidence '${evidence.caseId}' belongs to the wrong workflow`);
+  }
   assertPositiveInteger(evidence.protectedRun.runId, "Protected run id");
   assertPositiveInteger(evidence.protectedRun.attempt, "Protected run attempt");
   assertPositiveInteger(evidence.protectedRun.jobId, "Protected run job id");
@@ -452,6 +461,7 @@ export function assertNativeRuntimeQualificationEvidence(
   }
   const casesById = new Map(definition.cases.map((entry) => [entry.id, entry]));
   const evidenceById = new Map<string, NativeRuntimeQualificationEvidence>();
+  const sourcePairs = new Set<string>();
   for (const entry of evidence) {
     if (evidenceById.has(entry.caseId)) {
       throw new Error(`Native runtime qualification evidence repeats case '${entry.caseId}'`);
@@ -461,6 +471,7 @@ export function assertNativeRuntimeQualificationEvidence(
       throw new Error(`Native runtime qualification evidence names unknown case '${entry.caseId}'`);
     }
     assertCaseEvidence(definition, qualificationCase, entry);
+    sourcePairs.add(`${entry.protectedRun.headSha}:${entry.protectedRun.baseSha}`);
     evidenceById.set(entry.caseId, entry);
   }
   const missing = definition.cases.filter((entry) => !evidenceById.has(entry.id));
@@ -468,5 +479,8 @@ export function assertNativeRuntimeQualificationEvidence(
     throw new Error(
       `Native runtime qualification evidence is incomplete: ${missing.map((entry) => entry.id).join(", ")}`,
     );
+  }
+  if (sourcePairs.size !== 1) {
+    throw new Error("Native runtime qualification evidence must use one exact head/base pair");
   }
 }

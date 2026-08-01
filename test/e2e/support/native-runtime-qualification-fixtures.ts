@@ -88,6 +88,7 @@ export function nativeRuntimeQualificationDefinition(
   return {
     id: `${provider}-native-activation`,
     repository: "NVIDIA/NemoClaw",
+    protectedWorkflow: "E2E / PR Gate",
     provider,
     cases,
   };

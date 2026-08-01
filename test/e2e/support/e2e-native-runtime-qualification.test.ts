@@ -232,6 +232,24 @@ describe("native runtime activation qualification", () => {
       assertNativeRuntimeQualificationEvidence(PODMAN_NATIVE_ACTIVATION_QUALIFICATION, badSource),
     ).toThrow(/exact head\/base SHAs/u);
 
+    const wrongWorkflow = completeEvidence();
+    wrongWorkflow[0]!.protectedRun.workflow = "Unprotected runtime test";
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        wrongWorkflow,
+      ),
+    ).toThrow(/wrong workflow/u);
+
+    const mixedSourcePair = completeEvidence();
+    mixedSourcePair[0]!.protectedRun.headSha = "3".repeat(40);
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        mixedSourcePair,
+      ),
+    ).toThrow(/one exact head\/base pair/u);
+
     const badImage = completeEvidence();
     badImage[0]!.runtime.managedImages = [{ role: "agent", digest: "latest" }];
     expect(() =>

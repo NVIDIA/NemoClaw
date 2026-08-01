@@ -44,7 +44,8 @@ Activation evidence is complete only when every compiled case has:
 
 Evidence paths must be relative and traversal-free. SHA and SHA-256 fields are
 strict lowercase hexadecimal values. Missing, duplicate, unknown, or inexact
-case evidence fails the aggregate qualification check.
+case evidence fails the aggregate qualification check. All cases must use the
+configured protected workflow and one exact head/base pair.
 
 ## Activation boundary
 
