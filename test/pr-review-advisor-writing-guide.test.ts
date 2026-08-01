@@ -50,12 +50,12 @@ describe("PR Review Advisor writing guide", () => {
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-prompt-failure-"));
     const headSha = "a".repeat(40);
     const securitySkill = readTrustedSecurityReviewSkill();
-    const readSpy = vi
-      .spyOn(fs, "readFileSync")
-      .mockImplementationOnce(() => securitySkill)
-      .mockImplementationOnce(() => {
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation((file) => {
+      if (String(file).endsWith(`${path.sep}WRITING.md`)) {
         throw new Error("missing guide fixture");
-      });
+      }
+      return securitySkill;
+    });
     const metadata = {
       baseRef: "origin/main",
       headRef: "HEAD",

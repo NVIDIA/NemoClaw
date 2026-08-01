@@ -430,13 +430,17 @@ function changedTermLocations(
   headRef: string,
   cwd: string,
 ): TerminologyLocation[] {
-  const diff =
-    git(["diff", "--find-renames", "--unified=0", `${baseRef}...${headRef}`], true, cwd) ||
-    git(["diff", "--find-renames", "--unified=0", `${baseRef}..${headRef}`], true, cwd);
+  const mergeBaseDiff = boundedGit(
+    ["diff", "--find-renames", "--unified=0", `${baseRef}...${headRef}`],
+    cwd,
+  );
+  const diff = mergeBaseDiff.output
+    ? mergeBaseDiff
+    : boundedGit(["diff", "--find-renames", "--unified=0", `${baseRef}..${headRef}`], cwd);
   const locations: TerminologyLocation[] = [];
   let file = "";
   let line = 0;
-  for (const raw of diff.split(/\r?\n/u)) {
+  for (const raw of completeLines(diff)) {
     if (raw.startsWith("+++ b/")) {
       file = raw.slice(6);
       continue;

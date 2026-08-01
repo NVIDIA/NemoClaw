@@ -129,6 +129,43 @@ describe("PR review advisor terminology evidence", () => {
     expect(trace.headEvidenceTruncated).toBe(true);
   });
 
+  it("keeps tracing available when the changed-location diff exceeds its buffer", () => {
+    const fixture = fixtureRepository();
+    const largeDiffPath = path.join(fixture.directory, "large-diff.md");
+    fs.writeFileSync(
+      largeDiffPath,
+      `review-bound location\n${Array.from(
+        { length: 60_000 },
+        (_, index) => `unchanged filler ${index} ${"x".repeat(80)}`,
+      ).join("\n")}\n`,
+    );
+    expect(fs.statSync(largeDiffPath).size).toBeGreaterThan(4 * 1024 * 1024);
+    git(fixture.directory, ["add", "large-diff.md"]);
+    git(fixture.directory, [
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "-m",
+      "large changed-location diff",
+    ]);
+    const head = git(fixture.directory, ["rev-parse", "HEAD"]);
+
+    const trace = traceTerminology({
+      term: "review-bound",
+      baseRef: fixture.base,
+      headRef: head,
+      cwd: fixture.directory,
+    });
+
+    expect(trace.headOccurrences).toBe(2);
+    expect(trace.changedLocations).toContainEqual({
+      file: "large-diff.md",
+      line: 1,
+      text: "review-bound location",
+    });
+  });
+
   it("rejects a justified term without a concrete contrast and commits the corrected replacement decision", async () => {
     const fixture = fixtureRepository();
     const ledger = createTerminologyLedger(fixture.head);
