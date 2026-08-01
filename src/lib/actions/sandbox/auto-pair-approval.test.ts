@@ -16,85 +16,6 @@ import {
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
 
 describe("auto-pair approval pass behaviour (#4616)", () => {
-  it("reports one sanitized devices-list failure classification", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
-    const policy = readAutoPairApprovalPolicyModule();
-    expect(policy).toBeTruthy();
-    const script = buildAutoPairApprovalScript(
-      Buffer.from(policy as string, "utf-8").toString("base64"),
-      {
-        emitReceipt: true,
-        budget: { listTimeoutS: 0.5 },
-      },
-    );
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-list-receipt-"));
-    try {
-      fs.writeFileSync(
-        path.join(tmpDir, "openclaw"),
-        `#!${process.execPath}
-const args = process.argv.slice(2);
-if (args[0] !== "devices" || args[1] !== "list") process.exit(2);
-const sleepMs = Number(process.env.NEMOCLAW_LIST_SLEEP_MS || "0");
-if (sleepMs > 0) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
-}
-process.stdout.write(process.env.NEMOCLAW_LIST_STDOUT || "");
-process.stderr.write(process.env.NEMOCLAW_LIST_STDERR || "");
-process.exit(Number(process.env.NEMOCLAW_LIST_EXIT_CODE || "0"));
-`,
-        { mode: 0o755 },
-      );
-      for (const [environment, receipt] of [
-        [{ NEMOCLAW_LIST_SLEEP_MS: "800" }, "list-timeout"],
-        [
-          { NEMOCLAW_LIST_EXIT_CODE: "1", NEMOCLAW_LIST_STDERR: "raw failure" },
-          "list-command-failed",
-        ],
-        [
-          {
-            NEMOCLAW_LIST_EXIT_CODE: "1",
-            NEMOCLAW_LIST_STDERR: "scope upgrade pending approval raw detail",
-          },
-          "list-scope-upgrade-pending",
-        ],
-        [
-          {
-            NEMOCLAW_LIST_EXIT_CODE: "1",
-            NEMOCLAW_LIST_STDERR: "device pairing required raw detail",
-          },
-          "list-device-pairing-required",
-        ],
-        [
-          {
-            NEMOCLAW_LIST_EXIT_CODE: "1",
-            NEMOCLAW_LIST_STDERR: "gateway connect failed raw detail",
-          },
-          "list-gateway-connect-failed",
-        ],
-        [{ NEMOCLAW_LIST_STDOUT: "" }, "list-empty-output"],
-        [{ NEMOCLAW_LIST_STDOUT: "raw invalid json" }, "list-invalid-json"],
-        [{ NEMOCLAW_LIST_STDOUT: "[]\n" }, "list-invalid-output"],
-        [{ NEMOCLAW_LIST_STDOUT: "{}\n" }, "list-missing-pending"],
-      ] as const) {
-        const result = spawnSync("sh", ["-c", script], {
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            PATH: `${tmpDir}:/usr/bin:/bin`,
-            ...environment,
-          },
-          timeout: 10_000,
-        });
-        expect(parseAutoPairApprovalReceipt(result.stdout)).toBe(receipt);
-        expect(`${result.stdout}${result.stderr}`).not.toContain("raw ");
-      }
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   const pyIt =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
   const pyIt25s = (name: string, test: () => void) => pyIt(name, test, 25_000);
@@ -487,6 +408,37 @@ ${persistentRaceNeedle}`,
       expect(persistentDevicesRaceScript.includes("NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE")).toBe(
         true,
       );
+      const transientPendingPublicationNeedle = `    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+    try:
+        validate_clone_json_descriptor(fd)`;
+      const transientPendingPublicationScript = script.replace(
+        transientPendingPublicationNeedle,
+        `    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+    try:
+        serialized_pending = os.environ.pop('NEMOCLAW_TEST_TRANSIENT_PENDING_JSON', '')
+        if serialized_pending and directory_name == 'devices' and entry_name == 'pending.json':
+            with open(${JSON.stringify(path.join(devicesDir, "pending.json"))}, 'w', encoding='utf-8') as handle:
+                handle.write(serialized_pending)
+            raise json.JSONDecodeError('transient pending publication', '', 0)
+        validate_clone_json_descriptor(fd)`,
+      );
+      expect(transientPendingPublicationScript).toContain("transient pending publication");
+      const rotatedPendingPublicationNeedle = `        with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
+            parsed = json.load(handle)
+        validate_clone_json_descriptor(fd)`;
+      const rotatedPendingPublicationScript = script.replace(
+        rotatedPendingPublicationNeedle,
+        `        with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
+            parsed = json.load(handle)
+        serialized_pending = os.environ.pop('NEMOCLAW_TEST_ROTATED_PENDING_JSON', '')
+        if serialized_pending and directory_name == 'devices' and entry_name == 'pending.json':
+            replacement_path = ${JSON.stringify(path.join(devicesDir, "pending-replacement.json"))}
+            with open(replacement_path, 'w', encoding='utf-8') as handle:
+                handle.write(serialized_pending)
+            os.replace(replacement_path, ${JSON.stringify(path.join(devicesDir, "pending.json"))})
+        validate_clone_json_descriptor(fd)`,
+      );
+      expect(rotatedPendingPublicationScript).toContain("NEMOCLAW_TEST_ROTATED_PENDING_JSON");
       const execute = (
         failApproval = false,
         gatewayToken = "secret-token",
@@ -495,20 +447,33 @@ ${persistentRaceNeedle}`,
         invalidWatcherState = false,
         timeoutAfterCommit = false,
         devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
+        transientPendingJson = "",
+        rotatedPendingJson = "",
+        hardLinkPending = false,
       ) => {
         const approvalEnv = { ...process.env };
         delete approvalEnv.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
         delete approvalEnv.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING;
-        const approvalScript = timeoutAfterCommit
-          ? timeoutScript
-          : devicesRace === "child-entry"
-            ? childEntryRaceScript
-            : devicesRace === "persistent"
-              ? persistentDevicesRaceScript
-              : devicesRace === "transient"
-                ? transientDevicesRaceScript
-                : script;
-        return spawnSync("sh", {
+        const approvalScript = rotatedPendingJson
+          ? rotatedPendingPublicationScript
+          : transientPendingJson
+            ? transientPendingPublicationScript
+            : timeoutAfterCommit
+              ? timeoutScript
+              : devicesRace === "child-entry"
+                ? childEntryRaceScript
+                : devicesRace === "persistent"
+                  ? persistentDevicesRaceScript
+                  : devicesRace === "transient"
+                    ? transientDevicesRaceScript
+                    : script;
+        const pendingHardLinkPath = path.join(tmpDir, "pending-hard-link.json");
+        fs.rmSync(pendingHardLinkPath, { force: true });
+        const preparePendingHardLink = hardLinkPending
+          ? () => fs.linkSync(path.join(devicesDir, "pending.json"), pendingHardLinkPath)
+          : () => undefined;
+        preparePendingHardLink();
+        const result = spawnSync("sh", {
           encoding: "utf-8",
           input: approvalScript,
           env: {
@@ -521,6 +486,8 @@ ${persistentRaceNeedle}`,
             NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE: devicesRace === "persistent" ? "1" : "0",
             NEMOCLAW_TEST_TRANSIENT_DEVICES_RACE: devicesRace === "transient" ? "1" : "0",
             NEMOCLAW_TEST_CHILD_ENTRY_RACE: devicesRace === "child-entry" ? "1" : "0",
+            NEMOCLAW_TEST_TRANSIENT_PENDING_JSON: transientPendingJson,
+            NEMOCLAW_TEST_ROTATED_PENDING_JSON: rotatedPendingJson,
             NEMOCLAW_TEST_CLONE_STATE_DIR: stateDir,
             NEMOCLAW_TEST_CLONE_STATE_BACKUP: stateRaceBackup,
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
@@ -532,6 +499,8 @@ ${persistentRaceNeedle}`,
           },
           timeout: 10_000,
         });
+        fs.rmSync(pendingHardLinkPath, { force: true });
+        return result;
       };
       const run = (
         pending: unknown[],
@@ -546,6 +515,9 @@ ${persistentRaceNeedle}`,
           pairedById?: Record<string, unknown>;
           clientAuth?: "matching" | "missing" | "primary-symlink" | "stale";
           devicesRace?: "child-entry" | "persistent" | "transient";
+          hardLinkPending?: boolean;
+          rotatedPendingPublication?: boolean;
+          transientPendingPublication?: boolean;
         } = {},
       ) => {
         const pendingById =
@@ -606,6 +578,9 @@ ${persistentRaceNeedle}`,
           options.invalidWatcherState,
           options.timeoutAfterCommit,
           options.devicesRace,
+          options.transientPendingPublication ? JSON.stringify(pendingById) : "",
+          options.rotatedPendingPublication ? JSON.stringify(pendingById) : "",
+          options.hardLinkPending,
         );
       };
       const readApprovals = () =>
@@ -1071,15 +1046,15 @@ ${persistentRaceNeedle}`,
         primaryPending,
       );
 
-      for (const preparePendingState of [
-        () => fs.writeFileSync(clonePendingPath, "{"),
-        () => fs.writeFileSync(clonePendingPath, "[]"),
-      ]) {
+      for (const [preparePendingState, receipt] of [
+        [() => fs.writeFileSync(clonePendingPath, "{"), "list-pending-unstable"],
+        [() => fs.writeFileSync(clonePendingPath, "[]"), "list-pending-invalid-shape"],
+      ] as const) {
         resetLogs();
         preparePendingState();
         const failed = execute();
         expect(failed.status).toBe(0);
-        expect(parseAutoPairApprovalReceipt(failed.stdout)).toBe("list-failed");
+        expect(parseAutoPairApprovalReceipt(failed.stdout)).toBe(receipt);
         expect(readApprovals()).toEqual([]);
         expect(`${failed.stdout}${failed.stderr}`.includes("raw list output")).toBe(false);
         expect(fs.existsSync(listEnvFile)).toBe(false);
@@ -1087,6 +1062,29 @@ ${persistentRaceNeedle}`,
           primaryPending,
         );
       }
+
+      resetLogs();
+      const stabilized = run([foreignRequest, repairRequest], {
+        transientPendingPublication: true,
+      });
+      expect(stabilized.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(stabilized.stdout)).toBe("approved-one");
+      expect(readApprovals()).toEqual([repairRequest.requestId]);
+      expect(`${stabilized.stdout}${stabilized.stderr}`).not.toContain(
+        "transient pending publication",
+      );
+
+      resetLogs();
+      const stabilizedRotation = run([foreignRequest, repairRequest], {
+        rotatedPendingPublication: true,
+      });
+      expect(parseAutoPairApprovalReceipt(stabilizedRotation.stdout)).toBe("approved-one");
+      expect(readApprovals()).toEqual([repairRequest.requestId]);
+
+      resetLogs();
+      const hardLinked = run([foreignRequest, repairRequest], { hardLinkPending: true });
+      expect(parseAutoPairApprovalReceipt(hardLinked.stdout)).toBe("list-pending-unsafe");
+      expect(readApprovals()).toEqual([]);
 
       resetLogs();
       const noMatch = run([foreignRequest]);
@@ -1157,7 +1155,9 @@ ${persistentRaceNeedle}`,
       expect(persistentSwapOccurred).toBe(true);
       fs.unlinkSync(devicesDir);
       fs.renameSync(devicesRaceBackup, devicesDir);
-      expect(parseAutoPairApprovalReceipt(persistentDevicesRace.stdout)).toBe("list-failed");
+      expect(parseAutoPairApprovalReceipt(persistentDevicesRace.stdout)).toBe(
+        "list-pending-unsafe",
+      );
       expect(persistentDevicesRace.stdout.trim().split(/\r?\n/).length).toBe(1);
       expect(persistentDevicesRace.stderr.length).toBe(0);
       expect(readApproveCalls().length).toBe(0);

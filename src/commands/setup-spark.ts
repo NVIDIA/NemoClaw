@@ -4,6 +4,7 @@
 import { runOnboardAction } from "../lib/actions/global";
 import { CLI_NAME } from "../lib/cli/branding";
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
+import { createOnboardActionRuntimeDeps } from "../lib/cli/onboard-runtime-deps";
 import { buildOnboardFlags, type OnboardFlags } from "../lib/onboard/command-support";
 
 export default class SetupSparkCliCommand extends NemoClawCommand {
@@ -21,6 +22,6 @@ export default class SetupSparkCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(SetupSparkCliCommand);
-    await runOnboardAction(flags as OnboardFlags);
+    await runOnboardAction(flags as OnboardFlags, createOnboardActionRuntimeDeps());
   }
 }

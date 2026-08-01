@@ -60,7 +60,11 @@ import {
   DCODE_PROBE_STATE,
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
-import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import {
+  cleanupShieldsDestroyArtifacts,
+  removeSandboxRegistryEntryOutcome,
+  requireSandboxDestructiveCleanupAuthority,
+} from "./destroy";
 import {
   establishRestoredSandboxGatewayPairing,
   waitForRestoredSandboxGatewaySupervisor,
@@ -122,6 +126,36 @@ function snapshotExit(exitCode = 1): never {
 function formatSnapshotVersion(b: unknown) {
   const snapshotVersion = (b as { snapshotVersion?: number }).snapshotVersion ?? 0;
   return `v${snapshotVersion}`;
+}
+
+export function requireSnapshotDestinationRegistryRemoval(
+  name: string,
+  removalOutcome: ReturnType<typeof removeSandboxRegistryEntryOutcome>,
+): void {
+  if (removalOutcome.status !== "blocked") return;
+  // SOURCE_OF_TRUTH
+  // Invalid state: a bypassing registry writer changed cleanup authority after
+  // the locked pre-delete proof, leaving the destination absent while its
+  // ownership row must be retained.
+  // Source boundary: deleteSandboxForRestore proves provider/workload cleanup
+  // authority under the destination lifecycle lock, then registry removal
+  // rechecks that authority after the live delete.
+  // Source-fix constraint: the current runtime API has no authenticated atomic
+  // replace primitive and raw writers do not participate in NemoClaw's lock.
+  // Regression proof: snapshot-restore-lifecycle.test.ts covers pre-delete
+  // refusal; snapshot restore authority tests cover this retained-row stop.
+  // Removal condition: an exact provider-native replace transaction supplies
+  // durable delete, rollback, and cleanup receipts.
+  console.error(
+    `  Destination '${name}' is deleted, but local runtime ownership cleanup is incomplete.`,
+  );
+  console.error(
+    "  The registry entry was preserved because provider/workload cleanup authority could not be proven.",
+  );
+  console.error(
+    `  Run '${CLI_NAME} ${name} doctor --json'; restore trusted ownership metadata or resolve the runtime conflict, then retry. Do not rewrite a receipt to match a mutable name.`,
+  );
+  snapshotExit(1);
 }
 
 function renderSnapshotTable(
@@ -437,14 +471,32 @@ async function autoCreateSandboxFromSource(
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
 function deleteSandboxForRestore(name: string): void {
-  const sbMeta = registry.getSandbox(name);
-  if (sbMeta?.nimContainer) {
-    nim.stopNimContainerByName(sbMeta.nimContainer);
-  } else {
-    nim.stopNimContainer(name, { silent: true });
-  }
-  console.log(`  Deleting existing destination '${name}' before restore...`);
   withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
+    const sbMeta = registry.getSandbox(name);
+    if (!sbMeta) {
+      console.error(
+        `  Cannot delete destination '${name}': its durable runtime ownership entry disappeared.`,
+      );
+      snapshotExit(1);
+    }
+    try {
+      requireSandboxDestructiveCleanupAuthority(name, sbMeta);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(
+        `  Cannot delete destination '${name}' because runtime cleanup authority is unproven: ${detail}`,
+      );
+      console.error(
+        `  Run '${CLI_NAME} ${name} doctor --json' and resolve the recorded ownership conflict before retrying.`,
+      );
+      snapshotExit(1);
+    }
+    if (sbMeta.nimContainer) {
+      nim.stopNimContainerByName(sbMeta.nimContainer);
+    } else {
+      nim.stopNimContainer(name, { silent: true });
+    }
+    console.log(`  Deleting existing destination '${name}' before restore...`);
     if (readTimerMarker(name)) {
       shields.shieldsUp(name, {
         throwOnError: true,
@@ -485,7 +537,7 @@ function deleteSandboxForRestore(name: string): void {
       });
     }
     cleanupShieldsDestroyArtifacts(name);
-    removeSandboxRegistryEntry(name);
+    requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }

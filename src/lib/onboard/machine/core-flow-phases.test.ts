@@ -199,6 +199,11 @@ function createPhases(
       resolvePath: (value) => value,
       agentSupportsWebSearch: () => true,
       note: vi.fn(),
+      cliName: () => "nemoclaw",
+      retireReplacedSandboxWorkload: vi.fn(() => ({
+        status: "skipped" as const,
+        reason: "replacement-unproven" as const,
+      })),
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,

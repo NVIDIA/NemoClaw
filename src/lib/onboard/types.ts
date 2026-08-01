@@ -83,6 +83,11 @@ export interface SandboxCreateIntent {
 export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
+  /** Internal CLI composition for host-only Google Chat tunnel effects. */
+  googlechatTunnelRuntime?: Omit<
+    import("../messaging/channels/googlechat/hooks/tunnel-runtime").GooglechatTunnelRuntimeDeps,
+    "prompt" | "sandboxName"
+  >;
   authoritativeResumeConfig?: boolean;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;

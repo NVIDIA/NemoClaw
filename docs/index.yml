@@ -229,6 +229,9 @@ navigation:
                   - page: "Set Up Slack"
                     path: _build/agent-variants/manage-sandboxes/set-up-slack.openclaw.generated.mdx
                     slug: set-up-slack
+                  - page: "Set Up Google Chat"
+                    path: manage-sandboxes/set-up-google-chat.mdx
+                    slug: set-up-google-chat
                   - page: "Set Up WeChat"
                     path: _build/agent-variants/manage-sandboxes/set-up-wechat.openclaw.generated.mdx
                     slug: set-up-wechat

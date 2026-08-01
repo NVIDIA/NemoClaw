@@ -52,6 +52,11 @@ const HERMES_INTEGRITY_FILES = [
     target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
   },
   {
+    arg: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+    source: "agents/hermes/patch-gateway-process-identity.py",
+    target: "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
     source: "agents/hermes/patch-cron-execution-runtime.py",
     target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
@@ -214,6 +219,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
           "COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py",
           "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+          "COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
           "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
