@@ -25,6 +25,7 @@ import {
   matchingSandboxRecreateTransaction,
   planSandboxRecreateRecovery,
   type SandboxRecreateObservation,
+  sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
 
@@ -46,6 +47,14 @@ const SOURCE_ENTRY: SandboxEntry = {
   credentialEnv: "NVIDIA_API_KEY",
   gatewayName: "nemoclaw-31818",
   gatewayPort: 31818,
+  openshellDriver: "docker",
+  imageTag: "openshell/sandbox-from:old",
+  workload: {
+    schemaVersion: 1,
+    kind: "legacy-dockerfile",
+    reference: "openshell/sandbox-from:old",
+    shared: false,
+  },
 };
 
 function beginInput(observation: SandboxRecreateObservation) {
@@ -74,6 +83,14 @@ function transactionAt(
     gatewayPort: 31818,
     sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(SOURCE_ENTRY),
     sourceLiveIdentityFingerprint: SOURCE_ID,
+    sourceWorkload: {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+      },
+    },
     targetIntentFingerprint: TARGET_INTENT,
     targetGeneration: TARGET_GENERATION,
     targetLiveIdentityFingerprint: TARGET_ID,
@@ -100,6 +117,12 @@ describe("sandbox recreate journal", () => {
       phase: "planned",
     });
     expect(session.checkpoint?.sandboxRecreate).toBe(transaction);
+    expect(sandboxRecreateSourceWorkloadEntry(transaction)).toMatchObject({
+      name: "alpha",
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: SOURCE_ENTRY.workload,
+    });
     const serialized = JSON.stringify(transaction);
     expect(serialized).not.toContain("NVIDIA_API_KEY");
     expect(serialized).not.toContain("model-a");

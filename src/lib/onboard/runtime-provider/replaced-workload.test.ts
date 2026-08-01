@@ -121,4 +121,40 @@ describe("same-name replacement workload cleanup", () => {
     ).toEqual({ status: "skipped", reason: "replacement-unproven" });
     expect(removeImage).not.toHaveBeenCalled();
   });
+
+  it("skips image cleanup only for expected provider-selection failures", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        "target",
+        entry(SOURCE_IMAGE, "source"),
+        entry(REPLACEMENT_IMAGE, "target"),
+        { runtimeProviders: {} },
+      ),
+    ).toEqual({ status: "skipped", reason: "authority-unproven" });
+    expect(removeImage).not.toHaveBeenCalled();
+  });
+
+  it("does not hide unexpected provider registry failures", () => {
+    const brokenProviders = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor: () => {
+          throw new TypeError("broken provider registry");
+        },
+      },
+    );
+
+    expect(() =>
+      retireReplacedSandboxWorkload(
+        "alpha",
+        "target",
+        entry(SOURCE_IMAGE, "source"),
+        entry(REPLACEMENT_IMAGE, "target"),
+        { runtimeProviders: brokenProviders },
+      ),
+    ).toThrow(/broken provider registry/u);
+  });
 });

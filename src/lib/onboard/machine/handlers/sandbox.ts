@@ -87,6 +87,7 @@ import {
   type ReplacedSandboxWorkloadCleanupResult,
   retireReplacedSandboxWorkload as retireReplacedSandboxWorkloadDefault,
   type SandboxRecreateObservation,
+  sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
@@ -1328,7 +1329,7 @@ class SandboxStateFlow<
     }
     return {
       transaction,
-      sourceEntry,
+      sourceEntry: sandboxRecreateSourceWorkloadEntry(transaction) ?? sourceEntry,
       effectiveCreateIntent,
       repairMetadata,
       removalReceipt: null,

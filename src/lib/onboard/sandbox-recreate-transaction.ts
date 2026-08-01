@@ -15,6 +15,7 @@ import type { SandboxEntry } from "../state/registry";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "./runtime-provider/access";
@@ -59,7 +60,8 @@ export function retireReplacedSandboxWorkload(
   let authority;
   try {
     authority = requireRuntimeProviderDestructiveCleanupAuthority(sandboxName, source, providers);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof RuntimeProviderSelectionError)) throw error;
     return { status: "skipped", reason: "authority-unproven" };
   }
   const plan = authority.provider.cleanup.planOwnedWorkloadCleanup({
@@ -90,6 +92,42 @@ function canonicalJsonValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => [key, canonicalJsonValue(entry)]),
   );
+}
+
+function checkpointSourceWorkload(
+  source: SandboxEntry,
+): CheckpointSandboxRecreateTransaction["sourceWorkload"] {
+  if (!source.imageTag) return null;
+  return {
+    openshellDriver: source.openshellDriver ?? null,
+    imageTag: source.imageTag,
+    workload:
+      source.workload?.kind === "legacy-dockerfile"
+        ? { kind: "legacy-dockerfile", reference: source.workload.reference }
+        : null,
+  };
+}
+
+export function sandboxRecreateSourceWorkloadEntry(
+  transaction: CheckpointSandboxRecreateTransaction,
+): SandboxEntry | null {
+  const source = transaction.sourceWorkload;
+  if (!source) return null;
+  return {
+    name: transaction.sandboxName,
+    openshellDriver: source.openshellDriver,
+    imageTag: source.imageTag,
+    ...(source.workload
+      ? {
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile" as const,
+            reference: source.workload.reference,
+            shared: false as const,
+          },
+        }
+      : {}),
+  };
 }
 
 export function fingerprintSandboxRecreateValue(value: unknown): string {
@@ -194,6 +232,7 @@ export function beginSandboxRecreateTransaction(
     gatewayPort: input.gatewayPort,
     sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(input.sourceEntry),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
+    sourceWorkload: checkpointSourceWorkload(input.sourceEntry),
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
     targetLiveIdentityFingerprint: null,
