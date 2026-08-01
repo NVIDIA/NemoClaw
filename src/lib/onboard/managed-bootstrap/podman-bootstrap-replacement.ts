@@ -26,6 +26,10 @@ import {
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 
 export const PODMAN_BOOTSTRAP_REPLACEMENT_SCHEMA_VERSION = 1 as const;
+export const PODMAN_BOOTSTRAP_STATE_DIRECTORY = "/var/lib/nemoclaw" as const;
+export const PODMAN_BOOTSTRAP_STATE_VOLUME_LABEL =
+  "com.nvidia.nemoclaw.managed-bootstrap-state" as const;
+export const PODMAN_BOOTSTRAP_IDENTITY_LABEL = "com.nvidia.nemoclaw.bootstrap-identity" as const;
 
 const FULL_ID = /^(?:sha256:)?([a-f0-9]{64})$/u;
 const BOOTSTRAP_IDENTITY = /^[a-f0-9]{64}$/u;
@@ -82,6 +86,8 @@ export interface PodmanBootstrapPreparedReplacement {
   readonly originalRuntimeId: string;
   readonly replacementRuntimeId: string;
   readonly replacementStagingName: string;
+  readonly replacementStateVolumeName: string;
+  readonly replacementStateVolumeMountpoint: string;
   readonly replacementImageContentId: string;
   readonly replacementSpecFingerprint: string;
   readonly journal: PodmanBootstrapJournal;
@@ -114,6 +120,7 @@ export interface PodmanBootstrapRollbackReceipt {
   readonly originalRuntimeId: string;
   readonly originalStarted: boolean;
   readonly replacementRemoved: boolean;
+  readonly replacementStateVolumeRemoved: boolean;
 }
 
 export class PodmanBootstrapPreparationError extends Error {
@@ -134,6 +141,8 @@ interface NormalizedReplacementPlan extends PodmanBootstrapReplacementPlan {
   readonly commandArgv: readonly string[];
   readonly replacementImageContentId: string;
   readonly replacementStagingName: string;
+  readonly replacementStateVolumeName: string;
+  readonly replacementStateVolumeLabels: Readonly<Record<string, string>>;
   readonly originalSpecFingerprint: string;
   readonly replacementSpecFingerprint: string;
 }
@@ -148,6 +157,32 @@ interface ExactContainerExpectation {
   readonly commandArgv?: readonly string[];
   readonly environment?: readonly string[];
   readonly supervisorArgv?: readonly string[];
+  readonly stateVolume?: ExactStateVolumeExpectation;
+}
+
+interface ExactStateVolumeExpectation {
+  readonly name: string;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly mountpoint?: string;
+}
+
+interface ExactStateVolumeObservation {
+  readonly name: string;
+  readonly driver: "local";
+  readonly mountpoint: string;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly options: Readonly<Record<string, string>>;
+}
+
+interface ExactContainerStateMountObservation {
+  readonly name: string;
+  readonly source: string;
+  readonly destination: typeof PODMAN_BOOTSTRAP_STATE_DIRECTORY;
+  readonly driver: "local";
+  readonly mode: string;
+  readonly options: readonly string[];
+  readonly propagation: "" | "rprivate";
+  readonly readWrite: true;
 }
 
 interface ExactContainerObservation {
@@ -159,6 +194,7 @@ interface ExactContainerObservation {
   readonly entrypointArgv: readonly string[];
   readonly commandArgv: readonly string[];
   readonly environment: readonly string[];
+  readonly stateVolume: ExactContainerStateMountObservation | null;
 }
 
 function failure(message: string, rollbackRequired = true): never {
@@ -250,12 +286,54 @@ function environmentEntries(value: unknown): readonly string[] {
   return entries;
 }
 
+function exactAbsolutePath(value: unknown, label: string): string {
+  const target = safeString(value, label);
+  if (!path.posix.isAbsolute(target) || path.posix.normalize(target) !== target) {
+    return failure(`${label} must be one normalized absolute container path.`, false);
+  }
+  return target;
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function assertMountDoesNotShadowState(specification: string): void {
+  const destination = specification
+    .split(",")
+    .map((entry) => entry.split("=", 2))
+    .find(([key]) => ["destination", "dst", "target"].includes(key))?.[1];
+  if (!destination) return;
+  const normalized = exactAbsolutePath(destination, "Podman runtime mount destination");
+  if (pathsOverlap(normalized, PODMAN_BOOTSTRAP_STATE_DIRECTORY)) {
+    failure(
+      `Podman replacement runtime arguments cannot shadow ${PODMAN_BOOTSTRAP_STATE_DIRECTORY}.`,
+      false,
+    );
+  }
+}
+
 function runtimeArguments(value: unknown): readonly string[] {
   const args = exactArgv(value, "Podman replacement runtime arguments");
-  for (const argument of args) {
+  for (const [index, argument] of args.entries()) {
     const flag = argument.includes("=") ? argument.slice(0, argument.indexOf("=")) : argument;
     if (FORBIDDEN_RUNTIME_FLAGS.has(flag)) {
       return failure(`Podman replacement runtime arguments cannot set '${flag}'.`, false);
+    }
+    if (flag === "--volume" || flag === "-v") {
+      return failure(
+        "Podman replacement runtime arguments must use auditable --mount syntax.",
+        false,
+      );
+    }
+    if (flag === "--mount") {
+      const specification = argument.includes("=")
+        ? argument.slice(argument.indexOf("=") + 1)
+        : args[index + 1];
+      if (!specification) {
+        return failure("Podman replacement --mount requires one specification.", false);
+      }
+      assertMountDoesNotShadowState(specification);
     }
   }
   return args;
@@ -273,6 +351,27 @@ function stagingName(originalName: string, bootstrapIdentity: string): string {
     return failure("Podman bootstrap staging name is invalid.", false);
   }
   return value;
+}
+
+function stateVolumeName(originalName: string, bootstrapIdentity: string): string {
+  const suffix = `-nemoclaw-state-${bootstrapIdentity.slice(0, 12)}`;
+  const value = `${originalName.slice(0, 253 - suffix.length)}${suffix}`;
+  if (!SAFE_NAME.test(value) || value === originalName) {
+    return failure("Podman bootstrap state volume name is invalid.", false);
+  }
+  return value;
+}
+
+function stateVolumeLabels(
+  bootstrapIdentity: string,
+  heldWorkload: PodmanHeldWorkloadObservation,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    [PODMAN_BOOTSTRAP_IDENTITY_LABEL]: bootstrapIdentity,
+    [PODMAN_BOOTSTRAP_STATE_VOLUME_LABEL]: "true",
+    [PODMAN_SANDBOX_ID_LABEL]: heldWorkload.sandboxId,
+    [PODMAN_SANDBOX_NAME_LABEL]: heldWorkload.sandboxName,
+  });
 }
 
 function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacementPlan {
@@ -313,6 +412,8 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     "Podman replacement image content ID",
   );
   const replacementStagingName = stagingName(originalContainerName, plan.bootstrapIdentity);
+  const replacementStateVolumeName = stateVolumeName(originalContainerName, plan.bootstrapIdentity);
+  const replacementStateVolumeLabels = stateVolumeLabels(plan.bootstrapIdentity, held);
   const normalizedHeld = Object.freeze({
     ...held,
     runtimeId,
@@ -329,6 +430,8 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     commandArgv,
     replacementImageContentId,
     replacementStagingName,
+    replacementStateVolumeName,
+    replacementStateVolumeLabels,
     originalSpecFingerprint: stableHash({
       runtimeId,
       originalContainerName,
@@ -345,6 +448,8 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
       environment,
       entrypointArgv,
       commandArgv,
+      replacementStateVolumeName,
+      replacementStateVolumeLabels,
     }),
   });
 }
@@ -426,6 +531,108 @@ function sameMap(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function volumeExists(authority: PodmanBootstrapReplacementAuthority, volumeName: string): boolean {
+  const result = captureWhileWatcherStopped(authority, ["volume", "exists", volumeName]);
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  requireZero(result, "Podman bootstrap state-volume existence check");
+  return false;
+}
+
+function inspectExactStateVolume(
+  authority: PodmanBootstrapReplacementAuthority,
+  expected: ExactStateVolumeExpectation,
+): ExactStateVolumeObservation {
+  const result = captureWhileWatcherStopped(authority, ["volume", "inspect", expected.name]);
+  requireZero(result, "Podman bootstrap state-volume inspect");
+  const entries = parseJson(result.stdout, "Podman bootstrap state-volume inspect");
+  if (!Array.isArray(entries) || entries.length !== 1) {
+    return failure("Podman bootstrap state-volume inspect must identify exactly one volume.");
+  }
+  const inspect = record(entries[0], "Podman bootstrap state-volume inspect entry");
+  const name = safeString(inspect.Name, "Podman bootstrap state-volume name");
+  const driver = safeString(inspect.Driver, "Podman bootstrap state-volume driver");
+  const scope = safeString(inspect.Scope, "Podman bootstrap state-volume scope");
+  const mountpoint = exactAbsolutePath(
+    inspect.Mountpoint,
+    "Podman bootstrap state-volume mountpoint",
+  );
+  const labels = exactStringMap(inspect.Labels, "Podman bootstrap state-volume labels");
+  const options = exactStringMap(inspect.Options, "Podman bootstrap state-volume options");
+  if (
+    name !== expected.name ||
+    driver !== "local" ||
+    scope !== "local" ||
+    (inspect.Anonymous !== undefined && inspect.Anonymous !== false) ||
+    !sameMap(labels, expected.labels) ||
+    Object.keys(options).length !== 0 ||
+    (expected.mountpoint !== undefined && mountpoint !== expected.mountpoint)
+  ) {
+    return failure("Podman bootstrap state-volume ownership or storage identity changed.");
+  }
+  return Object.freeze({ name, driver: "local", mountpoint, labels, options });
+}
+
+function inspectStableStateVolume(
+  authority: PodmanBootstrapReplacementAuthority,
+  expected: ExactStateVolumeExpectation,
+): ExactStateVolumeObservation {
+  const first = inspectExactStateVolume(authority, expected);
+  const second = inspectExactStateVolume(authority, expected);
+  if (JSON.stringify(first) !== JSON.stringify(second)) {
+    return failure("Podman bootstrap state volume changed during stable inspection.");
+  }
+  return second;
+}
+
+function exactContainerStateMount(
+  inspect: JsonRecord,
+  expected: ExactStateVolumeExpectation,
+): ExactContainerStateMountObservation {
+  if (!Array.isArray(inspect.Mounts)) {
+    return failure("Podman bootstrap inspect Mounts must be an array.");
+  }
+  const matches = inspect.Mounts.map((entry, index) =>
+    record(entry, `Podman bootstrap inspect mount ${String(index)}`),
+  ).filter((entry) => entry.Destination === PODMAN_BOOTSTRAP_STATE_DIRECTORY);
+  if (matches.length !== 1 || expected.mountpoint === undefined) {
+    return failure("Podman bootstrap replacement requires one exact managed state volume.");
+  }
+  const mount = matches[0] as JsonRecord;
+  const mode = safeString(mount.Mode, "Podman bootstrap state-volume mount mode", true);
+  const options = parsedStringArray(mount.Options, "Podman bootstrap state-volume mount options");
+  const propagation = safeString(
+    mount.Propagation,
+    "Podman bootstrap state-volume propagation",
+    true,
+  );
+  const modeTokens = new Set(mode.split(",").filter(Boolean));
+  if (
+    mount.Type !== "volume" ||
+    mount.Name !== expected.name ||
+    mount.Source !== expected.mountpoint ||
+    mount.Driver !== "local" ||
+    mount.RW !== true ||
+    !["", "rprivate"].includes(propagation) ||
+    !modeTokens.has("z") ||
+    modeTokens.has("Z") ||
+    modeTokens.has("ro") ||
+    options.some((option) => option === "ro" || option === "readonly")
+  ) {
+    return failure("Podman bootstrap replacement state-volume mount changed after creation.");
+  }
+  return Object.freeze({
+    name: expected.name,
+    source: expected.mountpoint,
+    destination: PODMAN_BOOTSTRAP_STATE_DIRECTORY,
+    driver: "local",
+    mode,
+    options,
+    propagation: propagation as "" | "rprivate",
+    readWrite: true,
+  });
+}
+
 function inspectExactContainer(
   authority: PodmanBootstrapReplacementAuthority,
   expected: ExactContainerExpectation,
@@ -461,6 +668,15 @@ function inspectExactContainer(
   );
   const commandArgv = parsedStringArray(config.Cmd, "Podman bootstrap inspect command");
   const environment = parsedStringArray(config.Env, "Podman bootstrap inspect environment");
+  const stateVolumeAuthority = expected.stateVolume
+    ? inspectExactStateVolume(authority, expected.stateVolume)
+    : null;
+  const stateVolume = stateVolumeAuthority
+    ? exactContainerStateMount(inspect, {
+        ...expected.stateVolume,
+        mountpoint: stateVolumeAuthority.mountpoint,
+      })
+    : null;
   if (
     actualRuntimeId !== runtimeId ||
     name !== expected.name ||
@@ -488,6 +704,7 @@ function inspectExactContainer(
     entrypointArgv,
     commandArgv,
     environment,
+    stateVolume,
   });
 }
 
@@ -549,12 +766,31 @@ function createArgs(plan: NormalizedReplacementPlan, environmentFile: string): r
   }
   args.push(
     ...plan.runtimeArgs,
+    "--mount",
+    `type=volume,source=${plan.replacementStateVolumeName},destination=${PODMAN_BOOTSTRAP_STATE_DIRECTORY},readonly=false,relabel=shared`,
     "--entrypoint",
     JSON.stringify(plan.entrypointArgv),
     plan.replacementImageContentId,
     ...plan.commandArgv,
   );
   return Object.freeze(args);
+}
+
+function createStateVolumeArgs(plan: NormalizedReplacementPlan): readonly string[] {
+  const args = ["volume", "create", "--driver", "local"];
+  for (const [key, value] of Object.entries(plan.replacementStateVolumeLabels)) {
+    args.push("--label", `${key}=${value}`);
+  }
+  args.push(plan.replacementStateVolumeName);
+  return Object.freeze(args);
+}
+
+function parseCreatedStateVolumeName(output: string, expectedName: string): string {
+  const lines = output.trim().split(/\r?\n/u).filter(Boolean);
+  if (lines.length !== 1 || lines[0] !== expectedName) {
+    return failure("Podman volume create did not return the exact managed state-volume name.");
+  }
+  return expectedName;
 }
 
 function parseCreatedRuntimeId(output: string): string {
@@ -581,6 +817,8 @@ function createJournal(
     originalContainerName: plan.heldWorkload.containerName,
     originalImageContentId: plan.heldWorkload.imageContentId,
     originalSpecFingerprint: plan.originalSpecFingerprint,
+    replacementStateVolumeName: plan.replacementStateVolumeName,
+    replacementStateVolumeMountpoint: null,
     replacementRuntimeId: null,
     replacementStagingName: plan.replacementStagingName,
     replacementImageContentId: plan.replacementImageContentId,
@@ -629,6 +867,7 @@ function expectedOriginal(
 function expectedReplacement(
   plan: NormalizedReplacementPlan,
   runtimeId: string,
+  stateVolume: ExactStateVolumeObservation,
 ): ExactContainerExpectation {
   return {
     runtimeId,
@@ -639,6 +878,7 @@ function expectedReplacement(
     entrypointArgv: plan.entrypointArgv,
     commandArgv: plan.commandArgv,
     environment: plan.environment,
+    stateVolume,
   };
 }
 
@@ -646,6 +886,7 @@ function replacementExpectationFromJournal(
   journal: PodmanBootstrapJournal,
   held: PodmanHeldWorkloadObservation,
   runtimeId: string,
+  stateVolume: ExactStateVolumeObservation,
 ): ExactContainerExpectation {
   return {
     runtimeId,
@@ -653,6 +894,20 @@ function replacementExpectationFromJournal(
     imageContentId: journal.replacementImageContentId,
     labels: held.labels,
     running: false,
+    stateVolume,
+  };
+}
+
+function stateVolumeExpectationFromJournal(
+  journal: PodmanBootstrapJournal,
+  held: PodmanHeldWorkloadObservation,
+): ExactStateVolumeExpectation {
+  return {
+    name: journal.replacementStateVolumeName,
+    labels: stateVolumeLabels(journal.bootstrapIdentity, held),
+    ...(journal.replacementStateVolumeMountpoint
+      ? { mountpoint: journal.replacementStateVolumeMountpoint }
+      : {}),
   };
 }
 
@@ -715,13 +970,24 @@ export function prepareStoppedPodmanBootstrapReplacement(
   assertAuthority(input);
   const plan = normalizePlan(input.plan);
   input.watcherLease.assertStillStopped();
+  if (volumeExists(input, plan.replacementStateVolumeName)) {
+    failure("Podman bootstrap state-volume name is already in use.", false);
+  }
   input.journalStore.create(createJournal(input, plan));
+  const volumeCreate = captureWhileWatcherStopped(input, createStateVolumeArgs(plan));
+  requireZero(volumeCreate, "Podman bootstrap state-volume creation");
+  parseCreatedStateVolumeName(volumeCreate.stdout, plan.replacementStateVolumeName);
+  const stateVolume = inspectStableStateVolume(input, {
+    name: plan.replacementStateVolumeName,
+    labels: plan.replacementStateVolumeLabels,
+  });
+  input.journalStore.recordStateVolume(plan.bootstrapIdentity, stateVolume.mountpoint);
   const result = privateEnvironmentFile(plan.environment, (environmentFile) =>
     captureWhileWatcherStopped(input, createArgs(plan, environmentFile), CREATE_TIMEOUT_MS),
   );
   requireZero(result, "Podman stopped bootstrap replacement creation");
   const replacementRuntimeId = parseCreatedRuntimeId(result.stdout);
-  inspectStableContainer(input, expectedReplacement(plan, replacementRuntimeId));
+  inspectStableContainer(input, expectedReplacement(plan, replacementRuntimeId, stateVolume));
   const journal = input.journalStore.recordReplacement(
     plan.bootstrapIdentity,
     replacementRuntimeId,
@@ -733,6 +999,8 @@ export function prepareStoppedPodmanBootstrapReplacement(
     originalRuntimeId: plan.heldWorkload.runtimeId,
     replacementRuntimeId,
     replacementStagingName: plan.replacementStagingName,
+    replacementStateVolumeName: stateVolume.name,
+    replacementStateVolumeMountpoint: stateVolume.mountpoint,
     replacementImageContentId: plan.replacementImageContentId,
     replacementSpecFingerprint: plan.replacementSpecFingerprint,
     journal,
@@ -750,17 +1018,24 @@ export function stopExactPodmanBootstrapOriginal(
   if (
     input.prepared.originalRuntimeId !== journal.originalRuntimeId ||
     input.prepared.replacementRuntimeId !== journal.replacementRuntimeId ||
+    input.prepared.replacementStateVolumeName !== journal.replacementStateVolumeName ||
+    input.prepared.replacementStateVolumeMountpoint !== journal.replacementStateVolumeMountpoint ||
     input.prepared.replacementSpecFingerprint !== journal.replacementSpecFingerprint
   ) {
     failure("Podman bootstrap prepared replacement does not match the durable journal.");
   }
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, true));
+  const stateVolume = inspectStableStateVolume(
+    input,
+    stateVolumeExpectationFromJournal(journal, input.heldWorkload),
+  );
   inspectStableContainer(
     input,
     replacementExpectationFromJournal(
       journal,
       input.heldWorkload,
       input.prepared.replacementRuntimeId,
+      stateVolume,
     ),
   );
   const stop = captureWhileWatcherStopped(input, ["container", "stop", journal.originalRuntimeId]);
@@ -772,6 +1047,7 @@ export function stopExactPodmanBootstrapOriginal(
       journal,
       input.heldWorkload,
       input.prepared.replacementRuntimeId,
+      stateVolume,
     ),
   );
   const stopped = input.journalStore.recordOriginalStopped(journal.bootstrapIdentity);
@@ -784,6 +1060,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
   assertAuthority(input);
   const current = requireJournalPhase(input.journalStore.load(input.bootstrapIdentity), [
     "preparing-replacement",
+    "state-volume-created",
     "replacement-created",
     "original-stopped",
     "rollback-authorized",
@@ -792,10 +1069,22 @@ export function rollbackPodmanBootstrapBeforeCommit(
   expectedOriginal(current, input.heldWorkload);
   const journal = input.journalStore.authorizeRollback(input.bootstrapIdentity, [
     "preparing-replacement",
+    "state-volume-created",
     "replacement-created",
     "original-stopped",
   ]);
   assertJournalAuthority(input, journal);
+
+  const stateVolumePresent = volumeExists(input, journal.replacementStateVolumeName);
+  const stateVolume = stateVolumePresent
+    ? inspectStableStateVolume(
+        input,
+        stateVolumeExpectationFromJournal(journal, input.heldWorkload),
+      )
+    : null;
+  if (journal.replacementStateVolumeMountpoint !== null && !stateVolume) {
+    failure("Podman bootstrap recorded state volume disappeared before rollback.");
+  }
 
   const discoveredIds = listStagingRuntimeIds(input, journal.replacementStagingName);
   const runtimeIds = new Set<string>(discoveredIds);
@@ -806,9 +1095,17 @@ export function rollbackPodmanBootstrapBeforeCommit(
   const replacementRuntimeId = [...runtimeIds][0] ?? null;
   let replacementRemoved = false;
   if (replacementRuntimeId && containerExists(input, replacementRuntimeId)) {
+    if (!stateVolume) {
+      failure("Podman bootstrap replacement lost its exact managed state volume.");
+    }
     inspectStableContainer(
       input,
-      replacementExpectationFromJournal(journal, input.heldWorkload, replacementRuntimeId),
+      replacementExpectationFromJournal(
+        journal,
+        input.heldWorkload,
+        replacementRuntimeId,
+        stateVolume,
+      ),
     );
     const remove = captureWhileWatcherStopped(input, ["container", "rm", replacementRuntimeId]);
     requireZero(remove, "Podman bootstrap replacement rollback removal");
@@ -819,6 +1116,16 @@ export function rollbackPodmanBootstrapBeforeCommit(
   }
   if (listStagingRuntimeIds(input, journal.replacementStagingName).length !== 0) {
     failure("Podman bootstrap replacement staging name remained after rollback.");
+  }
+
+  let replacementStateVolumeRemoved = false;
+  if (stateVolume) {
+    const removeVolume = captureWhileWatcherStopped(input, ["volume", "rm", stateVolume.name]);
+    requireZero(removeVolume, "Podman bootstrap state-volume rollback removal");
+    if (volumeExists(input, stateVolume.name)) {
+      failure("Podman bootstrap state volume remained after exact rollback removal.");
+    }
+    replacementStateVolumeRemoved = true;
   }
 
   const originalWasRunning = inspectStableContainer(
@@ -843,5 +1150,6 @@ export function rollbackPodmanBootstrapBeforeCommit(
     originalRuntimeId: journal.originalRuntimeId,
     originalStarted,
     replacementRemoved,
+    replacementStateVolumeRemoved,
   });
 }
