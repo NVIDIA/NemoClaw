@@ -101,6 +101,7 @@ function mxcInferenceRuntime(): HostLocalInferenceRuntime {
   };
   return {
     providerId: "mxc",
+    authorityId: "memory:mxc-host-local-inference",
     services: ["ollama", "nim", "vllm"],
     translateContainerArgs: (args) => args,
     qualifyOllama: unavailable,
@@ -276,12 +277,28 @@ describe("RuntimeProviderBundle registry contract", () => {
 
     expectSupportedSurface(registered.hostLocalInference);
     expect(registered.hostLocalInference.runtime.providerId).toBe("mxc");
+    expect(registered.hostLocalInference.runtime.authorityId).toBe(
+      "memory:mxc-host-local-inference",
+    );
     expect(registered.hostLocalInference.runtime.services).toEqual(["ollama", "nim", "vllm"]);
     expect(registered.containerEngine).toMatchObject({
       identities: expect.arrayContaining([
         expect.objectContaining({ operation: "host-local-inference", engineId: "memory" }),
       ]),
     });
+  });
+
+  it("rejects a host-local inference runtime without an endpoint authority", () => {
+    const runtime = mxcInferenceRuntime();
+    const bundle = createInMemoryRuntimeProviderBundle({
+      providerId: "mxc",
+      workloadProfile: PORTABLE_PROFILE,
+      hostLocalInferenceRuntime: { ...runtime, authorityId: "" },
+    });
+
+    expect(() => createRuntimeProviderBundleRegistry([["mxc", bundle]])).toThrow(
+      "authorityId must be a non-empty string",
+    );
   });
 
   it("rejects an omitted managed platform without changing legacy receipt acceptance", () => {

@@ -171,6 +171,9 @@ function normalizedMounts(
   const mounts = (values ?? []).map((mount) => {
     const source = String(mount?.source ?? "");
     const target = String(mount?.target ?? "");
+    if (mount?.readOnly !== undefined && typeof mount.readOnly !== "boolean") {
+      throw new Error("Inference mount read-only flag must be a boolean when provided.");
+    }
     if (
       source !== source.trim() ||
       target !== target.trim() ||
@@ -183,7 +186,7 @@ function normalizedMounts(
     ) {
       throw new Error("Inference mounts require safe absolute Linux paths.");
     }
-    return Object.freeze({ source, target, readOnly: mount.readOnly === true });
+    return Object.freeze({ source, target, readOnly: mount.readOnly ?? false });
   });
   const targets = mounts.map((mount) => mount.target);
   if (new Set(targets).size !== targets.length) {
@@ -452,6 +455,9 @@ export function createPodmanHostLocalInferenceRuntime(
     if (normalized.providerId !== PROVIDER_ID) {
       throw new Error("Host-local inference receipt belongs to another runtime provider.");
     }
+    if (normalized.endpoint.host !== HOST_GATEWAY_NAME) {
+      throw new Error("Host-local inference receipt does not use the provider's canonical host.");
+    }
     authorize(false);
     requirePersistedEngineAuthority(normalized.engineAuthority, PROVIDER_ID, engine, bindingSha256);
     return normalized;
@@ -478,6 +484,7 @@ export function createPodmanHostLocalInferenceRuntime(
 
   return Object.freeze({
     providerId: PROVIDER_ID,
+    authorityId: engine.authorityId,
     services: Object.freeze(["ollama", "nim", "vllm"] as const),
     translateContainerArgs(args: readonly string[]) {
       authorize(true);

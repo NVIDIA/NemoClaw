@@ -317,6 +317,7 @@ function validateHostLocalInferenceSurface(
       `hostLocalInference runtime identity '${String(runtime.providerId)}' does not match '${providerId}'`,
     );
   }
+  requireNonEmptyString(runtime, "authorityId", "hostLocalInference runtime");
   if (
     !Array.isArray(runtime.services) ||
     runtime.services.length === 0 ||
