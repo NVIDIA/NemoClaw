@@ -19,25 +19,40 @@ import { createRuntimeProviderBundleRegistry } from "./registry";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
+const AUTHORITY_ID = "test:podman-socket";
 
-function hostDoctorEngine(): ContainerEngine {
+function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
   return {
     operation: "host-doctor",
     engineId: "podman",
     displayName: "Podman",
-    capture: vi.fn(() => ({
-      status: 0,
-      stdout: JSON.stringify({
-        host: {
-          arch: "amd64",
-          os: "linux",
-          cgroupVersion: "v2",
-          networkBackend: "netavark",
-          security: { rootless: true },
-        },
-      }),
-      stderr: "",
-    })),
+    authorityId,
+    capture: vi.fn((args: readonly string[]) => {
+      switch (args[0]) {
+        case "version":
+          return {
+            status: 0,
+            stdout: JSON.stringify({ Server: { Version: "5.6.2" } }),
+            stderr: "",
+          };
+        case "info":
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              host: {
+                arch: "amd64",
+                os: "linux",
+                cgroupVersion: "v2",
+                networkBackend: "netavark",
+                security: { rootless: true },
+              },
+            }),
+            stderr: "",
+          };
+        default:
+          return { status: 125, stdout: "", stderr: "unexpected command" };
+      }
+    }),
     captureHost: vi.fn((args: readonly string[]) => ({
       status: 0,
       stdout: args[0] === "--version" ? "podman version 5.6.2\n" : "0 1000 1\n1 100000 65536\n",
@@ -46,50 +61,55 @@ function hostDoctorEngine(): ContainerEngine {
   };
 }
 
-function lifecycleEngine(sandboxName: string): ContainerEngine {
+function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): ContainerEngine {
   let running = false;
   return {
     operation: "sandbox-lifecycle",
     engineId: "podman",
     displayName: "Podman",
+    authorityId,
     capture: vi.fn((args: readonly string[]) => {
-      if (args[0] === "ps") {
-        return {
-          status: 0,
-          stdout: `${CONTAINER_ID}\t${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}\n`,
-          stderr: "",
-        };
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify([
-            {
-              Id: CONTAINER_ID,
-              Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`,
-              Config: {
-                Labels: {
-                  [PODMAN_MANAGED_LABEL]: "true",
-                  [PODMAN_SANDBOX_ID_LABEL]: `id-${sandboxName}`,
-                  [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
-                  [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
+      const operation = String(args[0]);
+      switch (operation) {
+        case "ps":
+          return {
+            status: 0,
+            stdout: `${CONTAINER_ID}\t${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}\n`,
+            stderr: "",
+          };
+        case "container":
+          return {
+            status: 0,
+            stdout: JSON.stringify([
+              {
+                Id: CONTAINER_ID,
+                Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`,
+                Config: {
+                  Labels: {
+                    [PODMAN_MANAGED_LABEL]: "true",
+                    [PODMAN_SANDBOX_ID_LABEL]: `id-${sandboxName}`,
+                    [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
+                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
+                  },
+                },
+                State: {
+                  Running: running,
+                  Paused: false,
+                  Status: running ? "running" : "exited",
                 },
               },
-              State: {
-                Running: running,
-                Paused: false,
-                Status: running ? "running" : "exited",
-              },
-            },
-          ]),
-          stderr: "",
-        };
+            ]),
+            stderr: "",
+          };
+        case "start":
+          running = true;
+          return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+        case "stop":
+          running = false;
+          return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+        default:
+          return { status: 125, stdout: "", stderr: `unexpected operation ${operation}` };
       }
-      if (args[0] === "start" || args[0] === "stop") {
-        running = args[0] === "start";
-        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-      }
-      return { status: 125, stdout: "", stderr: `unexpected operation ${String(args[0])}` };
     }),
     captureHost: vi.fn(),
   };
@@ -159,5 +179,16 @@ describe("dormant Podman runtime provider", () => {
         engines: { hostDoctor: doctor, sandboxLifecycle: doctor },
       }),
     ).toThrow("'sandbox-lifecycle' Podman engine");
+  });
+
+  it("rejects engines bound to different endpoint authorities", () => {
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: {
+          hostDoctor: hostDoctorEngine("test:doctor-socket"),
+          sandboxLifecycle: lifecycleEngine("mismatched", "test:lifecycle-socket"),
+        },
+      }),
+    ).toThrow("same endpoint authority");
   });
 });

@@ -12,6 +12,7 @@ describe("operation-scoped container engine command", () => {
       operation: "sandbox-lifecycle",
       engineId: "podman",
       displayName: "Podman",
+      authorityId: "test:podman-socket",
       executable: "podman",
       endpointArgs: ["--url", "unix:///runtime/podman.sock"],
       capture,
@@ -38,6 +39,7 @@ describe("operation-scoped container engine command", () => {
       operation: "host-doctor",
       engineId: "podman",
       displayName: "Podman",
+      authorityId: "test:doctor",
       executable: "podman-doctor",
       capture: doctorCapture,
     });
@@ -45,6 +47,7 @@ describe("operation-scoped container engine command", () => {
       operation: "sandbox-lifecycle",
       engineId: "podman",
       displayName: "Podman",
+      authorityId: "test:lifecycle",
       executable: "podman-lifecycle",
       capture: lifecycleCapture,
     });
@@ -72,6 +75,7 @@ describe("operation-scoped container engine command", () => {
       operation: "sandbox-lifecycle",
       engineId: "podman",
       displayName: "Podman",
+      authorityId: "test:podman-socket",
       executable: "podman",
       capture: () => {
         throw commandFailure;
@@ -83,6 +87,30 @@ describe("operation-scoped container engine command", () => {
     expect(guard).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects endpoint rotation observed after a successful command", () => {
+    const authorityChanged = new Error("authority changed");
+    const guard = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw authorityChanged;
+      });
+    const capture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const engine = createContainerEngineCommand({
+      operation: "sandbox-lifecycle",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      capture,
+      guard,
+    });
+
+    expect(() => engine.capture(["start", "a".repeat(64)])).toThrow(authorityChanged);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(guard).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects invalid identities, timeouts, and command arguments before capture", () => {
     const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     expect(() =>
@@ -90,13 +118,24 @@ describe("operation-scoped container engine command", () => {
         operation: "host-doctor",
         engineId: "Podman",
         displayName: "Podman",
+        authorityId: "test:podman-socket",
         executable: "podman",
       }),
     ).toThrow("identity is invalid");
+    expect(() =>
+      createContainerEngineCommand({
+        operation: "host-doctor",
+        engineId: "podman",
+        displayName: "Podman",
+        authorityId: "unsafe/socket",
+        executable: "podman",
+      }),
+    ).toThrow("authority identity is invalid");
     const engine = createContainerEngineCommand({
       operation: "host-doctor",
       engineId: "podman",
       displayName: "Podman",
+      authorityId: "test:podman-socket",
       executable: "podman",
       capture,
     });

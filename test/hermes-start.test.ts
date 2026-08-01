@@ -14,6 +14,7 @@ import {
 } from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+const ENV_WRAPPER = path.join(import.meta.dirname, "../scripts/lib/entrypoint-env-wrapper.sh");
 const TIRITH_FINALIZER = path.join(
   import.meta.dirname,
   "..",
@@ -415,7 +416,6 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const marker = path.join(tmpDir, "dirname-called");
   const sourcePathLog = path.join(tmpDir, "source-path.log");
   const scriptPath = path.join(tmpDir, "run.sh");
-
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(
     path.join(fakeBin, "dirname"),
@@ -438,6 +438,7 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
   const prelude = src
     .slice(start, end)
+    .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENV_WRAPPER)
     .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
     .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);
 

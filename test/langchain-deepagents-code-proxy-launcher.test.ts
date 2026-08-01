@@ -55,6 +55,12 @@ function writeManagedProxyFiles(
 
 function replaceManagedProxyFileConstants(source: string, tempDir: string): string {
   const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
+  const entrypointEnvWrapper = path.join(
+    process.cwd(),
+    "scripts",
+    "lib",
+    "entrypoint-env-wrapper.sh",
+  );
   fs.writeFileSync(
     rlimitLib,
     "harden_resource_limits() { :; }\nverify_resource_limits_exact() { :; }\n",
@@ -65,6 +71,7 @@ function replaceManagedProxyFileConstants(source: string, tempDir: string): stri
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
       'exec "$MANAGED_DCODE_WRAPPER" "$@"',
     )
+    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
