@@ -107,6 +107,7 @@
   "files": [
     ".version",
     ".source-revision",
+    "agents/hermes/host/",
     "bin/",
     "dist/",
     "src/lib/messaging/channels/**/policy/*.{yaml,yml}",
