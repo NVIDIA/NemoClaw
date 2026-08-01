@@ -42,8 +42,74 @@ When the dedicated Google Chat tunnel is not running, NemoClaw starts it and pri
 Copy that complete URL into the Google Chat API HTTP endpoint field without adding a trailing slash, then confirm the prompt.
 NemoClaw stops the dedicated tunnel and webhook proxy if you do not confirm the endpoint or if enrollment fails before confirmation.
 
+If a later enrollment step fails after you confirm the endpoint, stop the public endpoint from the host:
+
+```bash
+nemoclaw my-assistant channels remove googlechat
+```
+
+Replace `my-assistant` with your sandbox name.
+The command attempts endpoint teardown even when interrupted enrollment left no Google Chat registry record.
+If the command reports that it could not stop the tunnel, correct the host service and run the command again before retrying enrollment.
+A removal that completes without cleanup warnings stops the dedicated tunnel and webhook proxy, removes any partial bridge provider and policy preset, and removes Google Chat from the durable messaging plan.
+
 If `GOOGLECHAT_AUDIENCE` already contains the public webhook URL, NemoClaw uses it and does not start or change cloudflared.
-That operator-managed endpoint must preserve `/googlechat` and deny every other dashboard or control path before forwarding to OpenClaw.
+Do not point the public tunnel directly at the OpenClaw dashboard on `127.0.0.1:18789`.
+Put a route-restricted proxy between the public tunnel and OpenClaw.
+
+Before enrollment, run this check from the trusted host:
+
+```bash
+(
+  set -eu
+  webhook_origin="$(
+    node -e '
+      try {
+        const url = new URL(process.argv[1]);
+        if (url.protocol !== "https:" || url.pathname !== "/googlechat") process.exit(1);
+        process.stdout.write(url.origin);
+      } catch {
+        process.exit(1);
+      }
+    ' "${GOOGLECHAT_AUDIENCE:?Set GOOGLECHAT_AUDIENCE first.}"
+  )"
+
+  check_denied_route() {
+    label="$1"
+    shift
+    status="$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' "$@" || true)"
+    if [ "$status" != "404" ]; then
+      printf '%s failed route restriction: HTTP %s\n' "$label" "${status:-no-status}" >&2
+      exit 1
+    fi
+    printf '%s denied: HTTP 404\n' "$label"
+  }
+
+  check_denied_route "Control UI" "$webhook_origin/"
+  check_denied_route "Health route" "$webhook_origin/health"
+  check_denied_route "GET /googlechat" "$GOOGLECHAT_AUDIENCE"
+  check_denied_route "WebSocket route" \
+    --http1.1 \
+    --header 'Connection: Upgrade' \
+    --header 'Upgrade: websocket' \
+    --header 'Sec-WebSocket-Key: MDAwMDAwMDAwMDAwMDAwMA==' \
+    --header 'Sec-WebSocket-Version: 13' \
+    "$webhook_origin/ws"
+)
+```
+
+Expected output:
+
+```text
+Control UI denied: HTTP 404
+Health route denied: HTTP 404
+GET /googlechat denied: HTTP 404
+WebSocket route denied: HTTP 404
+```
+
+The automatic NemoClaw proxy returns `HTTP 404` for all four checks.
+Accept an operator-managed endpoint only when all four checks print `HTTP 404`.
+Do not enroll Google Chat if a check returns another status or no status.
 
 Google Chat enrollment always requires an interactive terminal.
 Supported non-interactive onboarding skips the channel, because the Console endpoint and app principal steps need an operator.

@@ -3698,7 +3698,10 @@ async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
   sandboxName: string | null = null,
-  options: { readonly selectionCompleted?: boolean } = {},
+  options: {
+    readonly selectionCompleted?: boolean;
+    readonly googlechatTunnelRuntime?: OnboardOptions["googlechatTunnelRuntime"];
+  } = {},
 ): Promise<string[]> {
   return setupMessagingChannelsImpl(agent, existingChannels, {
     step,
@@ -3706,8 +3709,9 @@ async function setupMessagingChannels(
     isNonInteractive,
     sandboxName,
     selectionCompleted: options.selectionCompleted,
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    googlechatTunnelRuntime: { loadServices: () => require("./tunnel/services"), loadWebhookProxy: () => require("./messaging/channels/googlechat/tunnel/proxy"), prompt },
+    googlechatTunnelRuntime: options.googlechatTunnelRuntime
+      ? { ...options.googlechatTunnelRuntime, prompt }
+      : undefined,
   });
 }
 
@@ -4418,7 +4422,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         startRecordedStep,
         getRecordedMessagingChannelsForResume,
         showMessagingStage: () => step(5, 8, "Messaging channels"),
-        setupMessagingChannels,
+        setupMessagingChannels: (agent, existingChannels, sandboxName, options) =>
+          setupMessagingChannels(agent, existingChannels, sandboxName, {
+            ...options,
+            googlechatTunnelRuntime: opts.googlechatTunnelRuntime,
+          }),
         readMessagingPlanFromEnv,
         writePlanToEnv,
         clearPlanEnv,

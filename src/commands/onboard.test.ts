@@ -3,11 +3,19 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  createOnboardActionRuntimeDeps: vi.fn(),
+  onboardRuntimeDeps: { googlechatTunnelRuntime: {} },
+}));
+
 import { runOnboardAction } from "../lib/actions/global";
 import OnboardCliCommand from "./onboard";
 
 vi.mock("../lib/actions/global", () => ({
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../lib/cli/onboard-runtime-deps", () => ({
+  createOnboardActionRuntimeDeps: mocks.createOnboardActionRuntimeDeps,
 }));
 
 const rootDir = process.cwd();
@@ -15,6 +23,7 @@ const rootDir = process.cwd();
 describe("onboard oclif command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.createOnboardActionRuntimeDeps.mockReturnValue(mocks.onboardRuntimeDeps);
   });
 
   it("rejects mutually exclusive resume and fresh flags before dispatch", async () => {
@@ -37,6 +46,7 @@ describe("onboard oclif command", () => {
         yes: true,
         "yes-i-accept-third-party-software": true,
       }),
+      mocks.onboardRuntimeDeps,
     );
   });
 
@@ -45,6 +55,7 @@ describe("onboard oclif command", () => {
 
     expect(runOnboardAction).toHaveBeenCalledWith(
       expect.objectContaining({ "non-interactive": true, yes: true }),
+      mocks.onboardRuntimeDeps,
     );
   });
 
@@ -61,6 +72,7 @@ describe("onboard oclif command", () => {
         "sandbox-gpu-device": "nvidia.com/gpu=0",
         yes: true,
       }),
+      mocks.onboardRuntimeDeps,
     );
   });
 
@@ -69,6 +81,7 @@ describe("onboard oclif command", () => {
 
     expect(runOnboardAction).toHaveBeenCalledWith(
       expect.objectContaining({ "non-interactive": true, "no-gpu": true }),
+      mocks.onboardRuntimeDeps,
     );
   });
 
