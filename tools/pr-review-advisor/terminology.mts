@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -34,6 +34,7 @@ const TRACE_LIMIT = 20;
 const LOCATION_LIMIT = 40;
 const SAMPLE_LIMIT = 20;
 const GREP_SAMPLE_BUFFER_BYTES = 256 * 1024;
+const DIFF_LINE_PREFIX_LIMIT = 16 * 1024;
 
 type TerminologyChange = (typeof TERMINOLOGY_CHANGES)[number];
 type TerminologyDisposition = (typeof TERMINOLOGY_DISPOSITIONS)[number];
@@ -268,7 +269,7 @@ export function createTerminologyToolController({
       if (!selectedTerms.has(key) && selectedTerms.size >= TRACE_LIMIT) {
         throw new Error(`Terminology analysis accepts at most ${TRACE_LIMIT} selected terms`);
       }
-      const result = traceTerminology({
+      const result = await traceTerminology({
         term,
         baseRef,
         headRef,
@@ -310,7 +311,7 @@ export function createTerminologyToolController({
   };
 }
 
-export function traceTerminology({
+export async function traceTerminology({
   term,
   baseRef,
   headRef,
@@ -320,14 +321,14 @@ export function traceTerminology({
   baseRef: string;
   headRef: string;
   cwd?: string;
-}): TerminologyTrace {
+}): Promise<TerminologyTrace> {
   const normalized = normalizeTerm(term);
   const variants = termVariants(normalized);
   const baseSha = resolveCommit(baseRef, cwd);
   const headSha = resolveCommit(headRef, cwd);
   const baseMatches = grepRef(variants, baseSha, cwd);
   const headMatches = grepRef(variants, headSha, cwd);
-  const changedLocations = changedTermLocations(variants, baseSha, headSha, cwd);
+  const changedLocations = await changedTermLocations(variants, baseSha, headSha, cwd);
   const firstCommitSha =
     git(
       ["log", "--reverse", "--format=%H", "--regexp-ignore-case", `-S${normalized}`, headSha, "--"],
@@ -424,46 +425,122 @@ function errorOutput(error: unknown): string {
   return output instanceof Uint8Array ? Buffer.from(output).toString("utf8") : "";
 }
 
-function changedTermLocations(
+async function changedTermLocations(
   variants: readonly string[],
   baseRef: string,
   headRef: string,
   cwd: string,
-): TerminologyLocation[] {
-  const mergeBaseDiff = boundedGit(
+): Promise<TerminologyLocation[]> {
+  const mergeBaseDiff = await streamChangedTermLocations(
+    variants,
     ["diff", "--find-renames", "--unified=0", `${baseRef}...${headRef}`],
     cwd,
   );
-  const diff = mergeBaseDiff.output
-    ? mergeBaseDiff
-    : boundedGit(["diff", "--find-renames", "--unified=0", `${baseRef}..${headRef}`], cwd);
+  if (mergeBaseDiff.succeeded && mergeBaseDiff.hadOutput) return mergeBaseDiff.locations;
+  const directDiff = await streamChangedTermLocations(
+    variants,
+    ["diff", "--find-renames", "--unified=0", `${baseRef}..${headRef}`],
+    cwd,
+  );
+  return directDiff.succeeded ? directDiff.locations : [];
+}
+
+async function streamChangedTermLocations(
+  variants: readonly string[],
+  args: string[],
+  cwd: string,
+): Promise<{
+  succeeded: boolean;
+  hadOutput: boolean;
+  locations: TerminologyLocation[];
+}> {
+  const parser = createChangedLocationParser(variants);
+  const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.setEncoding("utf8");
+  child.stderr.resume();
+  const exit = new Promise<number | null>((resolve, reject) => {
+    child.once("error", (error) => {
+      reject(new Error(`Terminology evidence command failed: git ${args[0]}: ${error.message}`));
+    });
+    child.once("close", resolve);
+  });
+  const read = async () => {
+    for await (const chunk of child.stdout) parser.write(String(chunk));
+  };
+  const [code] = await Promise.all([exit, read()]);
+  const locations = parser.finish();
+  if (code === 0) {
+    return { succeeded: true, hadOutput: parser.hadOutput(), locations };
+  }
+  return { succeeded: false, hadOutput: parser.hadOutput(), locations: [] };
+}
+
+function createChangedLocationParser(variants: readonly string[]): {
+  write(chunk: string): void;
+  finish(): TerminologyLocation[];
+  hadOutput(): boolean;
+} {
+  const needles = variants.map((variant) => variant.toLocaleLowerCase());
+  const overlap = Math.max(...needles.map((needle) => needle.length - 1), 0);
   const locations: TerminologyLocation[] = [];
   let file = "";
   let line = 0;
-  for (const raw of completeLines(diff)) {
+  let linePrefix = "";
+  let matchTail = "";
+  let lineMatched = false;
+  let sawOutput = false;
+
+  const appendFragment = (fragment: string) => {
+    sawOutput ||= fragment.length > 0;
+    if (linePrefix.length < DIFF_LINE_PREFIX_LIMIT) {
+      linePrefix += fragment.slice(0, DIFF_LINE_PREFIX_LIMIT - linePrefix.length);
+    }
+    const searchable = `${matchTail}${fragment.toLocaleLowerCase()}`;
+    lineMatched ||= needles.some((needle) => searchable.includes(needle));
+    matchTail = overlap === 0 ? "" : searchable.slice(-overlap);
+  };
+
+  const finishLine = () => {
+    const raw = linePrefix.endsWith("\r") ? linePrefix.slice(0, -1) : linePrefix;
+    const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u);
     if (raw.startsWith("+++ b/")) {
       file = raw.slice(6);
-      continue;
-    }
-    const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u);
-    if (hunk) {
+    } else if (hunk) {
       line = Number(hunk[1]);
-      continue;
-    }
-    if (raw.startsWith("+") && !raw.startsWith("+++")) {
+    } else if (raw.startsWith("+") && !raw.startsWith("+++")) {
       const added = raw.slice(1);
-      if (
-        file &&
-        variants.some((variant) => added.toLocaleLowerCase().includes(variant.toLocaleLowerCase()))
-      ) {
+      if (file && lineMatched && locations.length < LOCATION_LIMIT) {
         locations.push(Object.freeze({ file, line, text: added.slice(0, 500) }));
       }
       line += 1;
-      continue;
+    } else if (!raw.startsWith("-")) {
+      line += 1;
     }
-    if (!raw.startsWith("-")) line += 1;
-  }
-  return locations;
+    linePrefix = "";
+    matchTail = "";
+    lineMatched = false;
+  };
+
+  return {
+    write(chunk: string) {
+      sawOutput ||= chunk.length > 0;
+      let offset = 0;
+      for (let newline = chunk.indexOf("\n", offset); newline !== -1; ) {
+        appendFragment(chunk.slice(offset, newline));
+        finishLine();
+        offset = newline + 1;
+        newline = chunk.indexOf("\n", offset);
+      }
+      appendFragment(chunk.slice(offset));
+    },
+    finish() {
+      if (linePrefix || matchTail) finishLine();
+      return locations;
+    },
+    hadOutput() {
+      return sawOutput;
+    },
+  };
 }
 
 function termVariants(term: string): string[] {

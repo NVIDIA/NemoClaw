@@ -76,9 +76,9 @@ function contentJson(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("PR review advisor terminology evidence", () => {
-  it("traces only a model-selected term and binds hyphen variants to the PR SHA", () => {
+  it("traces only a model-selected term and binds hyphen variants to the PR SHA", async () => {
     const fixture = fixtureRepository();
-    const trace = traceTerminology({
+    const trace = await traceTerminology({
       term: "review-bound",
       baseRef: fixture.base,
       headRef: fixture.head,
@@ -100,7 +100,7 @@ describe("PR review advisor terminology evidence", () => {
     expect(trace.headSamples.join("\n")).not.toContain("well-known");
   });
 
-  it("bounds samples while preserving matching-line counts for a frequent selected term", () => {
+  it("bounds samples while preserving matching-line counts for a frequent selected term", async () => {
     const fixture = fixtureRepository();
     fs.writeFileSync(
       path.join(fixture.directory, "frequent.md"),
@@ -117,7 +117,7 @@ describe("PR review advisor terminology evidence", () => {
     ]);
     const head = git(fixture.directory, ["rev-parse", "HEAD"]);
 
-    const trace = traceTerminology({
+    const trace = await traceTerminology({
       term: "review-bound",
       baseRef: fixture.base,
       headRef: head,
@@ -129,16 +129,15 @@ describe("PR review advisor terminology evidence", () => {
     expect(trace.headEvidenceTruncated).toBe(true);
   });
 
-  it("keeps tracing available when the changed-location diff exceeds its buffer", () => {
+  it("traces a selected location after more than 4 MiB of earlier diff output", async () => {
     const fixture = fixtureRepository();
     const largeDiffPath = path.join(fixture.directory, "large-diff.md");
-    fs.writeFileSync(
-      largeDiffPath,
-      `review-bound location\n${Array.from(
-        { length: 60_000 },
-        (_, index) => `unchanged filler ${index} ${"x".repeat(80)}`,
-      ).join("\n")}\n`,
-    );
+    const filler = Array.from(
+      { length: 60_000 },
+      (_, index) => `unchanged filler ${index} ${"x".repeat(80)}`,
+    ).join("\n");
+    expect(Buffer.byteLength(`${filler}\n`)).toBeGreaterThan(4 * 1024 * 1024);
+    fs.writeFileSync(largeDiffPath, `${filler}\nreview-bound location\n`);
     expect(fs.statSync(largeDiffPath).size).toBeGreaterThan(4 * 1024 * 1024);
     git(fixture.directory, ["add", "large-diff.md"]);
     git(fixture.directory, [
@@ -151,7 +150,7 @@ describe("PR review advisor terminology evidence", () => {
     ]);
     const head = git(fixture.directory, ["rev-parse", "HEAD"]);
 
-    const trace = traceTerminology({
+    const trace = await traceTerminology({
       term: "review-bound",
       baseRef: fixture.base,
       headRef: head,
@@ -161,7 +160,7 @@ describe("PR review advisor terminology evidence", () => {
     expect(trace.headOccurrences).toBe(2);
     expect(trace.changedLocations).toContainEqual({
       file: "large-diff.md",
-      line: 1,
+      line: 60_001,
       text: "review-bound location",
     });
   });
