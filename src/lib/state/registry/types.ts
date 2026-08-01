@@ -128,6 +128,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   messaging?: SandboxMessagingState;
   mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
+  /** Destination-scoped provider holding the host-minted Hermes inference key. */
+  hermesInferenceProvider?: string;
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
