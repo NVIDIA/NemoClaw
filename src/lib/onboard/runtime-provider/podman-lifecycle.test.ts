@@ -19,6 +19,12 @@ const SANDBOX_NAME = "alpha";
 const CONTAINER_ID = "a".repeat(64);
 const CONTAINER_NAME = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${SANDBOX_NAME}`;
 
+interface HarnessState {
+  readonly running: boolean;
+  readonly status: string;
+  readonly paused?: boolean;
+}
+
 function inspect(running: boolean, status: string, paused = false): string {
   return JSON.stringify([
     {
@@ -37,42 +43,38 @@ function inspect(running: boolean, status: string, paused = false): string {
   ]);
 }
 
-function harness(initial: { running: boolean; status: string; paused?: boolean }) {
+function harness(initial: HarnessState) {
   let running = initial.running;
   let paused = initial.paused ?? false;
   let status = initial.status;
+  const setState = (next: HarnessState) => {
+    running = next.running;
+    paused = next.paused ?? false;
+    status = next.status;
+  };
   const capture = vi.fn((args: readonly string[]) => {
-    const operation = args[0];
-    if (operation === "ps") {
-      return { status: 0, stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`, stderr: "" };
+    const operation = String(args[0]);
+    switch (operation) {
+      case "ps":
+        return { status: 0, stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`, stderr: "" };
+      case "container":
+        return { status: 0, stdout: inspect(running, status, paused), stderr: "" };
+      case "start":
+      case "unpause":
+        setState({ running: true, status: "running" });
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      case "stop":
+        setState({ running: false, status: "exited" });
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      default:
+        return { status: 125, stdout: "", stderr: `unexpected operation ${operation}` };
     }
-    if (operation === "container" && args[1] === "inspect") {
-      return { status: 0, stdout: inspect(running, status, paused), stderr: "" };
-    }
-    if (operation === "start") {
-      running = true;
-      paused = false;
-      status = "running";
-      return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-    }
-    if (operation === "unpause") {
-      running = true;
-      paused = false;
-      status = "running";
-      return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-    }
-    if (operation === "stop") {
-      running = false;
-      paused = false;
-      status = "exited";
-      return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-    }
-    return { status: 125, stdout: "", stderr: `unexpected operation ${String(operation)}` };
   });
   const engine: ContainerEngine = {
     operation: "sandbox-lifecycle",
     engineId: "podman",
     displayName: "Podman",
+    authorityId: "test:podman-socket",
     capture,
     captureHost: vi.fn(),
   };
@@ -83,7 +85,7 @@ function harness(initial: { running: boolean; status: string; paused?: boolean }
     sandbox: { name: SANDBOX_NAME, openshellDriver: "podman" },
     sandboxName: SANDBOX_NAME,
   };
-  return { capture, engine, input, log };
+  return { capture, engine, input, log, setState };
 }
 
 describe("Podman basic CPU lifecycle", () => {
@@ -164,5 +166,71 @@ describe("Podman basic CPU lifecycle", () => {
       message: expect.stringContaining("operation-scoped Podman engine"),
     });
     expect(runtime.capture).not.toHaveBeenCalled();
+  });
+
+  it("converges on retry after start succeeds but final inspection fails", () => {
+    const runtime = harness({ running: false, status: "exited" });
+    runtime.capture
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`,
+        stderr: "",
+      }))
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: inspect(false, "exited"),
+        stderr: "",
+      }))
+      .mockImplementationOnce(() => {
+        runtime.setState({ running: true, status: "running" });
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      })
+      .mockImplementationOnce(() => ({
+        status: 125,
+        stdout: "",
+        stderr: "inspection unavailable",
+      }));
+
+    expect(startPodmanSandbox(runtime.input, runtime.engine)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("inspection unavailable"),
+    });
+    expect(startPodmanSandbox(runtime.input, runtime.engine)).toEqual({ exitCode: 0 });
+    expect(
+      runtime.capture.mock.calls.map(([args]) => args).filter(([op]) => op === "start"),
+    ).toEqual([["start", CONTAINER_ID]]);
+  });
+
+  it("retries the exact container after a stop mutation fails", () => {
+    const runtime = harness({ running: true, status: "running" });
+    const beforeStop = vi.fn();
+    runtime.capture
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`,
+        stderr: "",
+      }))
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: inspect(true, "running"),
+        stderr: "",
+      }))
+      .mockImplementationOnce(() => ({ status: 125, stdout: "", stderr: "stop failed" }));
+
+    expect(stopPodmanSandbox(runtime.input, { beforeStop }, runtime.engine)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("stop failed"),
+    });
+    expect(stopPodmanSandbox(runtime.input, { beforeStop }, runtime.engine)).toEqual({
+      exitCode: 0,
+      state: "stopped",
+    });
+    expect(beforeStop).toHaveBeenCalledTimes(2);
+    expect(
+      runtime.capture.mock.calls.map(([args]) => args).filter(([op]) => op === "stop"),
+    ).toEqual([
+      ["stop", "--time", "30", CONTAINER_ID],
+      ["stop", "--time", "30", CONTAINER_ID],
+    ]);
   });
 });

@@ -20,6 +20,7 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 
 export type PodmanBootstrapJournalPhase =
   | "preparing-replacement"
+  | "state-volume-created"
   | "replacement-created"
   | "original-stopped"
   | "rollback-authorized";
@@ -36,6 +37,8 @@ export interface PodmanBootstrapJournal {
   readonly originalContainerName: string;
   readonly originalImageContentId: string;
   readonly originalSpecFingerprint: string;
+  readonly replacementStateVolumeName: string;
+  readonly replacementStateVolumeMountpoint: string | null;
   readonly replacementRuntimeId: string | null;
   readonly replacementStagingName: string;
   readonly replacementImageContentId: string;
@@ -47,6 +50,11 @@ export interface PodmanBootstrapJournalStore {
   readonly create: (journal: PodmanBootstrapJournal) => void;
   readonly load: (bootstrapIdentity: string) => PodmanBootstrapJournal | null;
   readonly listUnfinished: () => readonly PodmanBootstrapJournal[];
+  /** Record the exact Podman-managed state volume before container creation. */
+  readonly recordStateVolume: (
+    bootstrapIdentity: string,
+    replacementStateVolumeMountpoint: string,
+  ) => PodmanBootstrapJournal;
   /** Record the exact stopped replacement ID after a stable inspect. */
   readonly recordReplacement: (
     bootstrapIdentity: string,
@@ -110,6 +118,7 @@ function exactPhase(value: unknown): PodmanBootstrapJournalPhase {
   if (
     ![
       "preparing-replacement",
+      "state-volume-created",
       "replacement-created",
       "original-stopped",
       "rollback-authorized",
@@ -118,6 +127,18 @@ function exactPhase(value: unknown): PodmanBootstrapJournalPhase {
     fail("phase is unsupported");
   }
   return value as PodmanBootstrapJournalPhase;
+}
+
+function exactAbsolutePath(value: unknown, label: string): string {
+  const target = exactString(value, label);
+  if (
+    !path.isAbsolute(target) ||
+    path.normalize(target) !== target ||
+    target === path.parse(target).root
+  ) {
+    fail(`${label} must be one normalized non-root absolute path`);
+  }
+  return target;
 }
 
 function exactContainerName(value: unknown, label: string): string {
@@ -142,6 +163,8 @@ export function normalizePodmanBootstrapJournal(value: unknown): PodmanBootstrap
     "replacementImageContentId",
     "replacementRuntimeId",
     "replacementSpecFingerprint",
+    "replacementStateVolumeMountpoint",
+    "replacementStateVolumeName",
     "replacementStagingName",
     "sandboxId",
     "sandboxName",
@@ -158,6 +181,13 @@ export function normalizePodmanBootstrapJournal(value: unknown): PodmanBootstrap
     journal.replacementRuntimeId === null
       ? null
       : exactRuntimeId(journal.replacementRuntimeId, "replacement runtime ID");
+  const replacementStateVolumeMountpoint =
+    journal.replacementStateVolumeMountpoint === null
+      ? null
+      : exactAbsolutePath(
+          journal.replacementStateVolumeMountpoint,
+          "replacement state volume mountpoint",
+        );
   const normalized = Object.freeze({
     schemaVersion: PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
     phase: exactPhase(journal.phase),
@@ -179,6 +209,11 @@ export function normalizePodmanBootstrapJournal(value: unknown): PodmanBootstrap
       journal.originalSpecFingerprint,
       "original spec fingerprint",
     ),
+    replacementStateVolumeName: exactContainerName(
+      journal.replacementStateVolumeName,
+      "replacement state volume name",
+    ),
+    replacementStateVolumeMountpoint,
     replacementRuntimeId,
     replacementStagingName: exactContainerName(
       journal.replacementStagingName,
@@ -206,9 +241,12 @@ export function normalizePodmanBootstrapJournal(value: unknown): PodmanBootstrap
     fail("original and replacement runtime IDs must differ");
   }
   if (
-    (normalized.phase === "preparing-replacement" && replacementRuntimeId !== null) ||
+    (normalized.phase === "preparing-replacement" &&
+      (replacementStateVolumeMountpoint !== null || replacementRuntimeId !== null)) ||
+    (normalized.phase === "state-volume-created" &&
+      (replacementStateVolumeMountpoint === null || replacementRuntimeId !== null)) ||
     (["replacement-created", "original-stopped"].includes(normalized.phase) &&
-      replacementRuntimeId === null)
+      (replacementStateVolumeMountpoint === null || replacementRuntimeId === null))
   ) {
     fail("phase does not match the replacement runtime identity");
   }
@@ -459,6 +497,37 @@ export function createFilePodmanBootstrapJournalStore(
         }),
       );
     },
+    recordStateVolume(bootstrapIdentity: string, replacementStateVolumeMountpoint: string) {
+      const normalizedMountpoint = exactAbsolutePath(
+        replacementStateVolumeMountpoint,
+        "replacement state volume mountpoint",
+      );
+      assertDirectory(directory);
+      const target = journalPath(directory, bootstrapIdentity);
+      const current = load(bootstrapIdentity);
+      if (current?.phase === "state-volume-created") {
+        if (current.replacementStateVolumeMountpoint !== normalizedMountpoint) {
+          fail("replacement state volume mountpoint changed for this bootstrap identity");
+        }
+        return current;
+      }
+      if (!current || current.phase !== "preparing-replacement") {
+        fail(
+          `state volume recording requires preparing-replacement, found ${current?.phase ?? "absent"}`,
+        );
+      }
+      const updated = normalizePodmanBootstrapJournal({
+        ...current,
+        phase: "state-volume-created",
+        replacementStateVolumeMountpoint: normalizedMountpoint,
+      });
+      atomicWrite(directory, target, serializePodmanBootstrapJournal(updated), false);
+      const persisted = load(bootstrapIdentity);
+      if (!persisted || !sameJournal(persisted, updated)) {
+        fail("replacement state volume was not durably re-readable");
+      }
+      return persisted;
+    },
     recordReplacement(bootstrapIdentity: string, replacementRuntimeId: string) {
       const normalizedId = exactRuntimeId(replacementRuntimeId, "replacement runtime ID");
       assertDirectory(directory);
@@ -470,9 +539,9 @@ export function createFilePodmanBootstrapJournalStore(
         }
         return current;
       }
-      if (!current || current.phase !== "preparing-replacement") {
+      if (!current || current.phase !== "state-volume-created") {
         fail(
-          `replacement recording requires preparing-replacement, found ${current?.phase ?? "absent"}`,
+          `replacement recording requires state-volume-created, found ${current?.phase ?? "absent"}`,
         );
       }
       const updated = normalizePodmanBootstrapJournal({

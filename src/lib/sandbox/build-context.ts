@@ -200,6 +200,14 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-startup-hold.sh"),
+    path.join(stagedScriptsDir, "managed-startup-hold.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
+    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "gateway-control.sh"),
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );
@@ -234,6 +242,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "gateway-supervisor.sh"),
     path.join(stagedScriptsDir, "lib", "gateway-supervisor.sh"),
   );
@@ -262,6 +274,24 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
+  for (const relativePath of [
+    path.join("core", "json-types.ts"),
+    path.join("core", "ports.ts"),
+    path.join("onboard", "managed-bootstrap", "envelope.ts"),
+    path.join("security", "credential-hash.ts"),
+    path.join("state", "paths.ts"),
+    path.join("state", "state-root.ts"),
+  ]) {
+    const source = path.join(rootDir, "src", "lib", relativePath);
+    const target = path.join(buildCtx, "src", "lib", relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
+    path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
+    { recursive: true },
   );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
