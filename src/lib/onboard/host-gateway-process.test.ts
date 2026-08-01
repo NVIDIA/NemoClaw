@@ -88,15 +88,41 @@ describe("host gateway cleanup boundaries", () => {
 
   it("clears the exact gateway PID file and runtime marker", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-clear-"));
+    try {
+      const pidFile = path.join(stateDir, "openshell-gateway.pid");
+      const markerFile = path.join(stateDir, "runtime.json");
+      fs.writeFileSync(pidFile, "4242\n");
+      fs.writeFileSync(markerFile, "{}\n");
+
+      clearHostGatewayRuntimeFiles(stateDir, pidFile);
+
+      expect(fs.existsSync(pidFile)).toBe(false);
+      expect(fs.existsSync(markerFile)).toBe(false);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the gateway PID file when runtime marker removal fails", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-clear-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
     const markerFile = path.join(stateDir, "runtime.json");
     fs.writeFileSync(pidFile, "4242\n");
     fs.writeFileSync(markerFile, "{}\n");
+    const rmSync = vi.spyOn(fs, "rmSync").mockImplementation((candidate, options) => {
+      if (candidate === markerFile) throw new Error("marker cleanup failed");
+      return fs.rmSync(candidate, options);
+    });
 
-    clearHostGatewayRuntimeFiles(stateDir, pidFile);
-
-    expect(fs.existsSync(pidFile)).toBe(false);
-    expect(fs.existsSync(markerFile)).toBe(false);
+    try {
+      expect(() => clearHostGatewayRuntimeFiles(stateDir, pidFile)).toThrow(
+        "marker cleanup failed",
+      );
+      expect(fs.existsSync(pidFile)).toBe(true);
+    } finally {
+      rmSync.mockRestore();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

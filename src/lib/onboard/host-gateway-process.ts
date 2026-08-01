@@ -195,8 +195,8 @@ function waitForExit(
 }
 
 export function clearHostGatewayRuntimeFiles(stateDir: string, pidFile: string): void {
-  fs.rmSync(pidFile, { force: true });
   clearDockerDriverGatewayRuntimeMarker(stateDir);
+  fs.rmSync(pidFile, { force: true });
 }
 
 export function isHostPortFree(port: number, spawnSyncImpl: typeof spawnSync = spawnSync): boolean {
