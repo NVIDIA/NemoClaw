@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   AUTHORITY_ID,
@@ -28,12 +28,39 @@ describe("Podman host-local inference runtime", () => {
       endpoint: { host: "host.containers.internal", port: 11434, networkName: "openshell" },
       runtime: { kind: "host", probeImageRef: PROBE_IMAGE_REF },
     });
+    expect(host.runtime).toMatchObject({ providerId: "podman", authorityId: AUTHORITY_ID });
     expect(host.runtime.preserveForRebuild(receipt)).toEqual(receipt);
+    const probeUrls = host.capture.mock.calls
+      .flatMap(([args]) => args)
+      .filter((value) => URL.canParse(value))
+      .map((value) => new URL(value));
     expect(
-      host.capture.mock.calls.filter(([args]) =>
-        args.includes("http://host.containers.internal:11434/api/tags"),
-      ),
-    ).toHaveLength(2);
+      probeUrls.map((url) => ({
+        hash: url.hash,
+        origin: url.origin,
+        password: url.password,
+        pathname: url.pathname,
+        search: url.search,
+        username: url.username,
+      })),
+    ).toEqual([
+      {
+        hash: "",
+        origin: "http://host.containers.internal:11434",
+        password: "",
+        pathname: "/api/tags",
+        search: "",
+        username: "",
+      },
+      {
+        hash: "",
+        origin: "http://host.containers.internal:11434",
+        password: "",
+        pathname: "/api/tags",
+        search: "",
+        username: "",
+      },
+    ]);
     expect(host.runtime.translateContainerArgs(["--gpus", "all"])).toEqual([
       "--device",
       "nvidia.com/gpu=all",
@@ -110,6 +137,40 @@ describe("Podman host-local inference runtime", () => {
       "does not advertise",
     );
     expect(host.capture.mock.calls.filter(([args]) => args[0] === "run")).toHaveLength(0);
+  });
+
+  it("rejects a malformed mount flag instead of making an intended read-only mount writable", () => {
+    const host = runtimeHarness();
+    const input = {
+      ...managedInput("vllm"),
+      mounts: [
+        {
+          source: "/var/lib/nemoclaw/models",
+          target: "/models",
+          readOnly: "true" as unknown as boolean,
+        },
+      ],
+    };
+
+    expect(() => host.runtime.startManaged(input)).toThrow("read-only flag must be a boolean");
+    expect(host.capture.mock.calls.filter(([args]) => args[0] === "run")).toHaveLength(0);
+  });
+
+  it("rejects a receipt whose host is a lookalike of the canonical provider endpoint", () => {
+    const host = runtimeHarness();
+    const receipt = host.runtime.qualifyOllama({
+      networkName: "openshell",
+      hostPort: 11434,
+      probeImageRef: PROBE_IMAGE_REF,
+    });
+    const tampered = {
+      ...receipt,
+      endpoint: { ...receipt.endpoint, host: "host.containers.internal.attacker.example" },
+    };
+    const callsBeforeRejection = host.capture.mock.calls.length;
+
+    expect(() => host.runtime.preserveForRebuild(tampered)).toThrow("canonical host");
+    expect(host.capture).toHaveBeenCalledTimes(callsBeforeRejection);
   });
 
   it("rejects endpoint authority drift before receipt lifecycle commands", () => {

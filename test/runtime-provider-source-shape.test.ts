@@ -175,6 +175,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-gpu.ts",
+      "src/lib/onboard/runtime-provider/podman-host-local-inference-test-harness.ts",
       "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
       "src/lib/onboard/runtime-provider/podman-inference-args.ts",
       "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
