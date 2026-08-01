@@ -67,6 +67,7 @@ function harness(initial: { running: boolean; status: string; paused?: boolean }
     operation: "sandbox-lifecycle",
     engineId: "podman",
     displayName: "Podman",
+    authorityId: "test:podman-socket",
     capture,
     captureHost: vi.fn(),
   };

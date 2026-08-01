@@ -25,6 +25,7 @@ export interface PodmanSocketAuthority {
   readonly directoryChain: readonly PodmanSocketDirectoryAuthority[];
   readonly device: string;
   readonly inode: string;
+  readonly mode: string;
   readonly ownerUid: string;
   readonly socketPath: string;
 }
@@ -133,10 +134,15 @@ export function capturePodmanSocketAuthority(
       `Podman socket authority is owned by uid ${ownerUid}; expected current uid ${String(uid)}.`,
     );
   }
+  const mode = integerValue(stat.mode, "mode");
+  if ((mode & 0o022n) !== 0n) {
+    throw new Error("Podman socket authority is writable by another user or group.");
+  }
   return Object.freeze({
     directoryChain: captureDirectoryChain(normalized, uid, lstat),
     device: integerIdentity(stat.dev, "device"),
     inode: integerIdentity(stat.ino, "inode"),
+    mode: mode.toString(10),
     ownerUid,
     socketPath: normalized,
   });
@@ -150,6 +156,7 @@ export function assertPodmanSocketAuthority(
   if (
     actual.device !== expected.device ||
     actual.inode !== expected.inode ||
+    actual.mode !== expected.mode ||
     actual.ownerUid !== expected.ownerUid ||
     actual.directoryChain.length !== expected.directoryChain.length ||
     actual.directoryChain.some((component, index) => {
