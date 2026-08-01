@@ -435,6 +435,44 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     );
   });
 
+  it("retries headless fallback cleanup after volume removal fails", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementation(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses
+      .mockReturnValueOnce({
+        ...idleHostReaperResult(),
+        stopped: [4242],
+      })
+      .mockReturnValueOnce({
+        ...idleHostReaperResult(),
+        skippedDeadPids: [4242],
+      });
+    mocks.dockerRemoveVolumesByPrefix.mockImplementationOnce(() => {
+      throw new Error("injected volume cleanup failure");
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = {
+      clearGatewayRuntimeFiles,
+      isGatewayPortFree,
+      stopOpenShellGatewayUserService: () =>
+        serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+    };
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, deps)).toThrow(
+      "injected volume cleanup failure",
+    );
+    expect(clearGatewayRuntimeFiles).not.toHaveBeenCalled();
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, deps)).not.toThrow();
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledTimes(2);
+    expect(isGatewayPortFree).toHaveBeenCalledTimes(2);
+    expect(clearGatewayRuntimeFiles).toHaveBeenCalledOnce();
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledTimes(2);
+  });
+
   it("leaves the service manager alone for a standalone NemoClaw gateway (#7904)", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     vi.spyOn(os, "homedir").mockReturnValue("/home/tester");

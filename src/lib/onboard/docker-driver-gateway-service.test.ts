@@ -703,4 +703,27 @@ describe("docker-driver-gateway-service", () => {
       stopped: false,
     });
   });
+
+  it("refuses standalone fallback when the systemd service can activate automatically", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const activationPath = `${home}/.config/systemd/user/default.target.wants/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath || candidate === activationPath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: false,
+    });
+  });
 });

@@ -361,6 +361,24 @@ function userManagerLooksUnavailable(reason: string): boolean {
   );
 }
 
+function hasSystemdUserServiceActivationLink(
+  service: OpenShellGatewayUserServiceTarget,
+  home: string,
+  env: NodeJS.ProcessEnv,
+  existsSync: typeof fs.existsSync,
+): boolean {
+  if (service.manager !== "systemd") return false;
+  return existsSync(
+    path.join(
+      getOpenShellUserConfigHome(home, env),
+      "systemd",
+      "user",
+      "default.target.wants",
+      `${service.serviceName}.service`,
+    ),
+  );
+}
+
 function parseSystemctlShow(output: string): Record<string, string> {
   return Object.fromEntries(
     output
@@ -676,6 +694,7 @@ export function stopOpenShellGatewayUserService(
   }
   const env = opts.env ?? process.env;
   const home = effectiveHome(opts.home, opts.env);
+  const existsSync = opts.existsSync ?? fs.existsSync;
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const service = resolveOpenShellGatewayUserService({ ...opts, env, home });
@@ -691,7 +710,10 @@ export function stopOpenShellGatewayUserService(
   const describe = (stopped: boolean, reason?: string): OpenShellGatewayUserServiceStopResult => ({
     attempted: true,
     standaloneFallbackAllowed:
-      !stopped && service.manager === "systemd" && userManagerLooksUnavailable(reason ?? ""),
+      !stopped &&
+      service.manager === "systemd" &&
+      userManagerLooksUnavailable(reason ?? "") &&
+      !hasSystemdUserServiceActivationLink(service, home, env, existsSync),
     manager: service.manager,
     serviceName: service.serviceName,
     statusCommand: service.statusCommand,

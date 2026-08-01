@@ -156,6 +156,9 @@ export function cleanupGatewayAfterLastSandbox(
     stopOptions.openShellGatewayPort = perGatewayState.port;
     if (packagedServiceFallbackReason !== null) {
       // A package can be installed even when its user manager is unavailable.
+      // Destroy cannot repair the missing systemd user session. Remove this
+      // branch when supported onboarding no longer starts a standalone gateway
+      // after this service-manager failure.
       // In that exact start fallback, the standalone launcher wrote this
       // per-gateway PID evidence. Preserve it until every later cleanup step
       // succeeds so a retry can prove the same ownership again.
