@@ -101,10 +101,16 @@ an inert provider-neutral lifecycle ledger against that exact injected engine.
 Each record binds the action, source and target runtime handles, and a digest of
 opaque runtime and acceleration state before it publishes mutation authority.
 After a process restart, the caller must reconstruct the same provider, engine,
-endpoint authority, binding, runtime handles, and state digest. Commands execute
-only when they contain one persisted runtime handle exactly once; a mutable
-sandbox name is never sufficient destructive authority. Successful work leaves
-an exact durable completion receipt, and retirement publishes a tombstone before
-removing phase records so a transaction identity cannot be reused. This boundary
-does not select a provider, activate Podman, or interpret GPU/CDI state; later
-provider and GPU slices must supply and qualify those injected dependencies.
+endpoint authority, binding, runtime handles, and state digest. Before invoking
+the mutation callback, the file store publishes one process-owned execution
+lease. A competing live process cannot enter the callback; after a process crash,
+a restarted caller may replace the abandoned lease only after its recorded PID
+is no longer live. The lease is revalidated before and after every command and
+before completion. Each command also declares its target argument position, and
+the wrapper verifies that position contains the one exact persisted runtime ID;
+a mutable sandbox name or an ID in a non-target option is never sufficient
+destructive authority. Successful work leaves an exact durable completion
+receipt, and retirement publishes a tombstone before removing phase records so
+a transaction identity cannot be reused. This boundary does not select a
+provider, activate Podman, or interpret GPU/CDI state; later provider and GPU
+slices must supply and qualify those injected dependencies.
