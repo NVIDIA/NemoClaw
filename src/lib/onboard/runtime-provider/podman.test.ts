@@ -7,6 +7,7 @@ import { stopSandbox } from "../../actions/sandbox/stop";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import type { SandboxEntry } from "../../state/registry/types";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
+import type { HostLocalInferenceRuntime } from "./host-local-inference";
 import { createPodmanRuntimeProviderBundle } from "./podman";
 import {
   PODMAN_MANAGED_LABEL,
@@ -115,11 +116,44 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
   };
 }
 
+function inferenceEngine(authorityId = AUTHORITY_ID): ContainerEngine {
+  return {
+    operation: "host-local-inference",
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId,
+    capture: vi.fn(),
+    captureHost: vi.fn(),
+  };
+}
+
+function inferenceRuntime(): HostLocalInferenceRuntime {
+  const unavailable = () => {
+    throw new Error("not exercised by the bundle contract test");
+  };
+  return {
+    providerId: "podman",
+    services: ["ollama", "nim", "vllm"],
+    translateContainerArgs: (args) => args,
+    qualifyOllama: unavailable,
+    startManaged: unavailable,
+    inspectManaged: unavailable,
+    stopManaged: unavailable,
+    preserveForRebuild: unavailable,
+  };
+}
+
 function providerHarness(agent: (typeof AGENTS)[number]) {
   const sandboxName = `${agent}-podman`;
   const lifecycle = lifecycleEngine(sandboxName);
+  const inference = inferenceRuntime();
   const bundle = createPodmanRuntimeProviderBundle({
-    engines: { hostDoctor: hostDoctorEngine(), sandboxLifecycle: lifecycle },
+    engines: {
+      hostDoctor: hostDoctorEngine(),
+      hostLocalInference: inferenceEngine(),
+      sandboxLifecycle: lifecycle,
+    },
+    hostLocalInference: inference,
     preflight: { platform: "linux", architecture: "x64" },
   });
   const providers = createRuntimeProviderBundleRegistry([["podman", bundle]]);
@@ -128,7 +162,7 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
     name: sandboxName,
     openshellDriver: "podman",
   };
-  return { entry, lifecycle, providers, sandboxName };
+  return { entry, inference, lifecycle, providers, sandboxName };
 }
 
 describe("dormant Podman runtime provider", () => {
@@ -172,6 +206,17 @@ describe("dormant Podman runtime provider", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
   });
 
+  it.each(AGENTS)("binds the same all-service inference runtime for %s", (agent) => {
+    const candidate = providerHarness(agent);
+    const surface = candidate.providers.podman?.hostLocalInference;
+
+    expect(surface).toMatchObject({ providerId: "podman", supported: true });
+    if (surface?.supported !== true) throw new Error("expected supported inference surface");
+    expect(surface.runtime.services).toEqual(["ollama", "nim", "vllm"]);
+    expect(surface.runtime).not.toHaveProperty("agent");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  });
+
   it("rejects a mismatched engine scope before bundle registration", () => {
     const doctor = hostDoctorEngine();
     expect(() =>
@@ -190,5 +235,17 @@ describe("dormant Podman runtime provider", () => {
         },
       }),
     ).toThrow("same endpoint authority");
+  });
+
+  it("requires the inference engine and runtime as one bound surface", () => {
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: {
+          hostDoctor: hostDoctorEngine(),
+          hostLocalInference: inferenceEngine(),
+          sandboxLifecycle: lifecycleEngine("incomplete"),
+        },
+      }),
+    ).toThrow("engine and runtime together");
   });
 });

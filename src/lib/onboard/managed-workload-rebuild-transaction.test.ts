@@ -226,6 +226,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
       },
       acceptsReceipt: (receipt) => receipt?.kind === "managed-image",
     },
+    hostLocalInference: unsupported(providerId),
     lifecycle: unsupported(providerId),
     mutationAuthority: {
       providerId,

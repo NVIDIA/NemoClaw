@@ -9,6 +9,7 @@ import {
   type RuntimeProviderLifecycleStopHooks,
   type RuntimeProviderWorkloadProfile,
 } from "../../src/lib/onboard/runtime-provider/contract";
+import type { HostLocalInferenceRuntime } from "../../src/lib/onboard/runtime-provider/host-local-inference";
 
 export interface InMemoryRuntimeProviderState {
   readonly events: string[];
@@ -30,6 +31,7 @@ type InMemoryRuntimeProviderOptions = {
   readonly workloadProfile: RuntimeProviderWorkloadProfile;
   readonly state?: InMemoryRuntimeProviderState;
   readonly gatewayLauncher?: "nemoclaw" | "openshell";
+  readonly hostLocalInferenceRuntime?: HostLocalInferenceRuntime;
   readonly recordEvent?: (event: string) => void;
 };
 
@@ -47,6 +49,7 @@ export function createInMemoryRuntimeProviderBundle({
   workloadProfile,
   state = { events: [], running: new Set(), workloads: new Set() },
   gatewayLauncher = "nemoclaw",
+  hostLocalInferenceRuntime,
   recordEvent = (value) => state.events.push(value),
 }: InMemoryRuntimeProviderOptions): InMemoryRuntimeProviderBundle {
   const futureReason = "Unsupported by this in-memory contract fixture.";
@@ -81,7 +84,7 @@ export function createInMemoryRuntimeProviderBundle({
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: false,
+      hostLocalInference: hostLocalInferenceRuntime !== undefined,
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
@@ -116,6 +119,9 @@ export function createInMemoryRuntimeProviderBundle({
               workloadProfile.support?.platforms.includes(receipt.platform) === true;
       },
     },
+    hostLocalInference: hostLocalInferenceRuntime
+      ? { providerId, supported: true, runtime: hostLocalInferenceRuntime }
+      : unsupported(providerId, futureReason),
     lifecycle: {
       providerId,
       supported: true,
@@ -186,6 +192,15 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "memory", displayName: "In-memory" },
+        ...(hostLocalInferenceRuntime
+          ? [
+              {
+                operation: "host-local-inference" as const,
+                engineId: "memory",
+                displayName: "In-memory",
+              },
+            ]
+          : []),
         { operation: "sandbox-lifecycle", engineId: "memory", displayName: "In-memory" },
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],

@@ -27,6 +27,7 @@ const BUNDLE_SURFACES = [
   "preflightDoctor",
   "gateway",
   "workload",
+  "hostLocalInference",
   "lifecycle",
   "mutationAuthority",
   "bootstrap",
@@ -71,6 +72,7 @@ const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperat
   "sandbox-lifecycle",
   "workload-cleanup",
 ]);
+const HOST_LOCAL_INFERENCE_SERVICES = new Set(["ollama", "nim", "vllm"]);
 
 export class RuntimeProviderRegistrationError extends Error {
   constructor(message: string) {
@@ -304,6 +306,39 @@ function validateWorkloadSurface(providerId: string, surface: Record<string, unk
   validateWorkloadProfile(providerId, surface);
 }
 
+function validateHostLocalInferenceSurface(
+  providerId: string,
+  surface: Record<string, unknown>,
+): void {
+  if (surface.supported !== true) return;
+  const runtime = requireOwnRecord(surface, "runtime");
+  if (runtime.providerId !== providerId) {
+    throw new RuntimeProviderRegistrationError(
+      `hostLocalInference runtime identity '${String(runtime.providerId)}' does not match '${providerId}'`,
+    );
+  }
+  if (
+    !Array.isArray(runtime.services) ||
+    runtime.services.length === 0 ||
+    runtime.services.some((service) => !HOST_LOCAL_INFERENCE_SERVICES.has(String(service))) ||
+    new Set(runtime.services).size !== runtime.services.length
+  ) {
+    throw new RuntimeProviderRegistrationError(
+      `hostLocalInference for '${providerId}' must list unique valid services`,
+    );
+  }
+  for (const operation of [
+    "translateContainerArgs",
+    "qualifyOllama",
+    "startManaged",
+    "inspectManaged",
+    "stopManaged",
+    "preserveForRebuild",
+  ] as const) {
+    requireFunction(runtime, operation, "hostLocalInference runtime");
+  }
+}
+
 function validateLifecycleSurface(providerId: string, surface: Record<string, unknown>): void {
   if (surface.supported === true) {
     if (!CHANNEL_STOP_TRANSPORTS.has(String(surface.channelStopTransport))) {
@@ -428,6 +463,7 @@ function validateSupportedSurfaceSchemas(
   validatePreflightDoctorSurface(surfaces.preflightDoctor);
   validateGatewaySurface(providerId, surfaces.gateway);
   validateWorkloadSurface(providerId, surfaces.workload);
+  validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
   validateBootstrapSurface(surfaces.bootstrap);
@@ -442,6 +478,8 @@ function validateSupportedSurfaceSchemas(
     );
   }
   if (
+    (surfaces.hostLocalInference.supported === true &&
+      surfaces.capabilities.hostLocalInference !== true) ||
     surfaces.capabilities.directLifecycle !== (surfaces.lifecycle.supported === true) ||
     surfaces.capabilities.workloadImageCleanup !== (surfaces.cleanup.supported === true) ||
     surfaces.capabilities.legacyGatewayContainerInspection !==
