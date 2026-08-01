@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 const repoRoot = join(import.meta.dirname, "..");
 
 describe("runtime provider central source boundary", () => {
-  // source-shape-contract: compatibility -- Migrated lifecycle and mutation consumers must stay provider-neutral while production selection excludes unqualified future providers and managed-bootstrap dependencies
+  // source-shape-contract: compatibility -- Migrated lifecycle and mutation consumers must stay provider-neutral while production selection excludes unqualified future providers and driver-specific bootstrap dependencies
   it("keeps migrated provider identities and implementations behind the one bundle composition", () => {
     const read = (relativePath: string) => readFileSync(join(repoRoot, relativePath), "utf8");
     const driverNeutralActions = {
@@ -53,7 +53,12 @@ describe("runtime provider central source boundary", () => {
     expect(driverNeutralActions["actions/sandbox/start.ts"]).toMatch(
       /resolved\.lifecycle\.verifyStarted\(/u,
     );
-    expect(Object.values(providerContract).join("\n")).not.toMatch(/managed-bootstrap/u);
+    expect(providerContract.contract).toMatch(
+      /import type[\s\S]*from ["']\.\.\/managed-bootstrap\/runtime-create["']/u,
+    );
+    expect(
+      [providerContract.current, providerContract.docker, providerContract.registry].join("\n"),
+    ).not.toMatch(/managed-bootstrap/u);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
   });
 
@@ -97,7 +102,7 @@ describe("runtime provider central source boundary", () => {
     );
     expect(bootstrapProtocol.join("\n")).not.toMatch(/\b(?:docker|podman|openshell|mxc)\b/iu);
     expect(activationSources.join("\n")).not.toMatch(
-      /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
+      /(?:from\s+["'][^"']*managed-bootstrap\/(?:docker|docker-journal|docker-runtime)|require\([^)]*managed-bootstrap)/u,
     );
     expect(dockerProvider).not.toMatch(
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
