@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export { resolveOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 export {
   activateManagedBootstrapSequence,
   finalizeManagedBootstrapSequence,
@@ -20,3 +21,7 @@ export {
   serializeManagedBootstrapEnvelope,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
+export type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimePatch,
+} from "./runtime-create";

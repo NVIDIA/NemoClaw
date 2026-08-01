@@ -68,7 +68,7 @@ describe("Docker startup-command sandbox creation", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the startup-command recreation path with DCode's exact resource limits", () => {
+  it("uses the startup-command recreation path with DCode's exact resource limits", async () => {
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
       inspect: JSON.stringify([inspectFixture()]),
@@ -102,7 +102,7 @@ describe("Docker startup-command sandbox creation", () => {
       },
     });
 
-    patch.ensureApplied();
+    await patch.ensureApplied();
 
     expect(recreatePatch).not.toHaveBeenCalled();
     expect(dockerRunDetached.mock.calls[0]?.[0]).toEqual(
@@ -156,7 +156,102 @@ describe("Docker startup-command sandbox creation", () => {
     expect(context.rolledBack).toBe(true);
   });
 
-  it("reports startup-command creation failures through the composed patch boundary", () => {
+  it("defers a driver-owned managed cutover until the authoritative caller commits", async () => {
+    const deps = makeDeps();
+    let releaseCommit = () => {};
+    const commit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseCommit = resolve;
+        }),
+    );
+    const rollback = vi.fn(async () => {});
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+    });
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "startup-command",
+        label: "managed bootstrap",
+        device: "",
+        args: [],
+      },
+      failureContext: { sandboxName: "alpha" },
+      commit,
+      rollback,
+    });
+    patch.maybeApplyDuringCreate();
+    await patch.ensureApplied();
+    patch.waitForSupervisorReconnectIfNeeded();
+    expect(commit).not.toHaveBeenCalled();
+    const firstCommit = patch.commitAfterReady();
+    const duplicateCommit = patch.commitAfterReady();
+    expect(commit).toHaveBeenCalledOnce();
+    expect(rollback).not.toHaveBeenCalled();
+    releaseCommit();
+    await Promise.all([firstCommit, duplicateCommit]);
+  });
+
+  it("rolls back a driver-owned cutover before reporting commit failure", async () => {
+    const deps = makeDeps();
+    const events: string[] = [];
+    const commit = vi.fn(async () => {
+      events.push("commit");
+      throw new Error("receipt validation failed");
+    });
+    const rollback = vi.fn(async () => {
+      events.push("rollback");
+    });
+    const onPatchFailureExit = vi.fn(() => {
+      events.push("exit");
+    });
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: { onPatchFailureExit },
+    });
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "startup-command",
+        label: "managed bootstrap",
+        device: "",
+        args: [],
+      },
+      failureContext: {
+        sandboxName: "alpha",
+        oldContainerId: "held-container",
+        newContainerId: "replacement-container",
+      },
+      commit,
+      rollback,
+    });
+
+    await patch.commitAfterReady();
+
+    expect(events).toEqual(["commit", "rollback", "exit"]);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ message: "receipt validation failed" }),
+      expect.objectContaining({
+        context: expect.objectContaining({
+          oldContainerId: "held-container",
+          newContainerId: "replacement-container",
+          rolledBack: true,
+        }),
+      }),
+    );
+    await patch.rollbackManagedStartupAfterCreateFailure();
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("reports startup-command creation failures through the composed patch boundary", async () => {
     const deps = makeDeps();
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
@@ -177,7 +272,7 @@ describe("Docker startup-command sandbox creation", () => {
 
     patch.maybeApplyDuringCreate();
     expect(patch.createFailureMessage()).toMatch(/startup-command patch failed/);
-    patch.exitOnPatchError();
+    await patch.exitOnPatchError();
     expect(onPatchFailureExit).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ message: "startup recreate failed" }),
