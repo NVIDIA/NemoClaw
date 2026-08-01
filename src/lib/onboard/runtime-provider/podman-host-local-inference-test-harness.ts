@@ -6,7 +6,11 @@ import assert from "node:assert/strict";
 import { vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
-import type { HostLocalManagedInferenceInput } from "./host-local-inference";
+import type {
+  HostLocalInferenceRouteAuthority,
+  HostLocalInferenceRouteAuthorityStore,
+  HostLocalManagedInferenceInput,
+} from "./host-local-inference";
 import type {
   PersistedEngineAuthority,
   PersistedEngineAuthorityStore,
@@ -39,6 +43,21 @@ export function memoryStore(): PersistedEngineAuthorityStore {
       assert(
         value === null || JSON.stringify(value) === JSON.stringify(authority),
         "authority conflict",
+      );
+      value = authority;
+      return authority;
+    },
+  };
+}
+
+export function memoryRouteAuthorityStore(): HostLocalInferenceRouteAuthorityStore {
+  let value: HostLocalInferenceRouteAuthority | null = null;
+  return {
+    load: () => value,
+    record: (authority) => {
+      assert(
+        value === null || JSON.stringify(value) === JSON.stringify(authority),
+        "route authority conflict",
       );
       value = authority;
       return authority;
@@ -200,15 +219,20 @@ export function managedInput(service: "nim" | "vllm"): HostLocalManagedInference
   };
 }
 
-export function runtimeHarness(authorityId = AUTHORITY_ID, store = memoryStore()) {
+export function runtimeHarness(
+  authorityId = AUTHORITY_ID,
+  store = memoryStore(),
+  routeAuthorityStore = memoryRouteAuthorityStore(),
+) {
   const host = engineHarness(authorityId);
   const runtime = createPodmanHostLocalInferenceRuntime({
     engine: host.engine,
     authorityStore: store,
+    routeAuthorityStore,
     bindingSha256: BINDING_SHA256,
     preflight: preflight(authorityId),
   });
-  return { ...host, runtime, store };
+  return { ...host, routeAuthorityStore, runtime, store };
 }
 
 export function foreignContainer(id: string, name: string): ContainerState {
