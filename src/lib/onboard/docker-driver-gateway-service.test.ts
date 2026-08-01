@@ -682,7 +682,7 @@ describe("docker-driver-gateway-service", () => {
     });
   });
 
-  it("allows only an owned standalone fallback when the systemd user manager is unavailable", () => {
+  it("reports standalone fallback eligibility when the systemd user manager is unavailable", () => {
     const home = "/home/nvidia";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
 
