@@ -112,9 +112,9 @@ describe("host gateway cleanup boundaries", () => {
     const markerFile = path.join(stateDir, "runtime.json");
     fs.writeFileSync(pidFile, "4242\n");
     fs.writeFileSync(markerFile, "{}\n");
-    const rmSync = vi.spyOn(fs, "rmSync").mockImplementation((candidate, options) => {
-      if (candidate === markerFile) throw new Error("marker cleanup failed");
-      return fs.rmSync(candidate, options);
+    const rmSync = vi.spyOn(fs, "rmSync").mockImplementation((candidate) => {
+      expect(candidate).toBe(markerFile);
+      throw new Error("marker cleanup failed");
     });
 
     try {
