@@ -86,3 +86,11 @@ the direct root-stdin and hold contract without advertising buildless support.
 No production provider invokes the trampoline yet. Until the later provider
 activation and protected E2E slices pass, every production runtime provider
 keeps bootstrap unsupported.
+
+The next dormant lifecycle boundary persists only an operation-scoped provider,
+engine, endpoint-authority, and non-secret binding digest. A freshly qualified
+injected engine must match that immutable record exactly before later lifecycle
+recovery work can use it. The record does not persist an executable, endpoint,
+environment, or credential, does not activate an engine, and has no production
+consumer yet. Its contract is provider-neutral; tests use an MXC-style engine
+to ensure central persistence does not gain a Podman-specific selection branch.
