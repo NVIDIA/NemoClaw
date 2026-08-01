@@ -13,6 +13,7 @@ import {
   cleanupShieldsDestroyArtifacts,
   removeSandboxImage,
   removeSandboxRegistryEntry,
+  removeSandboxRegistryEntryOutcome,
   removeSandboxRegistryEntryWithReceipt,
   removeShieldsState,
   requireSandboxDestructiveCleanupAuthority,
@@ -45,17 +46,9 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   });
 
   it("removeSandboxImage calls docker rmi for recorded image tags", () => {
-    const removedTags: string[] = [];
+    const removeImage = vi.fn(() => ({ status: 0 }));
     const runtimeProviders = createRuntimeProviderBundleRegistry([
-      [
-        "docker",
-        createDockerRuntimeProviderBundle({
-          removeImage: (tag) => {
-            removedTags.push(tag);
-            return { status: 0 };
-          },
-        }),
-      ],
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
     ]);
 
     removeSandboxImage("alpha", {
@@ -63,7 +56,47 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
       runtimeProviders,
     });
 
-    expect(removedTags).toEqual(["openshell/sandbox-from:123"]);
+    expect(removeImage).toHaveBeenCalledWith("openshell/sandbox-from:123", {
+      ignoreError: true,
+      timeout: 30_000,
+    });
+  });
+
+  it("redacts provider cleanup failures before reporting them", () => {
+    const secret = "super-secret-provider-value";
+    const warn = vi.fn();
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      [
+        "docker",
+        createDockerRuntimeProviderBundle({
+          removeImage: () => {
+            throw new Error(`OPENAI_API_KEY=${secret}`);
+          },
+        }),
+      ],
+    ]);
+
+    const result = removeSandboxImage("alpha", {
+      getSandbox: () =>
+        ({
+          name: "alpha",
+          openshellDriver: "docker",
+          imageTag: "local/alpha:current",
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile",
+            reference: "local/alpha:current",
+            shared: false,
+          },
+        }) as any,
+      runtimeProviders,
+      warn,
+    });
+
+    expect(result).toEqual({ status: "skipped", reason: "authority-unproven" });
+    const warning = warn.mock.calls.flat().join("\n");
+    expect(warning).not.toContain(secret);
+    expect(warning).toContain("OPENAI_API_KEY=<REDACTED>");
   });
 
   it("removeSandboxImage gracefully handles missing imageTag", () => {
@@ -169,15 +202,30 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("workload receipt"));
 
     const removeSandbox = vi.fn(() => true);
-    const registryRemoved = removeSandboxRegistryEntry("alpha", {
+    const removalOutcome = removeSandboxRegistryEntryOutcome("alpha", {
       removeImage: () => result,
       removeSandbox,
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(() => requireSnapshotDestinationRegistryRemoval("alpha", registryRemoved)).toThrow();
-    expect(removeSandbox).not.toHaveBeenCalled();
-    expect(error.mock.calls.flat().join("\n")).toContain("doctor --json");
-    expect(error.mock.calls.flat().join("\n")).toContain("Do not rewrite a receipt");
+    try {
+      expect(() => requireSnapshotDestinationRegistryRemoval("alpha", removalOutcome)).toThrow();
+      expect(removeSandbox).not.toHaveBeenCalled();
+      const output = error.mock.calls.flat().join("\n");
+      expect(output).toContain("doctor --json");
+      expect(output).toContain("Do not rewrite a receipt");
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("accepts an already absent registry entry after destination deletion", () => {
+    const outcome = removeSandboxRegistryEntryOutcome("alpha", {
+      removeImage: () => ({ status: "skipped", reason: "no-owned-image" }),
+      removeSandbox: () => false,
+    });
+
+    expect(outcome).toEqual({ status: "not-found", removed: false });
+    expect(() => requireSnapshotDestinationRegistryRemoval("alpha", outcome)).not.toThrow();
   });
 
   it.each([

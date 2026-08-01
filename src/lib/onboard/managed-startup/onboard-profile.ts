@@ -40,7 +40,11 @@ const PROFILE_ENVIRONMENT_INPUTS = {
     "NEMOCLAW_REASONING_EFFORT",
   ],
   hermes: ["NEMOCLAW_CONTEXT_WINDOW", "NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
-  "langchain-deepagents-code": ["NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
+  "langchain-deepagents-code": [
+    "NEMOCLAW_PROXY_HOST",
+    "NEMOCLAW_PROXY_PORT",
+    "NEMOCLAW_REASONING_EFFORT",
+  ],
 } as const satisfies Record<ManagedStartupAgent, readonly string[]>;
 
 const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
@@ -209,7 +213,7 @@ export function buildManagedStartupOnboardProfile(
   const agent = exactManagedAgent(input.agentName);
   const capabilities = MANAGED_STARTUP_PROFILE_CAPABILITIES[agent];
   if (
-    agent !== "openclaw" &&
+    capabilities.inputModalities.length === 0 &&
     typeof input.environment.NEMOCLAW_INFERENCE_INPUTS === "string" &&
     input.environment.NEMOCLAW_INFERENCE_INPUTS.trim() !== ""
   ) {

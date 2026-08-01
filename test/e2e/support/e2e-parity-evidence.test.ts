@@ -29,12 +29,15 @@ const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
 const BASE_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 
-function evidenceInput(provider: "docker" | "test-mxc"): ExecutionEvidenceInput {
+function evidenceInput(
+  provider: "docker" | "test-mxc",
+  agent: "dcode" | "hermes" | "openclaw" = "openclaw",
+): ExecutionEvidenceInput {
   const matrix = compileRuntimeMatrix(foundationDefinition());
   const runtimeCase = matrix.cases.find(
-    (entry) => entry.scenario.agent === "openclaw" && entry.profile.provider === provider,
+    (entry) => entry.scenario.agent === agent && entry.profile.provider === provider,
   );
-  assert.ok(runtimeCase, `Missing fixture runtime case for ${provider}`);
+  assert.ok(runtimeCase, `Missing ${agent} fixture runtime case for ${provider}`);
   const resolved = resolveRuntimeCase(matrix, {
     scenarioId: runtimeCase.scenario.id,
     profileId: runtimeCase.profile.id,
@@ -99,6 +102,19 @@ describe("cross-runtime parity evidence", () => {
 
     expect(compareParityEvidence(docker, mxc)).toEqual([]);
     expect(() => assertParityEvidence(docker, mxc)).not.toThrow();
+  });
+
+  it("reports parity differences between valid evidence for different scenarios", () => {
+    const openclaw = buildExecutionEvidence(evidenceInput("docker", "openclaw"));
+    const hermes = buildExecutionEvidence(evidenceInput("test-mxc", "hermes"));
+
+    expect(compareParityEvidence(openclaw, hermes).map((mismatch) => mismatch.field)).toEqual([
+      "scenarioId",
+      "desiredStateFingerprint",
+    ]);
+    expect(() => assertParityEvidence(openclaw, hermes)).toThrow(
+      /scenarioId, desiredStateFingerprint/,
+    );
   });
 
   it("rejects executions that do not satisfy the scenario before parity comparison", () => {

@@ -53,6 +53,14 @@ export function createInMemoryRuntimeProviderBundle({
   const event = (kind: string, sandboxName: string) => recordEvent(`${kind}:${sandboxName}`);
   const planOwnedWorkloadCleanup = (input: RuntimeProviderCleanupInput) => {
     const reference = input.sandbox.imageTag;
+    const workload = input.sandbox.workload;
+    if (
+      workload?.kind === "legacy-dockerfile" &&
+      workload.reference !== null &&
+      workload.reference !== reference
+    ) {
+      return { action: "block" as const, reason: "authority-unproven" as const };
+    }
     return input.sandbox.workload?.shared === true
       ? { action: "retain" as const, reason: "shared-image" as const }
       : reference && state.workloads.has(reference)

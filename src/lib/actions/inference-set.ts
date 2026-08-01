@@ -73,6 +73,7 @@ import {
 import {
   prepareInferenceSetProviderBinding,
   type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
   requireInferenceSetRuntimeAuthority,
 } from "./inference-set-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
@@ -295,7 +296,8 @@ function assertInferenceSetRuntimeAuthority(
   try {
     requireInferenceSetRuntimeAuthority(entry, providers);
   } catch (error) {
-    throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
+    if (!(error instanceof RuntimeProviderSelectionError)) throw error;
+    throw new InferenceSetError(error.message, 2);
   }
 }
 

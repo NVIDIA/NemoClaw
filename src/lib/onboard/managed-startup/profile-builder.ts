@@ -46,11 +46,15 @@ const MAX_PROFILE_TUNING_INTEGER = 1_000_000_000;
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL = {
+  http: { upper: "HTTP_PROXY", lower: "http_proxy" },
+  https: { upper: "HTTPS_PROXY", lower: "https_proxy" },
+} as const;
 export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "http_proxy",
-  "https_proxy",
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.upper,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.upper,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.lower,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.lower,
 ] as const;
 
 /**
@@ -62,7 +66,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
-  "langchain-deepagents-code": "780ec15dd97efaea5b75614d657a4baf93cba4c7933e50f78fb72814cb427c85",
+  "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -424,13 +428,13 @@ function resolveHostProxy(
 ): Pick<ManagedStartupProfile["proxy"], "hostHttpUrl" | "hostHttpsUrl" | "hostNoProxy"> {
   const hostHttpUrl = resolveAliasedEnvironmentValue(
     environment,
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[0],
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[2],
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.upper,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.lower,
   );
   const hostHttpsUrl = resolveAliasedEnvironmentValue(
     environment,
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[1],
-    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS[3],
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.upper,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.lower,
   );
   const noProxy = resolveAliasedEnvironmentValue(environment, "NO_PROXY", "no_proxy");
   if (hostHttpUrl === null && hostHttpsUrl === null) {
@@ -797,6 +801,14 @@ function assertEnvironmentConsistency(
         config.observabilityEnabled,
       );
     }
+    const dcodeReasoningEffort = presentEnvironmentValue(environment, "NEMOCLAW_REASONING_EFFORT");
+    if (dcodeReasoningEffort !== null) {
+      assertEquivalent(
+        "NEMOCLAW_REASONING_EFFORT",
+        dcodeReasoningEffort.toLowerCase(),
+        profile.tuning.reasoningEffort,
+      );
+    }
   }
 
   const messaging = parseEnvironmentJson(environment, "NEMOCLAW_MESSAGING_PLAN_B64");
@@ -910,7 +922,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       contextWindow: null,
       maxTokens: null,
       reasoning: null,
-      reasoningEffort: null,
+      reasoningEffort: parseReasoningEffort(input.environment),
     };
   }
 

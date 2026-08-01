@@ -15,8 +15,12 @@ import type { SandboxWorkloadReceipt } from "./types";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 const COHORT_PATTERN = /^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
-const MANAGED_REFERENCE_PATTERN =
-  /^ghcr[.]io\/nvidia\/nemoclaw\/(?:openclaw|hermes|langchain-deepagents-code)-sandbox@sha256:[0-9a-f]{64}$/u;
+const MANAGED_REFERENCE_PATTERN = new RegExp(
+  `^(?:${Object.values(MANAGED_IMAGE_REPOSITORIES)
+    .map((repository) => repository.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join("|")})@sha256:[0-9a-f]{64}$`,
+  "u",
+);
 const MANAGED_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const RELEASE_PATTERN = /^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u;
 const MAX_COHORT_BYTES = 128;

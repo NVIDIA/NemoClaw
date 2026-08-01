@@ -228,7 +228,10 @@ describe("startSandbox", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("kubernetes");
+    expect(result.message).toContain("does not authorize 'start' mutation");
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
   it.each([

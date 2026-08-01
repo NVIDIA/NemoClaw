@@ -161,6 +161,7 @@ describe("destroySandbox flow", () => {
 
     expect(harness.dockerRunSpy).toHaveBeenCalledWith(["rmi", imageTag], {
       ignoreError: true,
+      timeout: 30_000,
     });
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.updateSessionSpy).toHaveBeenCalledOnce();

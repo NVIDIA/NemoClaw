@@ -186,6 +186,13 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
 export const registerSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
+export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
+  (
+    name: string,
+  ) =>
+    | { status: "complete"; removed: true }
+    | { status: "blocked"; reason: "authority-unproven"; removed: false }
+>(() => ({ status: "complete", removed: true }));
 export const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
@@ -312,6 +319,7 @@ vi.mock("./destroy", async () => {
   return {
     cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
     removeSandboxRegistryEntry: vi.fn(() => true),
+    removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
       runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
         sandboxName,
@@ -367,6 +375,7 @@ export function resetSnapshotRestoreMocks(): void {
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
+  removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({
     success: true,

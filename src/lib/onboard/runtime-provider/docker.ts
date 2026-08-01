@@ -37,7 +37,7 @@ type DockerStop = (name: string, options?: Record<string, unknown>) => DockerOpR
 type DockerUnpause = (name: string, options?: Record<string, unknown>) => DockerOpResult;
 type DockerRemoveImage = (
   reference: string,
-  options?: { ignoreError?: boolean },
+  options?: { ignoreError?: boolean; timeout?: number },
 ) => { status: number | null };
 
 export interface DockerRuntimeProviderDependencies {
@@ -244,7 +244,10 @@ function removeOwnedDockerWorkload(
   if (plan.action === "block") {
     return { status: "skipped", reason: "authority-unproven" };
   }
-  const result = deps.removeImage(plan.reference, { ignoreError: true });
+  const result = deps.removeImage(plan.reference, {
+    ignoreError: true,
+    timeout: DOCKER_OPERATION_TIMEOUT_MS,
+  });
   return {
     status: result.status === 0 ? "removed" : "failed",
     engineDisplayName: plan.engineDisplayName,

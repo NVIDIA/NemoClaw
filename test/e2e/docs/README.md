@@ -96,10 +96,8 @@ compiler tests today. The existing target compiler resolves the reference but
 does not dispatch its adapter IDs. Support tests execute the same compiled case
 through Docker-shaped and fake-MXC providers; no canonical target, workflow
 selector, live scenario, or production runtime registration consumes this
-metadata yet. The shared fixture context exposes optional `executionProfile`
-and `runtimeProvider` injection points, both defaulting to `undefined`. Existing
-legacy Docker command fixtures, their ordering, and their output contracts are
-unchanged.
+metadata yet. Existing legacy Docker command fixtures, their ordering, and
+their output contracts are unchanged.
 Execution evidence must be published with
 `ArtifactSink.writeExecutionEvidence(...)` so normal artifact redaction still
 applies.

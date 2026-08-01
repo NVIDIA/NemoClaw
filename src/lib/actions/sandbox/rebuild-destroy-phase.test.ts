@@ -3,15 +3,24 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
-import type { SandboxEntry, SandboxRemovalReceipt } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
-  getSandbox: vi.fn((_name: string): SandboxEntry | null => null),
+  getSandbox: vi.fn(
+    (
+      _name: string,
+    ): {
+      name: string;
+      agent: string;
+      nimContainer?: string | null;
+      gatewayName?: string | null;
+      gatewayPort?: number | null;
+    } | null => null,
+  ),
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
   prepareMcpForRebuild: vi.fn(),
   reattachMcpAfterDeleteFailure: vi.fn(),
-  removeSandboxRegistryEntryWithReceipt: vi.fn<() => SandboxRemovalReceipt | null>(() => null),
+  removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
@@ -49,20 +58,9 @@ vi.mock("../../state/registry", async (importOriginal) => ({
   listSandboxes: mocks.listSandboxes,
 }));
 
-vi.mock("./destroy", async () => {
-  const runtimeProviders = await vi.importActual<
-    typeof import("../../onboard/runtime-provider/access")
-  >("../../onboard/runtime-provider/access");
-  return {
-    removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
-    requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxEntry) =>
-      runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
-        sandboxName,
-        sandbox,
-        runtimeProviders.CURRENT_RUNTIME_PROVIDER_BUNDLES,
-      ),
-  };
-});
+vi.mock("./destroy", () => ({
+  removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
+}));
 
 vi.mock("./rebuild-flow-helpers", () => ({
   warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
@@ -74,6 +72,21 @@ vi.mock("./rebuild-mcp-phase", () => ({
 }));
 
 import { runRebuildDestroyPhase, waitForRebuildDeleteAbsence } from "./rebuild-destroy-phase";
+import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
+
+function stubRecreateJournal(): RebuildRecreateJournal {
+  return {
+    id: "journal-1",
+    acceptedTarget: false,
+    sourceConfirmedAbsent: false,
+    targetGeneration: "generation-1",
+    targetIntentFingerprint: "intent-1",
+    markDeleting: vi.fn(),
+    observeSourceForDelete: vi.fn(() => "source" as const),
+    confirmDeleted: vi.fn(),
+    completeAcceptedTarget: vi.fn(),
+  };
+}
 
 describe("rebuild destroy phase", () => {
   beforeEach(() => {
@@ -91,12 +104,7 @@ describe("rebuild destroy phase", () => {
       scrubbedAdapterEntries: [],
     });
     mocks.reattachMcpAfterDeleteFailure.mockResolvedValue(undefined);
-    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue({
-      entry: { name: "alpha", agent: "openclaw" },
-      wasDefault: true,
-      fallbackDefault: null,
-      postRemovalDefaultSelectionRevision: 1,
-    });
+    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue(null);
     mocks.captureOpenshell.mockReturnValue({
       status: 1,
       output: "",
@@ -142,6 +150,7 @@ describe("rebuild destroy phase", () => {
           },
         },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         log: vi.fn(),
         bail,
@@ -170,6 +179,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "langchain-deepagents-code" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         log,
         bail,
@@ -200,6 +210,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         log: vi.fn(),
         bail,
@@ -216,86 +227,6 @@ describe("rebuild destroy phase", () => {
     expectNoSandboxDelete(mocks.runOpenshell);
   });
 
-  it("blocks before MCP preparation when runtime cleanup authority is unknown", async () => {
-    mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
-      openshellDriver: "future-runtime",
-      imageTag: "local/alpha:current",
-    });
-    const bail = vi.fn((message: string): never => {
-      throw new Error(message);
-    });
-
-    await expect(
-      runRebuildDestroyPhase({
-        sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          agent: "openclaw",
-          openshellDriver: "future-runtime",
-          imageTag: "local/alpha:current",
-        },
-        staleRecovery: false,
-        backupManifest: null,
-        log: vi.fn(),
-        bail,
-        relockShieldsIfNeeded: vi.fn(() => true),
-        onDeleted: vi.fn(),
-      }),
-    ).rejects.toThrow("is not registered for this operation");
-
-    expect(mocks.prepareMcpForRebuild).not.toHaveBeenCalled();
-    expectNoSandboxDelete(mocks.runOpenshell);
-  });
-
-  it("rechecks workload ownership at the exact delete edge after MCP preparation", async () => {
-    const matchingEntry: SandboxEntry = {
-      name: "alpha",
-      agent: "openclaw",
-      openshellDriver: "docker",
-      imageTag: "local/alpha:current",
-      workload: {
-        schemaVersion: 1,
-        kind: "legacy-dockerfile",
-        reference: "local/alpha:current",
-        shared: false,
-      },
-    };
-    mocks.getSandbox
-      .mockReturnValueOnce(matchingEntry)
-      .mockReturnValueOnce(matchingEntry)
-      .mockReturnValue({
-        ...matchingEntry,
-        workload: {
-          ...matchingEntry.workload!,
-          reference: "local/alpha:changed",
-        },
-      });
-    const relockShieldsIfNeeded = vi.fn(() => true);
-    const bail = vi.fn((message: string): never => {
-      throw new Error(message);
-    });
-
-    await expect(
-      runRebuildDestroyPhase({
-        sandboxName: "alpha",
-        sandboxEntry: matchingEntry,
-        staleRecovery: false,
-        backupManifest: null,
-        log: vi.fn(),
-        bail,
-        relockShieldsIfNeeded,
-        onDeleted: vi.fn(),
-      }),
-    ).rejects.toThrow("could not prove ownership");
-
-    expect(mocks.prepareMcpForRebuild).toHaveBeenCalledOnce();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
-    expectNoSandboxDelete(mocks.runOpenshell);
-  });
-
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
     const log = vi.fn();
     const bail = vi.fn((message: string): never => {
@@ -306,6 +237,7 @@ describe("rebuild destroy phase", () => {
       sandboxName: "alpha",
       sandboxEntry: { name: "alpha", agent: "openclaw" },
       staleRecovery: false,
+      recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
       log,
@@ -341,6 +273,7 @@ describe("rebuild destroy phase", () => {
         gatewayPort: 19080,
       },
       staleRecovery: false,
+      recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
       log: vi.fn(),
@@ -395,6 +328,7 @@ describe("rebuild destroy phase", () => {
           gatewayPort: 8080,
         },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),
@@ -406,9 +340,9 @@ describe("rebuild destroy phase", () => {
       }),
     ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
 
-    expect(mocks.getSandbox).toHaveBeenCalledTimes(3);
+    expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
     expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.getSandbox.mock.invocationCallOrder[2] ?? Number.POSITIVE_INFINITY,
+      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
@@ -440,6 +374,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),
@@ -483,6 +418,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),
@@ -534,6 +470,7 @@ describe("rebuild destroy phase", () => {
       sandboxName: "alpha",
       sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
       staleRecovery: false,
+      recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
       log: vi.fn(),
@@ -652,6 +589,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),
@@ -696,6 +634,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),
@@ -744,6 +683,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         force: true,
         log: vi.fn(),
@@ -790,6 +730,7 @@ describe("rebuild destroy phase", () => {
       sandboxName: "alpha",
       sandboxEntry: { name: "alpha", agent: "openclaw" },
       staleRecovery: false,
+      recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
       log: vi.fn(),
@@ -925,6 +866,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: null,
         log: vi.fn(),
         bail: vi.fn((message: string): never => {
@@ -942,7 +884,7 @@ describe("rebuild destroy phase", () => {
     expect(mocks.listSandboxes).not.toHaveBeenCalled();
   });
 
-  it("removes registry state only after the gateway reports the deleted sandbox missing", async () => {
+  it("keeps the journaled source row after the gateway reports the deleted sandbox missing (#7734)", async () => {
     const events: string[] = [];
     let getAttempts = 0;
     mocks.runOpenshell.mockImplementation(() => {
@@ -957,20 +899,13 @@ describe("rebuild destroy phase", () => {
         ? { status: 0, stdout: "Name: alpha\nPhase: Terminating", stderr: "" }
         : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
     });
-    mocks.removeSandboxRegistryEntryWithReceipt.mockImplementation(() => {
-      events.push("remove-registry");
-      return {
-        entry: { name: "alpha", agent: "openclaw" },
-        wasDefault: true,
-        fallbackDefault: null,
-        postRemovalDefaultSelectionRevision: 1,
-      };
-    });
+    const recreateJournal = stubRecreateJournal();
 
     const result = await runRebuildDestroyPhase({
       sandboxName: "alpha",
       sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
       staleRecovery: false,
+      recreateJournal,
       backupManifest: null,
       log: vi.fn(),
       bail: vi.fn((message: string): never => {
@@ -981,61 +916,120 @@ describe("rebuild destroy phase", () => {
     });
 
     expect(result).not.toBeNull();
-    expect(events).toEqual(["delete", "get-live", "get-missing", "on-deleted", "remove-registry"]);
+    expect(result?.removalReceipt).toBeNull();
+    expect(events).toEqual(["delete", "get-live", "get-missing", "on-deleted"]);
     expect(mocks.waitUntil).toHaveBeenCalledOnce();
     expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(
       1,
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
-    expect(mocks.removeSandboxRegistryEntryWithReceipt).toHaveBeenCalledWith("alpha");
+    expect(recreateJournal.markDeleting).toHaveBeenCalledOnce();
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
   });
 
-  it("stops rebuild after deletion when workload cleanup authority is unproven", async () => {
-    mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
-    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue(null);
-    const onDeleted = vi.fn();
-    const bail = vi.fn((message: string): never => {
-      throw new Error(message);
+  it("journals the delete boundary before the destructive command (#7734)", async () => {
+    const order: string[] = [];
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+      order.push("journal:deleting");
     });
+    mocks.runOpenshell.mockImplementation((args: string[]) => {
+      const deleting = args[1] === "delete";
+      order.push(...(deleting ? ["openshell:delete"] : []));
+      return deleting
+        ? { status: 0, stdout: "deleted", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+    });
+
+    await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+      staleRecovery: false,
+      recreateJournal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: vi.fn((message: string): never => {
+        throw new Error(message);
+      }),
+      relockShieldsIfNeeded: vi.fn(() => true),
+      onDeleted: vi.fn(),
+    });
+
+    expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+  });
+
+  it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+      throw new Error("session store is unwritable");
+    });
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [{ server: "github" }],
+      detachedProviderEntries: [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      scrubbedAdapterEntries: [{ server: "github" }],
+    });
+    const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
       runRebuildDestroyPhase({
         sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          agent: "openclaw",
-          imageTag: "local/alpha:current",
-          workload: {
-            schemaVersion: 1,
-            kind: "legacy-dockerfile",
-            reference: "local/alpha:recorded",
-            shared: false,
-          },
-        },
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
         staleRecovery: false,
-        backupManifest: { backupPath: "/tmp/rebuild-backups/alpha/backup" } as never,
+        recreateJournal,
+        backupManifest: null,
         log: vi.fn(),
-        bail,
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Sandbox deletion could not be journaled");
+
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      [{ server: "github" }],
+    );
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("stops before inference and registry mutation when absence cannot be journaled (#7734)", async () => {
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.confirmDeleted).mockImplementation(() => {
+      throw new Error("OpenShell still reports the journaled source after delete");
+    });
+    mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
+    const onDeleted = vi.fn();
+    const onDeleteStateAmbiguous = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
         relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted,
+        onDeleteStateAmbiguous,
       }),
-    ).rejects.toThrow("workload cleanup authority could not be proven");
+    ).rejects.toThrow("Sandbox deletion could not be journaled");
 
-    expect(onDeleted).toHaveBeenCalledOnce();
-    expect(mocks.removeSandboxRegistryEntryWithReceipt).toHaveBeenCalledWith("alpha");
-    expect(bail).toHaveBeenCalledWith(
-      "Old sandbox deleted, but workload cleanup authority could not be proven; recovery state was preserved.",
-      1,
-    );
-    const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(errors).toContain("local runtime ownership cleanup is incomplete");
-    expect(errors).toContain("doctor --json");
-    expect(errors).toContain("Do not rewrite a receipt to match a mutable name");
-    expect(errors).toContain("/tmp/rebuild-backups/alpha/backup");
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-      "Old sandbox deleted",
-    );
+    expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
   });
 
   it("marks accepted deletion as ambiguous when transport failures prevent confirmation", async () => {
@@ -1054,6 +1048,7 @@ describe("rebuild destroy phase", () => {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
         staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
         backupManifest: { backupPath: "/tmp/rebuild-backups/alpha/backup" } as never,
         log: vi.fn(),
         bail: vi.fn((message: string): never => {

@@ -16,13 +16,19 @@ import {
 } from "../registry/runtime-matrix.ts";
 import type { FsmTransition, JsonValue, TerminalOutcome } from "../registry/scenario.ts";
 
-export interface RuntimeReadinessEvidence {
-  profileId: string;
-  ready: true;
-  engineName: string;
-  engineVersion: string;
-  capabilities: readonly ExecutionCapability[];
-}
+export type RuntimeReadinessEvidence =
+  | {
+      profileId: string;
+      ready: true;
+      engineName: string;
+      engineVersion: string;
+      capabilities: readonly ExecutionCapability[];
+    }
+  | {
+      profileId: string;
+      ready: false;
+      detail?: string;
+    };
 
 export interface ExactWorkloadIdentity {
   logicalId: string;
@@ -53,7 +59,9 @@ export interface RuntimeProviderEnvironment {
 
 export interface RuntimeProviderLifecycle {
   executeAdapter(adapterId: string, request: RuntimeAdapterRequest): Promise<void>;
-  cleanup(identity: ExactWorkloadIdentity): Promise<NonEmptyProviderReceipts>;
+  cleanup(
+    identity: ExactWorkloadIdentity | Pick<ExactWorkloadIdentity, "logicalId">,
+  ): Promise<NonEmptyProviderReceipts>;
 }
 
 export interface RuntimeProviderState {
@@ -79,14 +87,20 @@ export interface RuntimeExecutionRequest {
 
 async function cleanupAfterExecutionFailure(
   provider: RuntimeProviderFixture,
-  workload: ExactWorkloadIdentity,
+  workloads: readonly (ExactWorkloadIdentity | Pick<ExactWorkloadIdentity, "logicalId">)[],
   executionError: unknown,
 ): Promise<never> {
-  try {
-    await provider.lifecycle.cleanup(workload);
-  } catch (cleanupError) {
+  const cleanupErrors: unknown[] = [];
+  for (const workload of workloads) {
+    try {
+      await provider.lifecycle.cleanup(workload);
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+  }
+  if (cleanupErrors.length > 0) {
     throw new AggregateError(
-      [executionError, cleanupError],
+      [executionError, ...cleanupErrors],
       "Runtime case execution failed and provider cleanup also failed",
       { cause: executionError },
     );
@@ -113,6 +127,11 @@ export async function executeRuntimeCaseThroughProvider(
     );
   }
   const readiness = await provider.environment.prepare();
+  if (readiness.ready !== true) {
+    throw new Error(
+      `Runtime provider for '${runtimeCase.profile.id}' did not report a ready environment`,
+    );
+  }
   if (readiness.profileId !== runtimeCase.profile.id) {
     throw new Error(
       `Runtime readiness profile '${readiness.profileId}' does not match '${runtimeCase.profile.id}'`,
@@ -130,13 +149,18 @@ export async function executeRuntimeCaseThroughProvider(
   const workload = await provider.state.inspectWorkload({
     logicalId: runtimeCase.identities.sandbox,
   });
+  if (workload.logicalId !== runtimeCase.identities.sandbox) {
+    const mismatch = new Error(
+      `workload.logicalId '${workload.logicalId}' does not match case sandbox identity '${runtimeCase.identities.sandbox}'`,
+    );
+    return cleanupAfterExecutionFailure(
+      provider,
+      [workload, { logicalId: runtimeCase.identities.sandbox }],
+      mismatch,
+    );
+  }
   let lifecycle: RuntimeLifecycleEvidence;
   try {
-    if (workload.logicalId !== runtimeCase.identities.sandbox) {
-      throw new Error(
-        `workload.logicalId '${workload.logicalId}' does not match case sandbox identity '${runtimeCase.identities.sandbox}'`,
-      );
-    }
     for (const binding of runtimeCase.obligationBindings) {
       await binding.adapter.execute(provider, {
         caseId: runtimeCase.id,
@@ -149,7 +173,7 @@ export async function executeRuntimeCaseThroughProvider(
       workload,
     });
   } catch (executionError) {
-    return cleanupAfterExecutionFailure(provider, workload, executionError);
+    return cleanupAfterExecutionFailure(provider, [workload], executionError);
   }
   const cleanupReceipts = await provider.lifecycle.cleanup(workload);
 

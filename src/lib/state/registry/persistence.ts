@@ -22,6 +22,17 @@ import { nemoclawStateRoot } from "../state-root";
 import type { SandboxEntry, SandboxRegistry } from "./types";
 import { cloneSandboxWorkloadReceipt } from "./workload";
 
+function cloneSandboxWorkloadReceiptOrThrow(
+  value: SandboxEntry["workload"],
+  operation: "load" | "save",
+): SandboxEntry["workload"] {
+  const workload = cloneSandboxWorkloadReceipt(value);
+  if (value !== undefined && workload === undefined) {
+    throw new Error(`Cannot ${operation} a sandbox entry with an invalid workload receipt`);
+  }
+  return workload;
+}
+
 export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
   "sandboxes.json",
@@ -84,7 +95,7 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
-  const workload = cloneSandboxWorkloadReceipt(entry.workload);
+  const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const mcp = normalizeSandboxMcpState(entry.mcp);
   const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -129,7 +140,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     providerCredentialHashes?: unknown;
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
-  const workload = cloneSandboxWorkloadReceipt(durable.workload);
+  const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
   const baselineExclusions = normalizeBaselineExclusions(durable.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(

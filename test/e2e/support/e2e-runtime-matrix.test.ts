@@ -280,32 +280,6 @@ describe("cross-runtime E2E matrix compiler", () => {
     ).toBe(3);
   });
 
-  it("keeps Docker and socket-free fake MXC commands behind one provider fixture seam", async () => {
-    const providers = foundationProfiles().map((profile) => fakeRuntimeProvider(profile));
-
-    for (const provider of providers) {
-      const ready = await provider.environment.prepare();
-      const workload = await provider.state.inspectWorkload({ logicalId: "fixture-workload" });
-      await provider.lifecycle.executeAdapter(`${provider.profile.provider}.openclaw.provision`, {
-        caseId: "fixture-case",
-        obligationId: "provision",
-        workloadId: workload.logicalId,
-      });
-      const lifecycle = await provider.state.observe({
-        caseId: "fixture-case",
-        workload,
-      });
-      const cleanup = await provider.lifecycle.cleanup(workload);
-
-      expect(ready.profileId).toBe(provider.profile.id);
-      expect(workload.providerResourceId).toMatch(new RegExp(`^${provider.profile.provider}:`));
-      expect(lifecycle.terminalOutcome.status).toBe("succeeded");
-      expect(cleanup).toHaveLength(1);
-    }
-    expect(providers[1]?.profile.capabilities).toContain("transport.socket-free");
-    expect(providers[1]?.profile.capabilities).not.toContain("transport.docker-socket");
-  });
-
   it("executes compiled cases only through the provider-neutral seam", async () => {
     const matrix = compileRuntimeMatrix(foundationDefinition());
     for (const runtimeCase of matrix.cases.filter((entry) => entry.scenario.agent === "openclaw")) {
@@ -340,6 +314,42 @@ describe("cross-runtime E2E matrix compiler", () => {
     }
   });
 
+  it("rejects a provider that does not report a ready environment before workload inspection", async () => {
+    const matrix = compileRuntimeMatrix(foundationDefinition());
+    const runtimeCase = matrix.cases.find(
+      (entry) => entry.scenario.agent === "openclaw" && entry.profile.provider === "docker",
+    );
+    assert.ok(runtimeCase, "Missing Docker OpenClaw fixture case");
+    const resolved = resolveRuntimeCase(matrix, {
+      scenarioId: runtimeCase.scenario.id,
+      profileId: runtimeCase.profile.id,
+    });
+    const adapterCalls: string[] = [];
+    const provider = fakeRuntimeProvider(runtimeCase.profile, adapterCalls);
+    let inspected = false;
+    provider.environment.prepare = async () => ({
+      profileId: runtimeCase.profile.id,
+      ready: false,
+    });
+    provider.state.inspectWorkload = async () => {
+      inspected = true;
+      throw new Error("workload inspection must not run");
+    };
+
+    await expect(
+      executeRuntimeCaseThroughProvider({
+        resolved,
+        provider,
+        source: {
+          headSha: "0123456789abcdef0123456789abcdef01234567",
+          baseSha: "89abcdef0123456789abcdef0123456789abcdef",
+        },
+      }),
+    ).rejects.toThrow(/did not report a ready environment/);
+    expect(inspected).toBe(false);
+    expect(adapterCalls).toEqual([]);
+  });
+
   it("rejects an inspected workload mismatch before executing obligations and still cleans it", async () => {
     const matrix = compileRuntimeMatrix(foundationDefinition());
     const runtimeCase = matrix.cases.find(
@@ -351,7 +361,9 @@ describe("cross-runtime E2E matrix compiler", () => {
       profileId: runtimeCase.profile.id,
     });
     const adapterCalls: string[] = [];
-    const cleanedWorkloads: ExactWorkloadIdentity[] = [];
+    const cleanedWorkloads: Array<
+      ExactWorkloadIdentity | Pick<ExactWorkloadIdentity, "logicalId">
+    > = [];
     const provider = fakeRuntimeProvider(runtimeCase.profile, adapterCalls);
     const inspectedWorkload = {
       logicalId: "provider-returned-wrong-sandbox",
@@ -381,7 +393,10 @@ describe("cross-runtime E2E matrix compiler", () => {
       }),
     ).rejects.toThrow(/does not match case sandbox identity/);
     expect(adapterCalls).toEqual([]);
-    expect(cleanedWorkloads).toEqual([inspectedWorkload]);
+    expect(cleanedWorkloads).toEqual([
+      inspectedWorkload,
+      { logicalId: runtimeCase.identities.sandbox },
+    ]);
   });
 
   it("keeps the execution failure as the cause when cleanup also fails", async () => {

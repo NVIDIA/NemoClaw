@@ -163,8 +163,8 @@ export type SandboxWorkloadReceipt =
       readonly sourceRevision: string;
       /** Exact all-agent publication cohort that produced the immutable image. */
       readonly sourceCohort: string;
-      readonly capabilityContractVersion: number;
-      readonly startupProfileContractVersion: number;
+      readonly capabilityContractVersion: 1;
+      readonly startupProfileContractVersion: 1;
       /** Canonical, secret-free base64url profile transport used to start this image. */
       readonly encodedProfile: string;
       readonly startupProfileSha256: string;

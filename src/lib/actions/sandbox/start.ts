@@ -47,7 +47,7 @@ export async function startSandbox(
   const input = {
     environment: deps.environment ?? process.env,
     log,
-    sandbox: sandbox!,
+    sandbox: resolved.sandbox,
     sandboxName,
   };
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);

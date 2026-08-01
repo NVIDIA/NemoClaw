@@ -219,7 +219,7 @@ function dcodeProfile(): ManagedStartupProfile {
       contextWindow: null,
       maxTokens: null,
       reasoning: null,
-      reasoningEffort: null,
+      reasoningEffort: "high",
     },
     corporateCa: { bundleSha256: CA_SHA256 },
   };
@@ -526,6 +526,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
       NEMOCLAW_MODEL: "openai/gpt-5.4",
+      NEMOCLAW_REASONING_EFFORT: "high",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://openrouter.ai/api/v1",
       NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
@@ -536,6 +537,7 @@ describe("managed startup agent environment", () => {
     });
     const expectedDcodeRuntime = { ...result.configurationEnvironment };
     delete expectedDcodeRuntime.NEMOCLAW_INFERENCE_BASE_URL;
+    delete expectedDcodeRuntime.NEMOCLAW_REASONING_EFFORT;
     for (const name of [
       "HTTP_PROXY",
       "HTTPS_PROXY",
@@ -563,6 +565,7 @@ describe("managed startup agent environment", () => {
     expect(result.runtimeEnvironment).not.toHaveProperty("HTTP_PROXY");
     expect(result.runtimeEnvironment).not.toHaveProperty("HTTPS_PROXY");
     expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_INFERENCE_BASE_URL");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING_EFFORT");
 
     expect(result.materials).toEqual([
       {
@@ -602,6 +605,15 @@ describe("managed startup agent environment", () => {
         legacyInput: "NEMOCLAW_PROXY_PORT",
         path: "/usr/local/share/nemoclaw/dcode-proxy-port",
         contents: "3128\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_REASONING_EFFORT",
+        path: "/usr/local/share/nemoclaw/dcode-reasoning-effort",
+        contents: "high\n",
         owner: "root",
         group: "root",
         mode: 0o444,

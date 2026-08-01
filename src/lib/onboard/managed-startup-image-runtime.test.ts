@@ -627,6 +627,7 @@ describe("managed startup image runtime", () => {
         ? ["generate-agent-config"]
         : ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"],
     );
+    expect(plan.some((command) => command.argv.includes("agent-install"))).toBe(false);
   });
 
   it.each(
