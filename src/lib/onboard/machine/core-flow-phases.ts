@@ -66,6 +66,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   gatewayName: string;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
+  recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
@@ -212,6 +213,7 @@ export function createSandboxOnboardFlowPhase<
       gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
+      recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
       resumeAgentChanged: options.resumeAgentChanged,
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,

@@ -20,14 +20,18 @@ import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/ag
 import {
   applyManagedStartupCommandEnvironmentPlan,
   applyManagedStartupImageProfile,
+  applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
+  MANAGED_STARTUP_COMPLETION_FILE,
   MANAGED_STARTUP_MERGED_CA_FILE,
   MANAGED_STARTUP_PROFILE_ENV,
   MANAGED_STARTUP_RUNTIME_ENV_FILE,
   type ManagedStartupImageActionPlanInput,
   normalizeHermesManagedConfigDescriptor,
   readStableRegularFile,
+  serializeManagedStartupCompletionMarker,
   serializeManagedStartupRuntimeEnvironment,
+  verifyManagedStartupImageCompletion,
 } from "./managed-startup/image-runtime";
 import {
   encodeManagedStartupProfile,
@@ -35,8 +39,10 @@ import {
   MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupProfile,
   validateManagedStartupProfile,
 } from "./managed-startup/profile";
+import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 
 function dashboard(agent: ManagedStartupAgent): ManagedStartupDashboard {
   switch (agent) {
@@ -110,10 +116,11 @@ describe("buildManagedStartupImageActionPlan", () => {
       { action: "messaging-post-agent-install", runAs: "sandbox" },
     ]);
     expect(plan[0]?.argv).toContain("runtime-setup");
+    expect(plan[0]?.argv).toContain("apply");
     expect(plan[0]?.argv).not.toContain("--managed-startup-runtime");
     expect(plan[2]?.argv).toContain("post-agent-install");
+    expect(plan[2]?.argv).toContain("apply");
     expect(plan[2]?.argv).toContain("--managed-startup-runtime");
-    expect(plan.some((command) => command.argv.includes("agent-install"))).toBe(false);
     expect(
       plan.some((command) =>
         command.argv.some((argument) => /^(?:npm|npx|pip|pip3|uv)$/u.test(argument)),
@@ -150,8 +157,17 @@ describe("buildManagedStartupImageActionPlan", () => {
     expect(command?.argv.at(-1)).toBe(generator);
   });
 
-  it("constructs the same reviewed commands for apply and clear messaging intent", () => {
-    expect(buildManagedStartupImageActionPlan(actionInput("openclaw", "clear"))).toEqual(
+  it.each([
+    "apply",
+    "clear",
+  ] as const)("passes explicit %s intent to both messaging phases", (mode) => {
+    const plan = buildManagedStartupImageActionPlan(actionInput("openclaw", mode));
+    expect(plan[0]?.argv).toEqual(expect.arrayContaining(["--mode", mode]));
+    expect(plan[2]?.argv).toEqual(expect.arrayContaining(["--mode", mode]));
+  });
+
+  it("keeps apply and clear as distinct reviewed commands", () => {
+    expect(buildManagedStartupImageActionPlan(actionInput("openclaw", "clear"))).not.toEqual(
       buildManagedStartupImageActionPlan(actionInput("openclaw", "apply")),
     );
   });
@@ -252,6 +268,51 @@ describe("buildManagedStartupImageActionPlan", () => {
       },
       /unsupported managed startup construction action/,
     ],
+    [
+      "missing dashboard",
+      {
+        ...actionInput("openclaw"),
+        actions: actionInput("openclaw").actions.filter(
+          (action) => action.kind !== "configure-dashboard",
+        ),
+      },
+      /exactly one dashboard construction action/,
+    ],
+    [
+      "duplicate dashboard",
+      {
+        ...actionInput("hermes"),
+        actions: [...actionInput("hermes").actions, actionInput("hermes").actions.at(-1)!],
+      },
+      /exactly one dashboard construction action/,
+    ],
+    [
+      "mismatched dashboard",
+      {
+        ...actionInput("openclaw"),
+        actions: actionInput("openclaw").actions.map((action) =>
+          action.kind === "configure-dashboard"
+            ? { ...action, dashboard: dashboard("hermes") }
+            : action,
+        ),
+      },
+      /dashboard for hermes cannot be used by openclaw/,
+    ],
+    [
+      "unknown image agent",
+      { ...actionInput("openclaw"), agent: "unknown-agent" },
+      /unsupported agent "unknown-agent"/,
+    ],
+    [
+      "invalid messaging mode",
+      {
+        ...actionInput("openclaw"),
+        actions: actionInput("openclaw").actions.map((action) =>
+          action.kind === "apply-messaging-plan" ? { ...action, mode: "replace" } : action,
+        ),
+      },
+      /messaging intent must be apply or clear/,
+    ],
   ])("fails closed for an incomplete or mismatched construction contract: %s", (_name, input, message) => {
     expect(() =>
       buildManagedStartupImageActionPlan(input as ManagedStartupImageActionPlanInput),
@@ -323,7 +384,10 @@ describe("managed startup image runtime", () => {
       "/var/lib",
       "/var/lib/nemoclaw",
     ]);
-    let runtimeFileWritten = false;
+    const files = new Map<string, Buffer>();
+    const descriptorTargets = new Map<number, string>();
+    const pendingFiles = new Map<string, Buffer>();
+    let nextDescriptor = 91;
     const stat = (kind: "directory" | "file", mode: number) =>
       ({
         gid: 0,
@@ -334,8 +398,27 @@ describe("managed startup image runtime", () => {
         nlink: 1,
         uid: 0,
       }) as fs.Stats;
+    const bigFileStat = (bytes: Buffer) =>
+      ({
+        ctimeNs: 1n,
+        dev: 1n,
+        gid: 0n,
+        ino: 2n,
+        isFile: () => true,
+        mode: 0o100444n,
+        mtimeNs: 1n,
+        nlink: 1n,
+        size: BigInt(bytes.length),
+        uid: 0n,
+      }) as fs.BigIntStats;
     const missing = (): never => {
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    };
+    const allocateDescriptor = (resolved: string): number => {
+      const descriptor = nextDescriptor;
+      nextDescriptor += 1;
+      descriptorTargets.set(descriptor, resolved);
+      return descriptor;
     };
 
     vi.spyOn(process, "geteuid").mockReturnValue(0);
@@ -343,40 +426,101 @@ describe("managed startup image runtime", () => {
       const resolved = String(target);
       return directories.has(resolved)
         ? stat("directory", 0o755)
-        : resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE && runtimeFileWritten
-          ? stat("file", 0o400)
+        : files.has(resolved)
+          ? stat("file", 0o444)
           : missing();
     }) as typeof fs.lstatSync);
     vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "chownSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "chmodSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "existsSync").mockReturnValue(false);
-    vi.spyOn(fs, "openSync").mockReturnValue(91);
+    vi.spyOn(fs, "openSync").mockImplementation(((target: fs.PathLike) => {
+      const resolved = String(target);
+      return (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE ||
+        resolved === MANAGED_STARTUP_COMPLETION_FILE) &&
+        !files.has(resolved)
+        ? missing()
+        : allocateDescriptor(resolved);
+    }) as typeof fs.openSync);
+    vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number) => {
+      const target = descriptorTargets.get(descriptor);
+      const bytes = target === undefined ? undefined : files.get(target);
+      return bytes === undefined ? missing() : bigFileStat(bytes);
+    }) as typeof fs.fstatSync);
+    vi.spyOn(fs, "readSync").mockImplementation(((
+      descriptor: number,
+      buffer: NodeJS.ArrayBufferView,
+      offset: number,
+      length: number,
+      position: number | null,
+    ) => {
+      const target = descriptorTargets.get(descriptor);
+      const bytes = (target === undefined ? undefined : files.get(target)) ?? missing();
+      const start = position ?? 0;
+      const count = Math.min(length, Math.max(0, bytes.length - start));
+      bytes.copy(buffer as Buffer, offset, start, start + count);
+      return count;
+    }) as typeof fs.readSync);
     vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "writeFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, value) => {
-      runtimeWrites.push(...(target === 91 ? [String(value)] : []));
+      const resolved =
+        (typeof target === "number" ? descriptorTargets.get(target) : undefined) ?? missing();
+      pendingFiles.set(
+        resolved,
+        Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(String(value), "utf8"),
+      );
     }) as typeof fs.writeFileSync);
     vi.spyOn(fs, "fchmodSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "fsyncSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "closeSync").mockImplementation(() => undefined);
-    vi.spyOn(fs, "renameSync").mockImplementation((_source, target) => {
-      runtimeFileWritten ||= String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE;
+    vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
+      const pending = pendingFiles.get(String(source)) ?? missing();
+      files.set(String(target), pending);
+      pendingFiles.delete(String(source));
+      runtimeWrites.push(
+        ...(String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE ? [pending.toString("utf8")] : []),
+      );
     });
     vi.spyOn(fs, "unlinkSync").mockImplementation(missing);
   }
 
   it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {
     const profile = managedStartupE2eProfile("openclaw");
+    const request = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile: encodeManagedStartupProfile(profile),
+    });
     const lstat = vi.spyOn(fs, "lstatSync");
     vi.spyOn(process, "geteuid").mockReturnValue(0);
 
     await expect(
-      applyManagedStartupImageProfile("openclaw", {
-        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      applyManagedStartupRootRequest(request, {
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "NaN",
-        [MANAGED_STARTUP_PROFILE_ENV]: encodeManagedStartupProfile(profile),
       }),
     ).rejects.toThrow(/finite positive seconds/u);
+    expect(lstat).not.toHaveBeenCalled();
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unknown live agent", "unknown-agent", "openclaw", /unsupported agent "unknown-agent"/u],
+    [
+      "configured and live agent mismatch",
+      "hermes",
+      "openclaw",
+      /managed startup profile targets openclaw, expected hermes/u,
+    ],
+  ] as const)("rejects %s before filesystem or coordinator mutation", async (_label, expectedAgent, profileAgent, message) => {
+    const profile = managedStartupE2eProfile(profileAgent);
+    const lstat = vi.spyOn(fs, "lstatSync");
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+
+    await expect(
+      applyManagedStartupImageProfile(expectedAgent, {
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+        [MANAGED_STARTUP_PROFILE_ENV]: encodeManagedStartupProfile(profile),
+      }),
+    ).rejects.toThrow(message);
     expect(lstat).not.toHaveBeenCalled();
     expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
   });
@@ -406,20 +550,69 @@ describe("managed startup image runtime", () => {
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
       [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
     });
-    const second = await applyManagedStartupImageProfile("openclaw", {
-      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "5",
-      [MANAGED_STARTUP_PROFILE_ENV]: encodedProfile,
-    });
+    const second = await applyManagedStartupRootRequest(
+      createManagedStartupRootApplyRequest({
+        agent: profile.agent,
+        encodedProfile,
+      }),
+      {
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "5",
+      },
+    );
 
     expect(first).toMatchObject({ adapterApplied: false, fingerprint });
-    expect(second).toMatchObject({ adapterApplied: false, fingerprint });
+    expect(second).toMatchObject({
+      adapterApplied: false,
+      fingerprint,
+      transactionPending: false,
+    });
     expect(runtimeWrites).toHaveLength(2);
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
   });
 
+  function writeCompletionFixture(
+    profile: ManagedStartupProfile,
+    corporateCaMerged = false,
+  ): {
+    readonly agent: ManagedStartupAgent;
+    readonly completionFile: string;
+    readonly fingerprint: string;
+    readonly runtimeEnvironmentFile: string;
+  } {
+    const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
+    const runtimeEnvironment = serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      corporateCaMerged,
+      mapped.configurationEnvironment,
+    );
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const completionFile = path.join(temporaryDirectory(), "managed-startup-complete.json");
+    const runtimeEnvironmentFile = path.join(temporaryDirectory(), "managed-startup-runtime.env");
+    fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+    fs.chmodSync(runtimeEnvironmentFile, 0o444);
+    fs.writeFileSync(
+      completionFile,
+      serializeManagedStartupCompletionMarker({
+        schemaVersion: 1,
+        agent: profile.agent,
+        profileFingerprint: fingerprint,
+        runtimeEnvironmentSha256: createHash("sha256")
+          .update(runtimeEnvironment, "utf8")
+          .digest("hex"),
+        corporateCaMerged,
+      }),
+      { mode: 0o444 },
+    );
+    fs.chmodSync(completionFile, 0o444);
+    return {
+      agent: profile.agent,
+      completionFile,
+      fingerprint,
+      runtimeEnvironmentFile,
+    };
+  }
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("maps the complete %s profile into the reviewed image command contract", (agent) => {
@@ -447,6 +640,74 @@ describe("managed startup image runtime", () => {
     expect(fingerprintManagedStartupProfile(same)).toBe(fingerprintManagedStartupProfile(initial));
     expect(fingerprintManagedStartupProfile(changed)).not.toBe(
       fingerprintManagedStartupProfile(initial),
+    );
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("accepts the root completion marker and exact runtime handoff for %s", (agent) => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile(agent));
+    mockDescriptorOwnership(0n, 0n);
+    expect(
+      verifyManagedStartupImageCompletion(
+        agent,
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toEqual({ agent, fingerprint: fixture.fingerprint });
+  });
+
+  it("rejects a changed profile against the root completion fingerprint", () => {
+    const initial = writeCompletionFixture(managedStartupE2eProfile("openclaw"));
+    const changedProfile = managedStartupE2eProfile("openclaw", true);
+    mockDescriptorOwnership(0n, 0n);
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        "openclaw",
+        fingerprintManagedStartupProfile(changedProfile),
+        initial.completionFile,
+        initial.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/completion marker does not match the requested profile/u);
+  });
+
+  it("rejects runtime handoff drift after a matching completion", () => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile("hermes"));
+    mockDescriptorOwnership(0n, 0n);
+    fs.chmodSync(fixture.runtimeEnvironmentFile, 0o644);
+    fs.appendFileSync(fixture.runtimeEnvironmentFile, "export NEMOCLAW_MODEL='tampered/model'\n");
+    fs.chmodSync(fixture.runtimeEnvironmentFile, 0o444);
+
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        "hermes",
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/runtime environment digest mismatch/u);
+  });
+
+  it("accepts merged CA paths without putting the CA payload in the readable handoff", () => {
+    const fixture = writeCompletionFixture(
+      managedStartupE2eProfile("langchain-deepagents-code", false, true),
+      true,
+    );
+    mockDescriptorOwnership(0n, 0n);
+    expect(
+      verifyManagedStartupImageCompletion(
+        "langchain-deepagents-code",
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toEqual({
+      agent: "langchain-deepagents-code",
+      fingerprint: fixture.fingerprint,
+    });
+    expect(fs.readFileSync(fixture.runtimeEnvironmentFile, "utf8")).not.toContain(
+      "NEMOCLAW_CORPORATE_CA_B64",
     );
   });
 

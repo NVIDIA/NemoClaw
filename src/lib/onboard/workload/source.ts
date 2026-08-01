@@ -178,13 +178,14 @@ export function resolveSandboxWorkloadSource(
     );
   }
 
+  const expectedPlatform = managedImageRuntimePlatform(options.runtime);
+  if (expectedPlatform === null) {
+    throw new SandboxWorkloadSourceError(
+      `Driver '${options.runtime.driverName}' has no unambiguous managed-image host platform.`,
+    );
+  }
+
   try {
-    const expectedPlatform = managedImageRuntimePlatform(options.runtime);
-    if (expectedPlatform === null) {
-      throw new SandboxWorkloadSourceError(
-        `Driver '${options.runtime.driverName}' has no unambiguous managed-image host platform.`,
-      );
-    }
     const contract = parseManagedImageContractV1(candidate, options.agentName, expectedPlatform);
     return {
       kind: "managed-image",
