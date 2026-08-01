@@ -387,12 +387,12 @@ describe("managed startup shared-state transaction", () => {
     const rm = vi.spyOn(fs, "rmSync").mockImplementation(((
       target: fs.PathLike,
       removeOptions?: fs.RmDirOptions,
-    ) => {
-      if (String(target).endsWith(`${path.sep}backups`)) {
-        throw new Error("injected post-rename cleanup interruption");
-      }
-      return originalRmSync(target, removeOptions);
-    }) as typeof fs.rmSync);
+    ) =>
+      String(target).endsWith(`${path.sep}backups`)
+        ? (() => {
+            throw new Error("injected post-rename cleanup interruption");
+          })()
+        : originalRmSync(target, removeOptions)) as typeof fs.rmSync);
     expect(() => commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
       /injected post-rename cleanup interruption/u,
     );
@@ -402,20 +402,22 @@ describe("managed startup shared-state transaction", () => {
     const committedDirectory = commitReceiptDirectory();
     const backups = path.join(committedDirectory, "backups");
     const manifest = path.join(committedDirectory, "manifest.json");
-    if (interruption === "during-compact-receipt-write") {
-      fs.renameSync(
-        path.join(committedDirectory, "receipt.json"),
-        path.join(committedDirectory, ".receipt.json.1234567890abcdef12345678"),
-      );
-    } else if (interruption === "during-backup-removal") {
-      const [firstBackup] = fs.readdirSync(backups);
-      expect(firstBackup).toBeTruthy();
-      fs.unlinkSync(path.join(backups, firstBackup!));
-    } else if (interruption === "after-backup-removal") {
-      originalRmSync(backups, { force: false, recursive: true });
-    } else if (interruption === "after-manifest-removal") {
-      fs.unlinkSync(manifest);
-    }
+    const applyInterruption: Record<typeof interruption, () => void> = {
+      "during-compact-receipt-write": () =>
+        fs.renameSync(
+          path.join(committedDirectory, "receipt.json"),
+          path.join(committedDirectory, ".receipt.json.1234567890abcdef12345678"),
+        ),
+      "before-backup-removal": () => undefined,
+      "during-backup-removal": () => {
+        const [firstBackup] = fs.readdirSync(backups);
+        expect(firstBackup).toBeTruthy();
+        fs.unlinkSync(path.join(backups, firstBackup!));
+      },
+      "after-backup-removal": () => originalRmSync(backups, { force: false, recursive: true }),
+      "after-manifest-removal": () => fs.unlinkSync(manifest),
+    };
+    applyInterruption[interruption]();
     expect(
       getManagedStartupSharedStateTransactionStatus(
         {
