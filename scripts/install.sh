@@ -1314,21 +1314,20 @@ upstream_openshell_gateway_user_service_installed() {
 }
 
 resolve_upstream_openshell_gateway_bin_for_service() {
-  local service_path gateway_bin
-  for service_path in \
-    /usr/local/lib/systemd/user/openshell-gateway.service \
-    /usr/lib/systemd/user/openshell-gateway.service \
-    /lib/systemd/user/openshell-gateway.service; do
-    [[ -f "$service_path" ]] || continue
-    case "$service_path" in
-      /usr/local/*) gateway_bin="/usr/local/bin/openshell-gateway" ;;
-      *) gateway_bin="/usr/bin/openshell-gateway" ;;
-    esac
-    [[ -x "$gateway_bin" ]] || return 1
-    printf '%s\n' "$gateway_bin"
-    return 0
-  done
-  return 1
+  local exec_start gateway_bin
+  local -a gateway_bins=()
+  exec_start="$(systemctl --user show openshell-gateway.service --property=ExecStart --value 2>/dev/null)" \
+    || return 1
+  mapfile -t gateway_bins < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE 'path=[^ ;}]+' \
+      | sed 's/^path=//' \
+      | sort -u
+  )
+  [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
+  gateway_bin="${gateway_bins[0]}"
+  [[ "$gateway_bin" == /*/openshell-gateway && -x "$gateway_bin" ]] || return 1
+  printf '%s\n' "$gateway_bin"
 }
 
 openshell_binary_version() {

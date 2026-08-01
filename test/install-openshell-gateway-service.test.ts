@@ -206,6 +206,30 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
+  it("resolves the gateway from the effective upstream ExecStart (#8051)", () => {
+    const home = makeTempRoot();
+    const conventionalGatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
+    const overriddenGatewayBin = path.join(home, "opt", "openshell", "openshell-gateway");
+    const systemctlBin = path.join(home, "systemctl-bin");
+    fs.mkdirSync(path.dirname(conventionalGatewayBin), { recursive: true });
+    fs.mkdirSync(path.dirname(overriddenGatewayBin), { recursive: true });
+    fs.mkdirSync(systemctlBin);
+    writeExecutable(conventionalGatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(overriddenGatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(
+      path.join(systemctlBin, "systemctl"),
+      `#!/usr/bin/env bash\nprintf '{ path=${overriddenGatewayBin} ; argv[]=${overriddenGatewayBin} ; ignore_errors=no ; }\\n'\n`,
+    );
+
+    const result = runInstallHelper(home, "resolve_upstream_openshell_gateway_bin_for_service", {
+      PATH: `${systemctlBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe(overriddenGatewayBin);
+    expect(result.stdout).not.toContain(conventionalGatewayBin);
+  });
+
   it("does not overwrite a foreign unit at the NemoClaw path (#6903)", () => {
     const home = makeTempRoot();
     const unitPath = servicePath(home);
