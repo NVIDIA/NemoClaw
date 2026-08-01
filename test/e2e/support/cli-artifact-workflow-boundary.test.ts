@@ -63,7 +63,7 @@ function workflowFixture(): Workflow {
 }
 
 type RestoreFixtureOptions = {
-  archive?: "valid" | "non-dist" | "link";
+  archive?: "valid" | "non-dist" | "link" | "traversal";
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
@@ -113,9 +113,22 @@ function writeNonDistArchive(context: ArchiveFixtureContext): void {
   execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "outside.txt"]);
 }
 
+function writeTraversalArchive(context: ArchiveFixtureContext): void {
+  fs.writeFileSync(path.join(context.payloadRoot, "outside.txt"), "outside dist\n");
+  execFileSync("tar", [
+    "-cf",
+    context.payload,
+    "--transform=s|^outside.txt$|dist/../outside.txt|",
+    "-C",
+    context.payloadRoot,
+    "outside.txt",
+  ]);
+}
+
 const ARCHIVE_FIXTURE_WRITERS = {
   link: writeLinkArchive,
   "non-dist": writeNonDistArchive,
+  traversal: writeTraversalArchive,
   valid: writeValidArchive,
 } satisfies Record<
   NonNullable<RestoreFixtureOptions["archive"]>,
@@ -337,6 +350,10 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       { archive: "non-dist" },
       "CLI artifact contains an unsafe member: outside.txt",
     );
+  });
+
+  it("rejects traversal through a dist-prefixed archive member before extraction (#7915)", () => {
+    expectRestoreFailure({ archive: "traversal" }, "CLI artifact contains traversal");
   });
 
   it("rejects an archive link before artifact extraction (#7915)", () => {
