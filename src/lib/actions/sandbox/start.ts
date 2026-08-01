@@ -1,119 +1,61 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "../../cli/branding";
 import {
-  findLabeledSandboxContainers,
-  recoverDockerDriverSandbox,
-} from "../../onboard/docker-driver-sandbox-recovery";
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+} from "../../onboard/runtime-provider/access";
 import * as registry from "../../state/registry";
 import {
-  gateDirectDriverLifecycle,
-  gateDockerRuntimeUp,
+  resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
-  type SandboxStopDeps,
-} from "./stop";
+} from "./runtime/lifecycle-runtime";
 
-// Lazy requires keep the heavy connect module (and the docker adapter's
-// transitive imports) out of this module's load path; tests inject
-// `deps.probeSandbox` / `deps.dockerUnpause`.
-function loadConnectProbe(): (sandboxName: string) => Promise<void> {
+function verifyGateway(sandboxName: string): Promise<void> {
   const { connectSandbox } = require("./connect") as {
-    connectSandbox: (sandboxName: string, options?: { probeOnly?: boolean }) => Promise<void>;
+    connectSandbox: (name: string, options?: { probeOnly?: boolean }) => Promise<void>;
   };
-  return (sandboxName) => connectSandbox(sandboxName, { probeOnly: true });
+  return connectSandbox(sandboxName, { probeOnly: true });
 }
 
-type DockerOpResult = { status?: number | null };
-type DockerUnpauseFn = (name: string, opts?: Record<string, unknown>) => DockerOpResult;
-
-function loadDockerUnpause(): DockerUnpauseFn {
-  return (require("../../adapters/docker") as { dockerUnpause: DockerUnpauseFn }).dockerUnpause;
-}
-
-const DOCKER_UNPAUSE_TIMEOUT_MS = 30_000;
-
-// Paused containers report `Up N minutes (Paused)` from `docker ps`, so the
-// recovery classifier counts them as running and would no-op — while
-// `docker start` on them fails outright. `docker unpause` is the only verb
-// that resumes them (#6026).
-function isPausedStatus(status: string): boolean {
-  return status.startsWith("Up") && status.endsWith("(Paused)");
-}
-
-export interface SandboxStartDeps
-  extends Pick<SandboxStopDeps, "isDockerRuntimeDown" | "printDockerRuntimeDownGuidance"> {
+export interface SandboxStartDeps {
+  environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
-  findLabeledSandboxContainers?: typeof findLabeledSandboxContainers;
-  recoverDockerDriverSandbox?: typeof recoverDockerDriverSandbox;
-  dockerUnpause?: DockerUnpauseFn;
-  /** Gateway/forward health probe; defaults to the `recover` action body. */
-  probeSandbox?: (sandboxName: string) => Promise<void>;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
+  verifyGateway?: (sandboxName: string) => Promise<void>;
   log?: (message: string) => void;
 }
 
 /**
- * Restart a stopped sandbox container and bring its gateway and host
- * forwards back up (#6026). Counterpart to `stopSandbox`.
- *
- * Container restart reuses the #4423 recovery module (handles the stopped
- * original and the gpu-backup-sibling rename) plus a paused-container
- * unpause branch; the health probe reuses the `recover` action body so
- * forwards and the in-sandbox gateway come back exactly as they would after
- * `nemoclaw <name> recover`.
+ * Restart a stopped sandbox through the lifecycle facet bound to its durable
+ * provider identity, then restore gateway health and host forwards.
  */
 export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
 ): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
-
-  const gate = gateDirectDriverLifecycle(
+  const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+  const resolved = resolveSandboxLifecycleProvider(
     sandboxName,
+    sandbox,
     "start",
-    deps.getSandbox ?? registry.getSandbox,
+    deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
   );
-  if (gate) return gate;
+  if (!resolved.ok) return resolved.result;
 
-  const runtimeGate = gateDockerRuntimeUp(sandboxName, "start", deps);
-  if (runtimeGate) return runtimeGate;
-
-  const containers = (deps.findLabeledSandboxContainers ?? findLabeledSandboxContainers)(
+  const input = {
+    environment: deps.environment ?? process.env,
+    log,
+    sandbox: resolved.sandbox,
     sandboxName,
-  );
-  const paused = containers.find((container) => isPausedStatus(container.status));
-  if (paused) {
-    const dockerUnpause = deps.dockerUnpause ?? ((name, opts) => loadDockerUnpause()(name, opts));
-    const result = dockerUnpause(paused.name, {
-      ignoreError: true,
-      timeout: DOCKER_UNPAUSE_TIMEOUT_MS,
-    });
-    if (result.status !== 0) {
-      return {
-        exitCode: 1,
-        message: `  docker unpause ${paused.name} failed (exit ${result.status ?? "unknown"}).`,
-      };
-    }
-    log(`  Container '${paused.name}' unpaused.`);
-  } else {
-    const recovery = (deps.recoverDockerDriverSandbox ?? recoverDockerDriverSandbox)(sandboxName);
-    if (!recovery.recovered) {
-      return {
-        exitCode: 1,
-        message:
-          `  Could not start sandbox '${sandboxName}': ${recovery.detail ?? "unknown failure"}. ` +
-          `If the container was removed, run '${CLI_NAME} ${sandboxName} rebuild' to recreate it.`,
-      };
-    }
-
-    if (recovery.via === "started-running-original") {
-      log(`  Sandbox '${sandboxName}' is already running.`);
-    } else {
-      log(`  Container '${recovery.containerName ?? sandboxName}' started.`);
-    }
-  }
+  };
+  const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);
+  if (preflight) return preflight;
+  const result = resolved.lifecycle.start(input);
+  if (result.exitCode !== 0) return result;
 
   log("  Checking gateway health and host forwards…");
-  await (deps.probeSandbox ?? loadConnectProbe())(sandboxName);
+  await resolved.lifecycle.verifyStarted(input, deps.verifyGateway ?? verifyGateway);
   return { exitCode: 0 };
 }

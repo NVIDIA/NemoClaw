@@ -70,6 +70,19 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   bash
 ```
 
+## Verify the Installed Route
+
+After the installer completes, inspect the live route and the sandbox inference path.
+
+```bash
+$$nemoclaw my-assistant inference get
+$$nemoclaw my-assistant status
+```
+
+Confirm that `inference get` reports the `vllm-local` provider and the `nemotron-ultra` model.
+Continue only when the `Inference` row in the status output reports `reachable`.
+This result confirms that the sandbox route returned HTTP `200` through `499`; it does not prove a successful model invocation.
+
 ## Review Reboot and Resume Behavior
 
 If the local host requires a reboot during initial preparation, the installer stops with status `10`.

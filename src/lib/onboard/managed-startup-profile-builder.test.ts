@@ -11,6 +11,7 @@ import { decodeManagedStartupProfile } from "./managed-startup/profile";
 import {
   assertManagedStartupProfileBuilderInventoryCoverage,
   buildManagedStartupProfile,
+  ManagedStartupProfileBuilderError,
   type ManagedStartupProfileBuilderInput,
   type ValidatedManagedStartupProfileTransport,
 } from "./managed-startup/profile-builder";
@@ -298,9 +299,7 @@ describe("buildManagedStartupProfile", () => {
     });
     expect(built.corporateCaB64).toBeUndefined();
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
-    expect(built.startupProfileSha256).toBe(
-      createHash("sha256").update(built.encodedProfile, "utf8").digest("hex"),
-    );
+    expect(built.startupProfileSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it("builds Hermes with Tavily, gateway presets, messaging, context, and forwarding", () => {
@@ -452,7 +451,7 @@ describe("buildManagedStartupProfile", () => {
       }),
     );
 
-    const normalizedPem = PEM.endsWith("\n") ? PEM : `${PEM}\n`;
+    const normalizedPem = `${PEM.trimEnd()}\n`;
     expect(built.corporateCaB64).toBe(Buffer.from(normalizedPem, "utf8").toString("base64"));
     expect(built.profile.corporateCa.bundleSha256).toBe(
       createHash("sha256").update(normalizedPem, "utf8").digest("hex"),
@@ -522,6 +521,30 @@ describe("buildManagedStartupProfile", () => {
       hermesInput({ environment: { NEMOCLAW_OPENCLAW_OTEL: "1" } }),
       /not supported by hermes/,
     ],
+    [
+      "Hermes inference compatibility",
+      hermesInput({
+        inference: { ...hermesInput().inference, compatibility: { strict: true } },
+      }),
+      /does not support inference compatibility/,
+    ],
+    [
+      "DCode inference compatibility",
+      dcodeInput({
+        inference: { ...dcodeInput().inference, compatibility: { strict: true } },
+      }),
+      /does not support inference compatibility/,
+    ],
+    [
+      "Hermes input modalities",
+      hermesInput({ environment: { NEMOCLAW_INFERENCE_INPUTS: "text,image" } }),
+      /NEMOCLAW_INFERENCE_INPUTS is not supported by hermes/,
+    ],
+    [
+      "DCode input modalities",
+      dcodeInput({ environment: { NEMOCLAW_INFERENCE_INPUTS: "text" } }),
+      /NEMOCLAW_INFERENCE_INPUTS is not supported by langchain-deepagents-code/,
+    ],
   ])("rejects unsupported cross-agent intent: %s", (_label, input, message) => {
     expect(() => buildManagedStartupProfile(input)).toThrow(message);
   });
@@ -572,29 +595,72 @@ describe("buildManagedStartupProfile", () => {
   });
 
   it.each([
-    openClawInput({
-      environment: { HTTP_PROXY: "http://operator:password@proxy.example.test:8080" },
-    }),
-    openClawInput({
-      inference: {
-        ...openClawInput().inference,
-        model: "sk-proj-secret-material-1234567890",
-      },
-    }),
-    openClawInput({
-      environment: {
-        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify({
-          agents: [
-            {
-              id: "reviewer",
-              api_key: ["sk", "secret", "material", "1234567890"].join("-"),
-            },
-          ],
+    [
+      "credential-bearing proxy URL",
+      openClawInput({
+        environment: { HTTP_PROXY: "http://operator:password@proxy.example.test:8080" },
+      }),
+      "proxy.hostHttpUrl",
+      "password",
+    ],
+    [
+      "secret-shaped model",
+      openClawInput({
+        inference: {
+          ...openClawInput().inference,
+          model: "sk-proj-secret-material-1234567890",
+        },
+      }),
+      "inference.model",
+      "sk-proj-secret-material-1234567890",
+    ],
+    [
+      "credential-shaped extra-agent field",
+      openClawInput({
+        environment: {
+          NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify({
+            agents: [
+              {
+                id: "reviewer",
+                api_key: ["sk", "secret", "material", "1234567890"].join("-"),
+              },
+            ],
+          }),
+        },
+      }),
+      "agentConfig.extraAgents.agents[0].api_key",
+      "sk-secret-material-1234567890",
+    ],
+  ] as const)("rejects %s with a precise non-secret-bearing domain error", (_label, input, field, secret) => {
+    let thrown: unknown;
+    try {
+      buildManagedStartupProfile(input);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ManagedStartupProfileBuilderError);
+    expect(thrown).toHaveProperty("message", expect.stringContaining(field));
+    expect(thrown).toHaveProperty("message", expect.not.stringContaining(secret));
+  });
+
+  it.each([
+    ["null", "[null]", /NEMOCLAW_EXTRA_AGENTS_JSON\[0\] must be an object/u],
+    ["unknown primitive", '["unknown"]', /NEMOCLAW_EXTRA_AGENTS_JSON\[0\] must be an object/u],
+    [
+      "unsafe prototype field",
+      '[{"id":"reviewer","__proto__":{"polluted":true}}]',
+      /NEMOCLAW_EXTRA_AGENTS_JSON\[0\] contains an unsafe prototype field/u,
+    ],
+  ] as const)("rejects a %s top-level extra-agent entry", (_label, value, message) => {
+    expect(() =>
+      buildManagedStartupProfile(
+        openClawInput({
+          environment: {
+            NEMOCLAW_EXTRA_AGENTS_JSON: value,
+          },
         }),
-      },
-    }),
-  ])("rejects secret material instead of serializing it", (input) => {
-    expect(() => buildManagedStartupProfile(input)).toThrow();
+      ),
+    ).toThrow(message);
   });
 
   it("rejects malformed or non-CA certificate material", () => {

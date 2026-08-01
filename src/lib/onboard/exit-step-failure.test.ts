@@ -109,6 +109,43 @@ describe("terminal step failure helper", () => {
     expect(loaded.machine.state).toBe("failed");
   });
 
+  it("records the in-flight step as interrupted when the exit backstop fires (#7982)", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const listeners: Array<(code: number) => void> = [];
+      const processLike = {
+        once: (_event: "exit", listener: (code: number) => void) => {
+          listeners.push(listener);
+        },
+      };
+
+      registerIncompleteOnboardExitFailureHandler(
+        session,
+        () => false,
+        "Onboarding exited before the step completed.",
+        processLike,
+      );
+      listeners[0](1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    const loaded = requireLoadedSession();
+    expect(loaded.machine.state).toBe("failed");
+    expect(loaded.failure).toMatchObject({ step: "sandbox", interrupted: true });
+  });
+
+  it("records rebuild recreate cleanup as a failure without an onboard interrupt (#7982)", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
+
+    markLastStartedStepFailed(session, "Rebuild recreate failed");
+
+    const loaded = requireLoadedSession();
+    expect(loaded.machine.state).toBe("failed");
+    expect(loaded.failure).toMatchObject({ step: "sandbox", interrupted: false });
+  });
+
   it("marks rebuild recreate cleanup failures as terminal machine failures", () => {
     session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
 

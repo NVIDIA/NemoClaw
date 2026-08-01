@@ -431,6 +431,82 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
+  it.each([
+    ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2, 1],
+    ["fails after the bounded inference timeout retry", "timeout-always", 1, 2, 1],
+    ["does not retry a non-timeout inference failure", "http-401", 1, 1, 0],
+  ] as const)("%s during a named DCode rebuild", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rebuild-retry-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const counterFile = path.join(tempDir, "attempts");
+    try {
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          "count=0",
+          'if [ -f "$MOCK_REBUILD_COUNTER_FILE" ]; then',
+          '  read -r count <"$MOCK_REBUILD_COUNTER_FILE"',
+          "fi",
+          "count=$((count + 1))",
+          `printf '%s\\n' "$count" >"$MOCK_REBUILD_COUNTER_FILE"`,
+          'case "$MOCK_REBUILD_MODE" in',
+          "  timeout-then-success)",
+          '    if [ "$count" -eq 1 ]; then',
+          `      printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
+          "      exit 1",
+          "    fi",
+          "    ;;",
+          "  timeout-always)",
+          `    printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
+          "    exit 1",
+          "    ;;",
+          "  http-401)",
+          `    printf '%s\\n' 'existing sandbox inference probe returned HTTP 401' 'Sandbox is untouched — no data was lost.' >&2`,
+          "    exit 1",
+          "    ;;",
+          "  *)",
+          "    exit 2",
+          "    ;;",
+          "esac",
+          `printf '%s\\n' rebuilt`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS=0; rebuild_named_sandbox disabled',
+          "bash",
+          dcodeApprovalCheck,
+          mockCli,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MOCK_REBUILD_COUNTER_FILE: counterFile,
+            MOCK_REBUILD_MODE: mode,
+          },
+        },
+      );
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+      expect(
+        result.stderr.match(
+          /Retrying named sandbox rebuild once after a fail-closed inference timeout/gu,
+        ) ?? [],
+      ).toHaveLength(expectedRetryMessages);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",

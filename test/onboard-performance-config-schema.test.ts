@@ -574,6 +574,16 @@ describe("full-E2E cold-path calibration", () => {
     expect(startupAdjustment.runs).toHaveLength(5);
     expect(new Set(startupAdjustment.runs.map((run) => run.runId)).size).toBe(5);
     expect(new Set(startupAdjustment.runs.map((run) => run.jobId)).size).toBe(5);
+    expect(new Set(startupAdjustment.runs.map((run) => run.testedSha)).size).toBe(5);
+    expect(
+      Object.fromEntries(startupAdjustment.runs.map((run) => [run.runId, run.testedSha])),
+    ).toEqual({
+      30614075121: "387cb08644fe030bb85146255f4b77e3c54697d2",
+      30615995748: "915b25c522d982fc7d40d01e583bc8f15bcf975f",
+      30619965759: "c3106eea0669aa645c0ff6f51adce0badf24477f",
+      30620296004: "f8fb820159c4843a19759efc9b0e28d4aa122440",
+      30620879680: "d1b24c97c348215574fd8c55435a2e8c5e0d86e1",
+    });
     expect(
       changedInputs(
         startupAdjustment.changeSha,
@@ -587,7 +597,9 @@ describe("full-E2E cold-path calibration", () => {
       expect(run.workflowHeadSha).toMatch(/^[0-9a-f]{40}$/u);
       expect(run.testedSha).toMatch(/^[0-9a-f]{40}$/u);
       expect(gitIsAncestor(startupAdjustment.changeSha, run.workflowHeadSha)).toBe(true);
-      expect(gitIsAncestor(startupAdjustment.changeSha, run.testedSha)).toBe(true);
+      // A tested revision can be a PR merge or head commit that GitHub stops
+      // advertising after the PR closes. The run and job receipts bind that
+      // exact SHA; local ancestry uses the durable workflow head instead.
       expect(
         gitIsAncestor(run.workflowHeadSha, startupAdjustment.runtimeInputsVerifiedThroughSha),
       ).toBe(true);
