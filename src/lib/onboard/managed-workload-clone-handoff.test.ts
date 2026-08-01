@@ -36,11 +36,12 @@ const PORTABLE_PROFILE = {
 } as const satisfies RuntimeProviderWorkloadProfile;
 
 function provider(providerId: "docker" | "mxc"): RuntimeProviderBundle {
-  if (providerId === "docker") return CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
-  return createInMemoryRuntimeProviderBundle({
-    providerId,
-    workloadProfile: PORTABLE_PROFILE,
-  });
+  return providerId === "docker"
+    ? CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!
+    : createInMemoryRuntimeProviderBundle({
+        providerId,
+        workloadProfile: PORTABLE_PROFILE,
+      });
 }
 
 function receipt(
@@ -308,9 +309,10 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
       workload: {
         ...base.workload,
         acceptsReceipt: (candidate) => {
-          if (candidate?.kind === "managed-image") {
-            observedReceipts.push(candidate);
-            mutationResults.push(Reflect.set(candidate, "reference", "mutated-by-provider"));
+          const managedCandidates = candidate?.kind === "managed-image" ? [candidate] : [];
+          for (const managedCandidate of managedCandidates) {
+            observedReceipts.push(managedCandidate);
+            mutationResults.push(Reflect.set(managedCandidate, "reference", "mutated-by-provider"));
           }
           return true;
         },
