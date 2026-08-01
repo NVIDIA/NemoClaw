@@ -432,10 +432,10 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it.each([
-    ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2],
-    ["fails after the bounded inference timeout retry", "timeout-always", 1, 2],
-    ["does not retry a non-timeout inference failure", "http-401", 1, 1],
-  ] as const)("%s during a named DCode rebuild", (_label, mode, expectedStatus, expectedAttempts) => {
+    ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2, 1],
+    ["fails after the bounded inference timeout retry", "timeout-always", 1, 2, 1],
+    ["does not retry a non-timeout inference failure", "http-401", 1, 1, 0],
+  ] as const)("%s during a named DCode rebuild", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rebuild-retry-"));
     const mockCli = path.join(tempDir, "nemoclaw");
     const counterFile = path.join(tempDir, "attempts");
@@ -497,13 +497,11 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
       expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
       expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
-      if (mode === "http-401") {
-        expect(result.stderr).not.toContain("Retrying named sandbox rebuild");
-      } else {
-        expect(result.stderr).toContain(
-          "Retrying named sandbox rebuild once after a fail-closed inference timeout",
-        );
-      }
+      expect(
+        result.stderr.match(
+          /Retrying named sandbox rebuild once after a fail-closed inference timeout/gu,
+        ) ?? [],
+      ).toHaveLength(expectedRetryMessages);
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
