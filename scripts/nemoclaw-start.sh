@@ -3420,6 +3420,45 @@ GATEWAYURLENVEOF
       # WhatsApp reinjects it only for its gateway-backed login command.
       printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
     fi
+    # #7795: bake the sandbox name for the connect-shell hints below.
+    # OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to every process it
+    # spawns inside the sandbox — this entrypoint included — and only its own
+    # root-owned PID 1 keeps the real name, which this unprivileged entrypoint
+    # cannot read. So the hints had no way to resolve the name and always fell
+    # back to the '<name>' placeholder. NEMOCLAW_SANDBOX_NAME is injected by the
+    # host at sandbox-create time (see buildSandboxRuntimeEnvArgs in
+    # src/lib/onboard/sandbox-create-launch.ts) and is the only in-container
+    # source of the name; capture it here for the renderer below.
+    #
+    # Apply the same RFC-1123 allowlist the renderer uses (mirrors
+    # NAME_VALID_PATTERN in src/lib/name-validation.ts). Missing or invalid
+    # values cannot reach a copyable command. An accepted value is limited to
+    # [a-z0-9-] and needs no further escaping.
+    # Evaluate the ranges in a subshell under the C locale so [a-z0-9-] stays
+    # ASCII and is not widened by the entrypoint's LC_COLLATE/LC_CTYPE.
+    local _sandbox_label_src _sandbox_label
+    _sandbox_label_src="${NEMOCLAW_SANDBOX_NAME:-}"
+    (
+      LC_ALL=C
+      _sandbox_label=""
+      case "$_sandbox_label_src" in
+        "" | 0 | 1 | true | TRUE | false | FALSE) ;;
+        [!a-z]* | *- | *[!a-z0-9-]*) ;;
+        *)
+          if [ "${#_sandbox_label_src}" -le 63 ]; then
+            _sandbox_label="$_sandbox_label_src"
+          fi
+          ;;
+      esac
+      # Emit the negative case too, never nothing: the file is sourced into a
+      # shell the sandbox controls, so an explicit unset stops a pre-set value
+      # from surviving when no valid name is available.
+      if [ -n "$_sandbox_label" ]; then
+        printf "export _NEMOCLAW_SANDBOX_LABEL='%s'\n" "$_sandbox_label"
+      else
+        printf 'unset _NEMOCLAW_SANDBOX_LABEL\n'
+      fi
+    )
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
 # #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
@@ -3872,18 +3911,21 @@ openclaw() {
 # behavior is this proactive connect-shell reminder. It does NOT make the
 # denial-time curl/git/wget error itself denial-adjacent — that is intentional,
 # given the source boundary above — so the tool error stays unchanged.
-_nemoclaw_policy_denial_hint_label() {
-  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
-  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
-  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
-  # rather than merely stripping: only render it when it is a valid sandbox name.
-  # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
-  # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
-  # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
-  # (digit-leading labels, control characters, ANSI escapes, shell
-  # metacharacters, whitespace) falls back to a placeholder the user resolves
-  # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
-  # characters, so an embedded newline is rejected by the metacharacter class.
+_nemoclaw_valid_sandbox_label() {
+  # Print $1 when it is a valid sandbox name, print nothing otherwise. Callers
+  # treat empty output as "unusable" and move on to the next source.
+  #
+  # The candidates are untrusted input interpolated into a copyable `nemoclaw …`
+  # command, so allowlist rather than merely strip: only render a value that is
+  # a valid sandbox name. This mirrors NAME_VALID_PATTERN in
+  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts
+  # with a lowercase letter, then lowercase alphanumerics/hyphens, no trailing
+  # hyphen. Anything else (digit-leading labels, control characters, ANSI
+  # escapes, shell metacharacters, whitespace) is rejected, and the caller falls
+  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
+  # globs match newlines as ordinary characters, so an embedded newline is
+  # rejected by the metacharacter class. The boolean forms are OpenShell's older
+  # "this is a sandbox" marker rather than a name.
   #
   # Evaluate the ranges under the C locale so [a-z0-9-] stays ASCII and is not
   # widened by the caller's LC_COLLATE/LC_CTYPE (e.g. a locale that folds
@@ -3891,18 +3933,40 @@ _nemoclaw_policy_denial_hint_label() {
   # is only ever called inside $(…) command substitution (a subshell), so the
   # assignment cannot leak into the interactive shell.
   LC_ALL=C
-  # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
-  # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
-  case "${OPENSHELL_SANDBOX:-}" in
-    "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
-    [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
+  case "${1:-}" in
+    "" | 0 | 1 | true | TRUE | false | FALSE) ;;
+    [!a-z]* | *- | *[!a-z0-9-]*) ;;
     *)
-      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
-        printf '%s' "$OPENSHELL_SANDBOX"
-      else
-        printf '<name>'
+      if [ "${#1}" -le 63 ]; then
+        printf '%s' "$1"
       fi
       ;;
+  esac
+}
+_nemoclaw_policy_denial_hint_label() {
+  # Render the first source that yields a valid sandbox name.
+  #
+  # OPENSHELL_SANDBOX is the runtime value. OpenShell exports it as the boolean
+  # "1" to sandbox processes. Keep it as the first candidate so a caller-provided
+  # valid sandbox name takes precedence over the generated fallback.
+  #
+  # _NEMOCLAW_SANDBOX_LABEL is the fallback that makes the hints work in the
+  # connect shell: the host-injected NEMOCLAW_SANDBOX_NAME, captured by the
+  # entrypoint when it generated this file. It is re-emitted (or explicitly
+  # unset) on every regeneration, so it cannot go stale, and it is allowlisted
+  # again here because the sandbox can reassign it after this file is sourced.
+  # Remove this fallback after the supported OpenShell contract supplies a
+  # validated sandbox name to every connect-shell process. Ref: #7795.
+  #
+  # Both call sites invoke this inside $(…) command substitution (a subshell),
+  # so the assignment below cannot leak into the interactive shell.
+  _nemoclaw_hint_label="$(_nemoclaw_valid_sandbox_label "${OPENSHELL_SANDBOX:-}")"
+  case "$_nemoclaw_hint_label" in
+    "") _nemoclaw_hint_label="$(_nemoclaw_valid_sandbox_label "${_NEMOCLAW_SANDBOX_LABEL:-}")" ;;
+  esac
+  case "$_nemoclaw_hint_label" in
+    "") printf '<name>' ;;
+    *) printf '%s' "$_nemoclaw_hint_label" ;;
   esac
 }
 _nemoclaw_policy_denial_hint_text() {

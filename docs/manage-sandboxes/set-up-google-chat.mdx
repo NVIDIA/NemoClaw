@@ -1,0 +1,181 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Google Chat"
+sidebar-title: "Set Up Google Chat"
+description: "Configure the experimental Google Chat webhook, service account, access controls, and OpenShell credential boundary for OpenClaw."
+description-agent: "Explains the experimental OpenClaw-only Google Chat setup, including its interactive public webhook flow, service-account key, audience, DM allowlist, personal-account principal discovery, and gateway-minted outbound token. Use before enabling Google Chat."
+keywords: ["nemoclaw google chat", "google chat api bot", "google chat webhook", "google chat service account"]
+content:
+  type: "how_to"
+agent-variants: ["openclaw"]
+---
+Google Chat support is experimental and available only for OpenClaw sandboxes.
+It receives events at `/googlechat` on the OpenClaw dashboard port and sends replies through the Google Chat API.
+
+<Warning title="Webhook Only">
+The automatic public endpoint accepts only `POST /googlechat` and denies dashboard, health, WebSocket, and other control paths.
+Continue to open the Control UI through `http://127.0.0.1:18789`; the Google Chat URL is not a dashboard URL.
+</Warning>
+
+## Prepare the Google Cloud Configuration
+
+Prepare the Google Cloud resources before you enable the channel.
+
+- Enable the Google Chat API and configure the Chat app that the sandbox will run.
+- Create a service account and download a JSON key. The JSON must contain
+  non-empty `client_email` and `private_key` string fields.
+- Minify the service-account JSON to one line before you paste it at the `GOOGLECHAT_SERVICE_ACCOUNT` prompt.
+- Choose an HTTP endpoint connection in **Google Chat API** > **Configuration** > **Connection settings**.
+
+Keep the JSON key available on the trusted host during enrollment.
+Do not copy it into the sandbox or its OpenClaw configuration.
+
+## Prepare the Public Webhook
+
+The default `app-url` audience flow starts a dedicated cloudflared service in front of a loopback-only webhook proxy.
+The proxy forwards only `POST /googlechat` to OpenClaw and limits webhook request bodies to 1 MiB.
+It is separate from `nemoclaw tunnel start`, which remains the explicit full-dashboard tunnel command.
+Install `cloudflared` on the host before enrollment when you do not already have a public endpoint.
+
+When the dedicated Google Chat tunnel is not running, NemoClaw starts it and prints the exact HTTPS endpoint ending in `/googlechat`.
+Copy that complete URL into the Google Chat API HTTP endpoint field without adding a trailing slash, then confirm the prompt.
+NemoClaw stops the dedicated tunnel and webhook proxy if you do not confirm the endpoint or if enrollment fails before confirmation.
+
+If a later enrollment step fails after you confirm the endpoint, stop the public endpoint from the host:
+
+```bash
+nemoclaw my-assistant channels remove googlechat
+```
+
+Replace `my-assistant` with your sandbox name.
+The command attempts endpoint teardown even when interrupted enrollment left no Google Chat registry record.
+If the command reports that it could not stop the tunnel, correct the host service and run the command again before retrying enrollment.
+A removal that completes without cleanup warnings stops the dedicated tunnel and webhook proxy, removes any partial bridge provider and policy preset, and removes Google Chat from the durable messaging plan.
+
+If `GOOGLECHAT_AUDIENCE` already contains the public webhook URL, NemoClaw uses it and does not start or change cloudflared.
+Do not point the public tunnel directly at the OpenClaw dashboard on `127.0.0.1:18789`.
+Put a route-restricted proxy between the public tunnel and OpenClaw.
+
+Before enrollment, run this check from the trusted host:
+
+```bash
+(
+  set -eu
+  webhook_origin="$(
+    node -e '
+      try {
+        const url = new URL(process.argv[1]);
+        if (url.protocol !== "https:" || url.pathname !== "/googlechat") process.exit(1);
+        process.stdout.write(url.origin);
+      } catch {
+        process.exit(1);
+      }
+    ' "${GOOGLECHAT_AUDIENCE:?Set GOOGLECHAT_AUDIENCE first.}"
+  )"
+
+  check_denied_route() {
+    label="$1"
+    shift
+    status="$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' "$@" || true)"
+    if [ "$status" != "404" ]; then
+      printf '%s failed route restriction: HTTP %s\n' "$label" "${status:-no-status}" >&2
+      exit 1
+    fi
+    printf '%s denied: HTTP 404\n' "$label"
+  }
+
+  check_denied_route "Control UI" "$webhook_origin/"
+  check_denied_route "Health route" "$webhook_origin/health"
+  check_denied_route "GET /googlechat" "$GOOGLECHAT_AUDIENCE"
+  check_denied_route "WebSocket route" \
+    --http1.1 \
+    --header 'Connection: Upgrade' \
+    --header 'Upgrade: websocket' \
+    --header 'Sec-WebSocket-Key: MDAwMDAwMDAwMDAwMDAwMA==' \
+    --header 'Sec-WebSocket-Version: 13' \
+    "$webhook_origin/ws"
+)
+```
+
+Expected output:
+
+```text
+Control UI denied: HTTP 404
+Health route denied: HTTP 404
+GET /googlechat denied: HTTP 404
+WebSocket route denied: HTTP 404
+```
+
+The automatic NemoClaw proxy returns `HTTP 404` for all four checks.
+Accept an operator-managed endpoint only when all four checks print `HTTP 404`.
+Do not enroll Google Chat if a check returns another status or no status.
+
+Google Chat enrollment always requires an interactive terminal.
+Supported non-interactive onboarding skips the channel, because the Console endpoint and app principal steps need an operator.
+
+## Configure Access
+
+Leave `GOOGLECHAT_ALLOWED_USERS` empty to use OpenClaw's manual DM pairing flow.
+To use an allowlist, set it to comma-separated Google Chat user IDs such as `users/123456789`, not email addresses.
+Google Chat email addresses do not match this ID-based allowlist.
+
+Google Workspace accounts do not need `GOOGLECHAT_APP_PRINCIPAL`.
+Leave that prompt empty unless you use a personal or standalone Google account.
+
+## Enable Google Chat
+
+For a new sandbox, run `nemoclaw onboard` and select Google Chat in the messaging picker.
+For an existing OpenClaw sandbox, run:
+
+```bash
+nemoclaw my-assistant channels add googlechat
+```
+
+Follow the prompts to confirm the public endpoint, paste the service-account JSON, configure access, and rebuild the sandbox.
+NemoClaw applies the `googlechat` network policy preset and registers a sandbox-scoped `<sandbox>-googlechat-bridge` provider with OpenShell.
+
+OpenShell uses the service-account key as gateway-side refresh material to mint short-lived tokens with the `chat.bot` scope.
+NemoClaw passes the private key to the OpenShell command through an ephemeral child-process environment value, not through a command-line argument.
+The service-account private key does not enter the sandbox, and the OpenShell proxy inserts the minted bearer token into allowed requests to `chat.googleapis.com`.
+The Google Chat policy does not rewrite request bodies with credentials.
+
+The channel policy permits Node.js to read the Google Chat REST API and to create, update, or delete messages under the `/v1/spaces/` tree.
+It also permits Node.js GET requests to any path on `www.googleapis.com` because the Google authentication library controls the public certificate URL used to verify inbound event tokens.
+
+## Complete Personal Account Discovery
+
+Personal or standalone Google accounts need the add-on's numeric app principal.
+This value is a Google-assigned numeric ID, not an email address.
+
+If you do not know the value, leave `GOOGLECHAT_APP_PRINCIPAL` empty during the first enrollment, then start the rebuilt sandbox and follow these steps:
+
+1. Watch the OpenClaw logs for the discovery message.
+
+   ```bash
+   nemoclaw my-assistant logs --follow | grep "unexpected add-on principal"
+   ```
+
+2. Send one direct message to the bot.
+   The bot does not reply during this discovery attempt.
+
+3. Copy the numeric value from `unexpected add-on principal: <value>`.
+
+4. Re-add the channel with the value and accept the rebuild prompt.
+
+   ```bash
+   GOOGLECHAT_APP_PRINCIPAL="<numeric-id>" nemoclaw my-assistant channels add googlechat
+   ```
+
+The re-add flow prompts for the service-account JSON again when it is not already present in the current host environment.
+
+## Verify the Channel
+
+After the rebuild, send a direct message from an allowed or paired account and confirm that OpenClaw replies.
+If the webhook returns an error, verify that the public endpoint still ends in `/googlechat`, the dedicated tunnel and webhook proxy are running, and the Google Chat API configuration contains the exact same URL.
+
+Use the host-side `channels stop`, `channels start`, and `channels remove` commands to manage the integration.
+`channels stop googlechat` leaves the dedicated endpoint running so `channels start googlechat` can keep the same Google Cloud endpoint URL.
+`channels remove googlechat` and `nemoclaw <name> destroy` stop the dedicated cloudflared process and webhook proxy.
+`nemoclaw tunnel stop` does not stop the dedicated Google Chat endpoint; it controls the separate full-dashboard tunnel.
+Refer to [Manage Messaging Channels](manage-messaging-channels) for lifecycle behavior.

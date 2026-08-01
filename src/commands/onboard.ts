@@ -3,6 +3,7 @@
 
 import { runOnboardAction } from "../lib/actions/global";
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
+import { createOnboardActionRuntimeDeps } from "../lib/cli/onboard-runtime-deps";
 import {
   buildOnboardFlags,
   type OnboardFlags,
@@ -24,9 +25,11 @@ export default class OnboardCliCommand extends NemoClawCommand {
     const onboardFlags = flags as OnboardFlags;
     if (onboardFlags.events === "jsonl") {
       const { withOnboardJsonlEventStream } = await import("../lib/onboard/machine/jsonl-events");
-      await withOnboardJsonlEventStream(() => runOnboardAction(onboardFlags));
+      await withOnboardJsonlEventStream(() =>
+        runOnboardAction(onboardFlags, createOnboardActionRuntimeDeps()),
+      );
       return;
     }
-    await runOnboardAction(onboardFlags);
+    await runOnboardAction(onboardFlags, createOnboardActionRuntimeDeps());
   }
 }

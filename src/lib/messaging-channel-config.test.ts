@@ -31,6 +31,10 @@ describe("messaging channel config", () => {
       "MSTEAMS_APP_ID",
       "MSTEAMS_TENANT_ID",
       "MSTEAMS_PORT",
+      "GOOGLECHAT_AUDIENCE_TYPE",
+      "GOOGLECHAT_AUDIENCE",
+      "GOOGLECHAT_APP_PRINCIPAL",
+      "GOOGLECHAT_ALLOWED_USERS",
     ]);
   });
 

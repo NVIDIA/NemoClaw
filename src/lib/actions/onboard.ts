@@ -2,23 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { listAgents } from "../agent/defs";
-import { runOnboardCommand } from "../onboard/command";
+import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
+import { type OnboardCommandOptions, runOnboardCommand } from "../onboard/command";
 import type { OnboardFlags } from "../onboard/command-support";
+import type { OnboardOptions } from "../onboard/types";
 
-async function runOnboard(options?: unknown): Promise<void> {
+export interface OnboardActionRuntimeDeps {
+  readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
+}
+
+async function runOnboard(
+  options: OnboardCommandOptions,
+  runtimeDeps: OnboardActionRuntimeDeps,
+): Promise<void> {
   // Keep the monolithic legacy onboarding graph lazy so command metadata/help
   // imports do not execute it. Resolve it only when the user invokes onboard.
   const { onboard } = (await import("../onboard")) as unknown as {
-    onboard: (onboardOptions?: unknown) => Promise<void>;
+    onboard: (onboardOptions?: OnboardOptions) => Promise<void>;
   };
-  await onboard(options);
+  await onboard({ ...options, googlechatTunnelRuntime: runtimeDeps.googlechatTunnelRuntime });
 }
 
-function buildOnboardCommandDeps(flags: OnboardFlags) {
+function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardActionRuntimeDeps) {
   return {
     flags,
     env: process.env,
-    runOnboard,
+    runOnboard: (options: OnboardCommandOptions) => runOnboard(options, runtimeDeps),
     listAgents,
     log: console.log,
     error: console.error,
@@ -26,6 +35,9 @@ function buildOnboardCommandDeps(flags: OnboardFlags) {
   };
 }
 
-export async function runOnboardAction(flags: OnboardFlags): Promise<void> {
-  await runOnboardCommand(buildOnboardCommandDeps(flags));
+export async function runOnboardAction(
+  flags: OnboardFlags,
+  runtimeDeps: OnboardActionRuntimeDeps = {},
+): Promise<void> {
+  await runOnboardCommand(buildOnboardCommandDeps(flags, runtimeDeps));
 }

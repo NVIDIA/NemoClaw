@@ -476,6 +476,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",

@@ -1779,7 +1779,12 @@ NemoClaw preserves the per-gateway PID file and runtime marker so you can inspec
 Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
 When the default-port gateway runs under the packaged OpenShell gateway service, gateway cleanup stops that service before it reaps host processes, so the gateway port is released instead of being rebound by the service manager.
 The service is stopped, not disabled or removed, and the next onboarding run starts it again.
-If the service cannot be stopped, `destroy` exits non-zero after sandbox and registry deletion, prints the status command for the service, and skips gateway and volume removal.
+On headless Linux, the packaged service can exist while its `systemd` user manager is unavailable and the gateway runs through the standalone fallback.
+For this recognized manager-unavailable failure only, `destroy` uses the per-gateway PID file when the service is not enabled for automatic activation.
+If the recorded PID is live, its command line must match the exact gateway name and port before `destroy` stops it.
+If the recorded process has exited, `destroy` continues only after it verifies that the gateway port is free.
+If a live PID does not prove gateway ownership or the port remains occupied, `destroy` exits non-zero and preserves the runtime evidence for inspection.
+For any other service stop failure, `destroy` exits non-zero after sandbox and registry deletion, prints the status command for the service, and skips gateway and volume removal.
 If the OpenShell gateway is unreachable and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
