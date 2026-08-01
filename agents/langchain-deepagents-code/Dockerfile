@@ -37,6 +37,10 @@ RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+# The supplied base may end as a non-root runtime user. Reset the build user
+# explicitly before installing the root-owned managed-startup handoff.
+USER root
+
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 # Keep the root-owned managed-startup handoff in this image-only layer. The
@@ -46,8 +50,6 @@ RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtim
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$discovery_unsafe" \
     && install -d -o root -g root -m 0755 /run/nemoclaw
-
-USER root
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts

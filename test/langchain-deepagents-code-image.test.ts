@@ -155,6 +155,13 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 describe("LangChain Deep Agents Code image contracts", () => {
   it("hardens copied NemoClaw blueprints against sandbox-user mutation", () => {
     const dockerfile = readAgentFile("Dockerfile");
+    const finalRuntimeRoot = [
+      "FROM ${BASE_IMAGE}",
+      "",
+      "# The supplied base may end as a non-root runtime user. Reset the build user",
+      "# explicitly before installing the root-owned managed-startup handoff.",
+      "USER root",
+    ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
     const runtimeModeReplay = "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
 
@@ -183,8 +190,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile.indexOf("COPY --from=mcp-tool-discovery-runtime")).toBeLessThan(
       dockerfile.indexOf(managedRuntimeDirectory),
     );
-    expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
-      dockerfile.indexOf("USER root"),
+    expect(dockerfile).toContain(finalRuntimeRoot);
+    expect(dockerfile.indexOf(finalRuntimeRoot)).toBeLessThan(
+      dockerfile.indexOf(managedRuntimeDirectory),
     );
     expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
       dockerfile.indexOf(runtimeModeReplay),
