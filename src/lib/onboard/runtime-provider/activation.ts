@@ -164,6 +164,40 @@ function validateDeclaration(declaration: RuntimeProviderActivationDeclaration):
   }
 }
 
+export function normalizeRuntimeProviderActivationDeclaration(
+  declaration: RuntimeProviderActivationDeclaration,
+): RuntimeProviderActivationDeclaration {
+  validateDeclaration(declaration);
+  return Object.freeze({
+    ...declaration,
+    agents: Object.freeze([...declaration.agents]),
+    platforms: Object.freeze([...declaration.platforms]),
+    rootModes: Object.freeze([...declaration.rootModes]),
+    accelerationModes: Object.freeze([...declaration.accelerationModes]),
+    hostLocalInferenceServices: Object.freeze([...declaration.hostLocalInferenceServices]),
+    journeys: Object.freeze([...declaration.journeys]),
+    installer: Object.freeze({ ...declaration.installer }),
+    qualification: Object.freeze({ ...declaration.qualification }),
+  });
+}
+
+export function defineRuntimeProviderActivationDeclaration(
+  providerId: string,
+): RuntimeProviderActivationDeclaration {
+  return normalizeRuntimeProviderActivationDeclaration({
+    contractVersion: RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
+    providerId,
+    agents: RUNTIME_PROVIDER_ACTIVATION_AGENTS,
+    platforms: RUNTIME_PROVIDER_ACTIVATION_PLATFORMS,
+    rootModes: RUNTIME_PROVIDER_ACTIVATION_ROOT_MODES,
+    accelerationModes: RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES,
+    hostLocalInferenceServices: RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES,
+    journeys: RUNTIME_PROVIDER_ACTIVATION_JOURNEYS,
+    installer: { releaseInstaller: true, dockerUnavailable: true },
+    qualification: { protectedE2e: true, exactHeadAndBase: true },
+  });
+}
+
 function requireSupported(bundle: RuntimeProviderBundle, surfaceName: keyof RuntimeProviderBundle) {
   const surface = bundle[surfaceName] as { readonly supported?: boolean };
   if (surface.supported !== true) {
@@ -287,8 +321,8 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
 function validatedRegistration(
   registration: RuntimeProviderActivationRegistration,
 ): Readonly<RuntimeProviderActivationRegistration> {
-  validateDeclaration(registration.declaration);
-  const providerId = registration.declaration.providerId;
+  const declaration = normalizeRuntimeProviderActivationDeclaration(registration.declaration);
+  const providerId = declaration.providerId;
   const validated = createRuntimeProviderBundleRegistry([[providerId, registration.bundle]])[
     providerId
   ];
@@ -299,19 +333,7 @@ function validatedRegistration(
   }
   validateCompleteBundle(validated);
   return Object.freeze({
-    declaration: Object.freeze({
-      ...registration.declaration,
-      agents: Object.freeze([...registration.declaration.agents]),
-      platforms: Object.freeze([...registration.declaration.platforms]),
-      rootModes: Object.freeze([...registration.declaration.rootModes]),
-      accelerationModes: Object.freeze([...registration.declaration.accelerationModes]),
-      hostLocalInferenceServices: Object.freeze([
-        ...registration.declaration.hostLocalInferenceServices,
-      ]),
-      journeys: Object.freeze([...registration.declaration.journeys]),
-      installer: Object.freeze({ ...registration.declaration.installer }),
-      qualification: Object.freeze({ ...registration.declaration.qualification }),
-    }),
+    declaration,
     bundle: validated,
   });
 }

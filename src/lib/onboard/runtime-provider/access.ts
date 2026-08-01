@@ -9,6 +9,8 @@ export type {
 export {
   composeActivatedRuntimeProviderBundles,
   createRuntimeProviderActivationCatalog,
+  defineRuntimeProviderActivationDeclaration,
+  normalizeRuntimeProviderActivationDeclaration,
   RuntimeProviderActivationError,
 } from "./activation";
 export type {
