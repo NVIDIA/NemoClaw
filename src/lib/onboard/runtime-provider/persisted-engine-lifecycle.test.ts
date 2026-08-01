@@ -96,9 +96,7 @@ function harness(
   const engine = lifecycleEngine(options.capture, options.authorityId);
   const engineAuthorityStore = createFilePersistedEngineAuthorityStore(root);
   const authority = createPersistedEngineAuthority("mxc", engine, BINDING_SHA256);
-  if (!engineAuthorityStore.load("sandbox-lifecycle")) {
-    engineAuthorityStore.record(authority);
-  }
+  engineAuthorityStore.load("sandbox-lifecycle") ?? engineAuthorityStore.record(authority);
   const lifecycleStore = createFilePersistedEngineLifecycleStore(root);
   return {
     action,
