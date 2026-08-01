@@ -375,6 +375,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
     occurrences: list[dict] = []
     occurrence_ids: dict[str, int] = {}
     command: str | None = None
+    unknown_option = False
     terminated = False
     i = 0
     while i < len(argv):
@@ -450,6 +451,11 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
             i += 1
             continue
         if arg.startswith("-"):
+            # Skip only atomic unknown options; a following positional can be their value.
+            if "=" in arg or i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                unknown_option = True
+                i += 1
+                continue
             return None
         if arg in adapter["managed_commands"]:
             command = arg
@@ -468,6 +474,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
         "command": command,
         "occurrences": occurrences,
         "terminated": terminated,
+        "unknown_option": unknown_option,
     }
 
 
@@ -504,6 +511,7 @@ def _translate_resumed_oneshot(
         or len(resumes) + len(continues) != 1
         or parsed["command"] is not None
         or parsed["terminated"]
+        or parsed["unknown_option"]
     ):
         return None
     if _occurrences(parsed, "usage_file"):

@@ -27,6 +27,29 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.realArgv).toEqual(["-m", "opencode-zen/nemotron-3-ultra-free"]);
   });
 
+  it("merges after an unknown atomic top-level option (#8011)", () => {
+    const run = runWrapper(
+      ["--future-flag", "--provider", "nvidia-prod", "--model", "nvidia/model"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(["--future-flag", "--model", "nvidia-prod/nvidia/model"]);
+  });
+
+  it("passes through when an unknown option may own positional data (#8011)", () => {
+    const argv = [
+      "--future-option",
+      "future-value",
+      "--provider",
+      "nvidia-prod",
+      "--model",
+      "nvidia/model",
+    ];
+
+    expect(runWrapper(argv, {}).realArgv).toEqual(argv);
+  });
+
   it("preserves a namespaced model while merging its separate provider (#7361)", () => {
     const run = runWrapper(
       ["--provider", "nvidia-prod", "--model", "nvidia/nemotron-3-super-120b-a12b"],
