@@ -132,6 +132,9 @@ export interface VerifyDeploymentOptions {
 }
 
 const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 5000, 7000, 10000];
+// OpenClaw cron stops its provider preflight after 2.5 seconds. Require a
+// response within 2 seconds so onboarding leaves time for client overhead.
+const INFERENCE_ROUTE_REACHABILITY_MAX_SECONDS = 2;
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -220,7 +223,7 @@ function probeInferenceRouteOnce(
   deps: VerifyDeploymentDeps,
 ): { status: InferenceRouteStatus; detail: string } {
   const script =
-    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ` +
+    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time ${INFERENCE_ROUTE_REACHABILITY_MAX_SECONDS} ` +
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
