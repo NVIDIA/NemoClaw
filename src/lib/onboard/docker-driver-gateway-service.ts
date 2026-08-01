@@ -365,7 +365,7 @@ function hasSystemdUserServiceActivationLink(
   service: OpenShellGatewayUserServiceTarget,
   home: string,
   env: NodeJS.ProcessEnv,
-  existsSync: typeof fs.existsSync,
+  existsSync: (filePath: string) => boolean,
 ): boolean {
   if (service.manager !== "systemd") return false;
   return existsSync(

@@ -193,7 +193,7 @@ export function cleanupGatewayAfterLastSandbox(
       const portFree = deps.isGatewayPortFree ?? isHostPortFree;
       if (!portFree(perGatewayState.port)) {
         throw new Error(
-          `Refusing cleanup because gateway port ${String(perGatewayState.port)} remains occupied after the recorded standalone gateway process for '${gatewayName}' was stopped. ` +
+          `Refusing cleanup because gateway port ${String(perGatewayState.port)} remains occupied after the recorded standalone gateway process for '${gatewayName}' exited or was stopped. ` +
             "Inspect the remaining listener, stop only the matching gateway process, then rerun destroy.",
         );
       }
