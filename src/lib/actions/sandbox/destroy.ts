@@ -20,6 +20,13 @@ import { withGatewayRouteMutationLock } from "../../inference/gateway-route-muta
 import { parseHttpsPinRouteId } from "../../inference/https-pin-runtime";
 import { revokeHttpsPinRuntimeAdapterRoute } from "../../inference/https-pin-runtime-adapter";
 import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  normalizeRuntimeProviderIdentity,
+  type RuntimeProviderBundleRegistry,
+  type RuntimeProviderWorkloadCleanupResult,
+  requireRuntimeProviderDestructiveCleanupAuthority,
+} from "../../onboard/runtime-provider/access";
+import {
   emitProviderDetachResidualHint,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
@@ -31,7 +38,7 @@ import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
-import { executeSandboxDestroy } from "./destroy-execution";
+import { executeSandboxDestroy, redactDestroyError } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
@@ -39,22 +46,45 @@ import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { classifyDestroySandboxPresence } from "./destroy-presence";
 
-type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
-
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
-  dockerRmi?: DockerRmi;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
 };
 
 type RemoveSandboxRegistryEntryDeps = {
-  removeImage?: (sandboxName: string) => void;
+  removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandbox?: typeof registry.removeSandbox;
 };
 
 type RemoveSandboxRegistryEntryWithReceiptDeps = {
-  removeImage?: (sandboxName: string) => void;
+  removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
+
+export type RemoveSandboxRegistryEntryOutcome =
+  | {
+      readonly status: "complete";
+      readonly removed: true;
+    }
+  | {
+      readonly status: "not-found";
+      readonly removed: false;
+    }
+  | {
+      readonly status: "blocked";
+      readonly reason: "authority-unproven";
+      readonly removed: false;
+    };
+
+export function requireSandboxDestructiveCleanupAuthority(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry,
+  providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
+) {
+  return requireRuntimeProviderDestructiveCleanupAuthority(sandboxName, sandbox, providers);
+}
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
 
@@ -216,33 +246,76 @@ export function removeShieldsState(
 }
 
 /**
- * Remove the host-side Docker image that was built for a sandbox during onboard.
+ * Remove only a provider-owned per-sandbox workload image. Shared managed
+ * cohorts and ambiguous ownership are never deleted.
  * Must be called before registry.removeSandbox() since the imageTag is stored there.
  */
-export function removeSandboxImage(sandboxName: string, deps: RemoveSandboxImageDeps = {}): void {
+export function removeSandboxImage(
+  sandboxName: string,
+  deps: RemoveSandboxImageDeps = {},
+): RuntimeProviderWorkloadCleanupResult {
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const removeImage =
-    deps.dockerRmi ?? (require("../../adapters/docker") as { dockerRmi: DockerRmi }).dockerRmi;
   const sb = getSandbox(sandboxName);
-  if (!sb?.imageTag) return;
-  const result = removeImage(sb.imageTag, { ignoreError: true });
-  if (result.status === 0) {
-    console.log(`  Removed Docker image ${sb.imageTag}`);
-  } else {
-    console.warn(
-      `  ${YW}⚠${R} Failed to remove Docker image ${sb.imageTag}; run '${CLI_NAME} gc' to clean up.`,
+  if (!sb) return { status: "skipped", reason: "no-owned-image" };
+  const providerId = normalizeRuntimeProviderIdentity(sb.openshellDriver);
+  const log = deps.log ?? console.log;
+  const warn = deps.warn ?? console.warn;
+  let result: RuntimeProviderWorkloadCleanupResult;
+  try {
+    const authority = requireSandboxDestructiveCleanupAuthority(
+      sandboxName,
+      sb,
+      deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+    );
+    result = authority.provider.cleanup.removeOwnedWorkload({ sandbox: sb, sandboxName });
+  } catch (error) {
+    const detail = redactDestroyError(error);
+    warn(
+      `  ${YW}⚠${R} Runtime provider '${providerId}' could not prove workload cleanup ` +
+        `authority: ${detail} Local ownership state was preserved. Run '${CLI_NAME} ` +
+        `${sandboxName} doctor --json'; restore trusted ownership metadata or resolve the ` +
+        "runtime conflict, then retry. Do not rewrite a receipt to match a mutable name.",
+    );
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  if (result.status === "removed") {
+    log(`  Removed ${result.engineDisplayName} image ${result.reference}`);
+  } else if (result.status === "failed") {
+    warn(
+      `  ${YW}⚠${R} Failed to remove ${result.engineDisplayName} image ${result.reference}; ` +
+        `run '${CLI_NAME} gc' to clean up.`,
+    );
+  } else if (result.reason === "authority-unproven") {
+    warn(
+      `  ${YW}⚠${R} Runtime provider '${providerId}' did not prove ownership of the ` +
+        `recorded workload image. Local ownership state was preserved. Run '${CLI_NAME} ` +
+        `${sandboxName} doctor --json'; restore trusted ownership metadata or resolve the ` +
+        "runtime conflict, then retry. Do not rewrite a receipt to match a mutable name.",
     );
   }
+  return result;
+}
+
+export function removeSandboxRegistryEntryOutcome(
+  sandboxName: string,
+  deps: RemoveSandboxRegistryEntryDeps = {},
+): RemoveSandboxRegistryEntryOutcome {
+  const removeImage = deps.removeImage ?? removeSandboxImage;
+  const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
+  const imageResult = removeImage(sandboxName);
+  if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
+    return { status: "blocked", reason: "authority-unproven", removed: false };
+  }
+  return removeSandbox(sandboxName)
+    ? { status: "complete", removed: true }
+    : { status: "not-found", removed: false };
 }
 
 export function removeSandboxRegistryEntry(
   sandboxName: string,
   deps: RemoveSandboxRegistryEntryDeps = {},
 ): boolean {
-  const removeImage = deps.removeImage ?? removeSandboxImage;
-  const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
-  removeImage(sandboxName);
-  return removeSandbox(sandboxName);
+  return removeSandboxRegistryEntryOutcome(sandboxName, deps).removed;
 }
 
 export function removeSandboxRegistryEntryWithReceipt(
@@ -252,7 +325,10 @@ export function removeSandboxRegistryEntryWithReceipt(
   const removeImage = deps.removeImage ?? removeSandboxImage;
   const removeSandboxWithReceipt =
     deps.removeSandboxWithReceipt ?? registry.removeSandboxWithReceipt;
-  removeImage(sandboxName);
+  const imageResult = removeImage(sandboxName);
+  if (imageResult?.status === "skipped" && imageResult.reason === "authority-unproven") {
+    return null;
+  }
   return removeSandboxWithReceipt(sandboxName);
 }
 
@@ -426,7 +502,46 @@ async function destroySandboxUnlocked(
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
-  const removed = removeSandboxRegistryEntry(sandboxName);
+  /**
+   * SOURCE_OF_TRUTH
+   * Invalid state: the live sandbox is confirmed deleted or already absent,
+   * but its durable provider identity or workload receipt cannot prove image
+   * cleanup authority, so the registry row and onboarding session are retained.
+   * Source boundary: the persisted `openshellDriver` and `workload` receipt are
+   * validated only by the selected provider's `cleanup.removeOwnedWorkload`.
+   * Source-fix constraint: this is a residual guard for a raw writer or TOCTOU
+   * change after pre-delete authority validation. Destroy cannot synthesize
+   * provider ownership after remote deletion; guessing could remove a shared
+   * image or another provider's workload, so the operator must restore trusted
+   * ownership metadata or resolve the runtime conflict and retry.
+   * Regression proof: destroy-flow.test.ts proves both blocked retention and
+   * that a repaired matching receipt permits registry and session retirement;
+   * test/image-cleanup.test.ts proves the lower-level fail-closed contract.
+   * Removal condition: remove this recovery boundary only when the provider or
+   * registry owns authenticated reconciliation that can safely complete cleanup
+   * without retaining the local ownership row.
+   */
+  const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
+  const removed = removalOutcome.removed;
+  if (removalOutcome.status === "blocked") {
+    const providerId = normalizeRuntimeProviderIdentity(
+      (registry.getSandbox(sandboxName) ?? sandbox)?.openshellDriver,
+    );
+    console.warn(
+      `  ${YW}⚠${R} Sandbox '${sandboxName}' cleanup is incomplete for runtime provider ` +
+        `'${providerId}' because workload ownership authority could not be proven.`,
+    );
+    console.warn(
+      `  ${YW}⚠${R} The local registry and session were preserved. Run '${CLI_NAME} ` +
+        `${sandboxName} doctor --json'; restore trusted ownership metadata or resolve the ` +
+        `runtime conflict, then re-run '${CLI_NAME} ${sandboxName} destroy --yes'. Do not ` +
+        "rewrite a receipt to match a mutable name.",
+    );
+    emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (message) =>
+      console.warn(`  ${YW}⚠${R}${message}`),
+    );
+    process.exit(1);
+  }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
   }

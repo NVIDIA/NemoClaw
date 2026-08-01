@@ -241,6 +241,11 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(mcpProof).toContain("prepareExactMainDriverConfigProof(");
     expect(mcpProof).toContain("driverConfig.assertAfterOnboard()");
     expect(mcpProof).toContain("driverConfig.assertAfterRebuild()");
+    expect(mcpProof).toContain("from deepagents_code import _nemoclaw_managed as managed");
+    expect(mcpProof).not.toContain("/opt/nemoclaw-deepagents-code/managed-dcode-runtime.py");
+    expect(mcpProof).toContain("def reject_primary_tmpfile(path, flags, *args, **kwargs):");
+    expect(mcpProof).toContain("if directory == managed._MCP_ANONYMOUS_DIRECTORY:");
+    expect(mcpProof).toContain("managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY,");
   });
 
   it("binds stable selectors while keeping the physical Spark proof separate", () => {

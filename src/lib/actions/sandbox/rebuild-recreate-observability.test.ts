@@ -213,6 +213,7 @@ describe("runRebuildRecreatePhase handoff", () => {
         gatewayPort: 8080,
         sourceRegistryFingerprint: "source-registry",
         sourceLiveIdentityFingerprint: "source-identity",
+        sourceWorkload: null,
         targetIntentFingerprint: "intent-1",
         targetGeneration: "generation-1",
         targetLiveIdentityFingerprint: null,

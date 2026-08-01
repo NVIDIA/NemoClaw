@@ -1706,6 +1706,7 @@ function formatError(error: unknown): string {
 }
 
 export type MessagingBuildPhase = "runtime-setup" | "agent-install" | "post-agent-install";
+export type MessagingBuildApplyMode = "apply" | "clear";
 
 export interface MessagingBuildPhaseOptions {
   /**
@@ -1713,6 +1714,8 @@ export interface MessagingBuildPhaseOptions {
    * the explicit render and build-file plan to its durable home directory.
    */
   readonly managedStartupRuntime?: boolean;
+  /** Explicit provider-owned intent for managed startup profile application. */
+  readonly mode?: MessagingBuildApplyMode;
 }
 
 export function applyMessagingBuildPhase(
@@ -1721,10 +1724,23 @@ export function applyMessagingBuildPhase(
   env: Env = process.env,
   options: MessagingBuildPhaseOptions = {},
 ): readonly string[] {
+  const mode = options.mode ?? "apply";
+  if (mode !== "apply" && mode !== "clear") {
+    throw new MessagingBuildApplierError("Messaging apply mode must be 'apply' or 'clear'");
+  }
   if (options.managedStartupRuntime && phase !== "post-agent-install") {
     throw new MessagingBuildApplierError(
       "Managed startup runtime mode is only valid for post-agent-install",
     );
+  }
+  if (mode === "clear") {
+    if (plan !== null) {
+      throw new MessagingBuildApplierError("Messaging clear mode requires an absent plan");
+    }
+    return [];
+  }
+  if (options.managedStartupRuntime && plan === null) {
+    throw new MessagingBuildApplierError("Managed startup apply mode requires a messaging plan");
   }
   if (phase === "runtime-setup") {
     const target = writeMessagingRuntimePlanArtifact(plan, messagingRuntimePlanPath(env));
@@ -1809,13 +1825,13 @@ export function describeMessagingBuildPhase(
 }
 
 export function main(argv: readonly string[] = process.argv.slice(2)): void {
-  const { agent, phase, dryRun, managedStartupRuntime } = parseMessagingBuildArgs(argv);
+  const { agent, phase, dryRun, managedStartupRuntime, mode } = parseMessagingBuildArgs(argv);
   const plan = readMessagingBuildPlanFromEnv(process.env, agent);
   if (dryRun) {
     console.log(JSON.stringify(describeMessagingBuildPhase(plan, phase, process.env), null, 2));
     return;
   }
-  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime });
+  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime, mode });
 }
 
 function parseMessagingBuildArgs(argv: readonly string[]): {
@@ -1823,11 +1839,13 @@ function parseMessagingBuildArgs(argv: readonly string[]): {
   readonly phase: MessagingBuildPhase;
   readonly dryRun: boolean;
   readonly managedStartupRuntime: boolean;
+  readonly mode: MessagingBuildApplyMode;
 } {
   let agent: MessagingAgentId | undefined;
   let phase: MessagingBuildPhase | undefined;
   let dryRun = false;
   let managedStartupRuntime = false;
+  let mode: MessagingBuildApplyMode = "apply";
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -1837,6 +1855,15 @@ function parseMessagingBuildArgs(argv: readonly string[]): {
     }
     if (arg === "--managed-startup-runtime") {
       managedStartupRuntime = true;
+      continue;
+    }
+    if (arg === "--mode") {
+      mode = readApplyModeArg(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--mode=")) {
+      mode = readApplyModeArg(arg.slice("--mode=".length));
       continue;
     }
     if (arg === "--agent") {
@@ -1875,7 +1902,15 @@ function parseMessagingBuildArgs(argv: readonly string[]): {
     phase: resolvedPhase,
     dryRun,
     managedStartupRuntime,
+    mode,
   };
+}
+
+function readApplyModeArg(value: string | undefined): MessagingBuildApplyMode {
+  if (value === "apply" || value === "clear") {
+    return value;
+  }
+  throw new MessagingBuildApplierError("--mode must be 'apply' or 'clear'");
 }
 
 function readAgentArg(value: string | undefined): MessagingAgentId {

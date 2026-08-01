@@ -1,0 +1,50 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.100
+
+NemoClaw v0.0.100 strengthens restored OpenClaw pairing, transactional sandbox replacement, managed Deep Agents Code, and host readiness provenance.
+It also improves onboarding recovery, lifecycle cleanup, Hermes image builds, runtime diagnostics, documentation, and trusted end-to-end (E2E) evidence.
+
+- OpenClaw cross-sandbox restore now uses descriptor-pinned clone pairing, while fresh onboarding continues to use generated pairing identity.
+  A restored clone can perform one bounded scope-upgrade recovery and tolerate a brief pending-request publication interval.
+  Unsafe filesystem shapes, persistent malformed state, and mismatched identities still fail closed.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- Managed Model Context Protocol (MCP) startup for Deep Agents Code now works when OpenShell seccomp denies `memfd_create` and workspace-backed `/tmp` rejects `O_TMPFILE`.
+  The Deep Agents Code sandbox receives a 1 MiB private tmpfs with verified mount options, and the managed runtime keeps its anonymous descriptor and integrity checks.
+  For more information, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
+- Managed Deep Agents Code requests now apply the recorded compatible-endpoint reasoning effort at runtime.
+  Recovered onboarding and sandbox recreation also preserve recorded reasoning mode and effort instead of accepting unrelated ambient values.
+  For more information, refer to [Quickstart with Deep Agents](/user-guide/deepagents/get-started/quickstart) and [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities).
+- `rebuild` and same-name onboarding replacement now record a transaction before the first destructive mutation.
+  Recovery binds the source, replacement, registry generation, and OpenShell gateway, then continues the recorded operation or fails closed when those identities drift.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Compatible-endpoint onboarding now limits the Responses API streaming-event probe to 5 seconds while preserving the Chat Completions API fallback.
+  Onboarding reuses a successful Chat Completions validation result instead of sending the immediate host-side validation request when the public endpoint, model, authentication mode, and request requirements match.
+  The validated IP address set must also match, so onboarding sends another validation request after the DNS pin changes.
+  NemoClaw still sends a separate validation request for an operator-trusted private endpoint.
+  Host interruptions during an active onboarding step produce the existing resumable recovery path instead of an invalid state transition.
+  DGX Station Express also preserves its owner-only resume receipt when automatic dual-Station discovery selects the single-Station fallback.
+  For more information, refer to [Choose a Compatible Inference API](/user-guide/openclaw/inference/custom-endpoints/choose-compatible-inference-api), [Quickstart](/user-guide/openclaw/get-started/quickstart), and [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
+- `nemoclaw status` now reads terminal-runtime out-of-memory counters through a bounded host-side Docker probe, so a recorded kill produces degraded status and rebuild guidance.
+  Destroying the final sandbox now stops a packaged OpenShell gateway service and refuses cleanup when the service remains active.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- `shields down` now succeeds without changing state when an OpenClaw configuration already has the exact mutable posture.
+  Cloudflare Tunnel cleanup verifies that the recorded process still belongs to `cloudflared` before each signal and removes a stale PID file without signaling an unrelated process.
+  For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes) and [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
+- Managed Hermes image probes now run through a checked-in Python runner, so OpenShell gateways that use Docker's legacy builder enforce the same image assertions as BuildKit.
+  For more information, refer to [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins).
+- `nemoclaw host probe` schema `1.1.0` now identifies the exact compiled CLI version and immutable source revision for every readiness result.
+  Consumers can reject stale or mismatched readiness producers before they use host evidence.
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness).
+- Provider-neutral runtime bundles now enforce provider, workload, ownership, and registry contracts for the existing Docker and Kubernetes paths.
+  Root-owned managed shared-state transactions enforce atomic application and rollback contracts but remain inactive in production onboarding.
+  Neither foundation activates a new runtime provider or adds a CLI, configuration, default, or support claim.
+- Documentation now includes a focused Deep Agents Code operation page, publishes the agentic-documentation guide in every guide variant, and uses host capability detection for optional NVIDIA DORI routing.
+  It also adds missing recovery, memory-search, and two-DGX Station verification guidance identified by post-tag documentation audits.
+  For more information, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code) and [Engineer Documentation for AI Agents](/user-guide/openclaw/resources/engineer-agentic-documentation).
+- Trusted E2E now binds request proofs to explicit authenticated phases, keeps calibration ancestry durable after evidence-source PR refs disappear, and validates coupled MCP credential evidence.
+  Recovery repetition moved into deterministic integration tests, while the retained live test verifies one exact replacement process and connect-driven recovery.
+  The PR Review Advisor now preserves validated second-opinion lane disagreements and rejects malformed E2E collections.
