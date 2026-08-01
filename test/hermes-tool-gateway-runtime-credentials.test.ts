@@ -89,6 +89,11 @@ describe("Hermes tool-gateway runtime credentials", () => {
     expect(restoreWithoutClobber?.()).toBe(false);
     expect(store.resolve(concurrentState)).toBe(concurrentToken);
 
+    const restoreSameToken = store.replace(nextState, nextToken);
+    expect(store.register(nextState, nextToken)).toBe(true);
+    expect(restoreSameToken?.()).toBe(false);
+    expect(store.resolve(nextState)).toBe(nextToken);
+
     const restoreAbsent = store.replace(
       { sandbox: "new-clone", refresh_token_sha256: sha256(nextToken) },
       nextToken,
