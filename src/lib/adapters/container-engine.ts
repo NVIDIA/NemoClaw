@@ -9,6 +9,7 @@ import { buildSubprocessEnv } from "../subprocess-env";
 export type ContainerEngineOperationScope =
   | "host-doctor"
   | "gateway-inspection"
+  | "managed-bootstrap"
   | "sandbox-lifecycle"
   | "workload-cleanup";
 

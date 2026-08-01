@@ -13,7 +13,7 @@ import {
 } from "./socket-authority";
 
 export interface PodmanContainerEngineOptions {
-  readonly operation: "host-doctor" | "sandbox-lifecycle";
+  readonly operation: "host-doctor" | "managed-bootstrap" | "sandbox-lifecycle";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
   readonly capture?: ContainerEngineCommandCapture;
