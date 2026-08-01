@@ -5,8 +5,10 @@
 # Parse PR bodies for supersession references and emit edges:
 #   <superseder_pr> -> <superseded_pr>
 #
-# Patterns matched (case-insensitive): "supersedes #N", "replaces #N",
-# "closes in favor of #N", "closed in favor of #N", "folds in #N".
+# Patterns matched case-insensitively. Active forms such as "supersedes #N",
+# "replaces #N", and "folds in #N" point from the current PR to #N. Passive
+# forms such as "superseded by #N", "replaced by #N", "closed in favor of
+# #N", and "folded into #N" point from #N to the current PR.
 #
 # Usage: parse-supersession.sh <pr-1> <pr-2> [...] [--repo OWNER/REPO]
 
@@ -36,19 +38,34 @@ done
 candidates_set=$(printf '%s\n' "${prs[@]}" | sort -u)
 
 edges=()
+append_edge() {
+  local candidate="$1"
+  local existing
+
+  for existing in "${edges[@]}"; do
+    [ "$existing" = "$candidate" ] && return
+  done
+  edges+=("$candidate")
+}
+
+reverse_pattern='(supersed[a-z]*[[:space:]]+by|replac[a-z]*[[:space:]]+by|clos[a-z]*[[:space:]]+in[[:space:]]+favor[[:space:]]+of|fold[a-z]*[[:space:]]+into)'
 for pr in "${prs[@]}"; do
   body=$(gh pr view "$pr" "${repo_args[@]}" --json body --jq .body 2>/dev/null || echo "")
   [ -z "$body" ] && continue
 
-  # Extract referenced PR numbers from supersession patterns.
-  while IFS= read -r ref; do
+  # Extract supersession statements and orient passive forms toward this PR.
+  while IFS= read -r statement; do
+    ref="${statement##*#}"
     # Only emit edges where the target is also a candidate.
     if printf '%s\n' "$candidates_set" | grep -q "^${ref}$"; then
-      edges+=("$pr -> $ref")
+      normalized=$(printf '%s' "$statement" | tr '[:upper:]' '[:lower:]')
+      if [[ $normalized =~ $reverse_pattern ]]; then
+        append_edge "$ref -> $pr"
+      else
+        append_edge "$pr -> $ref"
+      fi
     fi
   done < <(printf '%s' "$body" | grep -oiE '(supersed[a-z]*|replac[a-z]*|clos[a-z]* in favor of|fold[a-z]* in)[^#]*#([0-9]+)' \
-    | grep -oE '#[0-9]+' \
-    | tr -d '#' \
     | sort -u)
 done
 

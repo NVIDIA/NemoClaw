@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { getBuildIdentity } from "../../lib/core/version";
 import {
   createHostReadinessReport,
   createPublicReadinessReport,
@@ -31,9 +32,7 @@ export default class HostProbeCommand extends NemoClawCommand {
 
   public async run(): Promise<unknown> {
     await this.parse(HostProbeCommand);
-    const report = createPublicReadinessReport(
-      createHostReadinessReport({ nemoclawVersion: this.config.version }),
-    );
+    const report = createPublicReadinessReport(createHostReadinessReport(getBuildIdentity()));
     this.setExitCode(report.exitCode);
     if (this.jsonEnabled()) return report;
     this.log(renderReadinessReport(report));

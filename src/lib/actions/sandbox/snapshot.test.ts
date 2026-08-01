@@ -241,16 +241,17 @@ vi.mock("../../state/sandbox", () => ({
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,
 }));
-
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: vi.fn(),
+  waitForRestoredSandboxGatewaySupervisor: vi.fn(() => true),
 }));
 
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
   removeSandboxRegistryEntry: vi.fn(),
+  removeSandboxRegistryEntryOutcome: vi.fn(() => ({ status: "complete", removed: true })),
+  requireSandboxDestructiveCleanupAuthority: vi.fn(),
 }));
-
 describe("runSandboxSnapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1406,7 +1407,6 @@ describe("runSandboxSnapshot", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
-
     await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
       exitCode: 1,
     });
