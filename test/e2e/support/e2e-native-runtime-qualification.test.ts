@@ -89,6 +89,14 @@ describe("native runtime activation qualification", () => {
     expect(new Set(qualification.cases.map((entry) => entry.inference))).toEqual(
       new Set(["ollama", "nim", "vllm"]),
     );
+    expect(qualification.activation).toMatchObject({
+      providerId: "podman",
+      agents: ["openclaw", "hermes", "langchain-deepagents-code"],
+      platforms: ["linux/amd64", "linux/arm64"],
+      accelerationModes: ["cpu", "nvidia-cdi"],
+      hostLocalInferenceServices: ["ollama", "nim", "vllm"],
+    });
+    expect(Object.isFrozen(qualification.activation)).toBe(true);
     for (const entry of qualification.cases) {
       expect(entry).toMatchObject({
         gate: "protected-e2e",
@@ -127,7 +135,22 @@ describe("native runtime activation qualification", () => {
     expect(new Set(mxc.cases.map((entry) => entry.profile.provider))).toEqual(
       new Set(["test-mxc-native"]),
     );
+    expect(mxc.activation.providerId).toBe("test-mxc-native");
     expect(mxc.cases.every((entry) => entry.id.startsWith("test-mxc-native-"))).toBe(true);
+  });
+
+  it("fails closed when the activation catalog and qualification matrix drift", () => {
+    const definition = nativeRuntimeQualificationDefinition("drifted-activation-runtime");
+
+    expect(() =>
+      compileNativeRuntimeQualification({
+        ...definition,
+        activation: {
+          ...definition.activation,
+          platforms: ["linux/amd64"],
+        },
+      }),
+    ).toThrow(/platforms must be exactly 'linux\/amd64,linux\/arm64'/u);
   });
 
   it("fails closed when one required case is missing", () => {

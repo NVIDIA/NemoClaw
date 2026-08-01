@@ -7,12 +7,17 @@
 container-runtime candidate. It does not register a runtime, add a live target,
 alter the production runtime registry, or advertise support.
 
-The compiler has one provider-neutral contract. A candidate supplies an open
-provider ID and fixture bindings; the compiler does not branch on Podman, MXC,
-or any other engine name. The inert Podman candidate in
-`support/native-runtime-qualification-fixtures.ts` proves the intended scope,
-while the fake MXC-style test proves that the same contract accepts another
-provider without a central switch.
+The compiler consumes the same normalized activation declaration used by the
+provider catalog. That one record supplies the agents, platforms,
+accelerations, host-local inference services, lifecycle journeys, installer
+requirements, and protected-E2E requirements. Catalog/qualification drift is
+a compile error.
+
+A candidate supplies an open provider ID and fixture bindings; the compiler
+does not branch on Podman, MXC, or any other engine name. The inert Podman
+candidate in `support/native-runtime-qualification-fixtures.ts` proves the
+intended scope, while the fake MXC-style test proves that the same contract
+accepts another provider without a central switch.
 
 ## Required protected matrix
 

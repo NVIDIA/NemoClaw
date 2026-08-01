@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  normalizeRuntimeProviderActivationDeclaration,
+  type RuntimeProviderActivationAccelerationMode,
+  type RuntimeProviderActivationAgent,
+  type RuntimeProviderActivationDeclaration,
+  type RuntimeProviderActivationInferenceService,
+  type RuntimeProviderActivationJourney,
+  type RuntimeProviderActivationPlatform,
+} from "../../../src/lib/onboard/runtime-provider/activation.ts";
+import {
   defineExecutionProfile,
   type ExecutionAcceleration,
   type ExecutionArchitecture,
@@ -10,14 +19,6 @@ import {
   type ExecutionProviderId,
 } from "./execution-profile.ts";
 import { compareCodeUnits, type RuntimeAgent } from "./scenario.ts";
-
-export const NATIVE_RUNTIME_QUALIFICATION_AGENTS = ["openclaw", "hermes", "dcode"] as const;
-export const NATIVE_RUNTIME_QUALIFICATION_ARCHITECTURES = ["amd64", "arm64"] as const;
-export const NATIVE_RUNTIME_QUALIFICATION_ACCELERATIONS = ["cpu", "nvidia-gpu"] as const;
-export const NATIVE_RUNTIME_QUALIFICATION_INFERENCE = {
-  cpu: ["ollama"],
-  "nvidia-gpu": ["ollama", "nim", "vllm"],
-} as const satisfies Readonly<Record<ExecutionAcceleration, readonly LocalInferenceProvider[]>>;
 
 export type LocalInferenceProvider = "ollama" | "nim" | "vllm";
 export type QualificationObligation =
@@ -43,17 +44,79 @@ export type QualificationEvidenceKind =
   | "cleanup"
   | "nvidia-cdi";
 
-export const NATIVE_RUNTIME_QUALIFICATION_OBLIGATIONS = [
-  "installer.install",
-  "runtime.docker-unavailable",
-  "agent.onboard",
-  "agent.turn",
-  "sandbox.stop-start",
-  "sandbox.snapshot-restore",
-  "sandbox.rebuild",
-  "runtime.restart-reconcile",
-  "cleanup.exact",
-] as const satisfies readonly QualificationObligation[];
+export interface NativeRuntimeQualificationScope {
+  agents: readonly RuntimeAgent[];
+  architectures: readonly ExecutionArchitecture[];
+  accelerations: readonly ExecutionAcceleration[];
+  inference: Readonly<Record<ExecutionAcceleration, readonly LocalInferenceProvider[]>>;
+  obligations: readonly QualificationObligation[];
+}
+
+const ACTIVATION_AGENT_TO_RUNTIME = {
+  openclaw: "openclaw",
+  hermes: "hermes",
+  "langchain-deepagents-code": "dcode",
+} as const satisfies Readonly<Record<RuntimeProviderActivationAgent, RuntimeAgent>>;
+
+const ACTIVATION_PLATFORM_TO_ARCHITECTURE = {
+  "linux/amd64": "amd64",
+  "linux/arm64": "arm64",
+} as const satisfies Readonly<Record<RuntimeProviderActivationPlatform, ExecutionArchitecture>>;
+
+const ACTIVATION_ACCELERATION_TO_EXECUTION = {
+  cpu: "cpu",
+  "nvidia-cdi": "nvidia-gpu",
+} as const satisfies Readonly<
+  Record<RuntimeProviderActivationAccelerationMode, ExecutionAcceleration>
+>;
+
+const ACTIVATION_INFERENCE_TO_QUALIFICATION = {
+  ollama: "ollama",
+  nim: "nim",
+  vllm: "vllm",
+} as const satisfies Readonly<
+  Record<RuntimeProviderActivationInferenceService, LocalInferenceProvider>
+>;
+
+const ACTIVATION_JOURNEY_TO_OBLIGATION = {
+  onboard: "agent.onboard",
+  "agent-turn": "agent.turn",
+  "stop-start": "sandbox.stop-start",
+  "snapshot-restore": "sandbox.snapshot-restore",
+  rebuild: "sandbox.rebuild",
+  "restart-reconcile": "runtime.restart-reconcile",
+  "exact-cleanup": "cleanup.exact",
+} as const satisfies Readonly<Record<RuntimeProviderActivationJourney, QualificationObligation>>;
+
+export function nativeRuntimeQualificationScope(
+  input: RuntimeProviderActivationDeclaration,
+): Readonly<NativeRuntimeQualificationScope> {
+  const activation = normalizeRuntimeProviderActivationDeclaration(input);
+  const inferenceServices = activation.hostLocalInferenceServices.map(
+    (service) => ACTIVATION_INFERENCE_TO_QUALIFICATION[service],
+  );
+  const obligations: readonly QualificationObligation[] = [
+    "installer.install",
+    "runtime.docker-unavailable",
+    ...activation.journeys.map((journey) => ACTIVATION_JOURNEY_TO_OBLIGATION[journey]),
+  ];
+  return Object.freeze({
+    agents: Object.freeze(activation.agents.map((agent) => ACTIVATION_AGENT_TO_RUNTIME[agent])),
+    architectures: Object.freeze(
+      activation.platforms.map((platform) => ACTIVATION_PLATFORM_TO_ARCHITECTURE[platform]),
+    ),
+    accelerations: Object.freeze(
+      activation.accelerationModes.map(
+        (acceleration) => ACTIVATION_ACCELERATION_TO_EXECUTION[acceleration],
+      ),
+    ),
+    inference: Object.freeze({
+      cpu: Object.freeze(inferenceServices.filter((service) => service === "ollama")),
+      "nvidia-gpu": Object.freeze([...inferenceServices]),
+    }),
+    obligations: Object.freeze(obligations),
+  });
+}
 
 const BASE_EVIDENCE_KINDS = [
   "protected-run",
@@ -94,6 +157,7 @@ export interface NativeRuntimeQualificationDefinition {
   repository: string;
   protectedWorkflow: string;
   provider: ExecutionProviderId;
+  activation: RuntimeProviderActivationDeclaration;
   cases: readonly NativeRuntimeQualificationCase[];
 }
 
@@ -102,6 +166,7 @@ export interface CompiledNativeRuntimeQualification {
   repository: string;
   protectedWorkflow: string;
   provider: ExecutionProviderId;
+  activation: RuntimeProviderActivationDeclaration;
   cases: readonly Readonly<NativeRuntimeQualificationCase>[];
 }
 
@@ -224,20 +289,23 @@ function coverageKey(input: {
   return [input.agent, input.architecture, input.acceleration, input.inference].join("|");
 }
 
-function requiredCoverageKeys(): string[] {
-  return NATIVE_RUNTIME_QUALIFICATION_AGENTS.flatMap((agent) =>
-    NATIVE_RUNTIME_QUALIFICATION_ARCHITECTURES.flatMap((architecture) =>
-      NATIVE_RUNTIME_QUALIFICATION_ACCELERATIONS.flatMap((acceleration) =>
-        NATIVE_RUNTIME_QUALIFICATION_INFERENCE[acceleration].map((inference) =>
-          coverageKey({ agent, architecture, acceleration, inference }),
+function requiredCoverageKeys(scope: NativeRuntimeQualificationScope): string[] {
+  return scope.agents
+    .flatMap((agent) =>
+      scope.architectures.flatMap((architecture) =>
+        scope.accelerations.flatMap((acceleration) =>
+          scope.inference[acceleration].map((inference) =>
+            coverageKey({ agent, architecture, acceleration, inference }),
+          ),
         ),
       ),
-    ),
-  ).sort(compareCodeUnits);
+    )
+    .sort(compareCodeUnits);
 }
 
 function compileCase(
   definition: NativeRuntimeQualificationDefinition,
+  scope: NativeRuntimeQualificationScope,
   input: NativeRuntimeQualificationCase,
 ): Readonly<NativeRuntimeQualificationCase> {
   const profile = defineExecutionProfile(input.profile);
@@ -248,6 +316,13 @@ function compileCase(
   }
   if (profile.platform !== "linux" || profile.rootMode !== "rootless") {
     throw new Error(`Qualification case '${input.id}' must use a rootless Linux profile`);
+  }
+  if (
+    !scope.agents.includes(input.agent) ||
+    !scope.architectures.includes(profile.architecture) ||
+    !scope.accelerations.includes(profile.acceleration)
+  ) {
+    throw new Error(`Qualification case '${input.id}' is outside its activation declaration`);
   }
   const capabilities = new Set(profile.capabilities);
   const missingCapabilities = REQUIRED_CAPABILITIES.filter((value) => !capabilities.has(value));
@@ -265,7 +340,7 @@ function compileCase(
   if (input.dockerAvailability !== "unavailable") {
     throw new Error(`Qualification case '${input.id}' must prove Docker is unavailable`);
   }
-  const allowedInference = NATIVE_RUNTIME_QUALIFICATION_INFERENCE[profile.acceleration];
+  const allowedInference = scope.inference[profile.acceleration];
   if (!(allowedInference as readonly string[]).includes(input.inference)) {
     throw new Error(
       `Qualification case '${input.id}' cannot use ${input.inference} with ${profile.acceleration}`,
@@ -273,7 +348,7 @@ function compileCase(
   }
   assertExactSet(
     input.obligations,
-    NATIVE_RUNTIME_QUALIFICATION_OBLIGATIONS,
+    scope.obligations,
     `Qualification case '${input.id}' obligations`,
   );
   assertExactSet(
@@ -311,7 +386,14 @@ export function compileNativeRuntimeQualification(
     input.protectedWorkflow,
     "Native runtime qualification protected workflow",
   );
-  const cases = input.cases.map((entry) => compileCase(input, entry));
+  const activation = normalizeRuntimeProviderActivationDeclaration(input.activation);
+  if (activation.providerId !== input.provider) {
+    throw new Error(
+      `Native runtime activation provider '${activation.providerId}' does not match qualification provider '${input.provider}'`,
+    );
+  }
+  const scope = nativeRuntimeQualificationScope(activation);
+  const cases = input.cases.map((entry) => compileCase(input, scope, entry));
   const casesByCoverage = new Map<string, Readonly<NativeRuntimeQualificationCase>>();
   for (const entry of cases) {
     const key = coverageKey({
@@ -325,7 +407,7 @@ export function compileNativeRuntimeQualification(
     }
     casesByCoverage.set(key, entry);
   }
-  const expectedCoverage = requiredCoverageKeys();
+  const expectedCoverage = requiredCoverageKeys(scope);
   const missing = expectedCoverage.filter((key) => !casesByCoverage.has(key));
   const unknown = [...casesByCoverage.keys()].filter((key) => !expectedCoverage.includes(key));
   if (missing.length > 0 || unknown.length > 0) {
@@ -338,6 +420,7 @@ export function compileNativeRuntimeQualification(
     repository,
     protectedWorkflow,
     provider: input.provider,
+    activation,
     cases: Object.freeze([...cases].sort((left, right) => compareCodeUnits(left.id, right.id))),
   });
   compiledQualifications.add(compiled);

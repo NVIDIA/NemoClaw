@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { defineRuntimeProviderActivationDeclaration } from "../../../src/lib/onboard/runtime-provider/activation.ts";
 import {
   compileNativeRuntimeQualification,
-  NATIVE_RUNTIME_QUALIFICATION_ACCELERATIONS,
-  NATIVE_RUNTIME_QUALIFICATION_AGENTS,
-  NATIVE_RUNTIME_QUALIFICATION_ARCHITECTURES,
-  NATIVE_RUNTIME_QUALIFICATION_INFERENCE,
-  NATIVE_RUNTIME_QUALIFICATION_OBLIGATIONS,
   type NativeRuntimeQualificationDefinition,
+  type NativeRuntimeQualificationScope,
+  nativeRuntimeQualificationScope,
   qualificationCaseId,
   requiredQualificationEvidenceKinds,
 } from "../registry/activation-qualification.ts";
@@ -38,9 +36,12 @@ function profileId(
   return `${provider}-linux-${architecture}-${acceleration}`;
 }
 
-function qualificationProfiles(provider: ExecutionProviderId): ExecutionProfile[] {
-  return NATIVE_RUNTIME_QUALIFICATION_ARCHITECTURES.flatMap((architecture) =>
-    NATIVE_RUNTIME_QUALIFICATION_ACCELERATIONS.map((acceleration) =>
+function qualificationProfiles(
+  provider: ExecutionProviderId,
+  scope: NativeRuntimeQualificationScope,
+): ExecutionProfile[] {
+  return scope.architectures.flatMap((architecture) =>
+    scope.accelerations.map((acceleration) =>
       defineExecutionProfile({
         id: profileId(provider, architecture, acceleration),
         provider,
@@ -63,10 +64,12 @@ export function nativeRuntimeQualificationDefinition(
   providerName: string,
 ): NativeRuntimeQualificationDefinition {
   const provider = executionProviderId(providerName);
-  const profiles = qualificationProfiles(provider);
-  const cases = NATIVE_RUNTIME_QUALIFICATION_AGENTS.flatMap((agent) =>
+  const activation = defineRuntimeProviderActivationDeclaration(provider);
+  const scope = nativeRuntimeQualificationScope(activation);
+  const profiles = qualificationProfiles(provider, scope);
+  const cases = scope.agents.flatMap((agent) =>
     profiles.flatMap((profile) =>
-      NATIVE_RUNTIME_QUALIFICATION_INFERENCE[profile.acceleration].map((inference) => ({
+      scope.inference[profile.acceleration].map((inference) => ({
         id: qualificationCaseId({
           provider,
           agent,
@@ -80,7 +83,7 @@ export function nativeRuntimeQualificationDefinition(
         gate: "protected-e2e" as const,
         install: "release-installer" as const,
         dockerAvailability: "unavailable" as const,
-        obligations: [...NATIVE_RUNTIME_QUALIFICATION_OBLIGATIONS],
+        obligations: [...scope.obligations],
         evidenceKinds: [...requiredQualificationEvidenceKinds(profile.acceleration)],
       })),
     ),
@@ -90,6 +93,7 @@ export function nativeRuntimeQualificationDefinition(
     repository: "NVIDIA/NemoClaw",
     protectedWorkflow: "E2E / PR Gate",
     provider,
+    activation,
     cases,
   };
 }

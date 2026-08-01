@@ -10,13 +10,9 @@ import {
 import {
   composeActivatedRuntimeProviderBundles,
   createRuntimeProviderActivationCatalog,
-  RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES,
-  RUNTIME_PROVIDER_ACTIVATION_AGENTS,
-  RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
+  defineRuntimeProviderActivationDeclaration,
   RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES,
-  RUNTIME_PROVIDER_ACTIVATION_JOURNEYS,
   RUNTIME_PROVIDER_ACTIVATION_PLATFORMS,
-  RUNTIME_PROVIDER_ACTIVATION_ROOT_MODES,
   type RuntimeProviderActivationRegistration,
 } from "./activation";
 import { RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION, type RuntimeProviderBundle } from "./contract";
@@ -32,6 +28,7 @@ function unreachable(): never {
 function inferenceRuntime(): HostLocalInferenceRuntime {
   return {
     providerId: PROVIDER_ID,
+    authorityId: "mxc:contract-test",
     services: [...RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES],
     translateContainerArgs: (args) => [...args],
     qualifyOllama: unreachable,
@@ -88,18 +85,7 @@ function registration(
   bundle: RuntimeProviderBundle = completeBundle(),
 ): RuntimeProviderActivationRegistration {
   return {
-    declaration: {
-      contractVersion: RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
-      providerId: PROVIDER_ID,
-      agents: [...RUNTIME_PROVIDER_ACTIVATION_AGENTS],
-      platforms: [...RUNTIME_PROVIDER_ACTIVATION_PLATFORMS],
-      rootModes: [...RUNTIME_PROVIDER_ACTIVATION_ROOT_MODES],
-      accelerationModes: [...RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES],
-      hostLocalInferenceServices: [...RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES],
-      journeys: [...RUNTIME_PROVIDER_ACTIVATION_JOURNEYS],
-      installer: { releaseInstaller: true, dockerUnavailable: true },
-      qualification: { protectedE2e: true, exactHeadAndBase: true },
-    },
+    declaration: defineRuntimeProviderActivationDeclaration(PROVIDER_ID),
     bundle,
   };
 }
