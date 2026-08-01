@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
-import { clearDockerDriverGatewayRuntimeMarker } from "../../onboard/docker-driver-gateway-runtime-marker";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
@@ -20,7 +17,11 @@ import {
   type GatewayTeardownAuthorityResolver,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
-import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import {
+  clearHostGatewayRuntimeFiles,
+  isHostPortFree,
+  stopHostGatewayProcesses,
+} from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 
 export type DestroyRunOpenshell = (
@@ -31,32 +32,10 @@ export type DestroyRunOpenshell = (
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 export interface CleanupGatewayDeps {
-  clearGatewayRuntimeFiles?: (stateDir: string, pidFile: string) => void;
-  isGatewayPortFree?: (port: number) => boolean;
+  clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
+  isGatewayPortFree?: typeof isHostPortFree;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
-}
-
-function isGatewayPortFree(port: number): boolean {
-  const script =
-    "const net = require('node:net');" +
-    "const server = net.createServer();" +
-    "let done = false;" +
-    "const finish = (code) => { if (!done) { done = true; process.exit(code); } };" +
-    "server.once('error', () => finish(1));" +
-    `server.listen(${String(port)}, '127.0.0.1', () => server.close(() => finish(0)));`;
-  try {
-    return (
-      spawnSync(process.execPath, ["-e", script], { stdio: "ignore", timeout: 2_000 }).status === 0
-    );
-  } catch {
-    return false;
-  }
-}
-
-function clearGatewayRuntimeFiles(stateDir: string, pidFile: string): void {
-  fs.rmSync(pidFile, { force: true });
-  clearDockerDriverGatewayRuntimeMarker(stateDir);
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -208,7 +187,7 @@ export function cleanupGatewayAfterLastSandbox(
             "Restore the user service manager or stop the verified gateway listener, then rerun destroy.",
         );
       }
-      const portFree = deps.isGatewayPortFree ?? isGatewayPortFree;
+      const portFree = deps.isGatewayPortFree ?? isHostPortFree;
       if (!portFree(perGatewayState.port)) {
         throw new Error(
           `Refusing cleanup because gateway port ${String(perGatewayState.port)} remains occupied after the recorded standalone gateway process for '${gatewayName}' was stopped. ` +
@@ -264,7 +243,7 @@ export function cleanupGatewayAfterLastSandbox(
     ignoreError: true,
   });
   if (packagedServiceFallbackReason !== null) {
-    const clearRuntimeFiles = deps.clearGatewayRuntimeFiles ?? clearGatewayRuntimeFiles;
+    const clearRuntimeFiles = deps.clearGatewayRuntimeFiles ?? clearHostGatewayRuntimeFiles;
     clearRuntimeFiles(
       perGatewayState.stateDir,
       path.join(perGatewayState.stateDir, "openshell-gateway.pid"),
