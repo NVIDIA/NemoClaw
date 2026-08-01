@@ -53,43 +53,47 @@ function lifecycleEngine(sandboxName: string): ContainerEngine {
     engineId: "podman",
     displayName: "Podman",
     capture: vi.fn((args: readonly string[]) => {
-      if (args[0] === "ps") {
-        return {
-          status: 0,
-          stdout: `${CONTAINER_ID}\t${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}\n`,
-          stderr: "",
-        };
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        return {
-          status: 0,
-          stdout: JSON.stringify([
-            {
-              Id: CONTAINER_ID,
-              Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`,
-              Config: {
-                Labels: {
-                  [PODMAN_MANAGED_LABEL]: "true",
-                  [PODMAN_SANDBOX_ID_LABEL]: `id-${sandboxName}`,
-                  [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
-                  [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
+      const operation = String(args[0]);
+      switch (operation) {
+        case "ps":
+          return {
+            status: 0,
+            stdout: `${CONTAINER_ID}\t${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}\n`,
+            stderr: "",
+          };
+        case "container":
+          return {
+            status: 0,
+            stdout: JSON.stringify([
+              {
+                Id: CONTAINER_ID,
+                Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`,
+                Config: {
+                  Labels: {
+                    [PODMAN_MANAGED_LABEL]: "true",
+                    [PODMAN_SANDBOX_ID_LABEL]: `id-${sandboxName}`,
+                    [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
+                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
+                  },
+                },
+                State: {
+                  Running: running,
+                  Paused: false,
+                  Status: running ? "running" : "exited",
                 },
               },
-              State: {
-                Running: running,
-                Paused: false,
-                Status: running ? "running" : "exited",
-              },
-            },
-          ]),
-          stderr: "",
-        };
+            ]),
+            stderr: "",
+          };
+        case "start":
+          running = true;
+          return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+        case "stop":
+          running = false;
+          return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+        default:
+          return { status: 125, stdout: "", stderr: `unexpected operation ${operation}` };
       }
-      if (args[0] === "start" || args[0] === "stop") {
-        running = args[0] === "start";
-        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-      }
-      return { status: 125, stdout: "", stderr: `unexpected operation ${String(args[0])}` };
     }),
     captureHost: vi.fn(),
   };

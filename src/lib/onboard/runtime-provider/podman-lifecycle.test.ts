@@ -42,32 +42,26 @@ function harness(initial: { running: boolean; status: string; paused?: boolean }
   let paused = initial.paused ?? false;
   let status = initial.status;
   const capture = vi.fn((args: readonly string[]) => {
-    const operation = args[0];
-    if (operation === "ps") {
-      return { status: 0, stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`, stderr: "" };
+    const operation = String(args[0]);
+    switch (operation) {
+      case "ps":
+        return { status: 0, stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`, stderr: "" };
+      case "container":
+        return { status: 0, stdout: inspect(running, status, paused), stderr: "" };
+      case "start":
+      case "unpause":
+        running = true;
+        paused = false;
+        status = "running";
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      case "stop":
+        running = false;
+        paused = false;
+        status = "exited";
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      default:
+        return { status: 125, stdout: "", stderr: `unexpected operation ${operation}` };
     }
-    if (operation === "container" && args[1] === "inspect") {
-      return { status: 0, stdout: inspect(running, status, paused), stderr: "" };
-    }
-    if (operation === "start") {
-      running = true;
-      paused = false;
-      status = "running";
-      return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-    }
-    if (operation === "unpause") {
-      running = true;
-      paused = false;
-      status = "running";
-      return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-    }
-    if (operation === "stop") {
-      running = false;
-      paused = false;
-      status = "exited";
-      return { status: 0, stdout: CONTAINER_ID, stderr: "" };
-    }
-    return { status: 125, stdout: "", stderr: `unexpected operation ${String(operation)}` };
   });
   const engine: ContainerEngine = {
     operation: "sandbox-lifecycle",
