@@ -131,7 +131,7 @@ export class TerminologyLedger {
       const trace = traces.get(nonempty(candidate.traceId, "traceId"));
       if (!trace) throw new Error(`Unknown terminology trace ${candidate.traceId}`);
       if (trace.headSha !== this.#headSha) {
-        throw new Error(`Terminology trace ${trace.id} is not bound to the current PR SHA`);
+        throw new Error(`Terminology trace ${trace.id} does not match the reviewed commit`);
       }
       const term = normalizeTerm(candidate.term);
       if (!TERMINOLOGY_CHANGES.includes(candidate.change))
@@ -254,7 +254,7 @@ export function createTerminologyToolController({
     name: TERMINOLOGY_TRACE_TOOL,
     label: "Trace a selected repository term",
     description:
-      "Trace one semantically selected term across the base, PR SHA, and changed lines. This tool verifies evidence; it does not select or classify terms.",
+      "Trace one semantically selected term in the base and head commits, including changed lines. This tool verifies evidence; it does not select or classify terms.",
     parameters: Type.Object(
       { term: Type.String({ minLength: 1, maxLength: TERM_LIMIT }) },
       { additionalProperties: false },

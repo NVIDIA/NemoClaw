@@ -51,14 +51,14 @@ function fixtureRepository(): { directory: string; base: string; head: string } 
   git(directory, ["config", "user.email", "terminology@example.invalid"]);
   fs.writeFileSync(
     path.join(directory, "guide.md"),
-    "# Guide\n\nThe PR SHA identifies the revision under review.\n",
+    "# Guide\n\nThe commit SHA identifies the revision under review.\n",
   );
   git(directory, ["add", "guide.md"]);
   git(directory, ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "base"]);
   const base = git(directory, ["rev-parse", "HEAD"]);
   fs.writeFileSync(
     path.join(directory, "guide.md"),
-    "# Guide\n\nThe PR SHA identifies the revision under review.\nReview-bound evidence is required.\nAn ordinary well-known phrase stays ordinary.\n",
+    "# Guide\n\nThe commit SHA identifies the revision under review.\nReview-bound evidence is required.\nAn ordinary well-known phrase stays ordinary.\n",
   );
   git(directory, ["add", "guide.md"]);
   git(directory, ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "head"]);
@@ -76,7 +76,7 @@ function contentJson(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("PR review advisor terminology evidence", () => {
-  it("traces only a model-selected term and binds hyphen variants to the PR SHA", async () => {
+  it("traces only a model-selected term and binds hyphen variants to the commit SHA", async () => {
     const fixture = fixtureRepository();
     const trace = await traceTerminology({
       term: "review-bound",
@@ -252,11 +252,11 @@ describe("PR review advisor terminology evidence", () => {
       term: "review-bound",
       change: "introduced",
       disposition: "justified",
-      meaning: "Evidence for the PR SHA.",
+      meaning: "Evidence for the commit SHA.",
       contrast: null,
       existingTerm: null,
       semanticImpact: "evidence",
-      recommendation: "Use PR SHA.",
+      recommendation: "Use commit SHA.",
       traceId: trace.id,
       source: { file: "guide.md", line: trace.changedLocations[0]?.line },
     };
@@ -278,7 +278,7 @@ describe("PR review advisor terminology evidence", () => {
           {
             ...decision,
             disposition: "replace",
-            existingTerm: "PR SHA",
+            existingTerm: "commit SHA",
           },
         ],
         noChangesReason: null,
@@ -294,7 +294,7 @@ describe("PR review advisor terminology evidence", () => {
         {
           id: "T-001",
           disposition: "replace",
-          existingTerm: "PR SHA",
+          existingTerm: "commit SHA",
           source: { file: "guide.md", line: 4, headSha: fixture.head },
         },
       ],

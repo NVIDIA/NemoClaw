@@ -21,7 +21,7 @@ describe("PR review advisor writing guides", () => {
     expect(writingGuide).toContain("# NemoClaw Writing Guide");
     expect(writingGuide).toContain("Use one term for one concept");
     expect(writingGuide).toContain("## Scope and Review Policy");
-    expect(controlledWords).toContain("| `PR SHA` | Technical noun |");
+    expect(controlledWords).toContain("| `commit SHA` | Technical noun |");
     expect(prompt).toContain("Trusted security review skill from main checkout");
     expect(prompt).toContain("Trusted NemoClaw writing guide from workflow checkout");
     expect(prompt).toContain("# Security Code Review");

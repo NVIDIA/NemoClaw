@@ -551,7 +551,7 @@ function renderSecondOpinionTerminology(
     "<details>",
     `<summary>${compactCount(total, "terminology difference")} from the second opinion</summary>`,
     "",
-    "_Advisory only. These are normalized, PR-SHA-bound differences from the primary terminology receipt._",
+    "_Advisory only. These are normalized differences from the primary terminology receipt._",
     "",
   ];
   for (const decision of conflicts.slice(0, 10)) {

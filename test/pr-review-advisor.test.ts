@@ -1465,9 +1465,9 @@ diff --git a/test/example.test.ts b/test/example.test.ts
       disposition: "replace",
       meaning: "Evidence for one revision.",
       contrast: null,
-      existingTerm: "PR SHA",
+      existingTerm: "commit SHA",
       semanticImpact: "evidence",
-      recommendation: "Use PR SHA.",
+      recommendation: "Use commit SHA.",
       traceId: "term-valid",
       source: { file: "WRITING.md", line: 12, headSha: "a".repeat(40) },
     };
@@ -1484,7 +1484,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
       },
       {
         status: "candidates",
-        decisions: [{ ...decision, recommendation: "Use PR SHA.\nInjected text." }],
+        decisions: [{ ...decision, recommendation: "Use commit SHA.\nInjected text." }],
         noChangesReason: null,
       },
       {

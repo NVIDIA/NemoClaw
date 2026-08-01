@@ -71,7 +71,7 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).toContain("- _1 more._");
   });
 
-  it("does not render terminology without a PR-SHA binding", () => {
+  it("does not render terminology without a source commit", () => {
     const comment = buildComment({
       summary: "unused",
       result: {
@@ -82,7 +82,7 @@ describe("PR review advisor comment CLI", () => {
             {
               term: "review-bound",
               disposition: "replace",
-              recommendation: "Use PR SHA.",
+              recommendation: "Use commit SHA.",
               source: { file: "guide.md", line: 4 },
             },
           ],
@@ -307,9 +307,9 @@ describe("PR review advisor comment CLI", () => {
       disposition: "replace",
       meaning: "Evidence for one revision.",
       contrast: null,
-      existingTerm: "PR SHA",
+      existingTerm: "commit SHA",
       semanticImpact: "evidence",
-      recommendation: "Use PR SHA.",
+      recommendation: "Use commit SHA.",
       traceId: "term-valid",
       source: { file: "guide.md", line: 4, headSha },
     };
@@ -444,11 +444,11 @@ describe("PR review advisor comment CLI", () => {
             term: "review-bound",
             change: "introduced",
             disposition: "replace",
-            meaning: "Evidence for the PR SHA.",
+            meaning: "Evidence for the commit SHA.",
             contrast: null,
-            existingTerm: "PR SHA",
+            existingTerm: "commit SHA",
             semanticImpact: "evidence",
-            recommendation: "Use PR SHA.",
+            recommendation: "Use commit SHA.",
             traceId: "term-primary",
             source: { file: "guide.md", line: 4, headSha: "a".repeat(40) },
           },
