@@ -575,6 +575,43 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("keeps production Google Chat onboarding fail-closed with env-only E2E signals", async () => {
+    // Tracked stubs (not raw process.env mutation) so Vitest reverts them and
+    // these E2E signals cannot leak into later tests in the same run.
+    vi.stubEnv("E2E_TARGET_ID", "channels-stop-start");
+    vi.stubEnv("GOOGLECHAT_APP_PRINCIPAL", "123456789012345678901");
+    vi.stubEnv("GOOGLECHAT_AUDIENCE", "https://e2e-fake.trycloudflare.com/googlechat");
+    vi.stubEnv(
+      "GOOGLECHAT_SERVICE_ACCOUNT",
+      JSON.stringify({
+        client_email: "e2e-fake@e2e-fake.iam.gserviceaccount.com",
+        private_key: "fake-e2e-not-a-real-private-key",
+      }),
+    );
+    vi.stubEnv("NEMOCLAW_E2E_ALLOW_GOOGLECHAT_PRESET_AUDIENCE", "1");
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    const enabled = new Set(["googlechat"]);
+
+    const plan = await setupSelectedMessagingChannels(
+      ["googlechat"],
+      enabled,
+      manifests("googlechat"),
+      {
+        interactive: false,
+        sandboxName: "e2e-channels-stop-start-openclaw",
+      },
+    );
+
+    expect(enabled.has("googlechat")).toBe(false);
+    expect(plan?.channels).toEqual([
+      expect.objectContaining({
+        active: false,
+        channelId: "googlechat",
+      }),
+    ]);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it("seeds credentialless WhatsApp from its optional allowlist input in non-interactive mode", async () => {
     process.env.WHATSAPP_ALLOWED_IDS = "15551234567,15557654321";
     const notes: string[] = [];

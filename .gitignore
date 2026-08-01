@@ -1,5 +1,6 @@
 # Build artifacts and caches
 .version
+.source-revision
 *.pyc
 *.tsbuildinfo
 .pytest_cache/
@@ -19,6 +20,8 @@ Thumbs.db
 
 # Project-specific
 .nemoclaw-maintainer/
+# Legacy DORI status file; no longer read, kept ignored to prevent accidental commits.
+.dori_user_status
 draft_newsletter_*
 research/
 specs/

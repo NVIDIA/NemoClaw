@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const SYSTEM_READINESS_SCHEMA_VERSION = "1.0.0" as const;
+export const SYSTEM_READINESS_SCHEMA_VERSION = "1.1.0" as const;
 export const SUPPORTED_SYSTEM_READINESS_SCHEMA_MAJOR = 1;
 
 export type ReadinessState = "present" | "absent" | "unknown";
@@ -13,7 +13,7 @@ export type EvidenceScalar = string | number | boolean | null;
 
 export interface ReadinessProvenance {
   nemoclawVersion: string;
-  sourceRevision?: string;
+  sourceRevision: string;
   observedAt: string;
   [key: string]: unknown;
 }

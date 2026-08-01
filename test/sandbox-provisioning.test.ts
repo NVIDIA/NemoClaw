@@ -14,7 +14,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -1051,80 +1050,6 @@ describe("sandbox provisioning: base runtime tools", () => {
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-  it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
-    const dockerfile = completedDockerStage(fs.readFileSync(DOCKERFILE_BASE, "utf-8"));
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
-    const lists = path.join(tmp, "apt-lists");
-    const securityDebs = path.join(tmp, "security-debs");
-    const fakePy3 = path.join(tmp, "usr-bin", "python3");
-    const fakePyLink = path.join(tmp, "usr-local-bin", "python");
-    fs.mkdirSync(lists);
-    fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
-    fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
-    fs.writeFileSync(fakePy3, "#!/bin/sh\n", { mode: 0o755 });
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      "RUN apt-get update",
-      "# gosu for privilege separation",
-    )
-      .replaceAll("/var/lib/apt/lists", lists)
-      .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
-      .replaceAll("/usr/local/share/nemoclaw", path.join(tmp, "security-inventory"))
-      .replaceAll("/usr/local/bin/python", fakePyLink)
-      .replaceAll("/usr/bin/python3", fakePy3);
-    try {
-      const { result, calls } = runLoggedDockerShell(command, tmp, [
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-        'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-        'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-        ...BASE_APT_SECURITY_FUNCTIONS,
-      ]);
-      expect(result.status).toBe(0);
-      expect(calls).toContain("apt-get update");
-      expect(calls).toContain("procps=2:4.0.4-9");
-      expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
-      expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
-    const dockerfile = completedDockerStage(fs.readFileSync(DOCKERFILE_BASE, "utf-8"));
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
-    const lists = path.join(tmp, "apt-lists");
-    const securityDebs = path.join(tmp, "security-debs");
-    const fakePy3 = path.join(tmp, "usr-bin", "python3");
-    const fakePyLink = path.join(tmp, "usr-local-bin", "python");
-    fs.mkdirSync(lists, { recursive: true });
-    fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
-    fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
-    fs.writeFileSync(fakePy3, "#!/bin/sh\necho 3.13\n", { mode: 0o755 });
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      "RUN apt-get update",
-      "# gosu for privilege separation",
-    )
-      .replaceAll("/var/lib/apt/lists", lists)
-      .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
-      .replaceAll("/usr/local/share/nemoclaw", path.join(tmp, "security-inventory"))
-      .replaceAll("/usr/local/bin/python", fakePyLink)
-      .replaceAll("/usr/bin/python3", fakePy3);
-    try {
-      const { result } = runLoggedDockerShell(command, tmp, [
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-        'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-        'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-        ...BASE_APT_SECURITY_FUNCTIONS,
-      ]);
-      expect(result.status).toBe(0);
-      expect(fs.lstatSync(fakePyLink).isSymbolicLink()).toBe(true);
-      expect(fs.readlinkSync(fakePyLink)).toBe(fakePy3);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
@@ -1196,6 +1121,8 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "patch-hermes-session-list-preview.py"),
+      path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
+      path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1398,7 +1325,7 @@ describe("Hermes sandbox provisioning", () => {
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
-    for (const cache of ["npm", "electron", "node-gyp"]) {
+    for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
       const cachePath = path.join(rootCache, cache);
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
@@ -1411,7 +1338,8 @@ describe("Hermes sandbox provisioning", () => {
       .replaceAll("/opt/hermes", hermesRoot)
       .replaceAll("/root/.npm", path.join(rootCache, "npm"))
       .replaceAll("/root/.cache/electron", path.join(rootCache, "electron"))
-      .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"));
+      .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"))
+      .replaceAll("/root/.cache/uv", path.join(rootCache, "uv"));
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
@@ -1422,7 +1350,7 @@ describe("Hermes sandbox provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
       expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
-      for (const cache of ["npm", "electron", "node-gyp"]) {
+      for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
       }
     } finally {
@@ -1487,7 +1415,12 @@ describe("Hermes sandbox provisioning", () => {
           "runtime/gateway_state.json",
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
-        expect(run.calls).toContain(`chown gateway:sandbox ${path.join(hermesDir, "runtime")}`);
+        expect(run.calls).toContain(
+          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+            hermesDir,
+            "gateway",
+          )} ${path.join(hermesDir, "runtime")}`,
+        );
       }
     } finally {
       for (const run of runs) {

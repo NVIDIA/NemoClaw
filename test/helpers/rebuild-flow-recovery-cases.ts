@@ -8,6 +8,7 @@ import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
 } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { fingerprintSandboxLiveIdentity } from "../../src/lib/onboard/sandbox-recreate-transaction";
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import { createRebuildFlowHarness, installRebuildFlowTestHooks } from "./rebuild-flow-test-harness";
 
@@ -201,28 +202,16 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
         expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-        {
-          defaultTransition: {
-            from: null,
-            to: "alpha",
-            expectedRevision: 11,
-          },
-        },
+        {},
       );
       expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
     });
 
-    it("preserves an explicit same-fallback default choice during prepared rollback", async () => {
+    it("keeps an explicit default choice made while the replacement was in flight (#7734)", async () => {
       let harness!: ReturnType<typeof createRebuildFlowHarness>;
       harness = createRebuildFlowHarness({
         defaultSandbox: "alpha",
         defaultSelectionRevision: 10,
-        removalReceipt: {
-          entry: { name: "alpha", agentVersion: "0.1.0" },
-          wasDefault: true,
-          fallbackDefault: "beta",
-          postRemovalDefaultSelectionRevision: 11,
-        },
         onboard: () => {
           expect(harness.setDefault("beta")).toBe(true);
           throw new Error("recreate failed after explicit default choice");
@@ -238,35 +227,23 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
         expect.objectContaining({ name: "alpha" }),
-        {
-          defaultTransition: {
-            from: "beta",
-            to: "alpha",
-            expectedRevision: 11,
-          },
-        },
+        {},
       );
       expect(harness.getDefaultSelectionState()).toEqual({
         defaultSandbox: "beta",
-        defaultSelectionRevision: 12,
+        defaultSelectionRevision: 11,
       });
     });
 
-    it("preserves replacement registry metadata after a custom removal receipt", async () => {
+    it("keeps the default selection untouched across a journaled replacement (#7734)", async () => {
       let harness!: ReturnType<typeof createRebuildFlowHarness>;
       harness = createRebuildFlowHarness({
         defaultSandbox: "alpha",
         defaultSelectionRevision: 10,
-        removeSandboxRegistryEntryWithReceipt: () => ({
-          entry: { name: "alpha", model: "old-model" },
-          wasDefault: true,
-          fallbackDefault: "beta",
-          postRemovalDefaultSelectionRevision: 11,
-        }),
         onboard: () => {
           expect(harness.getDefaultSelectionState()).toEqual({
-            defaultSandbox: "beta",
-            defaultSelectionRevision: 11,
+            defaultSandbox: "alpha",
+            defaultSelectionRevision: 10,
           });
           harness.registerSandboxEntry("alpha");
           throw new Error("recreate failed after replacement registration");
@@ -277,14 +254,210 @@ export function registerRebuildFlowRecoveryTests(): void {
         harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
       ).rejects.toThrow("Recreate failed");
 
-      expect(harness.restoreSandboxEntryIfMissingSpy).toHaveReturnedWith(false);
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
       expect(harness.getDefaultSelectionState()).toEqual({
-        defaultSandbox: "beta",
-        defaultSelectionRevision: 11,
+        defaultSandbox: "alpha",
+        defaultSelectionRevision: 10,
       });
-      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Recreate failed: kept the replacement registry metadata already present",
+    });
+
+    const REPLACEMENT_PROBE = "Name: alpha\nId: sbx-replacement\nPhase: Ready\n";
+    const FOREIGN_PROBE = "Name: alpha\nId: sbx-foreign\nPhase: Ready\n";
+    const REPLACEMENT_IDENTITY = fingerprintSandboxLiveIdentity(REPLACEMENT_PROBE);
+    const POST_DELETE_PHASES = ["creating", "created", "registry_committing", "completed"] as const;
+    const provenReplacement = {
+      sandboxEntry: {
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
+      },
+    };
+
+    // Journal a replacement through the real pipeline, then die at the given
+    // post-delete phase so the restart reads persisted state, not a hand-built
+    // checkpoint.
+    async function interruptAfterCreate(phase: string): Promise<unknown> {
+      const interrupted = createRebuildFlowHarness({
+        ...provenReplacement,
+        onboard: (session) => {
+          Object.assign(
+            (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
+            {
+              phase,
+              targetGeneration: "generation-1",
+              targetLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
+            },
+          );
+          throw new Error("interrupted after replacement creation");
+        },
+      });
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+      return interrupted.session.checkpoint;
+    }
+
+    function restartRebuild(probe: string, checkpoint: unknown) {
+      const restarted = createRebuildFlowHarness({
+        ...provenReplacement,
+        captureOpenshell: (argv) =>
+          argv[0] === "sandbox" && argv[1] === "get"
+            ? { status: 0, output: probe, stdout: probe, stderr: "" }
+            : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" },
+      });
+      restarted.session.checkpoint = checkpoint;
+      // Both harnesses share one spy per mocked module function, so the
+      // interrupted run's calls have to be dropped before the restart.
+      restarted.runOpenshellSpy.mockClear();
+      restarted.onboardSpy.mockClear();
+      return restarted;
+    }
+
+    it.each(
+      POST_DELETE_PHASES,
+    )("keeps a registered replacement when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartRebuild(REPLACEMENT_PROBE, await interruptAfterCreate(phase));
+
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+      expect(
+        (restarted.session.checkpoint as { sandboxRecreate: unknown }).sandboxRecreate,
+      ).toBeNull();
+    });
+
+    it.each(
+      POST_DELETE_PHASES,
+    )("refuses a foreign same-name sandbox when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartRebuild(FOREIGN_PROBE, await interruptAfterCreate(phase));
+
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /not the journaled replacement/,
       );
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    const SOURCE_PROBE = "Name: alpha\nId: sbx-source\nPhase: Ready\n";
+    const MISSING_SOURCE = {
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: sandbox alpha not found",
+    };
+    const PRE_CREATE_PHASES = ["planned", "deleting", "deleted"] as const;
+    const LIVE_SOURCE_PHASES = ["planned", "deleting"] as const;
+
+    function sandboxGetProbes(probes: readonly (string | null)[]) {
+      let gets = 0;
+      return (argv: string[]) => {
+        if (argv[0] !== "sandbox" || argv[1] !== "get") return MISSING_SOURCE;
+        const probe = probes[Math.min(gets++, probes.length - 1)];
+        return probe ? { status: 0, output: probe, stdout: probe, stderr: "" } : MISSING_SOURCE;
+      };
+    }
+
+    async function interruptBeforeCreate(phase: string): Promise<unknown> {
+      const interrupted = createRebuildFlowHarness({
+        captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+        onboard: (session) => {
+          Object.assign(
+            (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
+            { phase },
+          );
+          throw new Error("interrupted before replacement creation");
+        },
+      });
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+      return interrupted.session.checkpoint;
+    }
+
+    function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
+      const restarted = createRebuildFlowHarness({
+        captureOpenshell: sandboxGetProbes(probes),
+      });
+      restarted.session.checkpoint = checkpoint;
+      restarted.runOpenshellSpy.mockClear();
+      restarted.onboardSpy.mockClear();
+      return restarted;
+    }
+
+    it.each(
+      LIVE_SOURCE_PHASES,
+    )("deletes the journaled source when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [SOURCE_PROBE, SOURCE_PROBE, null],
+        await interruptBeforeCreate(phase),
+      );
+
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
+
+      expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(restarted.onboardSpy).toHaveBeenCalled();
+    });
+
+    it.each(
+      PRE_CREATE_PHASES,
+    )("creates the replacement without a second delete when a rebuild restarts from '%s' with the source already absent (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource([null], await interruptBeforeCreate(phase));
+
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).toHaveBeenCalled();
+    });
+
+    it.each(
+      LIVE_SOURCE_PHASES,
+    )("stops before deletion when a same-name sandbox appears after a '%s' restart probe (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [null, FOREIGN_PROBE],
+        await interruptBeforeCreate(phase),
+      );
+
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/the live same-name sandbox is not the journaled source/);
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(
+      LIVE_SOURCE_PHASES,
+    )("refuses a changed same-name sandbox when a rebuild restarts from '%s' (#7734)", async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [FOREIGN_PROBE, null],
+        await interruptBeforeCreate(phase),
+      );
+
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /no longer has the journaled source identity/,
+      );
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    it("refuses a live same-name sandbox when a rebuild restarts from 'deleted' (#7734)", async () => {
+      const restarted = restartFromJournaledSource(
+        [SOURCE_PROBE, null],
+        await interruptBeforeCreate("deleted"),
+      );
+
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /appeared before replacement registration committed/,
+      );
+
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
     });
 
     it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
@@ -343,13 +516,7 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
         expect.objectContaining({ name: "alpha", toolDisclosure: "progressive" }),
-        {
-          defaultTransition: {
-            from: null,
-            to: "alpha",
-            expectedRevision: 11,
-          },
-        },
+        {},
       );
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("onboard --resume --name alpha --tool-disclosure direct"),

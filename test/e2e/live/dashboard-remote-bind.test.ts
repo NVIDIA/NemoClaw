@@ -4,16 +4,25 @@
 import os from "node:os";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import {
+  buildDashboardRemoteBindEnv,
+  dashboardRemoteBindConnectStarted,
+} from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
-
-// Branch validation provisions and onboards a real remote sandbox first; this
-// test restarts only that sandbox's dashboard forward and proves the explicit
-// remote-bind opt-in is honored without adding another harness.
 
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-remote-bind";
+const TEST_TIMEOUT_MS = 50 * 60_000;
+
+function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return buildDashboardRemoteBindEnv(SANDBOX_NAME, extra);
+}
 
 function matchingForwardLine(output: string, sandboxName: string, dashboardPort: string): string {
   return (
@@ -47,60 +56,123 @@ function remoteHostCandidate(): string {
   return process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4 || os.hostname();
 }
 
-function stripAnsi(output: string): string {
-  return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function connectStartedDashboardForward(
-  result: { exitCode: number | null; stdout: string; stderr: string },
-  sandboxName: string,
-  dashboardPort: string,
-): boolean {
-  const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
-  return (
-    result.exitCode === 0 ||
-    (result.exitCode === null &&
-      output.includes(`Forwarding port ${dashboardPort}`) &&
-      output.includes(`sandbox ${sandboxName}`))
-  );
-}
-
 runDashboardRemoteBindTest(
   "clean-host remote bind keeps audit risks active and binds all interfaces",
   {
+    timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "validate provisioned dashboard prerequisites",
+        "validate dashboard prerequisites",
+        "install and onboard dashboard sandbox",
         "restart dashboard with remote binding",
         "verify all-interface dashboard forward",
         "audit exposed dashboard controls",
       ],
     },
   },
-  async ({ artifacts, host, progress, sandbox }) => {
-    const sandboxName = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-test";
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    const sandboxName = SANDBOX_NAME;
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
     const remoteHost = remoteHostCandidate();
+    const hosted = requireHostedInferenceConfig(secrets);
+    const redactionValues = [hosted.apiKey];
 
     await artifacts.target.declare({
       id: "dashboard-remote-bind",
-      boundary: "remote-dashboard-forward",
+      boundary: "source-install-onboard-and-remote-dashboard-forward",
       optIn: "NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1",
       sandboxName,
       dashboardPort,
       remoteHost,
+      contracts: [
+        "install.sh onboards a real OpenShell sandbox on the unified Ubuntu E2E runner",
+        "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 creates an all-interface dashboard forward",
+        "remote binding does not suppress the insecure dashboard audit findings",
+        "terminal cleanup removes the sandbox and gateway",
+      ],
     });
+
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "dashboard-remote-bind-docker-info",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    if (docker.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") {
+        throw new Error(`Docker is required for dashboard remote-bind E2E: ${resultText(docker)}`);
+      }
+      skip("Docker is required for dashboard remote-bind E2E");
+    }
+
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "dashboard-remote-bind-cleanup-gateway",
+      env: testEnv(),
+      redactionValues,
+      timeoutMs: 60_000,
+    });
+    cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
+      sandbox.cleanupSandbox(sandboxName, {
+        artifactName: "dashboard-remote-bind-cleanup-openshell-sandbox",
+        env: testEnv(),
+        redactionValues,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, sandboxName, {
+      artifactName: "dashboard-remote-bind-cleanup-nemoclaw-sandbox",
+      env: testEnv(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
+
+    await host
+      .command(process.execPath, [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
+        artifactName: "dashboard-remote-bind-preclean-nemoclaw-sandbox",
+        env: testEnv(),
+        timeoutMs: 120_000,
+      })
+      .catch(() => undefined);
+    await sandbox
+      .cleanupSandbox(sandboxName, {
+        artifactName: "dashboard-remote-bind-preclean-openshell-sandbox",
+        env: testEnv(),
+        timeoutMs: 60_000,
+      })
+      .catch(() => undefined);
+    await sandbox
+      .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+        artifactName: "dashboard-remote-bind-preclean-gateway",
+        env: testEnv(),
+        timeoutMs: 60_000,
+      })
+      .catch(() => undefined);
+
+    progress.phase("install and onboard dashboard sandbox");
+    const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+      artifactName: "dashboard-remote-bind-install",
+      cwd: REPO_ROOT,
+      env: testEnv({
+        ...hosted.env,
+        NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
+      }),
+      redactionValues,
+      timeoutMs: 25 * 60_000,
+    });
+    expect(install.exitCode, resultText(install)).toBe(0);
 
     const cliProbe = await host.command(
       "bash",
-      ["-lc", "command -v nemoclaw && command -v openshell"],
+      [
+        "-lc",
+        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
+      ],
       {
         artifactName: "dashboard-remote-bind-cli-probe",
-        env: buildAvailabilityProbeEnv(),
+        env: testEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(cliProbe.exitCode, `required CLI probe failed\n${cliProbe.stderr}`).toBe(0);
+    expect(cliProbe.exitCode, `required CLI probe failed\n${resultText(cliProbe)}`).toBe(0);
     expect(cliProbe.stdout).toContain("nemoclaw");
     expect(cliProbe.stdout).toContain("openshell");
 
@@ -113,14 +185,11 @@ runDashboardRemoteBindTest(
 
     const connect = await host.nemoclaw([sandboxName, "connect"], {
       artifactName: "dashboard-remote-bind-connect",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
-      },
+      env: testEnv(),
       timeoutMs: 120_000,
     });
     expect(
-      connectStartedDashboardForward(connect, sandboxName, dashboardPort),
+      dashboardRemoteBindConnectStarted(connect, sandboxName, dashboardPort),
       `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
     ).toBe(true);
 

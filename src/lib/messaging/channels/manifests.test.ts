@@ -24,7 +24,9 @@ describe("built-in channel manifests", () => {
       channelNames,
     );
     expect(registry.listAvailable({ agent: "hermes" }).map((manifest) => manifest.id)).toEqual(
-      channelNames.filter((channelName) => channelName !== "voiceclaw"),
+      channelNames.filter(
+        (channelName) => channelName !== "voiceclaw" && channelName !== "googlechat",
+      ),
     );
   });
 
@@ -106,6 +108,10 @@ describe("built-in channel manifests", () => {
       "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.ts",
       "src/lib/messaging/channels/voiceclaw/manifest.ts",
       "src/lib/messaging/channels/voiceclaw/hooks/status-health.ts",
+      "src/lib/messaging/channels/googlechat/manifest.ts",
+      "src/lib/messaging/channels/googlechat/hooks/index.ts",
+      "src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate.ts",
+      "src/lib/messaging/channels/googlechat/template-resolver.ts",
       "src/lib/messaging/hooks/common/config-prompt.ts",
       "src/lib/messaging/hooks/common/token-paste.ts",
     ];

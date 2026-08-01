@@ -928,6 +928,39 @@ describe("registry", () => {
     expect(sandboxes.length).toBe(0);
   });
 
+  it("rejects an invalid workload receipt while loading the registry", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            workload: { schemaVersion: 2, kind: "legacy-dockerfile" },
+          },
+        },
+      }),
+    );
+
+    expect(() => registry.getSandbox("alpha")).toThrow(/invalid workload receipt/);
+  });
+
+  it("does not serialize an invalid workload receipt", () => {
+    expect(() =>
+      registry.save({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            workload: { schemaVersion: 2, kind: "legacy-dockerfile" },
+          },
+        },
+      }),
+    ).toThrow(/invalid workload receipt/);
+    expect(fs.existsSync(regFile)).toBe(false);
+  });
+
   it("skips malformed sandbox entries while loading the registry", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(
@@ -1169,6 +1202,19 @@ describe("advisory file locking", () => {
     try {
       // First attempt should throw, but no stale lock dir left behind
       expect(() => registry.acquireLock()).toThrow("ENOSPC");
+      expect(fs.existsSync(lockDir)).toBe(false);
+    } finally {
+      fs.writeFileSync = origWrite;
+    }
+  });
+
+  it("acquireLock does not treat an owner file EEXIST as lock contention (#7694)", () => {
+    const origWrite = fs.writeFileSync;
+    fs.writeFileSync = () => {
+      throw Object.assign(new Error("owner write EEXIST"), { code: "EEXIST" });
+    };
+    try {
+      expect(() => registry.acquireLock()).toThrow("owner write EEXIST");
       expect(fs.existsSync(lockDir)).toBe(false);
     } finally {
       fs.writeFileSync = origWrite;

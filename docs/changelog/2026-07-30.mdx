@@ -1,0 +1,42 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.99
+
+NemoClaw v0.0.99 strengthens snapshot restore, sandbox recovery, shared-route upgrades, Hermes lockdown, and experimental runtime identity.
+It also hardens host readiness, inference health checks, managed images, documentation routing, and release end-to-end (E2E) evidence.
+
+- Snapshot restore can now create a Docker- or VM-driver replacement from a stopped source when the registry records its image and complete inference route.
+  Restored SQLite databases must accept a write transaction, and OpenClaw clone restore waits for bounded managed-supervisor readiness before it applies state.
+  Pairing verification now proves that the restored authenticated session belongs to the clone.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Legacy supervisor recovery now backs up manifest-declared state before it recreates a container and restores that state only after replacement identity and managed health pass.
+  Rebuild recovery manifests publish atomically, OpenClaw onboarding persists the credential-free `nemoclaw-start` command, and recreated managed OpenClaw configuration files regain their required writable mode.
+  Failed recovery preserves the temporary backup and reports host recovery guidance when rollback also fails.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Rebuild now migrates only missing canonical credential environment-variable names for legacy sandboxes that share a gateway route.
+  It revalidates the target and every registered peer immediately before deletion, while explicit credential, model, endpoint, API-family, and gateway conflicts continue to stop the rebuild.
+  For more information, refer to [Use Shared Gateway Routes](/user-guide/openclaw/inference/manage-inference/use-shared-gateway-routes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes lockdown now keeps `/sandbox/.hermes` at `3770 root:sandbox`, which lets the gateway create runtime state while sealed configuration files remain protected.
+  Gateway restart, recovery, and connect now classify exhausted or refused relaunches as `relaunch quarantined` and direct you to rebuild instead of retrying a deterministic refusal.
+  For more information, refer to [Troubleshooting](/user-guide/hermes/reference/troubleshooting) and the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).
+- The experimental direct OpenClaw blueprint runner now includes a data-only Microsoft Entra runtime identity reference.
+  The reviewed policy restricts refresh to `login.microsoftonline.com`, bearer delivery to `GET graph.microsoft.com/v1.0/me`, and delegated permission guidance to `User.Read` with `offline_access`.
+  NemoClaw does not package OAuth bootstrap, on-behalf-of exchange, or a production identity middleware service, and normal `nemoclaw onboard` does not enable this component.
+  For more information, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
+- `nemoclaw host probe` now classifies a symlinked DGX Station release marker as unqualified instead of inconclusive, matching the other rejected marker shapes.
+  Local inference adapter health checks now retain at most 64 KiB and fail closed on oversized declared or chunked loopback responses.
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness).
+- Managed Hermes images now pin Node.js 24.18.1, `uv==0.11.33`, `mcp==1.28.1`, and `tornado==6.5.7`.
+  Managed LangChain Deep Agents Code images retain the reviewed 0.1.34 integration contract while pinning `uv==0.11.33`, `mcp==1.28.1`, `Pillow==12.3.0`, and `pyasn1==0.6.4`.
+  Image validation also rejects retained `uv` build cache metadata, ignores build-only BuildKit telemetry during the Deep Agents Code probe, and clears each local platform pull before validating the next architecture.
+- Trusted CI now publishes agent-complete Open Container Initiative images by immutable digest, validates anonymous pulls and runtime contracts, and promotes aliases only after those checks pass.
+  Dormant managed-image selection and startup-profile contracts resolve exact all-agent cohorts and bounded agent-specific startup data without activating buildless onboarding or changing the current `Dockerfile` path.
+- Documentation now keeps provider-switch sections within the applicable OpenClaw and Hermes guide variants, corrects the Omni sub-agent model ID, and generalizes agent-selection guidance.
+  The runtime identity, two-DGX Station vLLM, and memory search guides are now separate focused pages.
+  The NVIDIA DORI installation pin is corrected from 0.10.0 to 0.9.0.
+  For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers) and [Set Up Task-Specific Sub-Agents](/user-guide/openclaw/configure-agents/set-up-sub-agent).
+- Release E2E now preserves command and agent first-turn latency separately, evaluates recurring anomalies within an exact 12-sample cohort, and routes retired rebuild selectors to focused replacement evidence.
+  The credential-generation window runs independently, managed startup recovery covers the persisted startup command, and the standing Brev Launchable waits for the staging image family before deployment.

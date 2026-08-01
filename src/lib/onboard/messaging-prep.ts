@@ -6,6 +6,10 @@ import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
+import {
+  bridgeProviderNamesForChannel,
+  collectMessagingBridgeTokenDefs,
+} from "./messaging-bridge-provider";
 
 export type NamedMessagingChannel = { name: string } & ChannelDef;
 
@@ -128,6 +132,23 @@ export function prepareCreateSandboxMessaging(
     });
   }
 
+  // Messaging bridge providers: any channel that mints its outbound token
+  // gateway-side (declared by a co-located provider-profile YAML) registers a
+  // refresh-minted provider so the gateway mints the token (secret stays
+  // gateway-side) and the L7 proxy injects it. The credential value is a sentinel
+  // (minted by refresh, configured post-create in onboard's
+  // upsertMessagingProviders wrapper). Today only Google Chat uses this.
+  messagingTokenDefs.push(
+    ...collectMessagingBridgeTokenDefs({
+      sandboxName: input.sandboxName,
+      getCredential: input.getCredential,
+      env: input.env,
+      normalizeCredentialValue: input.normalizeCredentialValue,
+      enabledChannels: input.enabledChannels,
+      disabledChannelNames,
+    }),
+  );
+
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
     input.sandboxName,
     messagingTokenDefs,
@@ -150,6 +171,24 @@ export function prepareCreateSandboxMessaging(
       reusableMessagingProviders.push(name);
       if (!reusableMessagingChannels.includes(channel)) {
         reusableMessagingChannels.push(channel);
+      }
+    }
+  }
+
+  // Bridge channels have no token def at all when their env-only secret is
+  // gone (fresh process), so the envKey loop above misses them. The gateway
+  // still holds the refresh material — reuse the provider by name instead.
+  if (input.enabledChannels != null) {
+    for (const channel of input.enabledChannels) {
+      if (disabledChannelNames.has(channel)) continue;
+      for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel)) {
+        if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
+        if (reusableMessagingProviders.includes(name)) continue;
+        if (!input.providerExistsInGateway(name)) continue;
+        reusableMessagingProviders.push(name);
+        if (!reusableMessagingChannels.includes(channel)) {
+          reusableMessagingChannels.push(channel);
+        }
       }
     }
   }

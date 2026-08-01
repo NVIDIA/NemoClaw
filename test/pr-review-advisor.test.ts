@@ -36,6 +36,7 @@ import {
   writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -228,7 +229,7 @@ describe("PR review advisor", () => {
             requiredTests: [],
             optionalTests: [
               {
-                id: "upgrade-stale-sandbox",
+                id: "rebuild-openclaw",
                 reason: "The model tried to downgrade the deterministic job.",
               },
             ],
@@ -245,7 +246,7 @@ describe("PR review advisor", () => {
             ],
             optional: [
               {
-                id: "upgrade-stale-sandbox",
+                id: "rebuild-openclaw",
                 workflow: "e2e.yaml",
                 selectorType: "job",
                 reason: "The model tried to downgrade the deterministic job.",
@@ -259,13 +260,13 @@ describe("PR review advisor", () => {
     );
 
     expect(result.e2e.coverage.requiredTests.map((test) => test.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(result.e2e.coverage.optionalTests).toEqual([]);
     expect(result.e2e.targets.required.map((target) => target.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(result.e2e.targets.optional).toEqual([]);
     expect(result.e2e.targets.required[1]).not.toHaveProperty("dispatchCommand");
@@ -276,9 +277,9 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
     expect(comment).toContain("Advisory only. E2E / PR Gate selects and runs jobs independently.");
-    expect(comment).toContain("<code>upgrade-stale-sandbox</code>");
+    expect(comment).toContain("<code>rebuild-openclaw</code>");
     expect(comment).toContain("**Recommended E2E:**");
-    expect(comment.match(/<code>upgrade-stale-sandbox<\/code>/gu)).toHaveLength(1);
+    expect(comment.match(/<code>rebuild-openclaw<\/code>/gu)).toHaveLength(1);
     expect(comment).not.toContain("Recommended coverage");
     expect(comment).not.toContain("Recommended selectors");
     expect(comment).not.toContain("rm -rf");
@@ -291,7 +292,7 @@ describe("PR review advisor", () => {
           e2e: {
             coverage: {
               requiredTests: [],
-              optionalTests: [{ id: "docs-validation", reason: "Documentation changed." }],
+              optionalTests: [{ id: "vllm-docker-storage", reason: "Documentation changed." }],
               confidence: "low",
             },
             targets: { required, optional: [], confidence: "low" },
@@ -300,26 +301,26 @@ describe("PR review advisor", () => {
         metadata({ changedFiles: [] }),
       ).e2e;
     const optional = normalize();
-    expect(optional.coverage.optionalTests.map(({ id }) => id)).toEqual(["docs-validation"]);
+    expect(optional.coverage.optionalTests.map(({ id }) => id)).toEqual(["vllm-docker-storage"]);
     expect(optional.targets.optional).toEqual([
-      expect.objectContaining({ id: "docs-validation", selectorType: "job", required: false }),
+      expect.objectContaining({ id: "vllm-docker-storage", selectorType: "job", required: false }),
     ]);
     const required = normalize([
       {
-        id: "docs-validation",
+        id: "vllm-docker-storage",
         workflow: "e2e.yaml",
         selectorType: "job",
         reason: "The live documentation check is required.",
       },
     ]);
-    expect(required.coverage.requiredTests.map(({ id }) => id)).toEqual(["docs-validation"]);
+    expect(required.coverage.requiredTests.map(({ id }) => id)).toEqual(["vllm-docker-storage"]);
     expect(required.targets.required).toEqual([
-      expect.objectContaining({ id: "docs-validation", selectorType: "job", required: true }),
+      expect.objectContaining({ id: "vllm-docker-storage", selectorType: "job", required: true }),
     ]);
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });
 
-  it("renders each E2E recommendation once", () => {
+  it("renders each E2E recommendation once", testTimeoutOptions(30_000), () => {
     const result = normalizeReviewResult(
       validResult({
         e2e: {

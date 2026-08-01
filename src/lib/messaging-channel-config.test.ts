@@ -38,6 +38,10 @@ describe("messaging channel config", () => {
       "VOICECLAW_TELNYX_TO_NUMBER",
       "VOICECLAW_PUBLIC_URL",
       "VOICECLAW_WEBHOOK_PORT",
+      "GOOGLECHAT_AUDIENCE_TYPE",
+      "GOOGLECHAT_AUDIENCE",
+      "GOOGLECHAT_APP_PRINCIPAL",
+      "GOOGLECHAT_ALLOWED_USERS",
     ]);
   });
 

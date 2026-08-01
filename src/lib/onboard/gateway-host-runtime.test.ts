@@ -4,7 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
-import { GATEWAY_MANAGEMENT_ENV_VAR } from "./gateway-management";
+import {
+  GATEWAY_MANAGEMENT_ENV_VAR,
+  GatewayManagementDeclarationError,
+} from "./gateway-management";
 import { evaluateGatewayAttachment } from "./gateway-ownership";
 import type { PortProbeResult } from "./preflight";
 
@@ -113,6 +116,14 @@ describe("gateway host runtime ownership", () => {
 
     expect(() => createGatewayHostRuntime(createDeps()).getGatewayOwner()).toThrow(
       /Invalid gateway management declaration/,
+    );
+  });
+
+  it("throws a recognized GatewayManagementDeclarationError so the CLI can present it cleanly (#7627)", () => {
+    declareExternalSupervision({ ...DECLARATION, version: 99 });
+
+    expect(() => createGatewayHostRuntime(createDeps()).getGatewayOwner()).toThrow(
+      GatewayManagementDeclarationError,
     );
   });
 

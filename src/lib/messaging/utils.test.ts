@@ -34,6 +34,7 @@ describe("listSupportedMessagingChannelIdsForAgent", () => {
       "whatsapp",
       "teams",
       "voiceclaw",
+      "googlechat",
     ]);
     expect(listSupportedMessagingChannelIdsForAgent(manifests, "hermes")).toEqual([
       "telegram",

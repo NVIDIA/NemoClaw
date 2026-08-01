@@ -21,6 +21,7 @@ Stop and request maintainer direction, or route an independent solution through 
 This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
+Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
 
 ## Architecture
 
@@ -66,8 +67,9 @@ Package-specific guides:
 | Run E2E support tests | `npx vitest run --project e2e-support` |
 | Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
-| Run repo-wide pre-commit and coverage checks | `npm run check` |
-| Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the current diff | `npm run check:diff` |
+| Validate a routine PR diff with `pre-commit`, `commit-msg`, and `pre-push` checks | `npm run validate:pr` |
+| Run the narrow custom repository checks used by lint and hooks | `npm run checks:repository` |
+| Run the broad repo-wide pre-commit and coverage baseline | `npm run check` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
 | Auto-format | `npm run format` |
@@ -97,7 +99,6 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
    aggregate checks for code-changing PRs and code-changing pushes to `main`
 7. **`e2e-live`** — opt-in live targets that mutate real external state
-8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:
 
@@ -200,6 +201,7 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
 - Follow the [NemoClaw Writing Guide](WRITING.md) for changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
   The guide defines the review scope and the conditions that make a language finding blocking.
+- Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.
@@ -275,12 +277,48 @@ If the command trace contains no reviewer-request write, report the event as an 
 ## Documentation
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
-- After completing code or documentation changes, run a documentation writer subagent before final handoff. Give it the changed files, change summary, and test or docs-build evidence. For documentation-only changes, ask it to verify the writing rules and documentation style.
+- Before completing a code change, determine whether it changes a user-visible surface.
+  This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
+- When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
+  Direct it to read `docs/AGENTS.md`, update the affected docs, and run validation.
+  Give it the changed sources and user-visible impact.
+- Reconcile the authoring subagent's documentation changes and validation evidence before completing the implementation.
+  Include the required documentation in the same change.
+- If the host cannot run subagents, read `docs/AGENTS.md` in the primary task, complete the documentation work, and run its documented validation.
+  Do not omit required documentation because parallel execution is unavailable.
+- Before final handoff, a documentation writer subagent must independently review every completed code or documentation change.
+  Give it the changed files, change summary, and test or docs-build evidence.
+  For a documentation-only change, require review of the writing rules and documentation style.
+- If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
+  If no capable host is available, record the review as `blocked` and do not complete final handoff.
 - After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
 - If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
-- For normal docs changes, include source pages under `docs/`.
-- Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
+
+### NVIDIA DORI Routing
+
+Select the documentation path from current host capabilities.
+Do not ask the user to classify themselves or store repository-scoped identity
+state during a normal documentation task.
+
+1. Check whether the current agent exposes `dori_handle` or `dori_route` and
+   `dori_collections`.
+   If the user explicitly asks not to use DORI, use the
+   [Writing Style Guide](docs/AGENTS.md#writing-style-guide) instead.
+2. When those tools are available, list the installed collections.
+   - If a collection source contains `tech-docs/skill-library`, use DORI for
+     task routing.
+   - If the collection is missing, inaccessible, or cannot be verified,
+     continue with the
+     [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
+3. When the DORI tools are unavailable, continue with the Writing Style Guide.
+   Do not inspect a shell-visible CLI, install software, or configure the host
+   during a normal documentation task.
+4. Use [NVIDIA DORI Setup](docs/DORI_SETUP.md) only when the user explicitly
+   asks to install or configure DORI.
+
+Capability detection does not approve installation or host configuration.
+DORI unavailability must not block documentation work.
 
 ## PR Requirements
 
@@ -291,8 +329,8 @@ If the command trace contains no reviewer-request write, report the event as an 
 - Contributor agents must stop before `gh pr create` if the PR body will not include the DCO declaration or any commit is missing GitHub verification; tell the contributor to fix the issue before opening a PR
 - If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
 - Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
-- Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run check:diff`
+- Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run validate:pr`
 - Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
-- Limit open PRs to fewer than 10
+- Apply the 10-open-PR limit from `.github/workflows/pr-limit.yaml` only to accounts that the workflow does not exempt

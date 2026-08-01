@@ -34,6 +34,7 @@ describe("built-in messaging channel metadata", () => {
       "whatsapp",
       "teams",
       "voiceclaw",
+      "googlechat",
     ]);
     expect(listAvailableMessagingChannelIds({ agent: "hermes" })).toEqual([
       "telegram",
@@ -69,7 +70,7 @@ describe("built-in messaging channel metadata", () => {
       "demo-slack-bridge",
       "demo-slack-app",
     ]);
-    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
+    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp", "googlechat"]);
   });
 
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
@@ -99,6 +100,10 @@ describe("built-in messaging channel metadata", () => {
       "VOICECLAW_TELNYX_TO_NUMBER",
       "VOICECLAW_PUBLIC_URL",
       "VOICECLAW_WEBHOOK_PORT",
+      "GOOGLECHAT_AUDIENCE_TYPE",
+      "GOOGLECHAT_AUDIENCE",
+      "GOOGLECHAT_APP_PRINCIPAL",
+      "GOOGLECHAT_ALLOWED_USERS",
     ]);
     expect(getMessagingConfigEnvAliases()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
@@ -139,6 +144,7 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "whatsapp",
       "msteams",
+      "googlechat",
     ]);
     expect(listOpenClawPluginExtensionIds()).toEqual([
       "discord",
@@ -147,6 +153,7 @@ describe("built-in messaging channel metadata", () => {
       "whatsapp",
       "msteams",
       "voice-call",
+      "googlechat",
     ]);
     expect(
       Object.fromEntries(
@@ -249,6 +256,11 @@ describe("built-in messaging channel metadata", () => {
         packageKey: "voiceclaw/openclawVoiceCallPlugin",
         committedIntegrity:
           "sha512-d/gYtMZSScp75fYi7DNVslh4X+P/VaVBmOQpGIt3Y7NShHHOrMhC3oUq4N0ie50Ee/IFFWJ1BkvYNJsr0z+Nzg==",
+      },
+      {
+        packageKey: "googlechat/openclawPluginPackage",
+        committedIntegrity:
+          "sha512-Dv0xOmcxAThEr6hoK+ioofHNu18hfbIceQrEHX3AHZPpOUiTJvToVpA5eX87NQINewwfSJf0gVhE6kSbSk2Aew==",
       },
     ]);
   });

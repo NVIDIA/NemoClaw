@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveDiscordTemplateReference } from "./discord/template-resolver";
+import { resolveGooglechatTemplateReference } from "./googlechat/template-resolver";
 import { resolveSlackTemplateReference } from "./slack/template-resolver";
 import { resolveTeamsTemplateReference } from "./teams/template-resolver";
 import { resolveTelegramTemplateReference } from "./telegram/template-resolver";
@@ -18,6 +19,7 @@ const BUILT_IN_TEMPLATE_REFERENCE_RESOLVERS: readonly BuiltInRenderTemplateResol
   resolveWhatsappTemplateReference,
   resolveTeamsTemplateReference,
   resolveVoiceClawTemplateReference,
+  resolveGooglechatTemplateReference,
 ];
 
 export function createBuiltInRenderTemplateResolver(): BuiltInRenderTemplateResolver {

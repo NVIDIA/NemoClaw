@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RuntimeCaseReference } from "./runtime-matrix.ts";
 import type { AssertionGroup, TargetDefinition, TargetEnvironment } from "./types.ts";
 
 export class TargetBuilder {
@@ -22,6 +23,11 @@ export class TargetBuilder {
 
   environment(environment: TargetEnvironment): TargetBuilder {
     this.definition.environment = environment;
+    return this;
+  }
+
+  runtimeCase(runtimeCase: RuntimeCaseReference): TargetBuilder {
+    this.definition.runtimeCase = runtimeCase;
     return this;
   }
 
@@ -68,6 +74,7 @@ export class TargetBuilder {
   build(): TargetDefinition {
     return {
       ...this.definition,
+      ...(this.definition.runtimeCase ? { runtimeCase: { ...this.definition.runtimeCase } } : {}),
       assertionGroups: [...this.definition.assertionGroups],
       suiteIds: [...(this.definition.suiteIds ?? [])],
       onboardingAssertionIds: [...(this.definition.onboardingAssertionIds ?? [])],

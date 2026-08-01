@@ -8,9 +8,11 @@ import {
   shouldUpdateMachine,
 } from "../state/onboard-step-mutation";
 import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
-import { advanceTo } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
-import { assertValidOnboardMachineTransition } from "./machine/transitions";
+import {
+  assertOnboardNotInterrupted,
+  assertValidOnboardMachineTransition,
+} from "./machine/transitions";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
 import type { ResumeConfigConflict } from "./resume-config";
 
@@ -68,7 +70,6 @@ export class OnboardRuntimeBoundary {
       recordStepCompleteWithStateResult: this.recordStepCompleteWithStateResult.bind(this),
       recordStepFailedWithStateResult: this.recordStepFailedWithStateResult.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
-      recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
     };
   }
@@ -135,6 +136,7 @@ export class OnboardRuntimeBoundary {
       return;
     }
     if (result.type === "complete") {
+      assertOnboardNotInterrupted(current.machine.state, "complete", current.failure);
       assertValidOnboardMachineTransition(current.machine.state, "complete");
       return;
     }
@@ -150,6 +152,7 @@ export class OnboardRuntimeBoundary {
       return;
     }
 
+    assertOnboardNotInterrupted(current.machine.state, result.next, current.failure);
     const sourceState =
       result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
     if (current.machine.state === result.next) {
@@ -272,49 +275,10 @@ export class OnboardRuntimeBoundary {
     return this.getRuntime().emitRepairEvent(type, options);
   }
 
-  /**
-   * Record the initial `init -> preflight` transition, honoring resume semantics.
-   * Fresh onboarding applies the transition; resumes invalidate stale replay
-   * results when the session has already advanced past `init`.
-   */
-  async recordInitialPreflightTransition(resume: boolean): Promise<void> {
-    const result = advanceTo("preflight", { metadata: { state: "init" } });
-    if (!resume) {
-      await this.recordStateResultWithStepCompatibility(result);
-      return;
-    }
-    const current = await this.getRuntime().session();
-    if (current.machine.state === result.next) {
-      await this.recordInvalidatedStateResult(result, {
-        reason: "already_at_target",
-        currentState: current.machine.state,
-        sourceState: "init",
-      });
-      return;
-    }
-    if (current.machine.state !== "init") {
-      await this.recordInvalidatedStateResult(result, {
-        reason: "source_state_mismatch",
-        currentState: current.machine.state,
-        sourceState: "init",
-      });
-      return;
-    }
-    await this.recordStateResultWithStepCompatibility(result);
-  }
-
-  async recordPostVerifyStarted(): Promise<Session> {
-    const runtime = this.getRuntime();
-    const current = await runtime.session();
-    if (current.machine.state === "finalizing") {
-      return runtime.transition("post_verify");
-    }
-    return current;
-  }
-
   async recordSessionComplete(updates: SessionUpdates = {}): Promise<Session> {
     const runtime = this.getRuntime();
     const current = await runtime.session();
+    assertOnboardNotInterrupted(current.machine.state, "complete", current.failure);
     if (current.machine.state === "finalizing") {
       await runtime.transition("post_verify");
       return runtime.complete(updates);

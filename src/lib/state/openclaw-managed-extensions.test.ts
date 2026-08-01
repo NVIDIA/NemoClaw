@@ -26,6 +26,7 @@ const EXPECTED_MANAGED_EXTENSIONS = [
   "whatsapp",
   "msteams",
   "voice-call",
+  "googlechat",
 ] as const;
 
 describe("OpenClaw managed extension policy", () => {

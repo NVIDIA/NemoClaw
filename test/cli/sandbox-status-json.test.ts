@@ -28,7 +28,9 @@ function createInferenceRouteStatusSetup(options: {
   writeSandboxRegistry(home, sandboxName, {
     model: "nvidia/nemotron",
     provider: "nvidia-prod",
-    openshellDriver: "docker",
+    // These cases test only inference.local classification. Use the VM driver
+    // so Docker post-reboot delivery recovery does not affect their assertions.
+    openshellDriver: "vm",
   });
   fs.writeFileSync(
     path.join(localBin, "docker"),
@@ -621,7 +623,21 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       model: "gpt-4o-mini",
       openshellDriver: "docker",
     });
-    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "ps" ]; then echo "openshell-alpha"; exit 0; fi',
+        'if [ "$1" = "exec" ]; then',
+        "  echo 'oom_kill=3'",
+        "  echo 'source=/sys/fs/cgroup/memory.oom_control'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -633,8 +649,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
-        "  echo 'oom_kill=3'",
-        "  echo 'source=/sys/fs/cgroup/memory.oom_control'",
+        "  echo 'OK 200'",
         "  exit 0",
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',

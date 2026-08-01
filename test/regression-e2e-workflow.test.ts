@@ -44,9 +44,6 @@ function preparedVitestJobs(workflow: RegressionWorkflow) {
 
 describe("Regression E2E workflow contract", () => {
   const workflow = readYaml<RegressionWorkflow>(".github/workflows/regression-e2e.yaml");
-  const branchValidation = readYaml<RegressionWorkflow>(
-    ".github/workflows/e2e-branch-validation.yaml",
-  );
 
   // source-shape-contract: compatibility -- Keeps the executable WhatsApp regression on the supported Vitest live runner
   it("runs WhatsApp compact QR through Vitest instead of the retired shell script", () => {
@@ -68,8 +65,7 @@ describe("Regression E2E workflow contract", () => {
     );
     expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
-    expect(branchValidationCallers).toHaveLength(1);
-    expect(workflow.permissions).toEqual(branchValidation.permissions);
+    expect(branchValidationCallers).toHaveLength(0);
     expect(workflow.permissions).toEqual({
       actions: "read",
       checks: "write",
@@ -120,19 +116,6 @@ describe("Regression E2E workflow contract", () => {
         jobName,
       ).not.toContain("Build CLI");
     }
-  });
-
-  // source-shape-contract: compatibility -- Keeps the gateway drift regression in its stateful integration execution lane
-  it("collects the gateway drift regression from its integration project (#6692)", () => {
-    const job = workflow.jobs?.["gateway-drift-preflight-e2e"];
-    const runStep = job?.steps?.find(
-      (step) => step.name === "Run gateway drift preflight E2E test",
-    );
-
-    expect(runStep?.run).toContain(
-      "vitest run --project integration test/gateway-drift-preflight.test.ts",
-    );
-    expect(runStep?.run).not.toContain("vitest run --project cli");
   });
 
   // source-shape-contract: security -- Keeps the custom-plugin EXDEV regression immutable and free of repository secrets

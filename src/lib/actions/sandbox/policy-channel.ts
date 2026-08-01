@@ -7,7 +7,11 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isNonInteractiveEnv } from "../../core/non-interactive";
-import { prompt as askPrompt, getCredential } from "../../credentials/store";
+import {
+  prompt as askPrompt,
+  getCredential,
+  normalizeCredentialValue,
+} from "../../credentials/store";
 import {
   type PolicyAddOptions,
   type PolicyBaselineOptions,
@@ -35,9 +39,16 @@ import {
   tryGetMessagingAgentId,
 } from "../../messaging";
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
+import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
+import {
+  bridgeProviderNamesForChannel,
+  bridgeSecretEnvsForChannel,
+  collectMessagingBridgeTokenDefs,
+} from "../../onboard/messaging-bridge-provider";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import type { MessagingTokenDef } from "../../onboard/messaging-prep";
 import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
 import {
@@ -123,6 +134,18 @@ type ChannelMutationOptions = {
   dryRun?: boolean;
   force?: boolean;
 };
+
+/**
+ * Internal composition dependencies for channel mutation.
+ *
+ * The Google Chat capability is intentionally absent from the public CLI
+ * composition. The live E2E entrypoint supplies it directly so environment
+ * variables and predictable sandbox names cannot enable non-interactive
+ * audience enrollment in ordinary production execution.
+ */
+export interface AddSandboxChannelDependencies {
+  readonly googlechatNonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
+}
 
 const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
 
@@ -573,18 +596,10 @@ async function checkChannelAddConflict(
       console.log("  --force: proceeding without a completed messaging channel conflict check.");
       return true;
     }
-    if (isNonInteractive()) {
-      console.error(
-        `  Aborting: rerun with --force to skip the messaging channel conflict check for ${channelName}.`,
-      );
-      process.exit(1);
-    }
-    const answer = (await askPrompt("  Continue without a completed conflict check? [y/N]: "))
-      .trim()
-      .toLowerCase();
-    if (answer === "y" || answer === "yes") return true;
-    console.log("  Aborting channel add.");
-    return false;
+    console.error(
+      `  Aborting: resolve the messaging channel conflict check for ${channelName} or re-run with --force.`,
+    );
+    process.exit(1);
   }
   if (conflicts.length === 0) return true;
 
@@ -593,30 +608,29 @@ async function checkChannelAddConflict(
       reason === "matching-token"
         ? `uses the same ${channel} credential`
         : `already has ${channel} enabled, but its credential hash is unavailable`;
-    console.log(
-      `  ${YW}⚠${R} Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges (e.g. Telegram getUpdates 409).`,
-    );
+    const message = `Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect.`;
+    if (!force) {
+      console.error(`  Conflict: ${message}`);
+    } else {
+      console.log(
+        `  ${YW}⚠${R} ${message} Continuing may break both bridges (e.g. Telegram getUpdates 409).`,
+      );
+    }
   }
 
   if (force) {
     console.log(`  --force: proceeding despite the messaging channel conflict above.`);
     return true;
   }
-  if (isNonInteractive()) {
-    console.error(
-      `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
-    );
-    process.exit(1);
-  }
-  const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
-  if (answer === "y" || answer === "yes") return true;
-  console.log("  Aborting channel add.");
-  return false;
+  console.error(
+    `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+  );
+  process.exit(1);
 }
 
 // Channel-owned pre-enable checks run after `checkChannelAddConflict` so the
-// shared credential axis is reported first. Registry read failures stay
-// fail-soft: they warn and proceed instead of crashing the add path.
+// shared credential axis is reported first. Hook failure policy controls
+// whether registry read failures or detected conflicts require --force.
 async function checkMessagingPreEnableHooks(
   sandboxName: string,
   channelName: string,
@@ -625,12 +639,20 @@ async function checkMessagingPreEnableHooks(
 ): Promise<boolean> {
   const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
+  const abortOnFailure = requests.some((request) => (request.onFailure ?? "abort") === "abort");
 
   let registryEntries: ReturnType<typeof registry.listSandboxes>["sandboxes"];
   try {
     registryEntries = registry.listSandboxes().sandboxes;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (abortOnFailure && !force) {
+      console.error(`  Could not verify messaging pre-enable checks: ${message}`);
+      console.error(
+        `  Aborting: resolve the messaging pre-enable check for ${channelName} or re-run with --force.`,
+      );
+      process.exit(1);
+    }
     console.log(`  ${YW}⚠${R} Could not verify messaging pre-enable checks: ${message}`);
     return true;
   }
@@ -667,8 +689,19 @@ async function checkMessagingPreEnableHooks(
   } catch (err) {
     if (!isMessagingHookConflictError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
+    const failedHookAborts = err.onFailure === "abort";
     for (const line of message.split("\n").filter((line) => line.trim().length > 0)) {
-      console.log(`  ${YW}⚠${R} ${line}`);
+      if (failedHookAborts && !force) {
+        console.error(`  Conflict: ${line}`);
+      } else {
+        console.log(`  ${YW}⚠${R} ${line}`);
+      }
+    }
+    if (failedHookAborts && !force) {
+      console.error(
+        `  Aborting: resolve the messaging pre-enable conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+      );
+      process.exit(1);
     }
     if (force) {
       console.log("  --force: proceeding despite the messaging pre-enable conflict above.");
@@ -695,27 +728,75 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
-): Promise<void> {
-  const tokenDefs = Object.entries(acquired).map(([envKey, token]) => ({
+): Promise<boolean> {
+  const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
   }));
-  if (tokenDefs.length > 0) {
-    const gatewayName = getSandboxTargetGatewayName(sandboxName);
-    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
-    if (!recovery.recovered) {
-      console.error(
-        `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
-      );
-      console.error("  in env for this run only — re-run after starting the gateway, or run");
-      console.error(`  'openshell gateway start --name ${gatewayName}' manually.`);
-      process.exit(1);
-    }
-    // upsertMessagingProviders handles create-or-update and process.exits on
-    // failure, so reaching the next line means every entry is registered.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs);
+  // Bridge channels declare no manifest credentials, so the loop above yields
+  // nothing for them. Their provider must be created HERE (same seam onboarding
+  // uses): the pasted secret is env-only and gone once this process exits, so a
+  // deferred rebuild cannot configure it.
+  const bridgeDefs = collectMessagingBridgeTokenDefs({
+    sandboxName,
+    enabledChannels: [channelName],
+    disabledChannelNames: new Set<string>(),
+    getCredential,
+    env: process.env,
+    // Env-map values (string | undefined) fit the store helper's input union.
+    normalizeCredentialValue: (value) => normalizeCredentialValue(value as string | undefined),
+  });
+  if (
+    bridgeDefs.length === 0 &&
+    bridgeProviderNamesForChannel(sandboxName, channelName).length > 0
+  ) {
+    const secretEnvs = bridgeSecretEnvsForChannel(channelName);
+    console.error(
+      `  ✗ ${channelName} mints its outbound token gateway-side and needs ${secretEnvs.join(", ")} to configure it.`,
+    );
+    console.error(
+      "  Paste the secret at the enrollment prompt or export the env var, then re-run.",
+    );
+    process.exit(1);
   }
+  tokenDefs.push(...bridgeDefs);
+  if (tokenDefs.length === 0) return false;
+
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  if (!recovery.recovered) {
+    console.error(
+      `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
+    );
+    console.error("  in env for this run only — re-run after starting the gateway, or run");
+    console.error(`  'openshell gateway start --name ${gatewayName}' manually.`);
+    process.exit(1);
+  }
+  try {
+    // bestEffort: failures throw (instead of process.exit inside the helper)
+    // so a partial add can be torn down below before exiting.
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs, { bestEffort: true });
+  } catch (err) {
+    console.error(
+      `  ✗ Failed to register '${channelName}' providers with the gateway: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    const teardown = await applyChannelRemoveToGatewayAndRegistry(
+      sandboxName,
+      channelName,
+      Object.keys(acquired),
+      { bestEffort: true },
+    );
+    if (!teardown.ok) {
+      console.error(
+        `  ${YW}⚠${R} Partial provider state may remain; run '${CLI_NAME} ${sandboxName} channels remove ${channelName}' once the gateway is reachable.`,
+      );
+    }
+    process.exit(1);
+  }
+  return true;
 }
 
 // Remove a channel's bridge providers from the gateway and drop it from the
@@ -730,7 +811,18 @@ async function applyChannelRemoveToGatewayAndRegistry(
   const residual: string[] = [];
   let gatewayReachable = true;
 
-  if (channelTokenKeys.length > 0) {
+  // Providers to tear down: the per-credential providers PLUS the gateway-minted
+  // bridge provider for a bridge-backed channel (which has no channelTokenKeys, so
+  // it would otherwise be left dangling — still minting/rotating a token for a
+  // removed channel). Discovery is generic (bridge module), by convention.
+  const providerNames = [
+    ...new Set([
+      ...channelTokenKeys.map((envKey) => bridgeProviderName(sandboxName, channelName, envKey)),
+      ...bridgeProviderNamesForChannel(sandboxName, channelName),
+    ]),
+  ];
+
+  if (providerNames.length > 0) {
     const gatewayName = getSandboxTargetGatewayName(sandboxName);
     const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
@@ -756,8 +848,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // configured for a sandbox that is no longer alive.
   const detachFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
-    for (const envKey of channelTokenKeys) {
-      const name = bridgeProviderName(sandboxName, channelName, envKey);
+    for (const name of providerNames) {
       const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -793,8 +884,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
   const deleteFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
-    for (const envKey of channelTokenKeys) {
-      const name = bridgeProviderName(sandboxName, channelName, envKey);
+    for (const name of providerNames) {
       if (!bestEffort && detachFailedSet.has(name)) continue;
       const result = runOpenshell(["provider", "delete", name], {
         ignoreError: true,
@@ -896,10 +986,18 @@ async function planSandboxChannelAdd(
   sandboxName: string,
   channelId: string,
   agent: AgentDefinition,
+  dependencies: AddSandboxChannelDependencies,
 ): Promise<SandboxMessagingPlan> {
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
-    createBuiltInMessagingHookRegistry(),
+    createBuiltInMessagingHookRegistry({
+      googlechat: {
+        tunnelAudienceGate: {
+          nonInteractiveAudienceCapability: dependencies.googlechatNonInteractiveAudienceCapability,
+        },
+        tunnelRuntime: policyChannelDependencies.googlechatTunnelRuntime(sandboxName),
+      },
+    }),
     createBuiltInRenderTemplateResolver(),
   );
   const availableChannels = availableManifestChannelsForAgent(agent);
@@ -1104,15 +1202,17 @@ function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession>
 export async function addSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
+  dependencies: AddSandboxChannelDependencies = {},
 ): Promise<void> {
   return withSandboxMutationLock(sandboxName, () =>
-    addSandboxChannelUnlocked(sandboxName, options),
+    addSandboxChannelUnlocked(sandboxName, options, dependencies),
   );
 }
 
 async function addSandboxChannelUnlocked(
   sandboxName: string,
   options: ChannelMutationOptions,
+  dependencies: AddSandboxChannelDependencies,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const force = Boolean(options.force);
@@ -1154,7 +1254,7 @@ async function addSandboxChannelUnlocked(
     return;
   }
 
-  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent);
+  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened
@@ -1223,8 +1323,14 @@ async function addSandboxChannelUnlocked(
   // discard the change. Pre-fix this was safe because saveCredential()
   // wrote credentials.json; with env-only persistence, exiting before
   // the rebuild used to drop the queued token.
-  await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
-  console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
+  const registeredBridge = await applyChannelAddToGatewayAndRegistry(
+    sandboxName,
+    canonical,
+    acquired,
+  );
+  if (registeredBridge) {
+    console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
+  }
 
   if (
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
@@ -1274,6 +1380,13 @@ async function rollbackChannelAdd(
     console.error(
       `  ${YW}⚠${R} Rollback could not fully clean ${residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
     );
+    // The prior bridge secret is env-only and gone — the failed re-add already
+    // overwrote the gateway's refresh material, so a restore is impossible.
+    if (bridgeProviderNamesForChannel(sandboxName, canonical).length > 0) {
+      console.error(
+        `  ${YW}⚠${R} The gateway bridge provider keeps the newly configured key material; re-run '${CLI_NAME} ${sandboxName} channels add ${canonical}' to converge.`,
+      );
+    }
     if (Object.keys(snapshot.priorCreds).length > 0) {
       try {
         const priorTokenDefs = Object.entries(snapshot.priorCreds).map(([envKey, token]) => ({
@@ -1520,7 +1633,6 @@ async function removeSandboxChannelUnlocked(
     return;
   }
 
-  clearChannelTokens(channel);
   const tokenKeys = getChannelTokenKeys(channel);
   const isQrChannel = channelUsesInSandboxQrPairing(channel);
 
@@ -1540,6 +1652,24 @@ async function removeSandboxChannelUnlocked(
     (registryEntry?.policies || []).includes(canonical) ||
     sessionPolicyPresets.includes(canonical) ||
     policies.getAppliedPresets(sandboxName).includes(canonical);
+
+  // The public Google Chat endpoint must stop before credentials, providers,
+  // policy, or durable plan state change. Otherwise a partial teardown leaves
+  // a live webhook with no retryable channel record. Attempt this even when
+  // registry residue is absent so `channels remove` can recover an orphaned
+  // endpoint from an earlier interrupted cleanup.
+  if (canonical === "googlechat") {
+    try {
+      policyChannelDependencies.stopGooglechatWebhookTunnel(sandboxName);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  ${YW}⚠${R} Could not stop the Google Chat webhook tunnel: ${message}`);
+      console.error(
+        `  No channel configuration or credentials were changed; fix the tunnel teardown and re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      );
+      process.exit(1);
+    }
+  }
 
   // QR-paired channels store auth blobs inside the sandbox that survive a
   // rebuild via the state_dirs backup. Tear those down FIRST so a cleanup
@@ -1563,6 +1693,7 @@ async function removeSandboxChannelUnlocked(
     process.exit(1);
   }
 
+  clearChannelTokens(channel);
   await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
   if (tokenKeys.length > 0) {
     console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);

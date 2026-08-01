@@ -181,6 +181,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       {
         "@openclaw/discord@2026.7.1":
           "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
+        "@openclaw/googlechat@2026.7.1":
+          "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.7.1.tgz",
         "@openclaw/msteams@2026.7.1":
           "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
         "@openclaw/slack@2026.7.1": OPENCLAW_SLACK_2026_7_1_TARBALL,

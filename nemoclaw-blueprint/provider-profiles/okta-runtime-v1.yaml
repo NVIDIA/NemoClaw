@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Data-only reference for the experimental runtime identity contract.
+# The direct runner validates this complete credential-delivery shape before
+# import, including the Okta-controlled destination suffix, exact executable
+# allowlist, and enforced endpoint rule. OpenShell owns refresh-token custody,
+# access-token rotation, sandbox placeholders, and post-policy injection.
+# Copy this file, replace the example authorization-server URL and API host,
+# and review the endpoint rules before use.
+id: okta-runtime-v1
+display_name: Okta Runtime Credentials v1
+description: Gateway-managed Okta access-token refresh for an attached sandbox
+category: agent
+credentials:
+  - name: OKTA_ACCESS_TOKEN
+    description: Short-lived Okta API access token
+    env_vars:
+      - OKTA_ACCESS_TOKEN
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://example.okta.com/oauth2/default/v1/token
+      refresh_before_seconds: 300
+      max_lifetime_seconds: 3600
+      material:
+        - name: client_id
+          required: true
+        - name: refresh_token
+          required: true
+          secret: true
+        - name: client_secret
+          required: false
+          secret: true
+endpoints:
+  - host: api.example.okta.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

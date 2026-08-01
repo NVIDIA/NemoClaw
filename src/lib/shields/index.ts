@@ -1471,8 +1471,11 @@ try:
             os.close(fd)
 
     if action == "lock":
-        os.fchown(config_fd, 0, 0)
-        os.fchmod(config_fd, 0o755)
+        # Root-owned in the sandbox group with set-id/sticky: Hermes keeps
+        # writing its top-level runtime state while the sticky bit stops the
+        # sandbox identity from unlinking the sealed root-owned files (#7865).
+        os.fchown(config_fd, 0, sandbox_gid)
+        os.fchmod(config_fd, 0o3770)
         os.fchown(parent_fd, 0, sandbox_gid)
         os.fchmod(parent_fd, 0o1775)
     else:
@@ -2590,6 +2593,13 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
+  if (state._isCorrupt) {
+    console.error("  Shields state is corrupt; refusing to unlock.");
+    console.error(
+      `  Recovery: inspect the reported state error and restore trusted state for ${sandboxName} before retrying.`,
+    );
+    return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
+  }
   if (state.shieldsDown) {
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
@@ -2896,6 +2906,16 @@ function shieldsUpWithoutHostLock(
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
+  if (state._isCorrupt) {
+    console.error("  Shields state is corrupt; refusing to raise shields.");
+    console.error(
+      `  Recovery: inspect the reported state error and restore trusted state for ${sandboxName} before retrying.`,
+    );
+    return failShieldsCommand(
+      `Cannot raise shields while persisted shields state is corrupt for ${sandboxName}`,
+      opts.throwOnError,
+    );
+  }
   // shieldsDown === false means explicitly locked by a previous shields-up.
   // undefined (no state file) means fresh sandbox — mutable default, allow shields-up.
   if (state.shieldsDown === false) {
@@ -3199,9 +3219,7 @@ function shieldsStatusWithoutHostLock(
     console.error(
       `  ${stateFilePath(sandboxName)} could not be parsed: ${state._corruptError ?? "unknown error"}`,
     );
-    console.error(
-      `  Recovery warning: run \`nemoclaw ${sandboxName} shields up\` to restore a known-good state.`,
-    );
+    console.error(`  Recovery warning: restore trusted state for ${sandboxName} before retrying.`);
     throw new DeferredShieldsExit("Shields state is corrupt", 1);
   }
 

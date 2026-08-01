@@ -25,6 +25,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
       "whatsapp",
       "teams",
       "voiceclaw",
+      "googlechat",
     ]);
   });
 
@@ -209,6 +210,7 @@ describe("sandbox-channels listChannels", () => {
       "whatsapp",
       "teams",
       "voiceclaw",
+      "googlechat",
     ]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");

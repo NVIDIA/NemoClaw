@@ -366,6 +366,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         "whatsapp",
         "teams",
         "voiceclaw",
+        "googlechat",
       ],
       credentialAvailability: expect.any(Object),
     });
