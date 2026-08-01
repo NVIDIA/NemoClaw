@@ -511,7 +511,10 @@ describe("Podman bootstrap stopped replacement", () => {
       watcherLease: watcher.lease,
       plan: {
         ...plan,
-        runtimeArgs: ["--mount", "type=volume,source=workspace,dest=/sandbox=cache"],
+        runtimeArgs: [
+          "--mount",
+          `type=volume,source=workspace,dest=${PODMAN_BOOTSTRAP_STATE_DIRECTORY}=cache`,
+        ],
       },
     });
 
