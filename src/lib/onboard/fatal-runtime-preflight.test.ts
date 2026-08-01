@@ -96,25 +96,26 @@ describe("rejectUnsupportedContainerRuntime (#7320)", () => {
             };
           }) as never,
           run: (_command, args) => {
-            if (args[0] === "--version") {
-              return { status: 0, stdout: "podman version 5.6.2", stderr: "" };
+            switch (args[0]) {
+              case "--version":
+                return { status: 0, stdout: "podman version 5.6.2", stderr: "" };
+              case "unshare":
+                return { status: 0, stdout: "0 1000 1\n1 100000 65536\n", stderr: "" };
+              default:
+                return {
+                  status: 0,
+                  stdout: JSON.stringify({
+                    host: {
+                      arch: "amd64",
+                      os: "linux",
+                      cgroupVersion: "v2",
+                      networkBackend: "netavark",
+                      security: { rootless: true },
+                    },
+                  }),
+                  stderr: "",
+                };
             }
-            if (args[0] === "unshare") {
-              return { status: 0, stdout: "0 1000 1\n1 100000 65536\n", stderr: "" };
-            }
-            return {
-              status: 0,
-              stdout: JSON.stringify({
-                host: {
-                  arch: "amd64",
-                  os: "linux",
-                  cgroupVersion: "v2",
-                  networkBackend: "netavark",
-                  security: { rootless: true },
-                },
-              }),
-              stderr: "",
-            };
           },
         },
       },

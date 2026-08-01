@@ -94,31 +94,33 @@ interface GatewayProcessReceipt {
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required for the native Podman E2E lane.`);
-  return value;
+  expect(value, `${name} is required for the native Podman E2E lane.`).toBeTruthy();
+  return value ?? "";
 }
 
 function selectedAgent(): Agent {
   const value = requiredEnvironment("E2E_PODMAN_AGENT");
-  if (!AGENTS.includes(value as Agent)) {
-    throw new Error(`E2E_PODMAN_AGENT must be one of ${AGENTS.join(", ")}; got '${value}'.`);
-  }
+  expect(AGENTS, `E2E_PODMAN_AGENT must be one of ${AGENTS.join(", ")}; got '${value}'.`).toContain(
+    value,
+  );
   return value as Agent;
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
+  expect(
+    value !== null && typeof value === "object" && !Array.isArray(value),
+    `${label} must be an object.`,
+  ).toBe(true);
   return value as Record<string, unknown>;
 }
 
 function requireStringField(record: Record<string, unknown>, key: string, label: string): string {
   const value = record[key];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`${label} must be a non-empty string.`);
-  }
-  return value;
+  expect(
+    typeof value === "string" && value.length > 0,
+    `${label} must be a non-empty string.`,
+  ).toBe(true);
+  return value as string;
 }
 
 function requireStringArrayField(
@@ -127,20 +129,18 @@ function requireStringArrayField(
   label: string,
 ): string[] {
   const value = record[key];
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry): entry is string => typeof entry === "string")
-  ) {
-    throw new Error(`${label} must be a string array.`);
-  }
-  return value;
+  expect(
+    Array.isArray(value) && value.every((entry): entry is string => typeof entry === "string"),
+    `${label} must be a string array.`,
+  ).toBe(true);
+  return value as string[];
 }
 
 function readCatalogEvidence(file: string, agent: Agent): ManagedImageEvidence {
   const parsed = requireRecord(JSON.parse(fs.readFileSync(file, "utf8")), "catalog evidence");
   const entries = parsed.images;
-  if (!Array.isArray(entries)) throw new Error("catalog evidence images must be an array.");
-  const entry = entries.find(
+  expect(Array.isArray(entries), "catalog evidence images must be an array.").toBe(true);
+  const entry = (entries as unknown[]).find(
     (candidate) => requireRecord(candidate, "catalog image").agent === agent,
   );
   const image = requireRecord(entry, `${agent} catalog image`);
@@ -154,9 +154,10 @@ function readCatalogEvidence(file: string, agent: Agent): ManagedImageEvidence {
     sourceCohort: image.sourceCohort,
   };
   for (const [key, value] of Object.entries(evidence)) {
-    if (typeof value !== "string" || value.length === 0) {
-      throw new Error(`${agent} catalog evidence field '${key}' must be a non-empty string.`);
-    }
+    expect(
+      typeof value === "string" && value.length > 0,
+      `${agent} catalog evidence field '${key}' must be a non-empty string.`,
+    ).toBe(true);
   }
   expect(evidence.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
   expect(evidence.reference).toBe(`${evidence.image}@${evidence.digest}`);
@@ -218,8 +219,9 @@ function freshPodmanEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 function gatewayName(entry: Record<string, unknown>): string {
   const candidate = entry.gatewayName;
-  if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-  return process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw";
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate.trim()
+    : process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw";
 }
 
 function managedRuntimeBinding(stateDir: string): Record<string, unknown> {
@@ -252,9 +254,9 @@ function assertHealthyPodmanDoctor(stdout: string, sandboxName: string): void {
   expect(report.failed).toBe(0);
   expect(report.status === "ok" || report.status === "warn").toBe(true);
   const checks = report.checks;
-  if (!Array.isArray(checks)) throw new Error("doctor report checks must be an array.");
+  expect(Array.isArray(checks), "doctor report checks must be an array.").toBe(true);
   for (const label of ["Podman service", "OpenShell status", "Live sandbox"]) {
-    const check = checks.find(
+    const check = (checks as unknown[]).find(
       (candidate) => requireRecord(candidate, "doctor check").label === label,
     );
     expect(requireRecord(check, `doctor check '${label}'`).status).toBe("ok");
@@ -268,31 +270,29 @@ function managedStartupCommand(
 ): void {
   const env = requireStringArrayField(config, "Env", "Podman container Config.Env");
   const commandEntries = env.filter((entry) => entry.startsWith("OPENSHELL_SANDBOX_COMMAND="));
-  if (commandEntries.length !== 1) {
-    throw new Error("managed Podman container must persist one sandbox startup command");
-  }
+  expect(
+    commandEntries,
+    "managed Podman container must persist one sandbox startup command",
+  ).toHaveLength(1);
   const command = commandEntries[0]?.slice("OPENSHELL_SANDBOX_COMMAND=".length) ?? "";
   const exactImageOwnedSuffix =
     `/usr/local/bin/nemoclaw-managed-startup-hold --agent ${agent} ` +
     `--profile-fingerprint ${profileFingerprint}`;
-  if (
-    !command.startsWith("env ") ||
-    !command.endsWith(exactImageOwnedSuffix) ||
-    /(?:^|\s)sleep\s+infinity(?:\s|$)/u.test(command)
-  ) {
-    throw new Error(
-      "managed Podman container did not persist the exact image-owned startup command",
-    );
-  }
+  expect(
+    command.startsWith("env ") &&
+      command.endsWith(exactImageOwnedSuffix) &&
+      !/(?:^|\s)sleep\s+infinity(?:\s|$)/u.test(command),
+    "managed Podman container did not persist the exact image-owned startup command",
+  ).toBe(true);
 }
 
 function normalizedPodmanUlimits(
   hostConfig: Record<string, unknown>,
 ): Map<string, { hard: number; soft: number }> {
   const raw = hostConfig.Ulimits;
-  if (!Array.isArray(raw)) throw new Error("Podman HostConfig.Ulimits must be an array.");
+  expect(Array.isArray(raw), "Podman HostConfig.Ulimits must be an array.").toBe(true);
   const limits = new Map<string, { hard: number; soft: number }>();
-  for (const [index, entry] of raw.entries()) {
+  for (const [index, entry] of (raw as unknown[]).entries()) {
     const limit = requireRecord(entry, `Podman HostConfig.Ulimits[${String(index)}]`);
     const name = requireStringField(
       limit,
@@ -303,26 +303,34 @@ function normalizedPodmanUlimits(
       .toLowerCase();
     const soft = limit.Soft;
     const hard = limit.Hard;
-    if (!Number.isSafeInteger(soft) || !Number.isSafeInteger(hard) || limits.has(name)) {
-      throw new Error(`Podman HostConfig.Ulimits contains invalid or repeated '${name}'.`);
-    }
+    expect(
+      Number.isSafeInteger(soft) && Number.isSafeInteger(hard) && !limits.has(name),
+      `Podman HostConfig.Ulimits contains invalid or repeated '${name}'.`,
+    ).toBe(true);
     limits.set(name, { hard: hard as number, soft: soft as number });
   }
   return limits;
 }
 
+const CONTAINER_ULIMIT_ASSERTIONS: Readonly<
+  Record<Agent, (hostConfig: Record<string, unknown>) => void>
+> = {
+  openclaw: () => undefined,
+  hermes: () => undefined,
+  "langchain-deepagents-code": (hostConfig) => {
+    const limits = normalizedPodmanUlimits(hostConfig);
+    expect(limits.get("nproc")).toEqual({ hard: 512, soft: 512 });
+    expect(limits.get("nofile")).toEqual({ hard: 65_536, soft: 65_536 });
+  },
+};
+
 function assertDcodeContainerUlimits(agent: Agent, hostConfig: Record<string, unknown>): void {
-  if (agent !== "langchain-deepagents-code") return;
-  const limits = normalizedPodmanUlimits(hostConfig);
-  expect(limits.get("nproc")).toEqual({ hard: 512, soft: 512 });
-  expect(limits.get("nofile")).toEqual({ hard: 65_536, soft: 65_536 });
+  CONTAINER_ULIMIT_ASSERTIONS[agent](hostConfig);
 }
 
 function readGatewayProcessReceipt(pidFile: string): GatewayProcessReceipt {
   const firstPidText = fs.readFileSync(pidFile, "utf8").trim();
-  if (!/^[1-9][0-9]*$/u.test(firstPidText)) {
-    throw new Error("managed Podman gateway PID receipt is malformed");
-  }
+  expect(firstPidText, "managed Podman gateway PID receipt is malformed").toMatch(/^[1-9][0-9]*$/u);
   const pid = Number(firstPidText);
   const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
   const commandEnd = stat.lastIndexOf(")");
@@ -334,21 +342,23 @@ function readGatewayProcessReceipt(pidFile: string): GatewayProcessReceipt {
           .split(/\s+/u)
       : [];
   const startTicks = fields[19];
-  if (!startTicks || !/^[1-9][0-9]*$/u.test(startTicks)) {
-    throw new Error("managed Podman gateway process start identity is unavailable");
-  }
+  expect(startTicks, "managed Podman gateway process start identity is unavailable").toMatch(
+    /^[1-9][0-9]*$/u,
+  );
   const argv = fs
     .readFileSync(`/proc/${String(pid)}/cmdline`)
     .toString("utf8")
     .split("\0")
     .filter(Boolean);
-  if (argv.length === 0 || !argv.join(" ").includes("openshell-gateway")) {
-    throw new Error("managed Podman gateway PID does not identify the OpenShell gateway");
-  }
-  if (fs.readFileSync(pidFile, "utf8").trim() !== firstPidText) {
-    throw new Error("managed Podman gateway PID receipt changed during inspection");
-  }
-  return { pid, startTicks };
+  expect(
+    argv.length > 0 && argv.join(" ").includes("openshell-gateway"),
+    "managed Podman gateway PID does not identify the OpenShell gateway",
+  ).toBe(true);
+  expect(
+    fs.readFileSync(pidFile, "utf8").trim(),
+    "managed Podman gateway PID receipt changed during inspection",
+  ).toBe(firstPidText);
+  return { pid, startTicks: startTicks! };
 }
 
 async function findPodmanContainerIds(
@@ -515,15 +525,12 @@ async function inspectPodmanManagedContainer(
   const imageDigest = image.Digest;
   const imageRepoDigests = image.RepoDigests;
   const inspectedImageId = requireStringField(image, "Id", "Podman managed image Id");
-  if (typeof imageDigest !== "string") {
-    throw new Error("Podman managed image Digest must be a string.");
-  }
-  if (
-    !Array.isArray(imageRepoDigests) ||
-    !imageRepoDigests.every((value): value is string => typeof value === "string")
-  ) {
-    throw new Error("Podman managed image RepoDigests must be a string array.");
-  }
+  expect(typeof imageDigest, "Podman managed image Digest must be a string.").toBe("string");
+  expect(
+    Array.isArray(imageRepoDigests) &&
+      imageRepoDigests.every((value): value is string => typeof value === "string"),
+    "Podman managed image RepoDigests must be a string array.",
+  ).toBe(true);
   expect(imageId).toBe(inspectedImageId);
   expect(imageDigest).toBe(options.catalog.digest);
   expect(imageRepoDigests).toContain(options.catalog.reference);
@@ -543,8 +550,8 @@ async function inspectPodmanManagedContainer(
     containerName,
     imageId,
     imageName,
-    imageDigest,
-    imageRepoDigests,
+    imageDigest: imageDigest as string,
+    imageRepoDigests: imageRepoDigests as string[],
     startupCommand,
     startupEntrypoint,
   };
@@ -587,28 +594,40 @@ async function inspectManagedStartupCompletion(
   return evidence as ManagedStartupCompletionEvidence;
 }
 
+const LIVE_ULIMIT_ASSERTIONS: Readonly<
+  Record<
+    Agent,
+    (sandbox: SandboxClient, sandboxName: string, artifactName: string) => Promise<void>
+  >
+> = {
+  openclaw: async () => undefined,
+  hermes: async () => undefined,
+  "langchain-deepagents-code": async (sandbox, sandboxName, artifactName) => {
+    const result = await sandbox.exec(
+      sandboxName,
+      [
+        "bash",
+        "-lc",
+        'printf "%s:%s:%s:%s\\n" "$(ulimit -Su)" "$(ulimit -Hu)" "$(ulimit -Sn)" "$(ulimit -Hn)"',
+      ],
+      {
+        artifactName,
+        env: freshPodmanEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    assertExitZero(result, "DCode live nproc/nofile contract");
+    expect(result.stdout.trim()).toBe("512:512:65536:65536");
+  },
+};
+
 async function assertDcodeLiveUlimits(
   sandbox: SandboxClient,
   agent: Agent,
   sandboxName: string,
   artifactName: string,
 ): Promise<void> {
-  if (agent !== "langchain-deepagents-code") return;
-  const result = await sandbox.exec(
-    sandboxName,
-    [
-      "bash",
-      "-lc",
-      'printf "%s:%s:%s:%s\\n" "$(ulimit -Su)" "$(ulimit -Hu)" "$(ulimit -Sn)" "$(ulimit -Hn)"',
-    ],
-    {
-      artifactName,
-      env: freshPodmanEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  assertExitZero(result, "DCode live nproc/nofile contract");
-  expect(result.stdout.trim()).toBe("512:512:65536:65536");
+  await LIVE_ULIMIT_ASSERTIONS[agent](sandbox, sandboxName, artifactName);
 }
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -725,12 +744,13 @@ test("native Podman: all supported agents use managed OCI images without Docker"
 
   let snapshotCloneDestroyed = false;
   cleanup.trackDisposable(`destroy Podman snapshot clone ${snapshotCloneName}`, async () => {
-    if (snapshotCloneDestroyed) return;
-    await host.nemoclaw([snapshotCloneName, "destroy", "--yes"], {
-      artifactName: `podman-${agent}-snapshot-clone-cleanup`,
-      env: freshPodmanEnv(),
-      timeoutMs: 180_000,
-    });
+    await (snapshotCloneDestroyed
+      ? Promise.resolve()
+      : host.nemoclaw([snapshotCloneName, "destroy", "--yes"], {
+          artifactName: `podman-${agent}-snapshot-clone-cleanup`,
+          env: freshPodmanEnv(),
+          timeoutMs: 180_000,
+        }));
   });
   const snapshotRestore = await host.nemoclaw(
     [sandboxName, "snapshot", "restore", "podman-runtime", "--to", snapshotCloneName, "--yes"],

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import { restoreEnvBulk } from "../../helpers/env-test-helpers";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
@@ -277,12 +278,11 @@ describe("onboarding phase fixture", () => {
       expect(runner.calls[1]?.options?.env).not.toHaveProperty("DOCKER_HOST");
       expect(runner.calls[1]?.options?.env).not.toHaveProperty("DOCKER_CONFIG");
     } finally {
-      if (previousSocket === undefined) delete process.env.OPENSHELL_PODMAN_SOCKET;
-      else process.env.OPENSHELL_PODMAN_SOCKET = previousSocket;
-      if (previousDockerHost === undefined) delete process.env.DOCKER_HOST;
-      else process.env.DOCKER_HOST = previousDockerHost;
-      if (previousDockerConfig === undefined) delete process.env.DOCKER_CONFIG;
-      else process.env.DOCKER_CONFIG = previousDockerConfig;
+      restoreEnvBulk({
+        OPENSHELL_PODMAN_SOCKET: previousSocket,
+        DOCKER_HOST: previousDockerHost,
+        DOCKER_CONFIG: previousDockerConfig,
+      });
     }
   });
 

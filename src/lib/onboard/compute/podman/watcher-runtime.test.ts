@@ -56,7 +56,7 @@ describe("Podman production watcher runtime", () => {
     let listenerPids = [303];
     const lifecycle = {
       assertInactive: vi.fn(() => {
-        if (active) throw new Error("still active");
+        expect(active).toBe(false);
       }),
       captureActive: vi.fn(() => receipt),
       describe: vi.fn((value: Receipt) => ({

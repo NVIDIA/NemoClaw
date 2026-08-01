@@ -125,7 +125,6 @@ describe("managed snapshot runtime authority", () => {
 
   it("threads the qualified socket receipt and rejects replacement before watcher composition", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-authority-"));
-    const previousGatewayBin = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
     try {
       const socketPath = "/run/user/1000/podman/podman.sock";
       buildPodmanDriverGatewayEnv({
@@ -158,7 +157,7 @@ describe("managed snapshot runtime authority", () => {
       const createWatcherController = vi.fn(() => {
         throw new Error("watcher composition must not run after authority replacement");
       });
-      process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN = "/bin/sh";
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_BIN", "/bin/sh");
 
       expect(() =>
         createPodmanManagedSnapshotRuntimeAuthority(context("podman"), {
@@ -180,11 +179,7 @@ describe("managed snapshot runtime authority", () => {
       expect(assertSocketAuthority).toHaveBeenCalledExactlyOnceWith(socketAuthority);
       expect(createWatcherController).not.toHaveBeenCalled();
     } finally {
-      if (previousGatewayBin === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN = previousGatewayBin;
-      }
+      vi.unstubAllEnvs();
       fs.rmSync(stateDir, { force: true, recursive: true });
     }
   });

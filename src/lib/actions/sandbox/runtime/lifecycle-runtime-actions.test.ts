@@ -83,29 +83,33 @@ function podmanLifecycleHarness(
   const captureHostCommand = vi.fn((_command: string, args: string[]) => {
     const operationIndex = args.indexOf("--url") + 2;
     const operation = args[operationIndex];
-    if (operation === "ps") {
-      return {
-        status: 0,
-        stderr: "",
-        stdout: options.lookupRows ?? `${CONTAINER_ID}\t${CONTAINER_NAME}\n`,
-      };
+    switch (operation) {
+      case "ps":
+        return {
+          status: 0,
+          stderr: "",
+          stdout: options.lookupRows ?? `${CONTAINER_ID}\t${CONTAINER_NAME}\n`,
+        };
+      case "container":
+        expect(args[operationIndex + 1]).toBe("inspect");
+        return {
+          status: 0,
+          stderr: "",
+          stdout: podmanInspect(running, options.initialStatus),
+        };
+      case "stop":
+        running = false;
+        return { status: 0, stderr: "", stdout: CONTAINER_ID };
+      case "start":
+        running = true;
+        return { status: 0, stderr: "", stdout: CONTAINER_ID };
+      default:
+        return {
+          status: 125,
+          stderr: `unexpected Podman operation: ${String(operation)}`,
+          stdout: "",
+        };
     }
-    if (operation === "container" && args[operationIndex + 1] === "inspect") {
-      return {
-        status: 0,
-        stderr: "",
-        stdout: podmanInspect(running, options.initialStatus),
-      };
-    }
-    if (operation === "stop") {
-      running = false;
-      return { status: 0, stderr: "", stdout: CONTAINER_ID };
-    }
-    if (operation === "start") {
-      running = true;
-      return { status: 0, stderr: "", stdout: CONTAINER_ID };
-    }
-    return { status: 125, stderr: `unexpected Podman operation: ${String(operation)}`, stdout: "" };
   });
   const getSandbox = vi.fn(() => podmanSandbox(agent));
   const assertPodmanSocketAuthority = vi.fn();
@@ -286,12 +290,11 @@ describe("sandbox lifecycle runtime actions", () => {
 
   it("revalidates after stop preparation and sends no mutation through a replaced socket", () => {
     const h = podmanLifecycleHarness("openclaw");
-    let validations = 0;
-    h.assertPodmanSocketAuthority.mockImplementation(() => {
-      validations += 1;
-      if (validations === 6) {
-        throw new Error("Podman socket authority changed after it was qualified.");
-      }
+    for (let validation = 0; validation < 5; validation += 1) {
+      h.assertPodmanSocketAuthority.mockImplementationOnce(() => undefined);
+    }
+    h.assertPodmanSocketAuthority.mockImplementationOnce(() => {
+      throw new Error("Podman socket authority changed after it was qualified.");
     });
 
     expect(

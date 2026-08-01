@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { CURRENT_OPEN_SHELL_COMPUTE_PLANS } from "../compute/plan";
+import { createPodmanOpenShellWatcherController } from "../compute/podman/sandbox-recreate";
 import {
   CURRENT_SANDBOX_CREATE_RUNTIME_PATCH_ADAPTERS,
   createSandboxCreateRuntimePatch,
@@ -44,6 +45,44 @@ function request(driverName = "mxc"): SandboxCreateRuntimePatchRequest {
 }
 
 describe("sandbox-create runtime patch registry", () => {
+  it("requires exact-socket CDI qualification for a Podman GPU request", () => {
+    const base = request("podman");
+    const input = {
+      ...base,
+      lifecycle: {
+        ...base.lifecycle,
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: "0",
+      },
+    };
+    const runtimeAuthority = {
+      cdiDevices: ["nvidia.com/gpu=0"],
+      socketAuthority: {
+        directoryChain: [],
+        device: "8",
+        inode: "9",
+        ownerUid: "1000",
+        socketPath: "/run/user/1000/podman/podman.sock",
+      },
+      socketPath: "/run/user/1000/podman/podman.sock",
+      watcherController: createPodmanOpenShellWatcherController({
+        assertStopped() {},
+        resumeAndProve() {},
+        stopAndProve: () => true,
+      }),
+    };
+
+    expect(() =>
+      createSandboxCreateRuntimePatch({ ...input, runtimeAuthority }),
+    ).not.toThrow();
+    expect(() =>
+      createSandboxCreateRuntimePatch({
+        ...input,
+        runtimeAuthority: { ...runtimeAuthority, cdiDevices: ["nvidia.com/gpu=all"] },
+      }),
+    ).toThrow("does not advertise");
+  });
+
   it("covers every current compute driver and preserves Kubernetes direct creation", () => {
     expect(Object.keys(CURRENT_SANDBOX_CREATE_RUNTIME_PATCH_ADAPTERS).sort()).toEqual(
       Object.values(CURRENT_OPEN_SHELL_COMPUTE_PLANS)

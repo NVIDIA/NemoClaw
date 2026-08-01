@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanSandboxCreateRuntimeAuthority } from "../compute/podman/sandbox-create-authority";
+import {
+  assertPodmanGpuAttachmentQualified,
+  resolvePodmanGpuAttachment,
+} from "../compute/podman/gpu-attachment";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import { createPodmanSandboxCreatePatch, type PodmanSandboxCreatePatchOptions } from "./podman";
 import type { SandboxCreateRuntimePatch } from "./types";
@@ -27,6 +31,7 @@ export interface SandboxCreateRuntimeLifecycleContext {
       }[]
     | null;
   readonly sandboxGpuEnabled: boolean;
+  readonly sandboxGpuDevice?: string | null;
   readonly sandboxName: string;
   readonly timeoutSecs: number;
   readonly deps: {
@@ -72,9 +77,6 @@ export function createDirectSandboxCreateRuntimePatch(): SandboxCreateRuntimePat
 
 function podmanOptions(request: SandboxCreateRuntimePatchRequest): PodmanSandboxCreatePatchOptions {
   const { lifecycle } = request;
-  if (lifecycle.sandboxGpuEnabled) {
-    throw new Error("Native Podman managed startup does not support sandbox GPU attachment.");
-  }
   const authority = request.runtimeAuthority as Partial<PodmanSandboxCreateRuntimeAuthority> | null;
   if (
     !authority ||
@@ -86,12 +88,23 @@ function podmanOptions(request: SandboxCreateRuntimePatchRequest): PodmanSandbox
   ) {
     throw new Error("Podman managed startup requires its qualified socket and watcher controller.");
   }
+  const gpuAttachment = resolvePodmanGpuAttachment(
+    lifecycle.sandboxGpuEnabled,
+    lifecycle.sandboxGpuDevice,
+  );
+  if (gpuAttachment) {
+    if (!Array.isArray(authority.cdiDevices)) {
+      throw new Error("Podman sandbox GPU attachment requires qualified CDI runtime authority.");
+    }
+    assertPodmanGpuAttachmentQualified(authority.cdiDevices, gpuAttachment);
+  }
   const { runCaptureOpenshell, runOpenshell, sleep } = lifecycle.deps;
   return {
     managedStartupRootApplyRequest: lifecycle.managedStartupRootApplyRequest,
     openshellSandboxCommand: lifecycle.openshellSandboxCommand,
     persistStartupCommand: lifecycle.persistStartupCommand,
     requiredUlimits: lifecycle.requiredUlimits,
+    gpuAttachment,
     sandboxName: lifecycle.sandboxName,
     socketAuthority: authority.socketAuthority,
     socketPath: authority.socketPath,

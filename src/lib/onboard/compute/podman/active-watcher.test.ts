@@ -77,7 +77,7 @@ describe("active Podman watcher composition", () => {
       ...input,
       deps: {
         assertServiceInactive: vi.fn(() => {
-          if (active) throw new Error("service is active");
+          expect(active).toBe(false);
         }),
         captureService: vi.fn(() => (active ? receipt : null)),
         hasService: vi.fn(() => true),

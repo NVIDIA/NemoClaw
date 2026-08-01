@@ -115,6 +115,7 @@ export function createSandboxGpuCreateAttemptRunner(
           persistStartupCommand,
           requiredUlimits: input.requiredUlimits,
           sandboxGpuEnabled: input.sandboxGpuConfig.sandboxGpuEnabled,
+          sandboxGpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
           sandboxName: input.sandboxName,
           timeoutSecs: input.sandboxReadyTimeoutSecs,
           deps: {

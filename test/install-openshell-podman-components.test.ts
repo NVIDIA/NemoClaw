@@ -61,15 +61,16 @@ if [ "\${1:-}" = "--version" ]; then echo "openshell-gateway ${version}"; exit 0
 exit 0
 `,
   );
-  if (options.sandbox) {
-    executable(
-      path.join(bin, "openshell-sandbox"),
-      `#!/usr/bin/env bash
+  for (const sandboxBody of options.sandbox
+    ? [
+        `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell-sandbox ${version}"; exit 0; fi
 # ${FEATURES}
 exit 0
 `,
-    );
+      ]
+    : []) {
+    executable(path.join(bin, "openshell-sandbox"), sandboxBody);
   }
   executable(
     path.join(bin, "docker"),

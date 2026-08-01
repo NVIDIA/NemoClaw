@@ -360,9 +360,7 @@ describe("runSandboxDoctor flow", () => {
       vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
       const harness = createDoctorHarness({ openshellDriver: "podman" });
       harness.captureHostCommandSpy.mockImplementation((command: unknown) => {
-        if (command === "docker") {
-          throw new Error("Docker must not be invoked for Podman doctor");
-        }
+        expect(command).not.toBe("docker");
         return { status: 0, stdout: "{}\n", stderr: "" };
       });
 
@@ -399,9 +397,7 @@ describe("runSandboxDoctor flow", () => {
       vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
       const harness = createDoctorHarness({ openshellDriver: "podman" });
       harness.captureHostCommandSpy.mockImplementation((command: unknown) => {
-        if (command === "docker") {
-          throw new Error("Docker must not be invoked for persisted Podman doctor");
-        }
+        expect(command).not.toBe("docker");
         return { status: 0, stdout: "{}\n", stderr: "" };
       });
 

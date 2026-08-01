@@ -9,6 +9,7 @@ import {
   type PodmanOpenShellWatcherController,
   recreatePodmanManagedSandbox,
 } from "../compute/podman/sandbox-recreate";
+import type { PodmanGpuAttachment } from "../compute/podman/gpu-attachment";
 import {
   assertPodmanSocketAuthority,
   type PodmanSocketAuthority,
@@ -38,6 +39,7 @@ type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean })
 type WaitForSupervisor = typeof waitForSupervisorReconnect;
 
 export interface PodmanSandboxCreatePatchOptions {
+  readonly gpuAttachment?: PodmanGpuAttachment | null;
   readonly managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
   readonly openshellSandboxCommand: readonly string[];
   readonly persistStartupCommand: boolean;
@@ -104,7 +106,9 @@ export function createPodmanSandboxCreatePatch(
     socketAuthority: options.socketAuthority,
   };
   const patchEnabled =
-    options.persistStartupCommand || options.managedStartupRootApplyRequest != null;
+    options.persistStartupCommand ||
+    options.managedStartupRootApplyRequest != null ||
+    options.gpuAttachment != null;
 
   let recreation: PodmanManagedSandboxRecreateTransaction | null = null;
   let managedStartup: PodmanManagedStartupTransaction | null = null;
@@ -166,6 +170,7 @@ export function createPodmanSandboxCreatePatch(
     recreation = recreate(
       {
         command: options.openshellSandboxCommand,
+        gpuAttachment: options.gpuAttachment,
         ...(options.requiredUlimits ? { requiredUlimits: options.requiredUlimits } : {}),
         sandboxName: options.sandboxName,
         socketAuthority: options.socketAuthority,

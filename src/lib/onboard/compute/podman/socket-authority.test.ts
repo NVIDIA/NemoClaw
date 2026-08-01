@@ -33,16 +33,16 @@ function secureLstat(
 ) {
   const directoryInodes = new Map<string, bigint>();
   return (filePath: string) => {
-    if (filePath === SOCKET_PATH) return stat(socketOverrides);
-    if (!directoryInodes.has(filePath)) {
-      directoryInodes.set(filePath, BigInt(7000 + directoryInodes.size));
-    }
-    return stat({
-      directory: true,
-      ino: directoryInodes.get(filePath),
-      uid: filePath.startsWith("/run/user/1000") ? 1000n : 0n,
-      ...(directoryOverrides[filePath] ?? {}),
-    });
+    const directoryInode = directoryInodes.get(filePath) ?? BigInt(7000 + directoryInodes.size);
+    directoryInodes.set(filePath, directoryInode);
+    return filePath === SOCKET_PATH
+      ? stat(socketOverrides)
+      : stat({
+          directory: true,
+          ino: directoryInode,
+          uid: filePath.startsWith("/run/user/1000") ? 1000n : 0n,
+          ...(directoryOverrides[filePath] ?? {}),
+        });
   };
 }
 

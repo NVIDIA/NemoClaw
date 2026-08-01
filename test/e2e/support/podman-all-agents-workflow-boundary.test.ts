@@ -41,8 +41,8 @@ function workflow(): Workflow {
 
 function namedStep(job: WorkflowJob, name: string): WorkflowStep {
   const step = job.steps?.find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`missing Podman workflow step '${name}'`);
-  return step;
+  expect(step, `missing Podman workflow step '${name}'`).toBeDefined();
+  return step!;
 }
 
 function liveTestSource(): string {

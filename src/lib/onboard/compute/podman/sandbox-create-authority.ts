@@ -12,12 +12,14 @@ import {
 } from "./socket-authority";
 
 export interface PodmanSandboxCreateRuntimeAuthority {
+  readonly cdiDevices?: readonly string[];
   readonly socketAuthority: PodmanSocketAuthority;
   readonly socketPath: string;
   readonly watcherController: PodmanOpenShellWatcherController;
 }
 
 export interface PodmanSandboxCreateRuntimeAuthorityInput {
+  readonly cdiDevices?: readonly string[];
   readonly driverLabel: string;
   readonly gatewayBin: string;
   readonly gatewayName: string;
@@ -63,6 +65,7 @@ export function createPodmanSandboxCreateRuntimeAuthority(
   }
   (dependencies.assertSocketAuthority ?? assertPodmanSocketAuthority)(socketAuthority);
   return {
+    cdiDevices: [...(input.cdiDevices ?? [])],
     socketAuthority,
     socketPath: input.socketPath,
     watcherController: (

@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NAME_VALID_PATTERN } from "../../../name-validation";
+import type { PodmanGpuAttachment } from "./gpu-attachment";
 import {
   buildPodmanManagedSandboxCreatePlan,
   PODMAN_MANAGED_LABEL,
@@ -55,6 +56,7 @@ export interface PodmanManagedSandboxRecreateTransaction {
   readonly command: readonly string[];
   readonly driverName: "podman";
   readonly immutableImage: string;
+  readonly gpuAttachment?: PodmanGpuAttachment | null;
   readonly newContainerId: string;
   readonly oldContainerId: string;
   readonly originalLabels: Readonly<Record<string, string>>;
@@ -537,6 +539,7 @@ function buildPinnedCreatePlan(
     readonly name?: string;
     readonly requireCommandEnvironment?: boolean;
     readonly requiredUlimits?: readonly PodmanUlimit[];
+    readonly gpuAttachment?: PodmanGpuAttachment | null;
   },
   deps: PodmanManagedSandboxRecreateDeps,
 ): PodmanManagedSandboxCreatePlan {
@@ -548,6 +551,7 @@ function buildPinnedCreatePlan(
     name: options.name,
     requireCommandEnvironment: options.requireCommandEnvironment,
     requiredUlimits: options.requiredUlimits,
+    gpuAttachment: options.gpuAttachment,
   });
 }
 
@@ -741,6 +745,7 @@ type PodmanRestoreIdentity = Pick<
   | "backupContainerId"
   | "backupContainerName"
   | "backupSemanticDigest"
+  | "gpuAttachment"
   | "originalLabels"
   | "originalName"
   | "originalSemanticDigest"
@@ -759,6 +764,7 @@ function buildVerifiedRestorePlan(
     backup,
     {
       command: null,
+      gpuAttachment: transaction.gpuAttachment,
       labels: podmanWatcherInvisibleBackupLabels(backup),
       name: transaction.backupContainerName,
     },
@@ -770,6 +776,7 @@ function buildVerifiedRestorePlan(
     backup,
     {
       command: null,
+      gpuAttachment: transaction.gpuAttachment,
       labels: transaction.originalLabels,
       name: transaction.originalName,
     },
@@ -828,7 +835,12 @@ function restoreManagedFromBackup(
   );
   requireEquivalentCreatePlan(
     transaction.originalSemanticDigest,
-    buildPinnedCreatePlan(transaction.socketPath, runningOriginal, { command: null }, deps),
+    buildPinnedCreatePlan(
+      transaction.socketPath,
+      runningOriginal,
+      { command: null, gpuAttachment: transaction.gpuAttachment },
+      deps,
+    ),
   );
   return { originalRecreated: true, originalStarted: true };
 }
@@ -948,6 +960,7 @@ function rollbackAndResumeWatcher(
 export function recreatePodmanManagedSandbox(
   options: {
     readonly command: readonly string[];
+    readonly gpuAttachment?: PodmanGpuAttachment | null;
     readonly requiredUlimits?: readonly PodmanUlimit[];
     readonly sandboxName: string;
     readonly socketAuthority: PodmanSocketAuthority;
@@ -973,10 +986,21 @@ export function recreatePodmanManagedSandbox(
     deps,
   );
   const command = [...options.command];
+  const gpuAttachment = options.gpuAttachment ?? null;
   const requiredUlimits = (options.requiredUlimits ?? []).map((limit) => ({ ...limit }));
-  const plan = buildPinnedCreatePlan(socketPath, original, { command, requiredUlimits }, deps);
+  const plan = buildPinnedCreatePlan(
+    socketPath,
+    original,
+    { command, gpuAttachment, requiredUlimits },
+    deps,
+  );
   const semanticDigest = createPlanSemanticDigest(plan);
-  const originalPlan = buildPinnedCreatePlan(socketPath, original, { command: null }, deps);
+  const originalPlan = buildPinnedCreatePlan(
+    socketPath,
+    original,
+    { command: null, gpuAttachment },
+    deps,
+  );
   const originalSemanticDigest = createPlanSemanticDigest(originalPlan);
   const originalLabels = { ...original.labels };
   const pinnedAgain = discoverManagedSandbox(socketPath, options.sandboxName, deps);
@@ -997,11 +1021,16 @@ export function recreatePodmanManagedSandbox(
   );
   requireEquivalentCreatePlan(
     semanticDigest,
-    buildPinnedCreatePlan(socketPath, current, { command, requiredUlimits }, deps),
+    buildPinnedCreatePlan(
+      socketPath,
+      current,
+      { command, gpuAttachment, requiredUlimits },
+      deps,
+    ),
   );
   requireEquivalentCreatePlan(
     originalSemanticDigest,
-    buildPinnedCreatePlan(socketPath, current, { command: null }, deps),
+    buildPinnedCreatePlan(socketPath, current, { command: null, gpuAttachment }, deps),
   );
   const backupContainerName = backupName(originalName, commandDeps(deps).now());
   const backupLabels = podmanWatcherInvisibleBackupLabels(original);
@@ -1010,6 +1039,7 @@ export function recreatePodmanManagedSandbox(
     original,
     {
       command: null,
+      gpuAttachment,
       labels: backupLabels,
       name: backupContainerName,
     },
@@ -1040,6 +1070,7 @@ export function recreatePodmanManagedSandbox(
     backupContainerName,
     backupSemanticDigest,
     command,
+    gpuAttachment,
     immutableImage: plan.immutableImage,
     oldContainerId,
     originalLabels,
@@ -1064,7 +1095,7 @@ export function recreatePodmanManagedSandbox(
     buildPinnedCreatePlan(
       socketPath,
       backup,
-      { command: null, labels: backupLabels, name: backupContainerName },
+      { command: null, gpuAttachment, labels: backupLabels, name: backupContainerName },
       deps,
     ),
   );
@@ -1237,7 +1268,7 @@ export function recreatePodmanManagedSandbox(
       buildPinnedCreatePlan(
         socketPath,
         createdReplacement,
-        { command, requireCommandEnvironment: true },
+        { command, gpuAttachment, requireCommandEnvironment: true },
         deps,
       ),
     );
@@ -1272,7 +1303,7 @@ export function recreatePodmanManagedSandbox(
       buildPinnedCreatePlan(
         socketPath,
         replacement,
-        { command, requireCommandEnvironment: true },
+        { command, gpuAttachment, requireCommandEnvironment: true },
         deps,
       ),
     );
@@ -1287,7 +1318,7 @@ export function recreatePodmanManagedSandbox(
       buildPinnedCreatePlan(
         socketPath,
         verifiedBackup,
-        { command: null, labels: backupLabels, name: backupContainerName },
+        { command: null, gpuAttachment, labels: backupLabels, name: backupContainerName },
         deps,
       ),
     );
@@ -1427,6 +1458,7 @@ export function finalizePodmanManagedSandbox(
       replacement,
       {
         command: options.transaction.command,
+        gpuAttachment: options.transaction.gpuAttachment,
         requireCommandEnvironment: true,
       },
       deps,
@@ -1445,6 +1477,7 @@ export function finalizePodmanManagedSandbox(
       backup,
       {
         command: null,
+        gpuAttachment: options.transaction.gpuAttachment,
         labels: podmanWatcherInvisibleBackupLabels(backup),
         name: options.transaction.backupContainerName,
       },

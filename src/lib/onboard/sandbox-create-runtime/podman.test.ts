@@ -136,6 +136,39 @@ function patchHarness(agent: ManagedStartupRootApplyRequest["agent"]) {
 }
 
 describe("Podman sandbox-create runtime patch", () => {
+  it("recreates for a qualified CDI attachment even without another startup patch", () => {
+    const transaction = recreation();
+    const recreate = vi.fn(() => transaction);
+    const gpuAttachment = { kind: "cdi", device: "nvidia.com/gpu=all" } as const;
+    const patch = createPodmanSandboxCreatePatch({
+      gpuAttachment,
+      openshellSandboxCommand: ["node", "agent.js"],
+      persistStartupCommand: false,
+      sandboxName: "alpha",
+      socketAuthority: SOCKET_AUTHORITY,
+      socketPath: SOCKET_PATH,
+      timeoutSecs: 60,
+      watcherController: watcherController(),
+      deps: {
+        runCaptureOpenshell: vi.fn(() => ""),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        assertSocketAuthority: vi.fn(),
+      },
+      overrides: {
+        findContainerIds: vi.fn(() => ["a".repeat(64)]),
+        recreate,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+
+    expect(recreate).toHaveBeenCalledWith(
+      expect.objectContaining({ gpuAttachment }),
+      expect.objectContaining({ socketAuthority: SOCKET_AUTHORITY }),
+    );
+  });
+
   it("revalidates its exact socket authority at an external mutation edge", () => {
     const harness = patchHarness("openclaw");
     harness.patch.revalidateBeforeMutation();
