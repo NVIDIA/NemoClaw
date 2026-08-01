@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants,
   existsSync,
   fstatSync,
   lstatSync,
@@ -1540,6 +1541,13 @@ function snapshotManifestAuthority(manifest: RebuildManifest): RebuildManifest {
 }
 
 function hashSnapshotTree(backupPath: string): string {
+  if (typeof constants.O_NOFOLLOW !== "number") {
+    throw new Error("snapshot hashing requires O_NOFOLLOW support");
+  }
+  const openFlags =
+    constants.O_RDONLY |
+    constants.O_NOFOLLOW |
+    (typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0);
   const hash = createHash("sha256");
   const visit = (directory: string, relativeDirectory: string): void => {
     const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
@@ -1565,7 +1573,7 @@ function hashSnapshotTree(backupPath: string): string {
         throw new Error(`snapshot contains unsupported entry '${relativePath}'`);
       }
       hash.update(JSON.stringify(["file", relativePath, stat.size]), "utf8");
-      const descriptor = openSync(fullPath, "r");
+      const descriptor = openSync(fullPath, openFlags);
       try {
         const opened = fstatSync(descriptor);
         if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino) {
@@ -1578,7 +1586,17 @@ function hashSnapshotTree(backupPath: string): string {
           hash.update(buffer.subarray(0, bytesRead));
         }
         const after = fstatSync(descriptor);
-        if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+        const pathAfter = lstatSync(fullPath);
+        if (
+          after.size !== opened.size ||
+          after.mtimeMs !== opened.mtimeMs ||
+          pathAfter.isSymbolicLink() ||
+          !pathAfter.isFile() ||
+          pathAfter.dev !== opened.dev ||
+          pathAfter.ino !== opened.ino ||
+          pathAfter.size !== opened.size ||
+          pathAfter.mtimeMs !== opened.mtimeMs
+        ) {
           throw new Error(`snapshot entry '${relativePath}' changed while it was read`);
         }
       } finally {

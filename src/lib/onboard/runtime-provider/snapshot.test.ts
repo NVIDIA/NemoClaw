@@ -15,7 +15,6 @@ import {
   createRuntimeProviderSnapshotSurface,
   observeDockerRuntimeSnapshot,
   observeOpenShellRuntimeSnapshot,
-  RuntimeProviderSnapshotError,
   type RuntimeProviderSnapshotObservation,
 } from "./snapshot";
 
