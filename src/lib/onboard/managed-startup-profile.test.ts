@@ -309,8 +309,9 @@ describe("managed startup profile", () => {
     const validated = validateManagedStartupProfile(profile);
     const encoded = encodeManagedStartupProfile(profile);
 
-    expect(decodeManagedStartupProfile(encoded)).toEqual(validated);
-    expect(encoded).not.toContain(profile.inference.model);
+    const decoded = decodeManagedStartupProfile(encoded);
+    expect(decoded).toEqual(validated);
+    expect(decoded.inference.model).toBe(profile.inference.model);
     expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
   });
 
@@ -882,7 +883,7 @@ describe("managed startup profile", () => {
         ...OPENCLAW_PROFILE,
         tools: { ...OPENCLAW_PROFILE.tools, enabledGateways: ["nous-web"] },
       }),
-    ).toThrow(/supported only by hermes/);
+    ).toThrow(/unsupported value/);
   });
 
   it("enforces adapter-specific web-search providers", () => {

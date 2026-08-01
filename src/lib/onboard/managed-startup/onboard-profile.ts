@@ -9,12 +9,14 @@ import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import { hasCredentialBearingHostProxyEnvironment } from "../host-proxy-env";
 import {
   MANAGED_STARTUP_AGENTS,
+  MANAGED_STARTUP_PROFILE_CAPABILITIES,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
 } from "./profile";
 import {
   type BuiltManagedStartupProfile,
   buildManagedStartupProfile,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS,
   type ManagedStartupResolvedInferenceInput,
 } from "./profile-builder";
 
@@ -45,7 +47,6 @@ const PROFILE_ENVIRONMENT_INPUTS = {
   ],
 } as const satisfies Record<ManagedStartupAgent, readonly string[]>;
 
-const HOST_PROXY_URL_INPUTS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
 
 export interface ManagedStartupOnboardProfileInput {
@@ -100,6 +101,14 @@ function requireDashboardPort(port: number): number {
   return port;
 }
 
+function dashboardHostname(chatUiUrl: string): string {
+  try {
+    return new URL(chatUiUrl).hostname;
+  } catch {
+    throw new ManagedStartupOnboardProfileError("chatUiUrl must be a valid HTTP(S) URL");
+  }
+}
+
 function dashboardForInput(
   agent: ManagedStartupAgent,
   input: ManagedStartupOnboardProfileInput,
@@ -126,7 +135,7 @@ function dashboardForInput(
     const remote =
       bindAddress === "0.0.0.0" ||
       input.wslExposure ||
-      !["127.0.0.1", "localhost", "::1", "[::1]"].includes(new URL(input.chatUiUrl).hostname);
+      !["127.0.0.1", "localhost", "::1", "[::1]"].includes(dashboardHostname(input.chatUiUrl));
     return {
       agent,
       mode: remote ? "remote" : "loopback",
@@ -180,12 +189,14 @@ function profileEnvironment(
   }
   const credentialProxy = hasCredentialBearingHostProxyEnvironment(environment);
   if (!credentialProxy) {
-    for (const name of HOST_PROXY_URL_INPUTS) {
+    for (const name of MANAGED_STARTUP_HOST_PROXY_URL_INPUTS) {
       const value = environment[name]?.trim();
       if (!value) continue;
       selected[name] = value;
     }
-    const hasCredentialFreeProxy = HOST_PROXY_URL_INPUTS.some((name) => selected[name]);
+    const hasCredentialFreeProxy = MANAGED_STARTUP_HOST_PROXY_URL_INPUTS.some(
+      (name) => selected[name],
+    );
     if (hasCredentialFreeProxy) {
       for (const name of HOST_NO_PROXY_INPUTS) {
         const value = environment[name];
@@ -200,11 +211,23 @@ export function buildManagedStartupOnboardProfile(
   input: ManagedStartupOnboardProfileInput,
 ): BuiltManagedStartupOnboardProfile {
   const agent = exactManagedAgent(input.agentName);
+  const capabilities = MANAGED_STARTUP_PROFILE_CAPABILITIES[agent];
+  if (
+    capabilities.inputModalities.length === 0 &&
+    typeof input.environment.NEMOCLAW_INFERENCE_INPUTS === "string" &&
+    input.environment.NEMOCLAW_INFERENCE_INPUTS.trim() !== ""
+  ) {
+    throw new ManagedStartupOnboardProfileError(
+      `NEMOCLAW_INFERENCE_INPUTS is not supported by ${agent}`,
+    );
+  }
+  if (!capabilities.supportsMessaging && input.messagingPlan !== null) {
+    throw new ManagedStartupOnboardProfileError(`${agent} does not support messaging`);
+  }
   const dashboard = dashboardForInput(agent, input);
   const environment = profileEnvironment(agent, input.environment);
   const credentialProxyReplayRequired =
-    agent !== "langchain-deepagents-code" &&
-    hasCredentialBearingHostProxyEnvironment(input.environment);
+    capabilities.supportsMessaging && hasCredentialBearingHostProxyEnvironment(input.environment);
   const built = buildManagedStartupProfile({
     agent,
     inference: input.inference,
@@ -212,7 +235,7 @@ export function buildManagedStartupOnboardProfile(
     webSearch: agent === "langchain-deepagents-code" ? null : input.webSearch,
     toolDisclosure: input.toolDisclosure,
     hermesToolGateways: agent === "hermes" ? input.hermesToolGateways : [],
-    messagingPlan: agent === "langchain-deepagents-code" ? null : input.messagingPlan,
+    messagingPlan: capabilities.supportsMessaging ? input.messagingPlan : null,
     dcodeAutoApprovalMode:
       agent === "langchain-deepagents-code" ? input.dcodeAutoApprovalMode : null,
     observabilityEnabled: agent === "langchain-deepagents-code" ? input.observabilityEnabled : null,

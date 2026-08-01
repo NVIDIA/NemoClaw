@@ -12,6 +12,13 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+  RuntimeProviderSelectionError,
+  type RuntimeProviderWorkloadCleanupResult,
+  requireRuntimeProviderDestructiveCleanupAuthority,
+} from "./runtime-provider/access";
 import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
@@ -24,6 +31,86 @@ const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
   "completed",
 ];
 
+export type ReplacedSandboxWorkloadCleanupResult =
+  | RuntimeProviderWorkloadCleanupResult
+  | { readonly status: "skipped"; readonly reason: "replacement-unproven" | "image-reused" };
+
+export type ReplacedSandboxSourceEntry = Omit<SandboxEntry, "workload"> & {
+  readonly workload?:
+    | Extract<NonNullable<SandboxEntry["workload"]>, { readonly kind: "managed-image" }>
+    | {
+        readonly schemaVersion: 1;
+        readonly kind: "legacy-dockerfile";
+        readonly reference: string | null;
+        readonly shared: boolean;
+      };
+};
+
+interface ReplacedSandboxWorkloadCleanupDeps {
+  readonly runtimeProviders?: RuntimeProviderBundleRegistry;
+}
+
+function providerCleanupSource(source: ReplacedSandboxSourceEntry): SandboxEntry {
+  const { workload, ...entry } = source;
+  if (!workload) return entry;
+  if (workload.kind === "managed-image") return { ...entry, workload };
+  return { ...entry, workload: { ...workload, shared: false } };
+}
+
+/** Remove an owned source image only after the journaled replacement is registered. */
+export function retireReplacedSandboxWorkload(
+  sandboxName: string,
+  targetGeneration: string,
+  targetLiveIdentityFingerprint: string | null,
+  source: ReplacedSandboxSourceEntry,
+  replacement: SandboxEntry | null,
+  deps: ReplacedSandboxWorkloadCleanupDeps = {},
+): ReplacedSandboxWorkloadCleanupResult {
+  if (
+    source.name !== sandboxName ||
+    replacement?.name !== sandboxName ||
+    replacement.lifecycleGeneration !== targetGeneration ||
+    !targetLiveIdentityFingerprint ||
+    replacement.lifecycleLiveIdentityFingerprint !== targetLiveIdentityFingerprint
+  ) {
+    return { status: "skipped", reason: "replacement-unproven" };
+  }
+  if (source.workload?.shared === true) {
+    return { status: "skipped", reason: "shared-image" };
+  }
+
+  const cleanupSource = providerCleanupSource(source);
+  const providers = deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES;
+  let authority;
+  try {
+    authority = requireRuntimeProviderDestructiveCleanupAuthority(
+      sandboxName,
+      cleanupSource,
+      providers,
+    );
+  } catch (error) {
+    if (!(error instanceof RuntimeProviderSelectionError)) throw error;
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  const plan = authority.provider.cleanup.planOwnedWorkloadCleanup({
+    sandbox: cleanupSource,
+    sandboxName,
+  });
+  if (plan.action === "retain") {
+    return { status: "skipped", reason: plan.reason };
+  }
+  if (plan.action !== "remove") {
+    return { status: "skipped", reason: "authority-unproven" };
+  }
+  if (
+    replacement.imageTag === plan.reference ||
+    replacement.workload?.reference === plan.reference
+  ) {
+    return { status: "skipped", reason: "image-reused" };
+  }
+  return authority.provider.cleanup.removeOwnedWorkload({ sandbox: cleanupSource, sandboxName });
+}
+
 function canonicalJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJsonValue);
   if (!value || typeof value !== "object") return value;
@@ -33,6 +120,46 @@ function canonicalJsonValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => [key, canonicalJsonValue(entry)]),
   );
+}
+
+function checkpointSourceWorkload(
+  source: SandboxEntry,
+): CheckpointSandboxRecreateTransaction["sourceWorkload"] {
+  if (!source.imageTag) return null;
+  return {
+    openshellDriver: source.openshellDriver ?? null,
+    imageTag: source.imageTag,
+    workload:
+      source.workload?.kind === "legacy-dockerfile"
+        ? {
+            kind: "legacy-dockerfile",
+            reference: source.workload.reference,
+            shared: source.workload.shared,
+          }
+        : null,
+  };
+}
+
+export function sandboxRecreateSourceWorkloadEntry(
+  transaction: CheckpointSandboxRecreateTransaction,
+): ReplacedSandboxSourceEntry | null {
+  const source = transaction.sourceWorkload;
+  if (!source) return null;
+  return {
+    name: transaction.sandboxName,
+    openshellDriver: source.openshellDriver,
+    imageTag: source.imageTag,
+    ...(source.workload
+      ? {
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile" as const,
+            reference: source.workload.reference,
+            shared: source.workload.shared,
+          },
+        }
+      : {}),
+  };
 }
 
 export function fingerprintSandboxRecreateValue(value: unknown): string {
@@ -137,6 +264,7 @@ export function beginSandboxRecreateTransaction(
     gatewayPort: input.gatewayPort,
     sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(input.sourceEntry),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
+    sourceWorkload: checkpointSourceWorkload(input.sourceEntry),
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
     targetLiveIdentityFingerprint: null,

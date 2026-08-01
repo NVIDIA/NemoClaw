@@ -57,9 +57,9 @@ describe("exact-main selected-driver config proof boundary", () => {
       });
       expect(EXACT_MAIN_TMPFS_MOUNT).toEqual({
         type: "tmpfs",
-        target: "/tmp/nemoclaw-exact-main-driver-config",
+        target: "/run/nemoclaw-dcode-mcp",
         options: ["noexec"],
-        size_bytes: 16_777_216,
+        size_bytes: 1_048_576,
         mode: 0o1777,
       });
       expect(EXACT_MAIN_DRIVER_CONFIG_JSON).not.toContain("selinux_label");
@@ -91,6 +91,37 @@ describe("exact-main selected-driver config proof boundary", () => {
       );
       expect(duplicate.status).toBe(64);
       expect(duplicate.stderr).toContain("refusing duplicate --driver-config-json");
+    } finally {
+      wrapper.remove();
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves production driver config when the wrapper only delegates capabilities", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exact-main-pass-through-"));
+    const delegate = path.join(fixture, "openshell-real");
+    fs.writeFileSync(delegate, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", {
+      encoding: "utf8",
+      mode: 0o700,
+    });
+    const wrapper = createOpenShellDriverConfigTestWrapper({
+      delegatedCapabilityMarkers: ["driver-config-json"],
+      label: "exact-main-pass-through",
+      realOpenshellPath: delegate,
+    });
+    try {
+      const create = spawnSync(
+        wrapper.executable,
+        ["sandbox", "create", "--driver-config-json", EXACT_MAIN_DRIVER_CONFIG_JSON],
+        { encoding: "utf8" },
+      );
+      expect(create.status, create.stderr).toBe(0);
+      expect(create.stdout.trimEnd().split("\n")).toEqual([
+        "sandbox",
+        "create",
+        "--driver-config-json",
+        EXACT_MAIN_DRIVER_CONFIG_JSON,
+      ]);
     } finally {
       wrapper.remove();
       fs.rmSync(fixture, { recursive: true, force: true });

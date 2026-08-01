@@ -71,7 +71,8 @@ The outgoing release restricted cookies, storage, clipboard, form values, and ne
 Because NemoClaw exposes the browser toolset, generated configuration now writes `browser.restrict_evaluate: true` to preserve that fail-closed posture; broadening page-context JavaScript evaluation requires a separate security decision.
 
 Hermes 0.19 changes the omitted gateway session-reset policy from `both` (daily and idle expiry) to `none`.
-Generated configuration now writes the complete outgoing policy—`mode: both`, 04:00 daily reset, 1,440-minute idle reset, notifications except on API server and webhook, and a 24-hour background-process age bound—so the upgrade does not silently make gateway sessions indefinitely durable or leave the remaining policy to mutable dependency defaults.
+Generated configuration now writes the complete outgoing policy: `mode: both`, 04:00 daily reset, 1,440-minute idle reset, notifications except on API server and webhook, and a 24-hour background-process age bound.
+This prevents the upgrade from silently making gateway sessions indefinitely durable or leaving the remaining policy to mutable dependency defaults.
 
 Hermes 0.19 also changes `display.show_reasoning` from `false` to `true`.
 Generated configuration now writes `display.show_reasoning: false` so internal reasoning is not newly disclosed through user-visible channel output.

@@ -14,7 +14,7 @@ import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
 } from "./maintenance";
-import { runOnboardAction as executeOnboardAction } from "./onboard";
+import { runOnboardAction as executeOnboardAction, type OnboardActionRuntimeDeps } from "./onboard";
 import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
@@ -33,8 +33,11 @@ export function setGlobalCliActionRuntimeHooksForTest(hooks: GlobalCliActionRunt
   runtimeHooks = hooks;
 }
 
-export async function runOnboardAction(flags: OnboardFlags): Promise<void> {
-  await executeOnboardAction(flags);
+export async function runOnboardAction(
+  flags: OnboardFlags,
+  runtimeDeps: OnboardActionRuntimeDeps = {},
+): Promise<void> {
+  await executeOnboardAction(flags, runtimeDeps);
 }
 
 export async function runDeployAction(instanceName?: string): Promise<void> {

@@ -45,6 +45,11 @@ import path from "node:path";
 
 import { shellQuote } from "../../core/shell-quote";
 import { ROOT } from "../../state/paths";
+import {
+  CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS,
+  CONNECT_AUTO_PAIR_PENDING_READ_POLL_S,
+  CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S,
+} from "./connect-autopair-budget";
 
 // Bound the in-sandbox work: 2s list + 1s × MAX_APPROVALS attempts plus
 // shell/python startup slack fits inside the outer spawnSync cap, so a wedged
@@ -55,12 +60,11 @@ export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
 // Default per-call budgets (seconds) for the in-sandbox openclaw subcommands.
 const AUTO_PAIR_LIST_TIMEOUT_S = 2;
 const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
-const AUTO_PAIR_POST_TIMEOUT_OBSERVE_S = 4;
 const AUTO_PAIR_POST_TIMEOUT_POLL_S = 0.1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
-// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 15s
+// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 25s
 // outer cap — via ./connect-autopair-budget. The doctor surface (#4616) uses
 // the defaults above to drain a backlog. Callers that omit a field inherit the
 // default, so the historical doctor payload stays byte-stable.
@@ -89,10 +93,27 @@ export type AutoPairApprovalResult = {
   receipt: AutoPairApprovalReceipt | null;
 };
 
+type AutoPairApprovalExecDeps = {
+  getOpenshellBinary: () => string;
+  spawnSync: typeof spawnSync;
+};
+
 export type AutoPairApprovalReceipt =
   | "policy-missing"
   | "exec-failed"
+  | "exec-timeout"
+  | "exec-spawn-failed"
+  | "exec-command-failed"
+  | "exec-signal"
+  | "exec-invalid-receipt"
   | "list-failed"
+  | "list-state-path-invalid"
+  | "list-platform-unsupported"
+  | "list-state-root-failed"
+  | "list-devices-directory-failed"
+  | "list-pending-unsafe"
+  | "list-pending-unstable"
+  | "list-pending-invalid-shape"
   | "list-pending-unavailable"
   | "list-timeout"
   | "list-exec-failed"
@@ -111,7 +132,7 @@ export type AutoPairApprovalReceipt =
   | "approved-one";
 
 const AUTO_PAIR_RECEIPT_LINE_RE =
-  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-pending-unavailable|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|list-state-path-invalid|list-platform-unsupported|list-state-root-failed|list-devices-directory-failed|list-pending-unsafe|list-pending-unstable|list-pending-invalid-shape|list-pending-unavailable|list-timeout|list-exec-failed|list-scope-upgrade-pending|list-device-pairing-required|list-gateway-connect-failed|list-command-failed|list-empty-output|list-invalid-json|list-invalid-output|list-missing-pending|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
 /**
  * Parse one fixed receipt only when it is the sole receipt and terminal output
@@ -126,6 +147,35 @@ export function parseAutoPairApprovalReceipt(output: string): AutoPairApprovalRe
   }
   const match = receiptLines[0].match(AUTO_PAIR_RECEIPT_LINE_RE);
   return (match?.[1] as AutoPairApprovalReceipt | undefined) ?? null;
+}
+
+type AutoPairApprovalExecResult = {
+  error?: Error;
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+};
+
+/**
+ * Collapse host-side sandbox-exec failures into fixed, non-secret receipts.
+ * Command output, error messages, signal names, and identifiers stay private.
+ */
+export function classifyAutoPairApprovalExecReceipt(
+  result: AutoPairApprovalExecResult,
+  output: string,
+): AutoPairApprovalReceipt {
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    return "exec-timeout";
+  }
+  if (result.error) {
+    return "exec-spawn-failed";
+  }
+  if (result.signal) {
+    return "exec-signal";
+  }
+  if (result.status !== 0) {
+    return "exec-command-failed";
+  }
+  return parseAutoPairApprovalReceipt(output) ?? "exec-invalid-receipt";
 }
 
 export function readAutoPairApprovalPolicyModule(): string | null {
@@ -281,7 +331,7 @@ def exit_with_receipt(receipt):
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
         local_paired_operator_token = ''
-        observe_deadline = time.monotonic() + ${AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
+        observe_deadline = time.monotonic() + ${CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
         while not sync_approved_clone_device_auth(device, previous_approval_token):
             remaining_observe_time = observe_deadline - time.monotonic()
             if remaining_observe_time <= 0:
@@ -319,15 +369,22 @@ def exit_with_receipt(receipt):
 # Removal condition: delete this path when the pinned OpenClaw release exposes
 # that bootstrap/list API for an unpaired clone.
 import stat
+import time
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 if not os.path.isabs(state_dir):
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-state-path-invalid")}
 for required_flag in ('O_DIRECTORY', 'O_NOFOLLOW'):
     if not hasattr(os, required_flag):
-        ${exitWithReceipt("list-failed")}
+        ${exitWithReceipt("list-platform-unsupported")}
 clone_directory_flags = (
     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
+)
+clone_path_flags = (
+    getattr(os, 'O_PATH', os.O_RDONLY)
+    | os.O_DIRECTORY
+    | os.O_NOFOLLOW
+    | getattr(os, 'O_CLOEXEC', 0)
 )
 clone_file_flags = (
     os.O_RDONLY
@@ -335,16 +392,31 @@ clone_file_flags = (
     | getattr(os, 'O_CLOEXEC', 0)
     | getattr(os, 'O_NONBLOCK', 0)
 )
+PENDING_READ_ATTEMPTS = ${CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS}
+PENDING_READ_POLL_S = ${CONNECT_AUTO_PAIR_PENDING_READ_POLL_S}
+
+class CloneStateEntryRotated(OSError):
+    pass
+
+def validate_clone_json_descriptor(fd):
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1:
+        raise OSError('clone state entry is not a single regular file')
+    if metadata.st_nlink == 0:
+        raise CloneStateEntryRotated('clone state entry was replaced after open')
 
 def open_clone_state_root():
-    root_fd = os.open(os.sep, clone_directory_flags)
+    # Ancestors such as / are traversal boundaries, not state directories.
+    # OpenShell's restored-clone policy permits path traversal but intentionally
+    # denies a read-directory handle for the whole filesystem root.
+    root_fd = os.open(os.sep, clone_path_flags)
     try:
         for component in (part for part in state_dir.split(os.sep) if part):
             if component in ('.', '..'):
                 raise OSError('unsafe clone state root')
             next_fd = os.open(
                 component,
-                clone_directory_flags,
+                clone_path_flags,
                 dir_fd=root_fd,
             )
             os.close(root_fd)
@@ -357,7 +429,7 @@ def open_clone_state_root():
 try:
     clone_state_dir_fd = open_clone_state_root()
 except OSError:
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-state-root-failed")}
 
 def clone_state_root_is_current():
     try:
@@ -410,11 +482,10 @@ def open_clone_json_descriptor(directory_fd, directory_name, entry_name):
         raise OSError('unsafe clone state entry')
     fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
     try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-            raise OSError('clone state entry is not a single regular file')
+        validate_clone_json_descriptor(fd)
         with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
             parsed = json.load(handle)
+        validate_clone_json_descriptor(fd)
         os.lseek(fd, 0, os.SEEK_SET)
         if not clone_directory_is_current(directory_name, directory_fd):
             raise OSError('clone state directory changed')
@@ -431,19 +502,35 @@ def read_clone_json(directory_fd, directory_name, entry_name):
 try:
     clone_devices_dir_fd = open_clone_directory('devices')
 except OSError:
-    ${exitWithReceipt("list-failed")}
-try:
-    local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
-        clone_devices_dir_fd,
-        'devices',
-        'pending.json',
-    )
-except FileNotFoundError:
-    ${exitWithReceipt("list-pending-unavailable")}
-except (OSError, ValueError):
-    ${exitWithReceipt("list-failed")}
-if not isinstance(local_pending_by_id, dict):
-    ${exitWithReceipt("list-failed")}
+    ${exitWithReceipt("list-devices-directory-failed")}
+# The gateway can publish pending.json immediately after the warm-up. Retry only
+# a missing entry before publication, invalid JSON during truncate/write, or an
+# opened inode that an atomic replace unlinked. Unsafe filesystem shapes and
+# persistently malformed documents fail closed before request selection.
+pending_read_failure = 'unavailable'
+for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
+    try:
+        local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
+            clone_devices_dir_fd,
+            'devices',
+            'pending.json',
+        )
+    except FileNotFoundError:
+        pending_read_failure = 'unavailable'
+    except (CloneStateEntryRotated, json.JSONDecodeError):
+        pending_read_failure = 'unstable'
+    except (OSError, ValueError):
+        ${exitWithReceipt("list-pending-unsafe")}
+    else:
+        if not isinstance(local_pending_by_id, dict):
+            ${exitWithReceipt("list-pending-invalid-shape")}
+        break
+    if pending_read_attempt + 1 < PENDING_READ_ATTEMPTS:
+        time.sleep(PENDING_READ_POLL_S)
+else:
+    if pending_read_failure == 'unavailable':
+        ${exitWithReceipt("list-pending-unavailable")}
+    ${exitWithReceipt("list-pending-unstable")}
 pending = list(local_pending_by_id.values())
 `
     : `
@@ -969,6 +1056,7 @@ export function runSandboxAutoPairApprovalPass(
     budget?: AutoPairApprovalBudget;
     localDeviceOnly?: boolean;
   } = {},
+  execDeps?: AutoPairApprovalExecDeps,
 ): AutoPairApprovalResult {
   const emitReceipt = options.receipt === true && options.localDeviceOnly === true;
   const capture = options.capture === true || emitReceipt;
@@ -992,26 +1080,33 @@ export function runSandboxAutoPairApprovalPass(
   // Lazy require: `adapters/openshell/runtime` pulls in `runner`, whose
   // load-time `require("./platform")` cannot be resolved by the Vitest TS
   // loader. Importing it here keeps this module unit-testable in-process.
-  const { getOpenshellBinary } =
-    require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+  const deps =
+    execDeps ??
+    (() => {
+      const { getOpenshellBinary } =
+        require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+      return { getOpenshellBinary, spawnSync };
+    })();
   try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+    // The restored-clone program is larger than OpenShell's command-argument
+    // transport boundary. Use the repository's supported stdin execution path
+    // so script growth cannot fail before Python emits its fixed receipt.
+    const result = deps.spawnSync(
+      deps.getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"],
       {
         cwd: ROOT,
         env: process.env,
-        stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "ignore", "ignore"],
+        input: script,
+        stdio: capture ? ["pipe", "pipe", "pipe"] : ["pipe", "ignore", "ignore"],
         encoding: "utf-8",
         timeout: outerTimeoutMs,
       },
     );
     const output = String(result.stdout || "");
-    const receipt: AutoPairApprovalReceipt | null = !emitReceipt
-      ? null
-      : result.error || result.status !== 0 || result.signal
-        ? "exec-failed"
-        : (parseAutoPairApprovalReceipt(output) ?? "exec-failed");
+    const receipt: AutoPairApprovalReceipt | null = emitReceipt
+      ? classifyAutoPairApprovalExecReceipt(result, output)
+      : null;
     if (!options.capture) {
       return { attempted: true, reported: false, approved: 0, receipt };
     }

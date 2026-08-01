@@ -75,10 +75,10 @@ Apply these rules to documentation, examples, headings, UI text, and release not
 
 ## Use DORI for Complete NVIDIA Doc Tools
 
-Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing) before checking for DORI.
-Only an `authorized` value can select the DORI path.
-When root routing selects that path, you can use DORI for additional documentation tools.
-Complete the documentation before the developer opens the pull or merge request.
+Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing).
+Use the following DORI workflow only when current host capabilities include the
+verified NVIDIA documentation Skill Library. Complete the documentation before
+the developer opens the pull or merge request.
 
 1. Route the documentation task through DORI. Include the changed source files,
    the user-visible impact, the documentation that might need updates, and the
@@ -91,8 +91,9 @@ Complete the documentation before the developer opens the pull or merge request.
 4. When the host does not support subagents, complete the same documentation
    work in the primary task.
 
-If root routing directs you to the Writing Style Guide, or if DORI is unavailable, inaccessible, declined, or fails, do not block the change.
-Continue using the Writing Style Guide above.
+If the verified Skill Library is unavailable, inaccessible, or fails, skip DORI.
+Do not attempt routing, prompt for setup, or ask for or persist a user
+classification. Continue using the Writing Style Guide above.
 
 ## Before Editing
 

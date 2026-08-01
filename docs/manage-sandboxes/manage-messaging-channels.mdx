@@ -20,6 +20,11 @@ Rebuild the sandbox after the update so the image reflects the current channel s
 For WeChat, the cached-token shortcut applies.
 Remove WeChat first when you intend to acquire a fresh account through a new QR scan.
 
+<AgentOnly variant="openclaw">
+For Google Chat, re-add the channel and paste the replacement service-account JSON.
+NemoClaw updates the gateway-side refresh material, and the sandbox continues to receive only gateway-minted access tokens.
+</AgentOnly>
+
 For detailed token rotation procedures, refer to [Credential Rotation](../../security/credential-rotation).
 
 ## Remove a Channel
@@ -34,6 +39,12 @@ $$nemoclaw my-assistant channels remove teams
 
 `channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` provider, and removes `wechat` from the enabled-channel set.
 The next rebuild omits WeChat configuration and per-account state files.
+
+<AgentOnly variant="openclaw">
+`channels remove googlechat` detaches and deletes the `<sandbox>-googlechat-bridge` provider before the rebuild removes Google Chat configuration and the matching policy preset.
+It also stops the dedicated cloudflared process and webhook proxy for that sandbox.
+If endpoint teardown fails, the command exits nonzero without changing the channel credentials, bridge provider, policy preset, or durable messaging plan so you can fix the host service and retry removal.
+</AgentOnly>
 
 For in-sandbox QR-paired channels such as WhatsApp, `channels remove` destructively clears the session directory before rebuild so stale auth files do not reconnect the channel.
 
@@ -74,6 +85,12 @@ For WeChat, `channels stop wechat` followed by rebuild keeps the per-account sta
 </AgentOnly>
 A later `channels start wechat` plus rebuild revives the bridge against the same iLink account without a fresh QR scan.
 The bot token remains in the OpenShell provider across the stop and start cycle.
+
+<AgentOnly variant="openclaw">
+Google Chat stop and start cycles also preserve the bridge provider and its gateway-side refresh material.
+They preserve the dedicated public webhook endpoint so the Google Cloud configuration can keep the same URL.
+The next rebuild reuses that provider without requiring the service-account JSON again.
+</AgentOnly>
 
 When `channels start` re-enables a channel, NemoClaw reapplies the matching built-in policy preset before rebuild.
 If policy restoration fails, the command keeps the channel disabled and exits without rebuilding into a partially active state.
