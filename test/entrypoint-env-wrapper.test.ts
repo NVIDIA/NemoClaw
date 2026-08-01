@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { sliceBlock } from "./helpers/corporate-ca-support";
 
 const HELPER = path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
@@ -134,8 +134,10 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-wrapper-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "run.sh");
-
     function runScenario(setArgs: string, extraEnv: Record<string, string> = {}) {
+      const baseEnv = { ...process.env };
+      delete baseEnv.NEMOCLAW_DASHBOARD_PORT;
+      delete baseEnv.CHAT_UI_URL;
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -156,9 +158,12 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       return spawnSync("bash", [scriptPath], {
         encoding: "utf-8",
         timeout: 5000,
-        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ""}`, ...extraEnv },
+        env: { ...baseEnv, PATH: `${fakeBin}:${process.env.PATH || ""}`, ...extraEnv },
       });
     }
+
+    vi.stubEnv("NEMOCLAW_DASHBOARD_PORT", "19999");
+    vi.stubEnv("CHAT_UI_URL", "https://ambient.example.test/ui");
 
     try {
       fs.mkdirSync(fakeBin);
@@ -205,6 +210,11 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(baked.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(baked.stdout).toContain("CMD=openclaw agent");
 
+      const defaults = runScenario("set -- nemoclaw-start openclaw agent");
+      expect(defaults.status).toBe(0);
+      expect(defaults.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:18789");
+      expect(defaults.stdout).toContain("PUBLIC_PORT=18789");
+
       const invalidHighPort = runScenario("set -- nemoclaw-start openclaw agent", {
         NEMOCLAW_DASHBOARD_PORT: "70000",
       });
@@ -212,6 +222,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
       expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
     } finally {
+      vi.unstubAllEnvs();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
