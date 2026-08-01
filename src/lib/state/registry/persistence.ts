@@ -19,6 +19,7 @@ import {
 } from "../registry-normalization";
 import * as reversibleRemoval from "../registry-reversible-removal";
 import { nemoclawStateRoot } from "../state-root";
+import { cloneSandboxHostLocalInferenceReceipt } from "./host-local-inference";
 import type { SandboxEntry, SandboxRegistry } from "./types";
 import { cloneSandboxWorkloadReceipt } from "./workload";
 
@@ -31,6 +32,19 @@ function cloneSandboxWorkloadReceiptOrThrow(
     throw new Error(`Cannot ${operation} a sandbox entry with an invalid workload receipt`);
   }
   return workload;
+}
+
+function cloneHostLocalInferenceReceiptOrThrow(
+  value: SandboxEntry["hostLocalInferenceReceipt"],
+  operation: "load" | "save",
+): SandboxEntry["hostLocalInferenceReceipt"] {
+  const receipt = cloneSandboxHostLocalInferenceReceipt(value);
+  if (value !== undefined && receipt === undefined) {
+    throw new Error(
+      `Cannot ${operation} a sandbox entry with an invalid host-local inference receipt`,
+    );
+  }
+  return receipt;
 }
 
 export const REGISTRY_FILE = path.join(
@@ -96,6 +110,10 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
+  const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
+    entry.hostLocalInferenceReceipt,
+    "load",
+  );
   const mcp = normalizeSandboxMcpState(entry.mcp);
   const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -104,6 +122,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const {
     messaging: _messaging,
     workload: _workload,
+    hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
@@ -112,6 +131,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(workload ? { workload } : {}),
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
@@ -141,6 +161,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
+  const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
+    durable.hostLocalInferenceReceipt,
+    "save",
+  );
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
   const baselineExclusions = normalizeBaselineExclusions(durable.baselineExclusions);
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
@@ -149,6 +173,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const {
     messaging: _messaging,
     workload: _workload,
+    hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
@@ -158,6 +183,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
