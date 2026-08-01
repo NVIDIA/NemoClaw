@@ -4393,7 +4393,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
         agentSupportsWebSearch,
         agentSupportsWebSearchProvider,
-        note,
+        ...{ note, cliName },
         updateSession: onboardSession.updateSession,
         getStoredMessagingChannelConfig,
         hydrateMessagingChannelConfig,
