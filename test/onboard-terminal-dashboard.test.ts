@@ -104,8 +104,10 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get " + sandboxName)) {
-    return scenario === "reuse" ? sandboxName : "";
+  if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
+    return scenario === "reuse"
+      ? [sandboxName, "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10))
+      : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";

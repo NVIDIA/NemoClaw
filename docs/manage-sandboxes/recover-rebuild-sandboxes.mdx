@@ -167,6 +167,33 @@ Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> recover` 
 The rebuild command preserves manifest-defined Deep Agents state, regenerates `config.toml`, reconstructs managed MCP projection state, and reapplies registered policies while recreating the container.
 </AgentOnly>
 
+### Continue an Interrupted Replacement
+
+Before `rebuild` deletes the existing sandbox, NemoClaw records a replacement journal in the onboarding session.
+The journal binds the operation to the sandbox name, recorded OpenShell gateway, source identity, and replacement settings.
+It stores fingerprints instead of credential values or raw OpenShell sandbox IDs.
+
+If `rebuild` stops after recording the journal, rerun the command with the same replacement settings.
+The rerun takes one of these actions:
+
+- It continues deletion when the live sandbox still has the journaled source identity.
+- It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
+- It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
+
+An accepted replacement is not deleted again.
+The command reports `Sandbox '<name>' already holds the replacement from the interrupted rebuild.` and preserves the state backup path when one exists.
+Pass `--verbose` to include the replacement identifier, OpenShell gateway, and journal phase in rebuild diagnostics.
+
+NemoClaw fails closed when the selected gateway, replacement settings, durable source registry fields, or live source or target identity no longer matches the journal.
+The error names the sandbox and the mismatch that stopped recovery.
+Do not delete a same-name sandbox to bypass this check.
+Inspect the named OpenShell gateway and sandbox, correct the reported drift, and rerun the original command.
+
+A same-name recreation started by `$$nemoclaw onboard` uses the same replacement journal.
+If that recreation is interrupted after the `Journaled replacement` message, rerun the original onboarding command with the same target settings.
+The active replacement can continue without adding `--resume`.
+Use `--resume` for interrupted onboarding steps that occur before a replacement journal exists.
+
 If an archive command preserves at least one state directory, NemoClaw keeps the usable entries and reports the manifest-defined paths that could not be archived.
 If a manifest-declared state file fails, NemoClaw stops before deleting the original sandbox even when it preserved state directories, unless you explicitly pass `--force`.
 If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.

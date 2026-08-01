@@ -137,14 +137,56 @@ function requireSecureDirectory(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     fail(`state directory component must be a real directory: ${target}`);
   }
-  requireOwner(stat, target, runtime);
+  const runtimeOwned = stat.uid === runtime.rootUid && stat.gid === runtime.rootGid;
+  const systemRootOwned = stat.uid === 0 && stat.gid === 0;
+  if (exactMode) {
+    requireOwner(stat, target, runtime);
+  } else if (!runtimeOwned && !systemRootOwned) {
+    fail(`state directory ancestor is not owned by a trusted identity: ${target}`);
+  }
   const mode = modeOf(stat);
-  if ((exactMode && mode !== STATE_DIRECTORY_MODE) || (!exactMode && (mode & 0o022) !== 0)) {
+  const writableByUntrustedIdentity = (mode & 0o022) !== 0;
+  const trustedStickyRoot = (stat.mode & 0o1000) !== 0 && (runtimeOwned || systemRootOwned);
+  if (
+    (exactMode && mode !== STATE_DIRECTORY_MODE) ||
+    (!exactMode && writableByUntrustedIdentity && !trustedStickyRoot)
+  ) {
     fail(
       exactMode
         ? `${target} must have mode 0700`
-        : `${target} must not be group- or world-writable`,
+        : `${target} is a replaceable group- or world-writable ancestor`,
     );
+  }
+}
+
+function requireSecureAncestors(target: string, runtime: ManagedStartupApplicationRuntime): void {
+  const root = path.parse(target).root;
+  let current = root;
+  requireSecureDirectory(current, runtime, false);
+  for (const segment of path.relative(root, target).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(current);
+    } catch {
+      fail(`state directory component is missing or unreadable: ${current}`);
+    }
+    if (stat.isSymbolicLink()) {
+      const runtimeOwned = stat.uid === runtime.rootUid && stat.gid === runtime.rootGid;
+      const systemRootOwned = stat.uid === 0 && stat.gid === 0;
+      if (!runtimeOwned && !systemRootOwned) {
+        fail(`state directory ancestor is a replaceable symlink: ${current}`);
+      }
+      let resolved: string;
+      try {
+        resolved = fs.realpathSync(current);
+      } catch {
+        fail(`state directory symlink is missing or unreadable: ${current}`);
+      }
+      requireSecureAncestors(resolved, runtime);
+      continue;
+    }
+    requireSecureDirectory(current, runtime, false);
   }
 }
 
@@ -158,7 +200,7 @@ function ensureStateDirectory(
   }
   const normalized = path.resolve(stateDirectory);
   const parent = path.dirname(normalized);
-  requireSecureDirectory(parent, runtime, false);
+  requireSecureAncestors(parent, runtime);
   try {
     fs.mkdirSync(normalized, { mode: STATE_DIRECTORY_MODE });
     fs.chownSync(normalized, runtime.rootUid, runtime.rootGid);
