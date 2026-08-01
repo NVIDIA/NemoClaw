@@ -3,7 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 
-import { deepFreezeOwned } from "../../../core/deep-freeze-owned";
+import { cloneAndDeepFreeze } from "../../../core/immutable";
 import {
   getHermesToolGatewayCloneBroker,
   type HermesToolGatewayCloneBroker,
@@ -179,7 +179,7 @@ export function prepareHermesManagedCloneBrokerTransaction(input: {
     runOpenshell: input.runOpenshell,
     transactionId: input.transactionId,
   });
-  return deepFreezeOwned({
+  return cloneAndDeepFreeze({
     schemaVersion: 1 as const,
     phase: "prepared" as const,
     gatewayProviderName: bindings[1].providerName,
@@ -249,7 +249,7 @@ export function provisionHermesManagedCloneBrokerTransaction(
       refreshToken,
       staged,
     );
-    return deepFreezeOwned({
+    return cloneAndDeepFreeze({
       schemaVersion: 1 as const,
       phase: "activated" as const,
       destinationSandboxName: prepared.providerTransaction.destinationSandboxName,
