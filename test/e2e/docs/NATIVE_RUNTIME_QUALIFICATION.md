@@ -52,6 +52,12 @@ strict lowercase hexadecimal values. Missing, duplicate, unknown, or inexact
 case evidence fails the aggregate qualification check. All cases must use the
 configured protected workflow and one exact head/base pair.
 
+Installer evidence is normalized through the production provider-neutral
+receipt contract. Its source revision must match the protected head, and its
+provider authority, engine identity, and version must match the runtime receipt
+for that case. The contract derives the required amd64 and arm64 targets from
+the activation declaration and requires Docker to be unavailable.
+
 ## Activation boundary
 
 Keep this contract inert until an implementation PR supplies executable

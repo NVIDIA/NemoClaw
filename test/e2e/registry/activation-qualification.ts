@@ -11,6 +11,10 @@ import {
   type RuntimeProviderActivationPlatform,
 } from "../../../src/lib/onboard/runtime-provider/activation.ts";
 import {
+  normalizeRuntimeProviderInstallerQualificationReceipt,
+  type RuntimeProviderInstallerQualificationReceipt,
+} from "../../../src/lib/onboard/runtime-provider/installer-qualification.ts";
+import {
   defineExecutionProfile,
   type ExecutionAcceleration,
   type ExecutionArchitecture,
@@ -187,14 +191,7 @@ export interface NativeRuntimeQualificationEvidence {
     headSha: string;
     baseSha: string;
   };
-  installer: {
-    provider: ExecutionProviderId;
-    architecture: ExecutionArchitecture;
-    dockerAvailability: "unavailable";
-    exitCode: 0;
-    invocation: QualificationArtifactReceipt;
-    script: QualificationArtifactReceipt;
-  };
+  installer: RuntimeProviderInstallerQualificationReceipt;
   runtime: {
     provider: ExecutionProviderId;
     profileId: string;
@@ -203,6 +200,7 @@ export interface NativeRuntimeQualificationEvidence {
     architecture: ExecutionArchitecture;
     acceleration: ExecutionAcceleration;
     rootMode: "rootless";
+    authorityId: string;
     engineName: string;
     engineVersion: string;
     managedImages: readonly {
@@ -475,16 +473,20 @@ function assertCaseEvidence(
   }
 
   const profile = qualificationCase.profile;
+  const installer = normalizeRuntimeProviderInstallerQualificationReceipt(
+    definition.activation,
+    evidence.installer,
+  );
+  const expectedPlatform = `linux/${profile.architecture}` as const;
   if (
-    evidence.installer.provider !== definition.provider ||
-    evidence.installer.architecture !== profile.architecture ||
-    evidence.installer.dockerAvailability !== "unavailable" ||
-    evidence.installer.exitCode !== 0
+    installer.platform !== expectedPlatform ||
+    installer.sourceRevision !== evidence.protectedRun.headSha ||
+    installer.runtime.authorityId !== evidence.runtime.authorityId ||
+    installer.runtime.engineName !== evidence.runtime.engineName ||
+    installer.runtime.engineVersion !== evidence.runtime.engineVersion
   ) {
     throw new Error(`Qualification evidence '${evidence.caseId}' has an invalid installer receipt`);
   }
-  assertArtifact(evidence.installer.invocation, "Installer invocation artifact");
-  assertArtifact(evidence.installer.script, "Installer script artifact");
 
   if (
     evidence.runtime.provider !== definition.provider ||
@@ -497,6 +499,7 @@ function assertCaseEvidence(
   ) {
     throw new Error(`Qualification evidence '${evidence.caseId}' has an invalid runtime identity`);
   }
+  assertSingleLine(evidence.runtime.authorityId, "Runtime authority id");
   assertSingleLine(evidence.runtime.engineName, "Runtime engine name");
   assertSingleLine(evidence.runtime.engineVersion, "Runtime engine version");
   if (evidence.runtime.managedImages.length === 0) {

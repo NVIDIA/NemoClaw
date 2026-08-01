@@ -18,6 +18,7 @@ const HEAD_SHA = "1".repeat(40);
 const BASE_SHA = "2".repeat(40);
 const ARTIFACT_SHA = "a".repeat(64);
 const IMAGE_DIGEST = `sha256:${"b".repeat(64)}`;
+const RUNTIME_AUTHORITY = `podman-sha256:${"c".repeat(64)}`;
 
 function artifact(label: string) {
   return { path: `qualification/${label}.json`, sha256: ARTIFACT_SHA };
@@ -37,12 +38,24 @@ function completeEvidence(): NativeRuntimeQualificationEvidence[] {
       baseSha: BASE_SHA,
     },
     installer: {
-      provider: PODMAN_NATIVE_ACTIVATION_QUALIFICATION.provider,
-      architecture: qualificationCase.profile.architecture,
+      schemaVersion: 1,
+      activationContractVersion: PODMAN_NATIVE_ACTIVATION_QUALIFICATION.activation.contractVersion,
+      providerId: PODMAN_NATIVE_ACTIVATION_QUALIFICATION.provider,
+      platform: `linux/${qualificationCase.profile.architecture}` as const,
+      rootMode: "rootless",
       dockerAvailability: "unavailable",
-      exitCode: 0,
-      invocation: artifact(`${qualificationCase.id}-installer-invocation`),
-      script: artifact(`${qualificationCase.id}-installer-script`),
+      sourceRevision: HEAD_SHA,
+      installer: {
+        kind: "release-installer",
+        exitCode: 0,
+        invocation: artifact(`${qualificationCase.id}-installer-invocation`),
+        script: artifact(`${qualificationCase.id}-installer-script`),
+      },
+      runtime: {
+        authorityId: RUNTIME_AUTHORITY,
+        engineName: "podman",
+        engineVersion: "5.6.2",
+      },
     },
     runtime: {
       provider: PODMAN_NATIVE_ACTIVATION_QUALIFICATION.provider,
@@ -52,6 +65,7 @@ function completeEvidence(): NativeRuntimeQualificationEvidence[] {
       architecture: qualificationCase.profile.architecture,
       acceleration: qualificationCase.profile.acceleration,
       rootMode: "rootless",
+      authorityId: RUNTIME_AUTHORITY,
       engineName: "podman",
       engineVersion: "5.6.2",
       managedImages: [{ role: "agent", digest: IMAGE_DIGEST }],
@@ -266,12 +280,43 @@ describe("native runtime activation qualification", () => {
 
     const mixedSourcePair = completeEvidence();
     mixedSourcePair[0]!.protectedRun.headSha = "3".repeat(40);
+    mixedSourcePair[0]!.installer = {
+      ...mixedSourcePair[0]!.installer,
+      sourceRevision: "3".repeat(40),
+    };
     expect(() =>
       assertNativeRuntimeQualificationEvidence(
         PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
         mixedSourcePair,
       ),
     ).toThrow(/one exact head\/base pair/u);
+
+    const wrongInstallerSource = completeEvidence();
+    wrongInstallerSource[0]!.installer = {
+      ...wrongInstallerSource[0]!.installer,
+      sourceRevision: BASE_SHA,
+    };
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        wrongInstallerSource,
+      ),
+    ).toThrow(/invalid installer receipt/u);
+
+    const wrongInstallerAuthority = completeEvidence();
+    wrongInstallerAuthority[0]!.installer = {
+      ...wrongInstallerAuthority[0]!.installer,
+      runtime: {
+        ...wrongInstallerAuthority[0]!.installer.runtime,
+        authorityId: `podman-sha256:${"d".repeat(64)}`,
+      },
+    };
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        wrongInstallerAuthority,
+      ),
+    ).toThrow(/invalid installer receipt/u);
 
     const badImage = completeEvidence();
     badImage[0]!.runtime.managedImages = [{ role: "agent", digest: "latest" }];
