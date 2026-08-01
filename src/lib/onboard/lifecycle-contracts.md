@@ -128,9 +128,9 @@ runtime mutation
 `createPodmanManagedGatewayWatcherController` is an internal, unregistered
 authority for a later native Podman bootstrap provider. It does not activate or
 advertise Podman support. The caller must resolve exactly one healthy watcher,
-its PID-reuse-safe process identity, and the managed lifecycle owner that can
-stop and resume the same launch identity. Ambiguous or externally supervised
-owners fail closed.
+a process identity that distinguishes PID reuse, and the managed lifecycle
+owner that can stop and resume the same launch identity. Ambiguous or
+externally supervised owners fail closed.
 
 The controller durably records an `acquiring` lease before the first stop
 request, proves the owner, process, and target listener absent, and then records
