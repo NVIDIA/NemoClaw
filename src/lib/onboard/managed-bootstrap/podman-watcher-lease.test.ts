@@ -51,17 +51,17 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
   const store = {
     read: vi.fn(() => durable),
     acquire: vi.fn((value: PodmanGatewayWatcherLeaseRecord) => {
-      if (durable !== null) throw new Error("lease already exists");
+      expect(durable, "lease already exists").toBeNull();
       durable = value;
       writes.push(value);
     }),
     advance: vi.fn((expectedLeaseId: string, value: PodmanGatewayWatcherLeaseRecord) => {
-      if (durable?.leaseId !== expectedLeaseId) throw new Error("lease compare-and-swap failed");
+      expect(durable?.leaseId, "lease compare-and-swap failed").toBe(expectedLeaseId);
       durable = value;
       writes.push(value);
     }),
     clear: vi.fn((expectedLeaseId: string) => {
-      if (durable?.leaseId !== expectedLeaseId) throw new Error("lease compare-and-clear failed");
+      expect(durable?.leaseId, "lease compare-and-clear failed").toBe(expectedLeaseId);
       durable = null;
     }),
   };
