@@ -48,14 +48,15 @@ describe("global cli action facade", () => {
   });
 
   it("forwards onboarding, deploy, maintenance, and help actions", async () => {
-    await runOnboardAction({ resume: true });
+    const onboardRuntimeDeps = { googlechatTunnelRuntime: {} };
+    await runOnboardAction({ resume: true }, onboardRuntimeDeps);
     await runDeployAction("gpu-alpha");
     await runBackupAllAction();
     await runGarbageCollectImagesAction({ dryRun: true });
     showRootHelp();
     showVersion();
 
-    expect(mocks.runOnboardAction).toHaveBeenCalledWith({ resume: true });
+    expect(mocks.runOnboardAction).toHaveBeenCalledWith({ resume: true }, onboardRuntimeDeps);
     expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
     expect(mocks.backupAll).toHaveBeenCalledWith();
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });
