@@ -17,9 +17,10 @@ import argparse
 
 PRE_ARGPARSE_INHERITED_FLAGS = [("-p", True), ("--profile", True)]
 
-def _add_shared(parser):
+def _add_shared(parser, include_provider=True):
     parser.add_argument("-m", "--model")
-    parser.add_argument("--provider")
+    if include_provider:
+        parser.add_argument("--provider")
     parser.add_argument("-t", "--toolsets")
     parser.add_argument("-s", "--skills", action="append")
     parser.add_argument("-r", "--resume")
@@ -46,13 +47,13 @@ def build_top_level_parser():
     return top, None, chat
 `;
 
-function runValidator(contract: object) {
+function runValidator(contract: object, parserFixture = PARSER_FIXTURE) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-adapter-"));
   try {
     const packageDir = path.join(fixture, "hermes_cli");
     fs.mkdirSync(packageDir);
     fs.writeFileSync(path.join(packageDir, "__init__.py"), '__version__ = "0.19.0"\n');
-    fs.writeFileSync(path.join(packageDir, "_parser.py"), PARSER_FIXTURE);
+    fs.writeFileSync(path.join(packageDir, "_parser.py"), parserFixture);
     const contractPath = path.join(fixture, "adapter.json");
     fs.writeFileSync(contractPath, `${JSON.stringify(contract)}\n`);
     const hermes = path.join(fixture, "hermes");
@@ -78,6 +79,21 @@ describe("Hermes CLI adapter validator", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       "adapter option profile has arity boolean, but preparse parser metadata requires a value",
+    );
+  });
+
+  it("rejects a translated option missing from the upstream chat parser (#8011)", () => {
+    const contract = JSON.parse(fs.readFileSync(CONTRACT, "utf8"));
+    const parserFixture = PARSER_FIXTURE.replace(
+      "    _add_shared(chat)",
+      "    _add_shared(chat, include_provider=False)",
+    );
+
+    const result = runValidator(contract, parserFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "adapter option --provider is absent from the upstream chat parser",
     );
   });
 });
