@@ -14,6 +14,8 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
@@ -24,7 +26,9 @@ import {
   fingerprintSandboxRegistryEntry,
   matchingSandboxRecreateTransaction,
   planSandboxRecreateRecovery,
+  retireReplacedSandboxWorkload,
   type SandboxRecreateObservation,
+  sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
 
@@ -46,6 +50,14 @@ const SOURCE_ENTRY: SandboxEntry = {
   credentialEnv: "NVIDIA_API_KEY",
   gatewayName: "nemoclaw-31818",
   gatewayPort: 31818,
+  openshellDriver: "docker",
+  imageTag: "openshell/sandbox-from:old",
+  workload: {
+    schemaVersion: 1,
+    kind: "legacy-dockerfile",
+    reference: "openshell/sandbox-from:old",
+    shared: false,
+  },
 };
 
 function beginInput(observation: SandboxRecreateObservation) {
@@ -74,6 +86,15 @@ function transactionAt(
     gatewayPort: 31818,
     sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(SOURCE_ENTRY),
     sourceLiveIdentityFingerprint: SOURCE_ID,
+    sourceWorkload: {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+        shared: false,
+      },
+    },
     targetIntentFingerprint: TARGET_INTENT,
     targetGeneration: TARGET_GENERATION,
     targetLiveIdentityFingerprint: TARGET_ID,
@@ -100,9 +121,57 @@ describe("sandbox recreate journal", () => {
       phase: "planned",
     });
     expect(session.checkpoint?.sandboxRecreate).toBe(transaction);
+    expect(sandboxRecreateSourceWorkloadEntry(transaction)).toMatchObject({
+      name: "alpha",
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: SOURCE_ENTRY.workload,
+    });
     const serialized = JSON.stringify(transaction);
     expect(serialized).not.toContain("NVIDIA_API_KEY");
     expect(serialized).not.toContain("model-a");
+  });
+
+  it("retains a shared source image after reconstructing an interrupted replacement", () => {
+    const source = {
+      ...SOURCE_ENTRY,
+      workload: { ...SOURCE_ENTRY.workload, shared: true },
+    } as unknown as SandboxEntry;
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    const transaction = beginSandboxRecreateTransaction(session, {
+      ...beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+      sourceEntry: source,
+    });
+    const restoredSource = sandboxRecreateSourceWorkloadEntry(transaction);
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+    const replacement: SandboxEntry = {
+      ...SOURCE_ENTRY,
+      imageTag: "openshell/sandbox-from:new",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:new",
+        shared: false,
+      },
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    };
+
+    expect(restoredSource?.workload?.shared).toBe(true);
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        TARGET_GENERATION,
+        TARGET_ID,
+        restoredSource ?? SOURCE_ENTRY,
+        replacement,
+        { runtimeProviders },
+      ),
+    ).toEqual({ status: "skipped", reason: "shared-image" });
+    expect(removeImage).not.toHaveBeenCalled();
   });
 
   it("starts at deleted when the source is already absent", () => {
