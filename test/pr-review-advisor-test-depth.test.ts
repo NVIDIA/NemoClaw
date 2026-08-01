@@ -21,6 +21,11 @@ function reviewResult(testDepth: TestDepth): ReviewResult {
       oneLine: "Review requires deeper validation.",
     },
     findings: [],
+    terminologyReview: {
+      status: "clear",
+      decisions: [],
+      noChangesReason: "No semantic terminology candidates were selected.",
+    },
     acceptanceCoverage: [],
     securityCategories: [],
     sourceOfTruthReview: [],

@@ -225,6 +225,7 @@ describe("PR review advisor comment CLI", () => {
     });
     expect(completed.fingerprints?.findings).toMatch(/^[0-9a-f]{64}$/u);
     expect(completed.fingerprints?.e2e).toMatch(/^[0-9a-f]{64}$/u);
+    expect(completed.fingerprints?.terminology).toMatch(/^[0-9a-f]{64}$/u);
     const reordered = normalizeAdvisorLaneReport(
       { ...finalResult, findings: [...finalResult.findings].reverse() },
       { ...finalResult, findings: [...finalResult.findings].reverse() },
@@ -257,6 +258,32 @@ describe("PR review advisor comment CLI", () => {
       partial: false,
     });
     expect(normalizeAdvisorLaneReport(finalResult, finalResult, "b".repeat(40))).toEqual({
+      status: "unavailable",
+      partial: false,
+    });
+    const wrongHeadTerminology = {
+      ...finalResult,
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [
+          {
+            id: "T-001",
+            term: "review-bound",
+            change: "introduced",
+            disposition: "replace",
+            meaning: "Evidence for one revision.",
+            contrast: null,
+            existingTerm: "PR SHA",
+            semanticImpact: "evidence",
+            recommendation: "Use PR SHA.",
+            traceId: "term-wrong-head",
+            source: { file: "guide.md", line: 4, headSha: "b".repeat(40) },
+          },
+        ],
+      },
+    };
+    expect(normalizeAdvisorLaneReport(finalResult, wrongHeadTerminology, headSha)).toEqual({
       status: "unavailable",
       partial: false,
     });
@@ -336,6 +363,25 @@ describe("PR review advisor comment CLI", () => {
         oneLine: "Primary review completed.",
       },
       findings: [{ severity: "warning", title: "Primary warning" }],
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [
+          {
+            id: "T-001",
+            term: "review-bound",
+            change: "introduced",
+            disposition: "replace",
+            meaning: "Evidence for the PR SHA.",
+            contrast: null,
+            existingTerm: "PR SHA",
+            semanticImpact: "evidence",
+            recommendation: "Use PR SHA.",
+            traceId: "term-primary",
+            source: { file: "guide.md", line: 4, headSha: "a".repeat(40) },
+          },
+        ],
+      },
       e2e: {
         coverage: {
           requiredTests: [],
@@ -361,6 +407,38 @@ describe("PR review advisor comment CLI", () => {
       headSha: result.headSha,
       summary: { confidence: "low", oneLine: "do not publish this summary" },
       findings: [{ severity: "warning", title: "do not publish this finding" }],
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [
+          {
+            id: "T-001",
+            term: "review-bound",
+            change: "introduced",
+            disposition: "justified",
+            meaning: "Evidence for the selected head.",
+            contrast: "Evidence for another revision.",
+            existingTerm: null,
+            semanticImpact: "evidence",
+            recommendation: "Define the contrast.",
+            traceId: "term-secondary-1",
+            source: { file: "guide.md", line: 4, headSha: result.headSha },
+          },
+          {
+            id: "T-002",
+            term: "lane-bound",
+            change: "introduced",
+            disposition: "define",
+            meaning: "A result from one model lane.",
+            contrast: null,
+            existingTerm: null,
+            semanticImpact: "none",
+            recommendation: "Define the term.",
+            traceId: "term-secondary-2",
+            source: { file: "guide.md", line: 8, headSha: result.headSha },
+          },
+        ],
+      },
       e2e: {
         coverage: {
           requiredTests: [
@@ -402,10 +480,15 @@ describe("PR review advisor comment CLI", () => {
       "**Nemotron 3 Ultra (second opinion):** Completed · low confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(comment).toContain("normalized findings differ");
+    expect(comment).toContain("normalized terminology decisions differ");
     expect(comment).toContain("normalized E2E selections differ");
     expect(comment).toContain("severity counts match");
     expect(comment).not.toContain("do not publish this summary");
     expect(comment).not.toContain("do not publish this finding");
+    expect(comment).toContain("2 terminology differences from the second opinion");
+    expect(comment).toContain("primary classified it as <code>replace</code>");
+    expect(comment).toContain("selected only by the second-opinion lane as <code>define</code>");
+    expect(comment).toContain("1 semantic terminology decision");
     expect(comment).toContain(
       "<summary>1 additional E2E selection from the second opinion</summary>",
     );
@@ -417,7 +500,7 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).not.toContain("not-allowlisted");
     expect(comment).not.toContain("do not publish an unknown selector");
     expect(comment).toContain(
-      "Second-opinion E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate.",
+      "Second-opinion terminology and E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate.",
     );
     expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
     expect(comment.match(/<code>vllm-docker-storage<\/code>/gu)).toHaveLength(1);

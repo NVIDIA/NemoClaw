@@ -1,0 +1,455 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+export const TERMINOLOGY_TRACE_TOOL = "pr_review_trace_term";
+export const TERMINOLOGY_UPDATE_TOOL = "pr_review_update_terminology";
+export const TERMINOLOGY_READ_TOOL = "pr_review_read_terminology";
+
+const CHANGES = ["introduced", "expanded", "redefined"] as const;
+const DISPOSITIONS = ["established", "justified", "define", "replace", "conflict"] as const;
+const SEMANTIC_IMPACTS = [
+  "none",
+  "behavior",
+  "security",
+  "support",
+  "evidence",
+  "test",
+  "release",
+] as const;
+const TERM_LIMIT = 80;
+const DECISION_LIMIT = 20;
+const TRACE_LIMIT = 20;
+const LOCATION_LIMIT = 40;
+const SAMPLE_LIMIT = 20;
+
+type TerminologyChange = (typeof CHANGES)[number];
+type TerminologyDisposition = (typeof DISPOSITIONS)[number];
+type TerminologySemanticImpact = (typeof SEMANTIC_IMPACTS)[number];
+
+export type TerminologyLocation = Readonly<{
+  file: string;
+  line: number;
+  text: string;
+}>;
+
+export type TerminologyTrace = Readonly<{
+  id: string;
+  term: string;
+  variants: readonly string[];
+  baseSha: string;
+  headSha: string;
+  baseOccurrences: number;
+  headOccurrences: number;
+  changedLocations: readonly TerminologyLocation[];
+  baseSamples: readonly string[];
+  headSamples: readonly string[];
+  firstCommitSha: string | null;
+}>;
+
+export type TerminologyDecision = Readonly<{
+  id: string;
+  term: string;
+  change: TerminologyChange;
+  disposition: TerminologyDisposition;
+  meaning: string;
+  contrast: string | null;
+  existingTerm: string | null;
+  semanticImpact: TerminologySemanticImpact;
+  recommendation: string;
+  traceId: string;
+  source: Readonly<{
+    file: string;
+    line: number;
+    headSha: string;
+  }>;
+}>;
+
+export type TerminologyReview = Readonly<{
+  status: "clear" | "candidates" | "limited";
+  decisions: readonly TerminologyDecision[];
+  noChangesReason: string | null;
+}>;
+
+export type TerminologyLedgerSnapshot = Readonly<{
+  version: 1;
+  revision: number;
+  headSha: string;
+  review: TerminologyReview;
+}>;
+
+type DecisionInput = Omit<TerminologyDecision, "id" | "source"> & {
+  source: { file: string; line: number };
+};
+
+type TerminologyCommitInput = Readonly<{
+  decisions: readonly DecisionInput[];
+  noChangesReason: string | null;
+}>;
+
+export class TerminologyLedger {
+  readonly #headSha: string;
+  #revision = 0;
+  #review: TerminologyReview = Object.freeze({
+    status: "limited",
+    decisions: Object.freeze([]),
+    noChangesReason: "Terminology review did not complete.",
+  });
+
+  constructor(headSha: string) {
+    this.#headSha = nonempty(headSha, "headSha");
+  }
+
+  commit(input: TerminologyCommitInput, traces: ReadonlyMap<string, TerminologyTrace>): void {
+    if (this.#revision !== 0) throw new Error("Terminology review already has a committed receipt");
+    if (input.decisions.length > DECISION_LIMIT) {
+      throw new Error(`Terminology review accepts at most ${DECISION_LIMIT} decisions`);
+    }
+    if (input.noChangesReason !== null && input.decisions.length > 0) {
+      throw new Error("noChangesReason is mutually exclusive with terminology decisions");
+    }
+    if (input.decisions.length === 0 && input.noChangesReason === null) {
+      throw new Error("An empty terminology receipt requires noChangesReason");
+    }
+    const seen = new Set<string>();
+    const decisions = input.decisions.map((candidate, index): TerminologyDecision => {
+      const trace = traces.get(nonempty(candidate.traceId, "traceId"));
+      if (!trace) throw new Error(`Unknown terminology trace ${candidate.traceId}`);
+      if (trace.headSha !== this.#headSha) {
+        throw new Error(`Terminology trace ${trace.id} is not bound to the current PR SHA`);
+      }
+      const term = normalizeTerm(candidate.term);
+      if (!CHANGES.includes(candidate.change))
+        throw new Error(`Unsupported change ${candidate.change}`);
+      if (!DISPOSITIONS.includes(candidate.disposition)) {
+        throw new Error(`Unsupported disposition ${candidate.disposition}`);
+      }
+      if (!SEMANTIC_IMPACTS.includes(candidate.semanticImpact)) {
+        throw new Error(`Unsupported semanticImpact ${candidate.semanticImpact}`);
+      }
+      if (term.toLocaleLowerCase() !== trace.term.toLocaleLowerCase()) {
+        throw new Error(`Decision term ${term} does not match trace ${trace.id}`);
+      }
+      const file = nonempty(candidate.source.file, "source.file");
+      const line = positiveInteger(candidate.source.line, "source.line");
+      if (
+        !trace.changedLocations.some((location) => location.file === file && location.line === line)
+      ) {
+        throw new Error(
+          `Decision source ${file}:${line} is not a changed occurrence in ${trace.id}`,
+        );
+      }
+      if (candidate.disposition === "justified" && !candidate.contrast?.trim()) {
+        throw new Error("A justified term requires a concrete contrast");
+      }
+      if (candidate.disposition === "replace" && !candidate.existingTerm?.trim()) {
+        throw new Error("A replacement decision requires existingTerm");
+      }
+      const key = `${term.toLocaleLowerCase()}\0${file}\0${line}`;
+      if (seen.has(key)) throw new Error(`Duplicate terminology decision for ${file}:${line}`);
+      seen.add(key);
+      return Object.freeze({
+        id: `T-${String(index + 1).padStart(3, "0")}`,
+        term,
+        change: candidate.change,
+        disposition: candidate.disposition,
+        meaning: nonempty(candidate.meaning, "meaning"),
+        contrast: nullableText(candidate.contrast),
+        existingTerm: nullableText(candidate.existingTerm),
+        semanticImpact: candidate.semanticImpact,
+        recommendation: nonempty(candidate.recommendation, "recommendation"),
+        traceId: trace.id,
+        source: Object.freeze({ file, line, headSha: this.#headSha }),
+      });
+    });
+    this.#revision = 1;
+    this.#review = Object.freeze({
+      status: decisions.length > 0 ? "candidates" : "clear",
+      decisions: Object.freeze(decisions),
+      noChangesReason:
+        decisions.length > 0 ? null : nonempty(input.noChangesReason ?? "", "noChangesReason"),
+    });
+  }
+
+  snapshot(): TerminologyLedgerSnapshot {
+    return Object.freeze({
+      version: 1,
+      revision: this.#revision,
+      headSha: this.#headSha,
+      review: this.#review,
+    });
+  }
+}
+
+export function createTerminologyLedger(headSha: string): TerminologyLedger {
+  return new TerminologyLedger(headSha);
+}
+
+const text = Type.String({ minLength: 1, maxLength: 2000 });
+const nullableTextSchema = Type.Union([text, Type.Null()]);
+const decisionSchema = Type.Object(
+  {
+    term: Type.String({ minLength: 1, maxLength: TERM_LIMIT }),
+    change: Type.Union(CHANGES.map((value) => Type.Literal(value))),
+    disposition: Type.Union(DISPOSITIONS.map((value) => Type.Literal(value))),
+    meaning: text,
+    contrast: nullableTextSchema,
+    existingTerm: nullableTextSchema,
+    semanticImpact: Type.Union(SEMANTIC_IMPACTS.map((value) => Type.Literal(value))),
+    recommendation: text,
+    traceId: Type.String({ minLength: 1, maxLength: 80 }),
+    source: Type.Object(
+      {
+        file: Type.String({ minLength: 1, maxLength: 500 }),
+        line: Type.Integer({ minimum: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+const commitSchema = Type.Object(
+  {
+    decisions: Type.Array(decisionSchema, { maxItems: DECISION_LIMIT }),
+    noChangesReason: nullableTextSchema,
+  },
+  { additionalProperties: false },
+);
+
+export type TerminologyToolController = {
+  tools: ToolDefinition[];
+  setStage(stage: string): void;
+};
+
+export function createTerminologyToolController({
+  ledger,
+  baseRef,
+  headRef,
+  cwd = process.cwd(),
+}: {
+  ledger: TerminologyLedger;
+  baseRef: string;
+  headRef: string;
+  cwd?: string;
+}): TerminologyToolController {
+  let stage = "";
+  const traces = new Map<string, TerminologyTrace>();
+  const selectedTerms = new Set<string>();
+  const trace = defineTool({
+    name: TERMINOLOGY_TRACE_TOOL,
+    label: "Trace a selected repository term",
+    description:
+      "Trace one semantically selected term across the base, PR SHA, and changed lines. This tool verifies evidence; it does not select or classify terms.",
+    parameters: Type.Object(
+      { term: Type.String({ minLength: 1, maxLength: TERM_LIMIT }) },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    execute: async (_id, input) => {
+      if (stage !== "terminology-review-analysis") {
+        throw new Error(`${TERMINOLOGY_TRACE_TOOL} is available only during terminology analysis`);
+      }
+      const term = normalizeTerm((input as { term: string }).term);
+      const key = term.toLocaleLowerCase();
+      if (!selectedTerms.has(key) && selectedTerms.size >= TRACE_LIMIT) {
+        throw new Error(`Terminology analysis accepts at most ${TRACE_LIMIT} selected terms`);
+      }
+      const result = traceTerminology({
+        term,
+        baseRef,
+        headRef,
+        cwd,
+      });
+      selectedTerms.add(key);
+      traces.set(result.id, result);
+      return toolResult(result);
+    },
+  });
+  const update = defineTool({
+    name: TERMINOLOGY_UPDATE_TOOL,
+    label: "Commit terminology review",
+    description:
+      "Commit the complete terminology review from traced changed occurrences, or an explicit reason that no candidate requires a decision.",
+    parameters: commitSchema,
+    executionMode: "sequential",
+    execute: async (_id, input) => {
+      if (stage !== "terminology-review") {
+        throw new Error(`${TERMINOLOGY_UPDATE_TOOL} is available only during terminology commit`);
+      }
+      ledger.commit(input as TerminologyCommitInput, traces);
+      return toolResult(ledger.snapshot(), true);
+    },
+  });
+  const read = defineTool({
+    name: TERMINOLOGY_READ_TOOL,
+    label: "Read terminology review",
+    description: "Read the canonical terminology receipt for later review stages and synthesis.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    executionMode: "sequential",
+    execute: async () => toolResult(ledger.snapshot()),
+  });
+  return {
+    tools: [trace, update, read],
+    setStage(value: string) {
+      stage = nonempty(value, "stage");
+    },
+  };
+}
+
+export function traceTerminology({
+  term,
+  baseRef,
+  headRef,
+  cwd = process.cwd(),
+}: {
+  term: string;
+  baseRef: string;
+  headRef: string;
+  cwd?: string;
+}): TerminologyTrace {
+  const normalized = normalizeTerm(term);
+  const variants = termVariants(normalized);
+  const baseSha = resolveCommit(baseRef, cwd);
+  const headSha = resolveCommit(headRef, cwd);
+  const baseMatches = grepRef(variants, baseSha, cwd);
+  const headMatches = grepRef(variants, headSha, cwd);
+  const changedLocations = changedTermLocations(variants, baseSha, headSha, cwd);
+  const firstCommitSha =
+    git(
+      ["log", "--reverse", "--format=%H", "--regexp-ignore-case", `-S${normalized}`, headSha, "--"],
+      true,
+      cwd,
+    )
+      .split(/\r?\n/u)
+      .find(Boolean) ?? null;
+  const id = `term-${createHash("sha256")
+    .update(JSON.stringify({ term: normalized.toLocaleLowerCase(), headSha }))
+    .digest("hex")
+    .slice(0, 16)}`;
+  return Object.freeze({
+    id,
+    term: normalized,
+    variants: Object.freeze(variants),
+    baseSha,
+    headSha,
+    baseOccurrences: baseMatches.length,
+    headOccurrences: headMatches.length,
+    changedLocations: Object.freeze(changedLocations.slice(0, LOCATION_LIMIT)),
+    baseSamples: Object.freeze(baseMatches.slice(0, SAMPLE_LIMIT)),
+    headSamples: Object.freeze(headMatches.slice(0, SAMPLE_LIMIT)),
+    firstCommitSha,
+  });
+}
+
+function resolveCommit(ref: string, cwd: string): string {
+  return git(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], false, cwd).trim();
+}
+
+function grepRef(variants: readonly string[], ref: string, cwd: string): string[] {
+  const matches = new Set<string>();
+  for (const variant of variants) {
+    for (const line of git(
+      ["grep", "-n", "-I", "-i", "-F", "-e", variant, ref, "--"],
+      true,
+      cwd,
+    ).split(/\r?\n/u)) {
+      if (line) matches.add(line);
+    }
+  }
+  return [...matches].sort();
+}
+
+function changedTermLocations(
+  variants: readonly string[],
+  baseRef: string,
+  headRef: string,
+  cwd: string,
+): TerminologyLocation[] {
+  const diff =
+    git(["diff", "--find-renames", "--unified=0", `${baseRef}...${headRef}`], true, cwd) ||
+    git(["diff", "--find-renames", "--unified=0", `${baseRef}..${headRef}`], true, cwd);
+  const locations: TerminologyLocation[] = [];
+  let file = "";
+  let line = 0;
+  for (const raw of diff.split(/\r?\n/u)) {
+    if (raw.startsWith("+++ b/")) {
+      file = raw.slice(6);
+      continue;
+    }
+    const hunk = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u);
+    if (hunk) {
+      line = Number(hunk[1]);
+      continue;
+    }
+    if (raw.startsWith("+") && !raw.startsWith("+++")) {
+      const added = raw.slice(1);
+      if (
+        file &&
+        variants.some((variant) => added.toLocaleLowerCase().includes(variant.toLocaleLowerCase()))
+      ) {
+        locations.push(Object.freeze({ file, line, text: added.slice(0, 500) }));
+      }
+      line += 1;
+      continue;
+    }
+    if (!raw.startsWith("-")) line += 1;
+  }
+  return locations;
+}
+
+function termVariants(term: string): string[] {
+  const variants = new Set([term]);
+  if (term.includes("-")) variants.add(term.replace(/-/gu, " "));
+  if (term.includes(" ")) variants.add(term.replace(/\s+/gu, "-"));
+  return [...variants];
+}
+
+function git(args: string[], allowFailure = false, cwd = process.cwd()): string {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+  } catch (error: unknown) {
+    const status =
+      typeof error === "object" && error !== null && "status" in error
+        ? (error as { status?: unknown }).status
+        : undefined;
+    if (allowFailure && typeof status === "number") return "";
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Terminology evidence command failed: git ${args[0]}: ${reason}`);
+  }
+}
+
+function normalizeTerm(value: string): string {
+  const term = nonempty(value, "term").replace(/\s+/gu, " ");
+  if (term.length > TERM_LIMIT || /[\u0000-\u001f\u007f]/u.test(term)) {
+    throw new Error(`term must be printable and at most ${TERM_LIMIT} characters`);
+  }
+  return term;
+}
+
+function nullableText(value: string | null): string | null {
+  return value === null ? null : nonempty(value, "text");
+}
+
+function nonempty(value: string, name: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${name} must be nonempty`);
+  return normalized;
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+  return value;
+}
+
+function toolResult(value: unknown, terminate = false) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(value) }],
+    details: {},
+    ...(terminate ? { terminate } : {}),
+  };
+}

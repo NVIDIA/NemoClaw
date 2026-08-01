@@ -26,6 +26,7 @@ const FINDING_BASIS_KINDS = [
   "missing_regression",
   "unnecessary_complexity",
   "documentation_mismatch",
+  "semantic_ambiguity",
 ] as const;
 
 type Severity = (typeof SEVERITIES)[number];
@@ -114,11 +115,12 @@ const ADDITION_POLICIES: Readonly<Record<string, AdditionPolicy>> = {
       "unmet_acceptance",
       "documentation_mismatch",
       "unnecessary_complexity",
+      "semantic_ambiguity",
     ],
   },
   "security-trust": {
     categories: ["security"],
-    basisKinds: ["security_violation"],
+    basisKinds: ["security_violation", "semantic_ambiguity"],
   },
   "tests-regressions": {
     categories: ["tests"],
