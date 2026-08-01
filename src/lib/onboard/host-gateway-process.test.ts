@@ -91,13 +91,16 @@ describe("host gateway cleanup boundaries", () => {
     try {
       const pidFile = path.join(stateDir, "openshell-gateway.pid");
       const markerFile = path.join(stateDir, "runtime.json");
+      const unrelatedFile = path.join(stateDir, "unrelated.txt");
       fs.writeFileSync(pidFile, "4242\n");
       fs.writeFileSync(markerFile, "{}\n");
+      fs.writeFileSync(unrelatedFile, "keep\n");
 
       clearHostGatewayRuntimeFiles(stateDir, pidFile);
 
       expect(fs.existsSync(pidFile)).toBe(false);
       expect(fs.existsSync(markerFile)).toBe(false);
+      expect(fs.existsSync(unrelatedFile)).toBe(true);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
