@@ -22,7 +22,7 @@ authority, and finalization receipts must either prove exact snapshot restore
 or exact workload absence.
 
 `scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
-that the later all-agent packaging slice will install as
+installed by every managed agent image as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. It authenticates a fixed,
 root-owned request, verifies an identity-bound completion, clears its private
 bootstrap variables and file descriptors, and then uses `exec "$@"` to preserve
@@ -65,12 +65,13 @@ Central onboarding accepts that provider-neutral surface without a Docker or
 Podman selection branch. Tests register an MXC-style surface through the same
 bundle and render held launches for OpenClaw, Hermes, and DCode.
 
-The image runtime now has dormant modes that consume the protected bootstrap
+The image runtime has dormant modes that consume the protected bootstrap
 envelope, bind shared-state authority to the exact attempt, publish an
 identity-bound completion, and authenticate that completion together with the
-ordinary startup handoff. The current image definitions still do not package
-`nemoclaw-managed-startup-hold`, `nemoclaw-managed-bootstrap`, or
-`managed-startup-image-runtime.cjs`; no production provider can invoke these
-modes yet. Later packaging and qualification slices must add those artifacts.
-Until that complete boundary passes protected E2E, every production runtime
-provider keeps bootstrap unsupported.
+ordinary startup handoff. OpenClaw, Hermes, and DCode images now package the
+root-owned hold, trampoline, runtime bundle, and complete inert capability
+union. Pull-request and publication workflows build the exact images and run
+the direct root-stdin and hold contract without advertising buildless support.
+No production provider invokes the trampoline yet. Until the later provider
+activation and protected E2E slices pass, every production runtime provider
+keeps bootstrap unsupported.

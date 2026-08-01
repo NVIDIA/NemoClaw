@@ -59,6 +59,7 @@ FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
 WORKDIR /opt/nemoclaw-managed-startup-build
 COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
 COPY src/lib/messaging/ ./src/lib/messaging/
+COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/
 COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
 COPY src/lib/security/credential-hash.ts ./src/lib/security/
 COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
@@ -116,6 +117,7 @@ COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-gu
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
+COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
@@ -979,13 +981,17 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # runtime-preload-builder stage before being flattened by filename for --require.
 COPY --from=openclaw-runtime-payload / /
 
+# Keep the root-owned managed-startup handoff in this image-only layer. The
+# following permissions block is replayed on the host by regression tests.
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e "const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== \"tool discovery received invalid runtime arguments\") process.exit(1);" "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && test -z "$discovery_unsafe"
+    && test -z "$discovery_unsafe" \
+    && install -d -o root -g root -m 0755 /run/nemoclaw
 
-# Copy startup script and shared sandbox initialisation library
+# Copy startup script and shared sandbox initialisation library.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+        /usr/local/bin/nemoclaw-managed-bootstrap \
         /usr/local/bin/nemoclaw-managed-startup-hold \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \

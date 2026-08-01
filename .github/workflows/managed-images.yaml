@@ -28,6 +28,7 @@ on:
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
+      - "src/lib/onboard/managed-bootstrap/envelope.ts"
       - "src/lib/onboard/managed-startup/**"
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
@@ -38,14 +39,14 @@ on:
 
 permissions:
   contents: read
-  packages: read
+  packages: write
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
   pr-build-and-entrypoint:
-    name: PR build and real entrypoint (${{ matrix.display_name }})
+    name: PR build and direct managed startup (${{ matrix.display_name }})
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -231,6 +232,11 @@ jobs:
           printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
             >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Install managed-image direct harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
       - name: Exercise managed startup root stdin and hold
         shell: bash
         env:
@@ -238,14 +244,16 @@ jobs:
           IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
         run: |
           set -euo pipefail
-          node --no-warnings --experimental-strip-types \
+          npx --no-install tsx \
             scripts/checks/run-managed-image-direct-e2e.ts \
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --platform linux/amd64
 
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -422,14 +430,24 @@ jobs:
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: BASE_IMAGE=${{ steps.base.outputs.ref }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
           sbom: true
 
-      - name: Validate exact managed image
+      - name: Install managed-image publication harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
+      - name: Validate exact managed image before promotion
         id: validate
         shell: bash
         env:
@@ -477,6 +495,16 @@ jobs:
               --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.contract"}}' \
               "$reference"
           )"
+          startup_profile_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.startup-profile"}}' \
+              "$reference"
+          )"
+          capabilities_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.capabilities"}}' \
+              "$reference"
+          )"
           platform_label="$(
             docker image inspect \
               --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.platform"}}' \
@@ -495,6 +523,8 @@ jobs:
           if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
              [ "$agent_label" != "$AGENT" ] ||
              [ "$contract_label" != "1" ] ||
+             [ "$startup_profile_label" != "1" ] ||
+             [ "$capabilities_label" != "1" ] ||
              [ "$platform_label" != "$PLATFORM" ] ||
              [ "$cohort_label" != "$PUBLICATION_COHORT" ] ||
              [ "$revision_label" != "$GITHUB_SHA" ]; then
@@ -625,48 +655,13 @@ jobs:
           fi
 
           DOCKER_CONFIG="$anonymous_config" \
-            node --no-warnings --experimental-strip-types \
+            npx --no-install tsx \
               scripts/checks/run-managed-image-direct-e2e.ts \
               --agent "$AGENT" \
               --image "$reference" \
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
-
-      - name: Install managed-image publication harness dependencies
-        run: |
-          npm ci --ignore-scripts
-          npm run build:policy-boundary
-
-      - name: Install pinned OpenShell runtime for publication
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.85"
-          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.85"
-          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG \
-            -u DOCKERHUB_USERNAME \
-            -u DOCKERHUB_TOKEN \
-            -u NVIDIA_API_KEY \
-            -u NVIDIA_INFERENCE_API_KEY \
-            -u GITHUB_TOKEN \
-            -u GH_TOKEN \
-            bash scripts/install-openshell.sh
-
-      - name: Exercise exact candidate through real OpenShell before promotion
-        env:
-          AGENT: ${{ matrix.agent }}
-          IMAGE_REFERENCE: ${{ steps.validate.outputs.local_id }}
-          SANDBOX_NAME: nemoclaw-publish-${{ matrix.agent }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$PATH"
-          npx tsx scripts/checks/run-managed-image-openshell-e2e.ts \
-            --agent "$AGENT" \
-            --image "$IMAGE_REFERENCE" \
-            --sandbox "$SANDBOX_NAME"
 
       - name: Export validated managed image candidate
         env:

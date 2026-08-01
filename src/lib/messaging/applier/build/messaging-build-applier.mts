@@ -1795,15 +1795,6 @@ export interface MessagingBuildPhaseOptions {
   readonly mode?: MessagingBuildApplyMode;
 }
 
-export interface MessagingBuildPhaseOptions {
-  /**
-   * A managed image already contains the reviewed capability union. Keep its
-   * durable HOME writes to the explicit render/build-file plan instead of
-   * invoking OpenClaw's broad migration and repair command.
-   */
-  readonly managedStartupRuntime?: boolean;
-}
-
 export function applyMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,

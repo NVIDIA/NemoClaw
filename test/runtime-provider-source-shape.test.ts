@@ -113,9 +113,12 @@ describe("runtime provider central source boundary", () => {
     expect(bootstrapProtocol[2]).not.toMatch(/from\s+["'][^"']*docker/u);
 
     for (const dockerfile of managedDockerfiles) {
-      expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
-      expect(dockerfile).not.toContain("managed-startup-image-runtime.cjs");
-      expect(dockerfile).not.toContain("nemoclaw-managed-startup-hold");
+      expect(dockerfile).toContain("nemoclaw-managed-bootstrap");
+      expect(dockerfile).toContain("managed-startup-image-runtime.cjs");
+      expect(dockerfile).toContain("nemoclaw-managed-startup-hold");
+      expect(dockerfile).not.toMatch(
+        /(?:driverId|providerId)\s*(?:===|!==)\s*["'](?:docker|podman)["']/u,
+      );
     }
   });
 });

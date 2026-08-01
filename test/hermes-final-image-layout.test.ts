@@ -232,6 +232,7 @@ describe("Hermes final image layout", () => {
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start",
           "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
+          "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
           "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
@@ -300,6 +301,14 @@ describe("Hermes final image layout", () => {
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
     );
+    const managedRuntimeDirectory = indexOfRequired(
+      finalStage,
+      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+    );
+    const runtimeModeReplay = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/bin/nemoclaw-start",
+    );
     const tirithFinalizerHash = indexOfRequired(
       finalStage,
       '"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"',
@@ -323,7 +332,14 @@ describe("Hermes final image layout", () => {
     expect(agent).toBeGreaterThan(certifiInstall);
     expect(agent).toBeLessThan(agentChmod);
     expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(managedRuntimeDirectory);
+    expect(managedRuntimeDirectory).toBeLessThan(blueprintChmod);
     expect(runtime).toBeLessThan(blueprintChmod);
+    expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
+    expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
+    expect(dockerfile).toContain(
+      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+    );
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
     expect(scan).toBeGreaterThan(darwinCompatibility);
@@ -350,7 +366,11 @@ describe("Hermes final image layout", () => {
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );
-    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(doctorLayer).toContain('if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then');
+    expect(doctorLayer).toContain('assert m.version("microsoft-teams-apps") == "2.0.13.4"');
+    expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.1"');
+    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& if /u);
+    expect(doctorLayer).toMatch(/fi\s+&& rm -rf \/sandbox\/[.]cache$/u);
     expect(finalStage).toContain("check_absent /opt/hermes/tests \\");
     expect(finalStage).toContain(
       "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",

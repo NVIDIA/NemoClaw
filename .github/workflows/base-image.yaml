@@ -34,6 +34,7 @@ on:
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
+      - "src/lib/onboard/managed-bootstrap/envelope.ts"
       - "src/lib/onboard/managed-startup/**"
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"

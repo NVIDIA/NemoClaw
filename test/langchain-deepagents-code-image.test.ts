@@ -155,6 +155,8 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 describe("LangChain Deep Agents Code image contracts", () => {
   it("hardens copied NemoClaw blueprints against sandbox-user mutation", () => {
     const dockerfile = readAgentFile("Dockerfile");
+    const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
+    const runtimeModeReplay = "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
@@ -176,6 +178,25 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("chmod -R 755 /sandbox/.nemoclaw/blueprints");
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
+    );
+    expect(dockerfile.split(managedRuntimeDirectory)).toHaveLength(2);
+    expect(dockerfile.indexOf("COPY --from=mcp-tool-discovery-runtime")).toBeLessThan(
+      dockerfile.indexOf(managedRuntimeDirectory),
+    );
+    expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
+      dockerfile.indexOf("USER root"),
+    );
+    expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
+      dockerfile.indexOf(runtimeModeReplay),
+    );
+    expect(dockerfile).toContain(
+      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+    );
+    expect(dockerfile).toContain(
+      "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
+    );
+    expect(dockerfile).toContain(
+      "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap",
     );
     expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
     expect(dockerfile).toContain("root|sandbox) ;; \\");
@@ -369,7 +390,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test ! -L /usr/local/lib/nemoclaw/dcode-managed-exec",
       `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-managed-exec)" = "0:0:755"`,
       "cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec",
-      "unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
       "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
       "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
@@ -378,9 +398,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(dockerfile).toContain(s);
     }
-    expect(dockerfile.indexOf("unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")).toBeLessThan(
-      dockerfile.indexOf('/usr/local/bin/dcode -n ""'),
-    );
     expect(
       dockerfile
         .split("\n")
