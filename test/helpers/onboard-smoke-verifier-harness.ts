@@ -12,6 +12,7 @@ type VerifyOnboardSmokeInvocation = {
   endpointUrl?: string;
   forceOpenAiLike?: boolean;
   model?: string;
+  pinnedAddresses?: string[];
   provider?: string;
 };
 
@@ -109,6 +110,7 @@ console.log = (...args) => calls.push(["log", args.join(" ")]);
         model: effectiveInvocation.model,
         authMode: getProbeAuthMode(effectiveInvocation.provider),
         extraHeaders: getProbeExtraHeaders(effectiveInvocation.provider),
+        pinnedAddresses: effectiveInvocation.pinnedAddresses,
       });
       if (!primed) throw new Error("failed to prime selected Chat Completions capability");
     }
