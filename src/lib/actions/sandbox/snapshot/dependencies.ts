@@ -11,10 +11,6 @@ export type {
   PreparedManagedWorkloadCloneHandoff,
   PrepareManagedWorkloadCloneHandoffInput,
 } from "../../../onboard/workload/clone";
-export {
-  ManagedWorkloadCloneError,
-  prepareManagedWorkloadCloneHandoff,
-} from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export type {
   ManagedCloneProviderBinding,
@@ -25,13 +21,6 @@ export type {
   ManagedCloneProviderTransactionReceipt,
   PreparedManagedCloneProvider,
   PreparedManagedCloneProviderTransaction,
-} from "./managed-clone-providers";
-export {
-  cleanupManagedCloneProviderTransaction,
-  ManagedCloneProviderTransactionError,
-  prepareManagedCloneProviderTransaction,
-  provisionManagedCloneProviderTransaction,
-  revalidateManagedCloneMutationAuthority,
 } from "./managed-clone-providers";
 export {
   ManagedSnapshotProfileRestoreError,
