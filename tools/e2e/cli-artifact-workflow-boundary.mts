@@ -18,7 +18,7 @@ export const CLI_ARTIFACT_DOWNLOAD_ACTION =
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@01f9a8da96e349717bfcd8c457e8380cf6bf3ff3";
+  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@e5a55a8be89d4a3dfd44b743c7190544ef2f5246";
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";

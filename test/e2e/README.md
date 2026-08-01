@@ -28,8 +28,11 @@ before those targets run; local runners must provide it themselves.
 ### Exact-Commit CLI Artifact
 
 The `generate-matrix` job owns the workflow's authoritative `npm run build:cli` invocation.
-It packages `dist/` once and publishes a content-addressed artifact for 65 current consumers.
-Those jobs still run the pinned preparation action for Node.js and dependency installation, but they set `build-cli: "false"`.
+It packages `dist/` once and publishes a content-addressed artifact for 63 restore consumers.
+Before artifact reuse, the workflow ran 63 independent CLI builds.
+The shared producer reduces this total to one and eliminates 62 duplicate build invocations.
+Each consumer still runs the pinned preparation action for Node.js and dependency installation.
+It sets `build-cli: "false"`.
 
 For a pull request (PR) dispatch, `checkout_sha` identifies the candidate source that the live jobs test.
 The trusted workflow still runs from `github.workflow_sha`.
@@ -39,12 +42,13 @@ The artifact name contains the candidate commit SHA and payload SHA-256 digest.
 The producer emits one `nemoclaw-e2e-cli-provenance-v1` JSON object through the `cli_artifact_provenance` job output.
 Each consumer passes that object as the restore action's only `provenance-json` input.
 
-Each consumer invokes the repository-owned `restore-e2e-cli-artifact` composite action at full commit SHA `01f9a8da96e349717bfcd8c457e8380cf6bf3ff3`.
+Each consumer invokes the repository-owned `restore-e2e-cli-artifact` composite action at a full commit SHA.
 The workflow does not load the action implementation from the candidate checkout.
 The pinned action rejects extra or missing provenance fields and compares the candidate checkout, repository, workflow SHA, run ID, and attempt before download.
 It then downloads by immutable artifact ID with digest mismatch handling set to `error`.
 It rejects a missing or malformed upload digest, a different candidate SHA, or a manifest that does not match the current source, workflow, run, toolchain contract, and payload.
 It also rejects an unsafe archive member, link, special file, or preexisting `dist/` directory before extraction.
+Before activation, the action requires staged `dist/build-identity.json` to name the candidate commit SHA.
 The restored CLI must report its version through `bin/nemoclaw.js`.
 These checks keep the candidate source identity separate from the trusted workflow identity and fail closed before a live test runs.
 
@@ -56,15 +60,18 @@ The pre-change baseline uses GitHub Actions composite-step timings from these wo
 | [30574154335](https://github.com/NVIDIA/NemoClaw/actions/runs/30574154335) | `cloud-onboard` | `385f598` | 18.793 seconds |
 | [30503498077](https://github.com/NVIDIA/NemoClaw/actions/runs/30503498077) | `Shared E2E (vllm-docker-storage)` | `d52d459` | 18.756 seconds |
 
-The observed sample median is 18.756 seconds.
-The implementation removes 64 duplicate build invocations from the pre-change inventory.
-At the sample median, the theoretical gross reduction is `(64 × 18.756) / 60 = 20.01` runner-minutes before artifact transfer overhead.
-This estimate does not predict workflow wall time because the producer dependency, runner queues, and transfer steps affect the critical path.
+The three observed build steps have a median duration of 18.756 seconds.
+These observations are inputs to theoretical analysis only.
+The implementation replaces 63 independent builds with one producer build and eliminates 62 duplicate invocations.
+Artifact upload, download, validation, and the producer dependency add runtime and can affect the workflow critical path.
+Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
-Record post-change measurements only from passing CI runs.
-Use comparable job selections, runner labels, and first attempts.
-Record the producer build, upload, consumer download, verification, restoration, job, and workflow durations.
-Sum the affected step durations for runner-minute comparison, and compare matched job and workflow elapsed times for wall-time comparison.
+A trusted PR E2E dispatch tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
+It therefore cannot measure this workflow change before merge.
+Post-change measurements require a passing post-merge `main` run.
+Use matching job selections, runner labels, and first attempts.
+Record the producer build, upload, consumer download, validation, activation, job, and workflow durations.
+Sum the affected step durations for runner-time comparison, and compare matched job and workflow elapsed times.
 Identify each result by workflow run, tested commit SHA, trusted workflow SHA, and attempt.
 Do not substitute a theoretical value for post-change CI evidence.
 
@@ -73,7 +80,6 @@ The retained historical fixtures have this artifact disposition:
 | Fixture | Disposition |
 | --- | --- |
 | `openshell-gateway-upgrade` | Keep the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity in the target. The target must install the historical package before it exercises the current upgrade path. |
-| `upgrade-stale-sandbox` | Keep construction of the old OpenClaw image and stale registry state inside the target. A published old image would bypass the legacy-state construction boundary. |
 | `rebuild-openclaw` | Keep the reviewed old-base build inside the target. The target must build and create the old sandbox before it exercises the current rebuild path. |
 
 These targets can consume the shared artifact for the current candidate CLI.
