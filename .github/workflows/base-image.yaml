@@ -541,16 +541,14 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
-          mapfile -t manifest_digests < <(
-            printf '%s\n' "$manifest_inspect" \
-              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-          )
-          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+          digest="$(
+            docker buildx imagetools inspect "$first_tag" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: expected one published Hermes base digest." >&2
             exit 1
           fi
-          digest="${manifest_digests[0]}"
           reference="$IMAGE@$digest"
           docker buildx imagetools inspect "$reference" >/dev/null
 
@@ -723,16 +721,14 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
-          mapfile -t manifest_digests < <(
-            printf '%s\n' "$manifest_inspect" \
-              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-          )
-          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+          digest="$(
+            docker buildx imagetools inspect "$first_tag" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: expected one published Deep Agents Code base digest." >&2
             exit 1
           fi
-          digest="${manifest_digests[0]}"
           reference="$IMAGE@$digest"
           docker buildx imagetools inspect "$reference" >/dev/null
 
@@ -907,16 +903,14 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
-          mapfile -t manifest_digests < <(
-            printf '%s\n' "$manifest_inspect" \
-              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-          )
-          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+          digest="$(
+            docker buildx imagetools inspect "$first_tag" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: expected one published OpenClaw base digest." >&2
             exit 1
           fi
-          digest="${manifest_digests[0]}"
           reference="$IMAGE@$digest"
           docker buildx imagetools inspect "$reference" >/dev/null
 
