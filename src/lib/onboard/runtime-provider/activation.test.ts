@@ -32,6 +32,7 @@ function unreachable(): never {
 function inferenceRuntime(): HostLocalInferenceRuntime {
   return {
     providerId: PROVIDER_ID,
+    authorityId: "mxc:contract-test",
     services: [...RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES],
     translateContainerArgs: (args) => [...args],
     qualifyOllama: unreachable,
