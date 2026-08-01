@@ -56,8 +56,17 @@ export interface PersistedEngineLifecycleStore {
   readonly listUnfinished: () => readonly PersistedEngineLifecycleRecord[];
   readonly create: (record: PersistedEngineLifecycleRecord) => PersistedEngineLifecycleRecord;
   readonly authorizeMutation: (transactionId: string) => PersistedEngineLifecycleRecord;
-  readonly complete: (
+  /**
+   * Acquire one process-owned execution lease before invoking a mutation.
+   * A dead process owner may be recovered, but a live owner always wins.
+   */
+  readonly acquireMutationExecution: (
     transactionId: string,
+  ) => PersistedEngineLifecycleExecutionLease;
+  readonly assertMutationExecution: (lease: PersistedEngineLifecycleExecutionLease) => void;
+  readonly releaseMutationExecution: (lease: PersistedEngineLifecycleExecutionLease) => void;
+  readonly complete: (
+    lease: PersistedEngineLifecycleExecutionLease,
     resultSha256: string,
   ) => PersistedEngineLifecycleRecord;
   /** Retire only the exact completed receipt; a durable tombstone prevents ID reuse. */
@@ -79,20 +88,33 @@ export interface PreparePersistedEngineLifecycleInput {
 
 export type PersistedEngineLifecycleExecutionInput = PreparePersistedEngineLifecycleInput;
 
+export interface PersistedEngineLifecycleExecutionLease {
+  readonly schemaVersion: typeof PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION;
+  readonly transactionId: string;
+  readonly ownerId: string;
+  readonly ownerPid: number;
+}
+
+export interface PersistedEngineLifecycleExactCommand {
+  readonly args: readonly string[];
+  /** Index containing the command's one exact persisted runtime target. */
+  readonly targetIndex: number;
+}
+
 export interface AuthorizedPersistedEngineLifecycle {
   readonly record: PersistedEngineLifecycleRecord;
   /**
    * Execute against one exact persisted runtime handle. The builder must place
-   * that handle exactly once in the argument vector.
+   * that handle exactly once and declare its semantic target position.
    */
   readonly captureExact: (
     role: PersistedEngineLifecycleResourceRole,
-    buildArgs: (runtimeId: string) => readonly string[],
+    buildCommand: (runtimeId: string) => PersistedEngineLifecycleExactCommand,
     timeoutMs?: number,
   ) => ContainerEngineCommandResult;
   readonly captureHostExact: (
     role: PersistedEngineLifecycleResourceRole,
-    buildArgs: (runtimeId: string) => readonly string[],
+    buildCommand: (runtimeId: string) => PersistedEngineLifecycleExactCommand,
     timeoutMs?: number,
   ) => ContainerEngineCommandResult;
 }
@@ -109,6 +131,7 @@ const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const RUNTIME_ID = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const ACTIONS = new Set<PersistedEngineLifecycleAction>([
@@ -125,6 +148,8 @@ const PHASES = new Set<PersistedEngineLifecyclePhase>([
   "completed",
 ]);
 const PHASE_FILES = ["prepared", "mutation-authorized", "completed"] as const;
+const EXECUTION_LEASE_FILE = "mutation-execution.json";
+const EXECUTION_RECOVERY_FILE = ".mutation-execution-recovery";
 const resourceRoles = (
   ...roles: PersistedEngineLifecycleResourceRole[]
 ): readonly PersistedEngineLifecycleResourceRole[] => Object.freeze(roles);
@@ -286,6 +311,57 @@ export function parsePersistedEngineLifecycleRecord(
   return record;
 }
 
+function normalizeExecutionLease(value: unknown): PersistedEngineLifecycleExecutionLease {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("mutation execution lease must be an object");
+  }
+  const lease = value as Record<string, unknown>;
+  if (
+    Object.keys(lease).sort().join(",") !== "ownerId,ownerPid,schemaVersion,transactionId" ||
+    lease.schemaVersion !== PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION ||
+    typeof lease.ownerId !== "string" ||
+    !UUID.test(lease.ownerId) ||
+    !Number.isSafeInteger(lease.ownerPid) ||
+    (lease.ownerPid as number) <= 0 ||
+    (lease.ownerPid as number) > 0x7fffffff
+  ) {
+    fail("mutation execution lease schema is unsupported");
+  }
+  return Object.freeze({
+    schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
+    transactionId: exactSha256(lease.transactionId, "mutation transaction identity"),
+    ownerId: lease.ownerId,
+    ownerPid: lease.ownerPid as number,
+  });
+}
+
+function serializeExecutionLease(lease: PersistedEngineLifecycleExecutionLease): string {
+  return `${JSON.stringify(normalizeExecutionLease(lease))}\n`;
+}
+
+function parseExecutionLease(serialized: string): PersistedEngineLifecycleExecutionLease {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    fail("mutation execution lease is not valid JSON");
+  }
+  const lease = normalizeExecutionLease(parsed);
+  if (serializeExecutionLease(lease) !== serialized) {
+    fail("mutation execution lease is not canonical");
+  }
+  return lease;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 function currentUid(fallback: number | bigint): bigint {
   return BigInt(typeof process.getuid === "function" ? process.getuid() : fallback);
 }
@@ -416,6 +492,39 @@ function tombstonePath(root: string, transactionId: string): string {
   return path.join(root, `${exactSha256(transactionId, "transaction identity")}.retired`);
 }
 
+function executionLeasePath(directory: string): string {
+  return path.join(directory, EXECUTION_LEASE_FILE);
+}
+
+function executionRecoveryPath(directory: string): string {
+  return path.join(directory, EXECUTION_RECOVERY_FILE);
+}
+
+function loadExecutionLease(directory: string): PersistedEngineLifecycleExecutionLease | null {
+  const serialized = readPrivateFile(executionLeasePath(directory));
+  return serialized === null ? null : parseExecutionLease(serialized);
+}
+
+function requireExactExecutionLease(
+  directory: string,
+  expected: PersistedEngineLifecycleExecutionLease,
+): PersistedEngineLifecycleExecutionLease {
+  const current = loadExecutionLease(directory);
+  if (!current || serializeExecutionLease(current) !== serializeExecutionLease(expected)) {
+    fail("mutation execution ownership changed");
+  }
+  return current;
+}
+
+function removeExactExecutionLease(
+  directory: string,
+  expected: PersistedEngineLifecycleExecutionLease,
+): void {
+  requireExactExecutionLease(directory, expected);
+  fs.unlinkSync(executionLeasePath(directory));
+  fsyncDirectory(directory);
+}
+
 function immutableRecord(record: PersistedEngineLifecycleRecord) {
   return {
     ...record,
@@ -464,7 +573,14 @@ function loadTransaction(
   }
   verifyPrivateDirectory(directory);
   const entries = fs.readdirSync(directory).sort();
-  if (entries.some((entry) => !PHASE_FILES.some((phase) => entry === `${phase}.json`))) {
+  if (
+    entries.some(
+      (entry) =>
+        entry !== EXECUTION_LEASE_FILE &&
+        entry !== EXECUTION_RECOVERY_FILE &&
+        !PHASE_FILES.some((phase) => entry === `${phase}.json`),
+    )
+  ) {
     fail("transaction directory contains an unsupported entry");
   }
   const prepared = loadPhase(directory, "prepared");
@@ -557,9 +673,81 @@ export function createFilePersistedEngineLifecycleStore(
         }),
       );
     },
-    complete(transactionId: string, resultSha256: string) {
-      const result = exactSha256(resultSha256, "completion result digest");
+    acquireMutationExecution(transactionId: string) {
       const current = loadTransaction(root, transactionId);
+      if (!current || current.phase !== "mutation-authorized") {
+        fail("mutation execution requires durable mutation authority");
+      }
+      const directory = transactionDirectory(root, transactionId);
+      requirePrivateDirectory(directory);
+      const lease = normalizeExecutionLease({
+        schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
+        transactionId,
+        ownerId: randomUUID(),
+        ownerPid: process.pid,
+      });
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (readPrivateFile(executionRecoveryPath(directory)) !== null) {
+          fail("mutation execution recovery is already in progress");
+        }
+        if (
+          publishExclusive(directory, executionLeasePath(directory), serializeExecutionLease(lease))
+        ) {
+          if (readPrivateFile(executionRecoveryPath(directory)) === null) return lease;
+          removeExactExecutionLease(directory, lease);
+          continue;
+        }
+
+        const existing = loadExecutionLease(directory);
+        if (!existing) continue;
+        if (existing.transactionId !== transactionId) {
+          fail("mutation execution lease names another transaction");
+        }
+        if (processIsAlive(existing.ownerPid)) {
+          fail("mutation execution is already owned by a live process");
+        }
+
+        const recoveryToken = `${randomUUID()}\n`;
+        if (!publishExclusive(directory, executionRecoveryPath(directory), recoveryToken)) {
+          fail("mutation execution recovery is already in progress");
+        }
+        try {
+          const abandoned = loadExecutionLease(directory);
+          if (abandoned && processIsAlive(abandoned.ownerPid)) {
+            fail("mutation execution owner became live during recovery");
+          }
+          if (abandoned) removeExactExecutionLease(directory, abandoned);
+        } finally {
+          const marker = readPrivateFile(executionRecoveryPath(directory));
+          if (marker === recoveryToken) {
+            fs.unlinkSync(executionRecoveryPath(directory));
+            fsyncDirectory(directory);
+          }
+        }
+      }
+      fail("mutation execution ownership could not be acquired");
+    },
+    assertMutationExecution(lease: PersistedEngineLifecycleExecutionLease) {
+      const expected = normalizeExecutionLease(lease);
+      const current = loadTransaction(root, expected.transactionId);
+      if (!current || current.phase !== "mutation-authorized") {
+        fail("mutation execution authority is no longer active");
+      }
+      requireExactExecutionLease(transactionDirectory(root, expected.transactionId), expected);
+    },
+    releaseMutationExecution(lease: PersistedEngineLifecycleExecutionLease) {
+      const expected = normalizeExecutionLease(lease);
+      const current = loadTransaction(root, expected.transactionId);
+      if (!current) fail("mutation execution transaction is missing");
+      removeExactExecutionLease(transactionDirectory(root, expected.transactionId), expected);
+    },
+    complete(lease: PersistedEngineLifecycleExecutionLease, resultSha256: string) {
+      const execution = normalizeExecutionLease(lease);
+      const directory = transactionDirectory(root, execution.transactionId);
+      requireExactExecutionLease(directory, execution);
+      const result = exactSha256(resultSha256, "completion result digest");
+      const current = loadTransaction(root, execution.transactionId);
       if (!current) fail("completion requires durable mutation authority");
       if (current.phase === "completed") {
         if (current.resultSha256 === result) return current;
@@ -580,6 +768,13 @@ export function createFilePersistedEngineLifecycleStore(
     retire(transactionId: string, resultSha256: string) {
       const result = exactSha256(resultSha256, "completion result digest");
       requirePrivateDirectory(root);
+      const directory = transactionDirectory(root, transactionId);
+      if (
+        readPrivateFile(executionLeasePath(directory)) !== null ||
+        readPrivateFile(executionRecoveryPath(directory)) !== null
+      ) {
+        fail("retirement requires released mutation execution ownership");
+      }
       const tombstone = tombstonePath(root, transactionId);
       const existingTombstone = readPrivateFile(tombstone);
       if (existingTombstone !== null) {
@@ -674,12 +869,26 @@ function requireExpectedLifecycle(
   return current;
 }
 
-function exactArguments(args: readonly string[], runtimeId: string): readonly string[] {
-  if (!Array.isArray(args) || args.length === 0 || args.length > MAX_ARGUMENTS) {
+function exactArguments(
+  command: PersistedEngineLifecycleExactCommand,
+  runtimeId: string,
+): readonly string[] {
+  if (
+    typeof command !== "object" ||
+    command === null ||
+    Array.isArray(command) ||
+    Object.keys(command).sort().join(",") !== "args,targetIndex" ||
+    !Array.isArray(command.args) ||
+    command.args.length === 0 ||
+    command.args.length > MAX_ARGUMENTS ||
+    !Number.isSafeInteger(command.targetIndex) ||
+    command.targetIndex < 0 ||
+    command.targetIndex >= command.args.length
+  ) {
     throw new Error("Exact runtime command has an invalid argument count.");
   }
   let exactRuntimeReferences = 0;
-  const normalized = args.map((value, index) => {
+  const normalized = command.args.map((value, index) => {
     if (
       typeof value !== "string" ||
       CONTROL_CHARACTERS.test(value) ||
@@ -693,27 +902,32 @@ function exactArguments(args: readonly string[], runtimeId: string): readonly st
   if (exactRuntimeReferences !== 1) {
     throw new Error("Exact runtime command must contain its persisted runtime ID exactly once.");
   }
+  if (normalized[command.targetIndex] !== runtimeId) {
+    throw new Error("Exact runtime command target must be its persisted runtime ID.");
+  }
   return Object.freeze(normalized);
 }
 
 function authorizedScope(
   input: PersistedEngineLifecycleExecutionInput,
   record: PersistedEngineLifecycleRecord,
+  lease: PersistedEngineLifecycleExecutionLease,
 ): AuthorizedPersistedEngineLifecycle {
   const capture = (
     host: boolean,
     role: PersistedEngineLifecycleResourceRole,
-    buildArgs: (runtimeId: string) => readonly string[],
+    buildCommand: (runtimeId: string) => PersistedEngineLifecycleExactCommand,
     timeoutMs?: number,
   ): ContainerEngineCommandResult => {
     const resource = record.resources.find((candidate) => candidate.role === role);
     if (!resource) throw new Error(`Persisted lifecycle has no exact ${role} runtime authority.`);
-    const args = exactArguments(buildArgs(resource.runtimeId), resource.runtimeId);
+    const args = exactArguments(buildCommand(resource.runtimeId), resource.runtimeId);
     const guard = () => {
       const current = requireExpectedLifecycle(input);
       if (current.phase !== "mutation-authorized") {
         throw new Error("Persisted lifecycle mutation authority is no longer active.");
       }
+      input.lifecycleStore.assertMutationExecution(lease);
     };
     guard();
     let result: ContainerEngineCommandResult | undefined;
@@ -737,14 +951,14 @@ function authorizedScope(
     record,
     captureExact: (
       role: PersistedEngineLifecycleResourceRole,
-      buildArgs: (runtimeId: string) => readonly string[],
+      buildCommand: (runtimeId: string) => PersistedEngineLifecycleExactCommand,
       timeoutMs?: number,
-    ) => capture(false, role, buildArgs, timeoutMs),
+    ) => capture(false, role, buildCommand, timeoutMs),
     captureHostExact: (
       role: PersistedEngineLifecycleResourceRole,
-      buildArgs: (runtimeId: string) => readonly string[],
+      buildCommand: (runtimeId: string) => PersistedEngineLifecycleExactCommand,
       timeoutMs?: number,
-    ) => capture(true, role, buildArgs, timeoutMs),
+    ) => capture(true, role, buildCommand, timeoutMs),
   });
 }
 
@@ -769,21 +983,27 @@ export async function executePersistedEngineLifecycle<T>(
     throw new Error("Persisted lifecycle transaction is already completed.");
   }
   const authorized = input.lifecycleStore.authorizeMutation(input.transactionId);
-  const result = await mutate(authorizedScope(input, authorized));
-  if (
-    typeof result !== "object" ||
-    result === null ||
-    Array.isArray(result) ||
-    Object.keys(result).sort().join(",") !== "resultSha256,value"
-  ) {
-    throw new Error("Persisted lifecycle mutation returned an invalid completion result.");
+  const lease = input.lifecycleStore.acquireMutationExecution(input.transactionId);
+  try {
+    const result = await mutate(authorizedScope(input, authorized, lease));
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      Array.isArray(result) ||
+      Object.keys(result).sort().join(",") !== "resultSha256,value"
+    ) {
+      throw new Error("Persisted lifecycle mutation returned an invalid completion result.");
+    }
+    const resultSha256 = exactSha256(result.resultSha256, "completion result digest");
+    const value = result.value;
+    const after = requireExpectedLifecycle(input);
+    if (after.phase !== "mutation-authorized") {
+      throw new Error("Persisted lifecycle mutation authority changed before completion.");
+    }
+    input.lifecycleStore.assertMutationExecution(lease);
+    const completed = input.lifecycleStore.complete(lease, resultSha256);
+    return Object.freeze({ record: completed, value });
+  } finally {
+    input.lifecycleStore.releaseMutationExecution(lease);
   }
-  const resultSha256 = exactSha256(result.resultSha256, "completion result digest");
-  const value = result.value;
-  const after = requireExpectedLifecycle(input);
-  if (after.phase !== "mutation-authorized") {
-    throw new Error("Persisted lifecycle mutation authority changed before completion.");
-  }
-  const completed = input.lifecycleStore.complete(input.transactionId, resultSha256);
-  return Object.freeze({ record: completed, value });
 }
