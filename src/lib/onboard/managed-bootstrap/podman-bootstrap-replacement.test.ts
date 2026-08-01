@@ -46,8 +46,8 @@ const ENGINE_AUTHORITY_ID = `podman-sha256:${"7".repeat(64)}`;
 const SANDBOX_NAME = "alpha";
 const SANDBOX_ID = "sandbox-alpha";
 const ORIGINAL_NAME = `openshell-sandbox-${SANDBOX_NAME}`;
-const STAGING_NAME = `${ORIGINAL_NAME}-nemoclaw-bootstrap-${BOOTSTRAP_IDENTITY.slice(0, 12)}`;
-const STATE_VOLUME_NAME = `${ORIGINAL_NAME}-nemoclaw-state-${BOOTSTRAP_IDENTITY.slice(0, 12)}`;
+const STAGING_NAME = "openshell-sandbox-alpha-nemoclaw-bootstrap-111111111111";
+const STATE_VOLUME_NAME = "openshell-sandbox-alpha-nemoclaw-state-111111111111";
 const STATE_VOLUME_MOUNTPOINT = `/var/lib/containers/storage/volumes/${STATE_VOLUME_NAME}/_data`;
 const SUPERVISOR_ARGV = ["/opt/openshell/bin/supervisor", "--config", "/etc/openshell.toml"];
 const ENTRYPOINT_ARGV = ["/usr/local/bin/nemoclaw-managed-bootstrap"];
@@ -134,6 +134,8 @@ class PodmanHarness {
   public createResult: ContainerEngineCommandResult | null = null;
   public replacementStartsOnCreate = false;
   public failReplacementInspectOnce = false;
+  public replacementEnvironment: readonly string[] = ENVIRONMENT;
+  public stateVolumeMountMode = "z";
   public capturedEnvironmentFile: string | null = null;
   public capturedEnvironmentContents: string | null = null;
   public capturedEnvironmentMode: number | null = null;
@@ -276,12 +278,12 @@ class PodmanHarness {
           labels: LABELS,
           entrypoint: ENTRYPOINT_ARGV,
           command: COMMAND_ARGV,
-          environment: ENVIRONMENT,
+          environment: this.replacementEnvironment,
           mounts: [
             {
               Destination: PODMAN_BOOTSTRAP_STATE_DIRECTORY,
               Driver: "local",
-              Mode: "z",
+              Mode: this.stateVolumeMountMode,
               Name: STATE_VOLUME_NAME,
               Options: ["rw"],
               Propagation: "",
@@ -417,6 +419,30 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
   });
 
+  it("accepts a stable Podman inspect with reordered environment entries", () => {
+    const harness = new PodmanHarness();
+    harness.replacementEnvironment = [...ENVIRONMENT].reverse();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    const prepared = prepare(harness, store, watcher.lease);
+
+    expect(prepared.journal.phase).toBe("replacement-created");
+    expect(harness.replacement?.environment).toEqual([...ENVIRONMENT].reverse());
+  });
+
+  it("accepts an empty non-authoritative Podman volume mount mode", () => {
+    const harness = new PodmanHarness();
+    harness.stateVolumeMountMode = "";
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    const prepared = prepare(harness, store, watcher.lease);
+
+    expect(prepared.journal.phase).toBe("replacement-created");
+    expect(harness.replacement?.mounts[0]?.Mode).toBe("");
+  });
+
   it("keeps pre-create authority when Podman create fails without exposing command output", () => {
     const harness = new PodmanHarness();
     harness.createResult = {
@@ -429,15 +455,9 @@ describe("Podman bootstrap stopped replacement", () => {
     const watcher = watcherLease();
 
     expect(() => prepare(harness, store, watcher.lease)).toThrowError(
-      /failed with status 125: socket interrupted/u,
+      /^(?![\s\S]*(?:credential-in-stdout|credential-in-stderr))[\s\S]*failed with status 125: socket interrupted/u,
     );
     expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("state-volume-created");
-    try {
-      prepare(harness, store, watcher.lease);
-    } catch (error) {
-      expect(String(error)).not.toContain("credential-in-stdout");
-      expect(String(error)).not.toContain("credential-in-stderr");
-    }
   });
 
   it("rejects identity flags supplied through provider runtime arguments", () => {
@@ -472,6 +492,67 @@ describe("Podman bootstrap stopped replacement", () => {
           runtimeArgs: [
             "--mount",
             "type=volume,source=attacker,destination=/var/lib/nemoclaw/managed-startup",
+          ],
+        },
+      }),
+    ).toThrow("cannot shadow /var/lib/nemoclaw");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("recognizes the Podman dest alias without truncating its value", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    const prepared = prepareStoppedPodmanBootstrapReplacement({
+      engine: harness.engine,
+      journalStore: store,
+      watcherLease: watcher.lease,
+      plan: {
+        ...plan,
+        runtimeArgs: [
+          "--mount",
+          `type=volume,source=workspace,dest=${PODMAN_BOOTSTRAP_STATE_DIRECTORY}=cache`,
+        ],
+      },
+    });
+
+    expect(prepared.journal.phase).toBe("replacement-created");
+  });
+
+  it("rejects a Podman mount specification without a destination", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: { ...plan, runtimeArgs: ["--mount", "type=volume,source=workspace"] },
+      }),
+    ).toThrow("requires one destination");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("checks every recognized Podman mount destination before rejecting ambiguity", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: {
+          ...plan,
+          runtimeArgs: [
+            "--mount",
+            "type=volume,source=workspace,destination=/sandbox,dest=/var/lib/nemoclaw",
           ],
         },
       }),
@@ -528,6 +609,40 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.replacement?.running).toBe(false);
     expect(harness.calls).toContainEqual(["container", "stop", ORIGINAL_RUNTIME_ID]);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "state-volume mountpoint",
+      (prepared: PodmanBootstrapPreparedReplacement) => ({
+        ...prepared,
+        replacementStateVolumeMountpoint: "/different/state-volume/mountpoint",
+      }),
+    ],
+    [
+      "replacement fingerprint",
+      (prepared: PodmanBootstrapPreparedReplacement) => ({
+        ...prepared,
+        replacementSpecFingerprint: "f".repeat(64),
+      }),
+    ],
+  ])("rejects a prepared replacement with a changed %s", (_label, mutate) => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+    const prepared = prepare(harness, store, watcher.lease);
+
+    expect(() =>
+      stopExactPodmanBootstrapOriginal({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        prepared: mutate(prepared),
+        heldWorkload,
+      }),
+    ).toThrow("does not match the durable journal");
+    expect(harness.original.running).toBe(true);
+    expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("replacement-created");
   });
 
   it("rolls back an exact stopped replacement and restarts the exact original", () => {
@@ -595,6 +710,26 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.replacement).toBeNull();
     expect(harness.stateVolume).toBeNull();
     expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+  });
+
+  it("fails closed when a recorded state volume disappears before rollback", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+    prepare(harness, store, watcher.lease);
+    harness.stateVolume = null;
+
+    expect(() =>
+      rollbackPodmanBootstrapBeforeCommit({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        heldWorkload,
+      }),
+    ).toThrow("recorded state volume disappeared before rollback");
+    expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("rollback-authorized");
+    expect(harness.original.running).toBe(true);
   });
 
   it("fails closed when rollback discovery finds two staging identities", () => {
