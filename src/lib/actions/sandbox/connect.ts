@@ -62,6 +62,7 @@ import {
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
+  printGatewayIntegrityRepairGuidance,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -82,6 +83,8 @@ import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
+  type GatewayRestartFailureLayer,
+  type ManagedGatewayControlCompletion,
   resolveSandboxDashboardPort,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
@@ -245,7 +248,16 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     return;
   }
 
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  // Managed recovery runs quiet here, so its classified failure layer is the
+  // only way this path can tell a retryable wedge apart from a deterministic
+  // integrity refusal that no restart, recover, or connect can clear (#7801).
+  let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+    quiet: true,
+    onRecoveryFailureLayer: (layer) => {
+      recoveryFailureLayer = layer;
+    },
+  });
   if (!processCheck.checked) {
     console.error(
       `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
@@ -289,13 +301,24 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
-    console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    const managedControlCompletion =
+      "managedControlCompletion" in processCheck
+        ? (processCheck.managedControlCompletion as ManagedGatewayControlCompletion)
+        : null;
+    if (managedControlCompletion?.disposition === "already-running") {
+      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    } else {
+      console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    }
     return;
   }
   await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
+  if (printGatewayIntegrityRepairGuidance(sandboxName, recoveryFailureLayer)) {
+    process.exit(1);
+  }
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
   // is the operator's only window into a gateway that served briefly and
   // then dropped its listener.

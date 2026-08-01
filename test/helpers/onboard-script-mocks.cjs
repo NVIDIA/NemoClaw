@@ -71,9 +71,33 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
   'test -f "$security_inventory"',
   'test ! -L "$security_inventory"',
   `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
-  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.2-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0782-1" "vim-tiny=2:9.2.0782-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" | cmp -s - "$security_inventory"`,
+  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.2-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0782-1" "vim-tiny=2:9.2.0782-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" | cmp -s - "$security_inventory"`,
   `printf '%s\\n' "nemoclaw-security-inventory-ok"`,
 ].join("; ");
+
+const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
+const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
+const ONBOARD_SANDBOX_INSPECT = {
+  Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
+  Image: `sha256:${"c".repeat(64)}`,
+  Name: "/openshell-my-assistant",
+  Config: {
+    Image: "openshell/sandbox:test",
+    Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
+    Labels: {
+      "openshell.ai/managed-by": "openshell",
+      "openshell.ai/sandbox-name": "my-assistant",
+    },
+    Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+    Cmd: [],
+    User: "0",
+    WorkingDir: "/sandbox",
+  },
+  HostConfig: {
+    NetworkMode: "openshell-docker",
+    RestartPolicy: { Name: "unless-stopped" },
+  },
+};
 
 function isOpenClawSecurityInventoryProbe(command) {
   const commandArgs = Array.isArray(command) ? command.map(String) : [];
@@ -113,6 +137,19 @@ function mockSandboxExecCurl(command, options = {}) {
 
 function mockOnboardRunCapture(command, options = {}) {
   const normalized = normalizeCommand(command);
+  if (
+    normalized.startsWith("docker ps -a --no-trunc ") &&
+    normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+    normalized.endsWith("--format {{.ID}}")
+  ) {
+    return `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\n${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
+  }
+  if (
+    normalized ===
+    `docker inspect --type container ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`
+  ) {
+    return JSON.stringify([ONBOARD_SANDBOX_INSPECT]);
+  }
   if (isOpenClawSecurityInventoryProbe(command)) {
     return "nemoclaw-security-inventory-ok";
   }
@@ -122,9 +159,26 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
+function mockStandaloneGatewayTeardownAuthority() {
+  const authority = require(
+    path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),
+  );
+  authority.resolveGatewayTeardownAuthority = ({ gatewayName, gatewayPort }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed",
+    source: "standalone",
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  });
+}
+
 module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
+  mockStandaloneGatewayTeardownAuthority,
   normalizeCommand,
 };

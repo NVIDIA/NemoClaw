@@ -32,7 +32,10 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { extractOpenClawAgentPayloadText } from "./agent-turn-latency-helpers.ts";
+import {
+  buildOpenClawFirstTurnLatencyEvidence,
+  extractOpenClawAgentPayloadText,
+} from "./agent-turn-latency-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
@@ -185,7 +188,9 @@ async function assertColdOnboardPerformance(input: {
   budget: ColdOnboardPerformanceBudget;
   install: ShellProbeResult;
   installCompletedAtMs: number;
+  model: string;
   outputEvents: readonly ShellProbeOutputEvent[];
+  providerName: string;
   sandbox: SandboxClient;
   traceDirectory: string;
   traceFile: string;
@@ -236,26 +241,37 @@ async function assertColdOnboardPerformance(input: {
   );
   const turnText = resultText(turn);
   const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
+  const firstTurnLatency = buildOpenClawFirstTurnLatencyEvidence(turnText, firstTurnCommandMs);
   const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
+  const firstTurnSentinelMatched = compactAssistantReply.includes(EXPECTED_FIRST_REPLY);
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
-    schemaVersion: "nemoclaw.full_e2e_cold_performance.v2",
+    schemaVersion: "nemoclaw.full_e2e_cold_performance.v3",
     sandbox: SANDBOX_NAME,
     installExitCode: input.install.exitCode,
     firstTurnExitCode: turn.exitCode,
+    firstTurnSentinelMatched,
     phaseMeasurements: {
       onboardRootMs: traceWindow.durationMs,
       rootStartToFirstTurnCompletionMs: performanceEvaluation.rootStartToFirstTurnCompletionMs,
       rootEndToInstallCompletionMs,
-      firstTurnCommandMs,
+      ...firstTurnLatency,
       rootEndToFirstTurnCompletionMs: performanceEvaluation.rootEndToFirstTurnCompletionMs,
       tracePhasesMs: traceWindow.phaseDurationsMs,
+    },
+    firstTurnCohort: {
+      agent: "openclaw",
+      inferenceMode: "agent-thinking-off",
+      model: input.model,
+      provider: input.providerName,
+      promptContract: "sentinel-v1",
     },
     onboardSecs: Math.ceil(traceWindow.durationMs / 1_000),
     rootStartToFirstTurnCompletionSecs,
     budget: input.budget,
     performance: {
+      anomalies: performanceEvaluation.anomalies,
       passed: performanceEvaluation.passed,
       violations: performanceEvaluation.violations,
       usedAuthoritativeLocalBaseBuild,
@@ -281,9 +297,14 @@ async function assertColdOnboardPerformance(input: {
   ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
   expect(turn.exitCode, turnText).toBe(0);
   expect(
-    compactAssistantReply,
+    firstTurnSentinelMatched,
     `expected the sentinel first agent reply, got: ${turnText}`,
-  ).toContain(EXPECTED_FIRST_REPLY);
+  ).toBe(true);
+  for (const anomaly of performanceEvaluation.anomalies) {
+    console.warn(
+      `::warning title=Hosted first-turn latency anomaly::root-end-to-first-turn-completion ${anomaly.measurementMs}ms exceeded ${anomaly.budgetMs}ms by ${anomaly.overageMs}ms after all deterministic cold-onboard budgets passed`,
+    );
+  }
   expect(
     performanceEvaluation.passed,
     `onboard-root-start-to-first-turn-completion took ${rootStartToFirstTurnCompletionSecs}s; ${performanceEvaluation.violations.join("; ")}`,
@@ -315,6 +336,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       USE_PREINSTALLED_LAUNCHABLE
         ? "the baked Launchable completes onboarding without installing from source"
         : "install.sh --non-interactive completes onboarding",
+      "cold onboarding stays within the checked-in full-E2E performance budgets",
       "nemoclaw and openshell are installed and usable",
       "sandbox appears in list/status and has policy/inference configuration",
       "direct hosted inference and sandbox inference.local both respond",
@@ -399,7 +421,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
         budget: coldOnboardBudget!,
         install,
         installCompletedAtMs,
+        model: hosted.model,
         outputEvents: coldOnboard.outputEvents,
+        providerName: hosted.providerName,
         sandbox,
         traceDirectory: coldOnboard.traceDirectory,
         traceFile: coldOnboard.traceFile,

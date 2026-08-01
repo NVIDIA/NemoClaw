@@ -33,7 +33,7 @@ describe("onboard helpers", () => {
 const registry = require(${registryPath});
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-runner.runCapture = (command) => (_n(command).includes("sandbox get my-assistant") ? "" : "");
+runner.runCapture = (command) => (_n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? "" : "");
 
 registry.registerSandbox({ name: "my-assistant" });
 
@@ -105,7 +105,7 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -215,6 +215,15 @@ const { createSandbox } = require(${onboardPath});
           entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
+    );
+    assert.ok(
+      payload.commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("docker run -d") &&
+          entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
+          entry.command.includes("nemoclaw-start"),
+      ),
+      "expected the default OpenClaw startup command to be persisted in the recreated container",
     );
   });
 
@@ -517,7 +526,7 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -619,7 +628,7 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -721,7 +730,7 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
   {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { probeOpenAiLikeEndpointWithValidationSession } from "./openai-validation-session";
 import {
   createOpenAiValidationTestDeps,
@@ -143,5 +143,67 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(result).toMatchObject({ ok: true, api: "openai-responses" });
     expect(paths).toEqual(["/v1/responses", "/v1/responses"]);
     expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("falls back after native streaming stalls without capping the initial request (#7792)", async () => {
+    const paths: string[] = [];
+    let initialResponse: http.ServerResponse | undefined;
+    let resolveInitialStarted!: () => void;
+    let resolveStreamingStarted!: () => void;
+    const initialStarted = new Promise<void>((resolve) => {
+      resolveInitialStarted = resolve;
+    });
+    const streamingStarted = new Promise<void>((resolve) => {
+      resolveStreamingStarted = resolve;
+    });
+    const responsePlan = [
+      (response: http.ServerResponse) => {
+        initialResponse = response;
+        resolveInitialStarted();
+      },
+      (response: http.ServerResponse) => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("event: response.created\ndata: {}\n\n");
+        resolveStreamingStarted();
+      },
+      (response: http.ServerResponse) => {
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      },
+    ];
+    const server = http.createServer((request, response) => {
+      const path = request.url ?? "";
+      paths.push(path);
+      request.resume();
+      responsePlan[paths.length - 1](response);
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    harness.getResponsesTimeoutMs = () => 20_000;
+    vi.useFakeTimers();
+
+    try {
+      const resultPromise = probeOpenAiLikeEndpointWithValidationSession(
+        `http://provider.example.test:${port}/v1`,
+        "test-model",
+        "test-key",
+        { probeStreaming: true },
+        harness,
+      );
+
+      await initialStarted;
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(initialResponse).toBeDefined();
+      initialResponse!.end('{"output":[{"type":"message"}]}');
+      await streamingStarted;
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true,
+        api: "openai-completions",
+      });
+      expect(paths).toEqual(["/v1/responses", "/v1/responses", "/v1/chat/completions"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

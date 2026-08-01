@@ -1224,6 +1224,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     sandboxName: SANDBOX_NAME,
     contracts: [
       "install.sh creates a real OpenClaw sandbox",
+      "fresh onboarding pairs one CLI identity and leaves no request pending for that device",
       "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
       "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
       "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
@@ -1353,7 +1354,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     await artifacts.writeText(`phase-2-fresh-agent-${attempt}.txt`, freshAgentOutput);
     expect(freshAgent.exitCode, freshAgentOutput).toBe(0);
     expect(freshAgentOutput).not.toMatch(
-      /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
+      /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|scope-upgrade-pending|approval=list-failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
     );
     expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
 
