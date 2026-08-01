@@ -149,6 +149,10 @@ function authority(agent: ManagedStartupAgent = "hermes") {
 type FixtureOptions = {
   agent?: ManagedStartupAgent;
   failAfterCutoverFence?: boolean;
+  failAfterRollbackFence?: boolean;
+  failAfterSharedCommitFence?: boolean;
+  failAfterStagedFence?: boolean;
+  failRemoveOnce?: boolean;
   failStart?: boolean;
   lostAcks?: boolean;
   ownerId?: string;
@@ -169,12 +173,16 @@ function fixture(options: FixtureOptions = {}) {
   const lostTransitions = new Set(["cutover", "shared-state-committed"]);
   let loseCreateAck = options.lostAcks === true;
   let loseRemoveAck = options.lostAcks === true;
+  let failRemoveOnce = options.failRemoveOnce === true;
   const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
   const copyJournal = () => (journal ? structuredClone(journal) : null);
   const store: DockerManagedBootstrapJournalStore = {
     create(value) {
       journal = structuredClone(value);
       events.push("journal:staged");
+      if (options.failAfterStagedFence === true) {
+        throw new Error("injected crash after durable staged fence");
+      }
       switch (loseCreateAck) {
         case true:
           loseCreateAck = false;
@@ -195,6 +203,10 @@ function fixture(options: FixtureOptions = {}) {
       switch (true) {
         case next === "cutover" && options.failAfterCutoverFence === true:
           throw new Error("injected crash after durable cutover fence");
+        case next === "rollback-authorized" && options.failAfterRollbackFence === true:
+          throw new Error("injected crash after durable rollback fence");
+        case next === "shared-state-committed" && options.failAfterSharedCommitFence === true:
+          throw new Error("injected crash after durable shared-state commit fence");
         case options.lostAcks === true && lostTransitions.delete(next):
           throw new DockerManagedBootstrapJournalAcknowledgementLostError(
             "lost journal transition acknowledgement",
@@ -408,6 +420,10 @@ function fixture(options: FixtureOptions = {}) {
     }),
     dockerRm: vi.fn((id) => {
       events.push(`rm:${id}`);
+      if (failRemoveOnce) {
+        failRemoveOnce = false;
+        throw new Error("injected crash before exact Docker removal");
+      }
       switch (id) {
         case OLD_ID:
           original = null as unknown as DockerContainerInspect;
@@ -571,6 +587,144 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.replacement).toBeNull();
     expect(fake.original.Name).toBe("/openshell-alpha");
     expect(fake.original.State?.Running).toBe(false);
+  });
+
+  it.each([
+    ["staged", { failAfterStagedFence: true }, "staged"],
+    ["cutover", { failAfterCutoverFence: true }, "cutover"],
+  ] as const)("reconciles a process restart from the durable %s phase", async (_label, options, phase) => {
+    const fake = fixture(options);
+    const first = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request: rootRequest, snapshot } = authority();
+    const prepared = await first.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request: rootRequest,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    await expect(
+      first.activateBootstrapReplacement({
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+      }),
+    ).rejects.toThrow(`crash after durable ${phase} fence`);
+    expect(fake.journal?.phase).toBe(phase);
+
+    const restarted = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject([
+      {
+        sourcePhase: phase,
+        outcome: "rolled-back",
+        finalization: {
+          restoredRuntimeId: OLD_ID,
+          heldWorkloadRemoved: false,
+        },
+      },
+    ]);
+    await expect(restarted.recoverUnfinishedTransactions()).resolves.toEqual([]);
+    expect(fake.journal).toBeNull();
+    expect(fake.finalization?.phase).toBe("rolled-back");
+    expect(fake.replacement).toBeNull();
+    expect(fake.original.Name).toBe("/openshell-alpha");
+    expect(fake.original.State?.Running).toBe(true);
+  });
+
+  it("finishes a rollback-authorized transaction after shared-state rollback is interrupted", async () => {
+    const fake = fixture({
+      agent: "openclaw",
+      failAfterRollbackFence: true,
+      sharedState: "pending",
+    });
+    const first = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request: rootRequest, snapshot } = authority("openclaw");
+    const prepared = await first.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request: rootRequest,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await first.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    await expect(
+      first.finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: null,
+      }),
+    ).rejects.toThrow("crash after durable rollback fence");
+    expect(fake.journal?.phase).toBe("rollback-authorized");
+    expect(fake.sharedState).toBe("pending");
+
+    const restarted = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject([
+      { sourcePhase: "rollback-authorized", outcome: "rolled-back" },
+    ]);
+    expect(fake.sharedState).toBe("none");
+    expect(fake.replacement).toBeNull();
+    expect(fake.original.State?.Running).toBe(true);
+  });
+
+  it("finishes exact commit cleanup after a process restart at the durable commit fence", async () => {
+    const fake = fixture({
+      agent: "langchain-deepagents-code",
+      failRemoveOnce: true,
+      sharedState: "pending",
+    });
+    const first = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request: rootRequest, snapshot } = authority("langchain-deepagents-code");
+    const prepared = await first.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request: rootRequest,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await first.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    const completion = await first.awaitBootstrap({
+      handle,
+      snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
+    await expect(
+      first.finalizeBootstrap({
+        outcome: "commit",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion,
+      }),
+    ).rejects.toThrow("crash before exact Docker removal");
+    expect(fake.journal?.phase).toBe("shared-state-committed");
+    expect(fake.sharedState).toBe("committed");
+
+    const restarted = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject([
+      { sourcePhase: "shared-state-committed", outcome: "committed" },
+    ]);
+    expect(fake.journal).toBeNull();
+    expect(fake.finalization?.phase).toBe("committed");
+    expect(fake.sharedState).toBe("none");
+    expect(fake.replacement?.State?.Running).toBe(true);
   });
 
   it("recovers the pre-stop cutover crash state after adapter restart", async () => {

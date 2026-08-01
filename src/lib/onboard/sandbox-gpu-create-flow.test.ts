@@ -68,17 +68,17 @@ import type {
 } from "./managed-bootstrap/runtime-create";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
+import type {
+  RuntimeProviderBootstrapSurface,
+  RuntimeProviderBundle,
+} from "./runtime-provider/contract";
+import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
-import type {
-  RuntimeProviderBootstrapSurface,
-  RuntimeProviderBundle,
-} from "./runtime-provider/contract";
-import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 
 const FAILED_PROOF: SandboxGpuProofResult = {
   status: "failed",
@@ -205,6 +205,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       (lifecycleInput: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
         launchArgv: ["mxc-launch", ...lifecycleInput.launchArgv.slice(1)],
         patch,
+        recoverUnfinished: vi.fn(async () => []),
         prepareNetwork: vi.fn(async () => undefined),
         runCreate: async <T>(
           start: (held: {

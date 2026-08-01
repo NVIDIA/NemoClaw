@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import type { ManagedStartupAgent } from "../managed-startup/profile";
 import type {
   ManagedBootstrapCompletionReceipt,
   ManagedBootstrapDurablePreparationReceipt,
@@ -11,9 +11,9 @@ import type {
   ManagedBootstrapSandboxIdentity,
 } from "./adapter";
 
-export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION = 2 as const;
+export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION = 3 as const;
 export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY = "managed-bootstrap";
-export const DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION = 1 as const;
+export const DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION = 2 as const;
 
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -36,6 +36,7 @@ export interface DockerManagedBootstrapJournal {
   readonly phase: DockerManagedBootstrapJournalPhase;
   readonly bootstrapIdentity: string;
   readonly providerId: string;
+  readonly agent: ManagedStartupAgent;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly planFingerprint: string;
   readonly profileFingerprint: string;
@@ -59,6 +60,7 @@ export interface DockerManagedBootstrapFinalizationRecord {
   readonly phase: "committed" | "rolled-back";
   readonly bootstrapIdentity: string;
   readonly providerId: string;
+  readonly agent: ManagedStartupAgent;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly planFingerprint: string;
   readonly profileFingerprint: string;
@@ -136,6 +138,13 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
   return value as DockerManagedBootstrapJournalPhase;
 }
 
+function exactAgent(value: unknown): ManagedStartupAgent {
+  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(String(value))) {
+    fail("agent is unsupported");
+  }
+  return value as ManagedStartupAgent;
+}
+
 function exactSandbox(value: unknown): ManagedBootstrapSandboxIdentity {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail("sandbox identity must be an object");
@@ -159,6 +168,7 @@ export function normalizeDockerManagedBootstrapJournal(
   }
   const journal = value as Record<string, unknown>;
   const expectedKeys = [
+    "agent",
     "backupName",
     "bootstrapIdentity",
     "commitReceipt",
@@ -191,6 +201,7 @@ export function normalizeDockerManagedBootstrapJournal(
     phase: exactPhase(journal.phase),
     bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
     providerId: exactString(journal.providerId, "provider ID"),
+    agent: exactAgent(journal.agent),
     sandbox: exactSandbox(journal.sandbox),
     planFingerprint: exactSha256(journal.planFingerprint, "plan fingerprint"),
     profileFingerprint: exactSha256(journal.profileFingerprint, "profile fingerprint"),
@@ -450,6 +461,7 @@ export function normalizeDockerManagedBootstrapFinalizationRecord(
   }
   const record = value as Record<string, unknown>;
   const expectedKeys = [
+    "agent",
     "bootstrapIdentity",
     "cleanupReceipt",
     "commitReceipt",
@@ -478,6 +490,7 @@ export function normalizeDockerManagedBootstrapFinalizationRecord(
     phase,
     bootstrapIdentity: exactSha256(record.bootstrapIdentity, "finalization bootstrap identity"),
     providerId: exactString(record.providerId, "finalization provider ID"),
+    agent: exactAgent(record.agent),
     sandbox,
     planFingerprint: exactSha256(record.planFingerprint, "finalization plan fingerprint"),
     profileFingerprint: exactSha256(record.profileFingerprint, "finalization profile fingerprint"),

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
 import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
@@ -15,12 +14,14 @@ import {
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "../openshell-docker-sandbox-containers";
+import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "../sandbox-gpu-create-attempt";
 import {
   activateManagedBootstrapSequence,
   finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
 } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import type {
@@ -137,6 +138,9 @@ function createDockerLifecycle(
   return {
     launchArgv: input.launchArgv,
     patch,
+    async recoverUnfinished() {
+      return recoverManagedBootstrapTransactions(adapter);
+    },
     async prepareNetwork() {
       if (input.route !== "compatibility") return;
       const { enforceDockerGpuPatchPreserveNetwork } = await import(

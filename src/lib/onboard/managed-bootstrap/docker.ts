@@ -59,6 +59,7 @@ import {
   type ManagedBootstrapObservedSnapshot,
   ManagedBootstrapOwnerCleanupRequiredError,
   type ManagedBootstrapPreparedReplacementHandle,
+  type ManagedBootstrapRecoveryReceipt,
   type ManagedBootstrapReplacementHandle,
   type ManagedBootstrapReplacementOptions,
   type ManagedBootstrapSandboxIdentity,
@@ -1406,6 +1407,16 @@ function managedSharedStateTransaction(
   } as const;
 }
 
+function recoveredManagedSharedStateTransaction(journal: DockerBootstrapTransaction) {
+  return {
+    agent: journal.agent,
+    bootstrapIdentity: journal.bootstrapIdentity,
+    containerId: journal.replacementRuntimeId,
+    image: journal.runtimeImageContentId,
+    profileFingerprint: journal.profileFingerprint,
+  } as const;
+}
+
 function sameDockerBootstrapJournal(
   left: DockerBootstrapTransaction,
   right: DockerBootstrapTransaction,
@@ -1783,6 +1794,7 @@ export function createDockerManagedBootstrapAdapter(
       phase,
       bootstrapIdentity: handle.bootstrapIdentity,
       providerId: handle.sandbox.driverId,
+      agent: handle.plan.profile.agent,
       sandbox: handle.sandbox,
       planFingerprint: createManagedBootstrapPlanFingerprint(handle.plan),
       profileFingerprint: handle.plan.profile.fingerprint,
@@ -1861,6 +1873,289 @@ export function createDockerManagedBootstrapAdapter(
       ...finalized.cleanupReceipt,
       alreadyRolledBack: true,
     });
+  };
+  const persistRecoveredFinalization = (
+    journal: DockerBootstrapTransaction,
+    phase: "committed" | "rolled-back",
+    commitReceipt: ManagedBootstrapCompletionReceipt | null,
+    cleanupReceipt: ManagedBootstrapFinalizationReceipt,
+  ): ManagedBootstrapFinalizationReceipt => {
+    const record = Object.freeze({
+      schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
+      phase,
+      bootstrapIdentity: journal.bootstrapIdentity,
+      providerId: journal.providerId,
+      agent: journal.agent,
+      sandbox: journal.sandbox,
+      planFingerprint: journal.planFingerprint,
+      profileFingerprint: journal.profileFingerprint,
+      imageReference: journal.imageReference,
+      commitReceipt,
+      cleanupReceipt,
+    } satisfies DockerManagedBootstrapFinalizationRecord);
+    const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
+    try {
+      deps.journalStore.recordFinalization(record);
+    } catch (error) {
+      const recovered = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
+      if (
+        !recovered ||
+        serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
+      ) {
+        throw error;
+      }
+    }
+    const persisted = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
+    if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
+      throw new Error("Managed bootstrap recovered finalization was not durably re-readable.");
+    }
+    return persisted.cleanupReceipt;
+  };
+  const recoveredReceipt = (
+    journal: DockerBootstrapTransaction,
+    sourcePhase: DockerBootstrapTransaction["phase"],
+    finalization: ManagedBootstrapFinalizationReceipt,
+  ): ManagedBootstrapRecoveryReceipt =>
+    Object.freeze({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      providerId: journal.providerId,
+      sourcePhase,
+      sandbox: journal.sandbox,
+      bootstrapIdentity: journal.bootstrapIdentity,
+      outcome: finalization.outcome,
+      finalization,
+    });
+  const finishRecoveredRollback = (
+    journal: DockerBootstrapTransaction,
+    sourcePhase: DockerBootstrapTransaction["phase"],
+  ): ManagedBootstrapRecoveryReceipt => {
+    const cleanupReceipt = Object.freeze({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: journal.sandbox,
+      bootstrapIdentity: journal.bootstrapIdentity,
+      outcome: "rolled-back",
+      restoredRuntimeId: journal.originalRuntimeId,
+      restoredSpecHash: journal.originalSpecHash,
+      heldWorkloadRemoved: false,
+      alreadyRolledBack: false,
+      finalizedAt: deps.now().toISOString(),
+    } satisfies ManagedBootstrapFinalizationReceipt);
+    const finalization = persistRecoveredFinalization(journal, "rolled-back", null, cleanupReceipt);
+    removeDockerBootstrapJournalDurably(journal, deps);
+    return recoveredReceipt(journal, sourcePhase, finalization);
+  };
+  const finishRecoveredCommit = (
+    journal: DockerBootstrapTransaction,
+    sourcePhase: DockerBootstrapTransaction["phase"],
+  ): ManagedBootstrapRecoveryReceipt => {
+    if (journal.phase !== "shared-state-committed" || journal.commitReceipt === null) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "durable commit recovery requires its exact completion receipt and commit fence",
+      });
+    }
+    const replacement = inspectTransactionRuntime(journal, journal.replacementRuntimeId, deps);
+    if (!replacement) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "the exact committed replacement is absent during restart recovery",
+      });
+    }
+    assertTransactionReplacement(journal, replacement);
+    if (
+      dockerContainerName(replacement) !== journal.originalName ||
+      !isStableRunning(replacement) ||
+      normalizeDockerManagedBootstrapLaunchSpec(replacement).hash !== journal.replacementSpecHash
+    ) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "the committed replacement does not match its durable runtime authority",
+      });
+    }
+    const sharedTransaction = recoveredManagedSharedStateTransaction(journal);
+    const sharedStatus = probeDockerManagedStartupSharedState(
+      { transaction: sharedTransaction, profileFingerprint: journal.profileFingerprint },
+      deps,
+    );
+    if (sharedStatus === "pending") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "shared state is pending after the durable commit fence",
+      });
+    }
+    const original = inspectTransactionRuntime(journal, journal.originalRuntimeId, deps);
+    if (original) {
+      assertTransactionOriginal(journal, original);
+      if (
+        dockerContainerName(original) !== journal.backupName ||
+        !isExplicitlyStopped(original) ||
+        normalizeDockerManagedBootstrapLaunchSpec({
+          ...original,
+          Name: `/${journal.originalName}`,
+        }).hash !== journal.originalSpecHash
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.originalRuntimeId,
+          detail: "the exact rollback backup changed before recovered commit cleanup",
+        });
+      }
+      if (sharedStatus === "none") {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.originalRuntimeId,
+          detail: "the shared commit receipt was retired before exact backup absence was proven",
+        });
+      }
+      const removed = deps.dockerRm(journal.originalRuntimeId, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+      if (
+        !hasZeroDockerExitStatus(removed) &&
+        probeExactDockerContainerAbsence(journal.originalRuntimeId, deps) !== "absent"
+      ) {
+        throw new ManagedBootstrapDurableCommitCleanupPendingError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          cleanupRuntimeId: journal.originalRuntimeId,
+          detail: `${commandDetail(removed) || "Docker removal failed"}; exact backup absence was not proven`,
+        });
+      }
+    }
+    if (sharedStatus === "committed") {
+      clearDockerManagedStartupSharedStateCommitReceipt(sharedTransaction, deps);
+    }
+    if (probeExactDockerContainerAbsence(journal.originalRuntimeId, deps) !== "absent") {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        cleanupRuntimeId: journal.originalRuntimeId,
+        detail: "exact rollback-backup absence was not durable after restart recovery",
+      });
+    }
+    const cleanupReceipt = Object.freeze({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: journal.sandbox,
+      bootstrapIdentity: journal.bootstrapIdentity,
+      outcome: "committed",
+      restoredRuntimeId: null,
+      restoredSpecHash: null,
+      heldWorkloadRemoved: false,
+      alreadyRolledBack: false,
+      finalizedAt: deps.now().toISOString(),
+    } satisfies ManagedBootstrapFinalizationReceipt);
+    const finalization = persistRecoveredFinalization(
+      journal,
+      "committed",
+      journal.commitReceipt,
+      cleanupReceipt,
+    );
+    removeDockerBootstrapJournalDurably(journal, deps);
+    return recoveredReceipt(journal, sourcePhase, finalization);
+  };
+  const finishRecoveredRollbackPhase = (
+    journal: DockerBootstrapTransaction,
+    sourcePhase: DockerBootstrapTransaction["phase"],
+  ): ManagedBootstrapRecoveryReceipt => {
+    const original = inspectTransactionRuntime(journal, journal.originalRuntimeId, deps);
+    if (!original) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.originalRuntimeId,
+        detail: "the exact rollback original is absent during restart recovery",
+      });
+    }
+    assertTransactionOriginal(journal, original);
+    const replacement = inspectTransactionRuntime(journal, journal.replacementRuntimeId, deps);
+    if (replacement) assertTransactionReplacement(journal, replacement);
+    if (journal.phase === "staged") {
+      if (
+        dockerContainerName(original) !== journal.originalName ||
+        !isStableRunning(original) ||
+        normalizeDockerManagedBootstrapLaunchSpec(original).hash !== journal.originalSpecHash ||
+        (replacement !== null &&
+          (dockerContainerName(replacement) !== journal.replacementStagingName ||
+            !isExplicitlyStopped(replacement)))
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.originalRuntimeId,
+          detail: "staged restart recovery does not match its pre-cutover fence",
+        });
+      }
+      if (replacement) removeExactReplacement(journal, replacement, deps);
+      return finishRecoveredRollback(journal, sourcePhase);
+    }
+    if (journal.phase !== "cutover" && journal.phase !== "rollback-authorized") {
+      return finishRecoveredCommit(journal, sourcePhase);
+    }
+    let activeJournal = journal;
+    if (!replacement && dockerContainerName(original) !== journal.originalName) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "the replacement disappeared before exact rollback restoration was proven",
+      });
+    }
+    if (replacement) {
+      const sharedTransaction = recoveredManagedSharedStateTransaction(journal);
+      const sharedStatus = probeDockerManagedStartupSharedState(
+        { transaction: sharedTransaction, profileFingerprint: journal.profileFingerprint },
+        deps,
+      );
+      if (sharedStatus === "committed") {
+        if (journal.phase === "rollback-authorized") {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: journal.bootstrapIdentity,
+            runtimeId: journal.replacementRuntimeId,
+            detail: "shared state committed after durable rollback authorization",
+          });
+        }
+        activeJournal = transitionDockerBootstrapJournalDurably(
+          journal,
+          "shared-state-committed",
+          deps,
+        );
+        return finishRecoveredCommit(activeJournal, sourcePhase);
+      }
+      if (journal.phase === "cutover") {
+        activeJournal = transitionDockerBootstrapJournalDurably(
+          journal,
+          "rollback-authorized",
+          deps,
+        );
+      }
+      if (sharedStatus === "pending") {
+        finalizeDockerManagedStartupSharedState(
+          {
+            transaction: sharedTransaction,
+            supervisorReady: false,
+            retainContainerAfterRollback: true,
+          },
+          deps,
+        );
+      }
+    } else if (journal.phase === "cutover") {
+      activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
+    }
+    restoreOriginal(activeJournal, deps);
+    const restored = inspectExact(activeJournal.originalRuntimeId, deps);
+    if (
+      !isStableRunning(restored) ||
+      dockerContainerName(restored) !== activeJournal.originalName ||
+      normalizeDockerManagedBootstrapLaunchSpec(restored).hash !== activeJournal.originalSpecHash
+    ) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: activeJournal.bootstrapIdentity,
+        runtimeId: activeJournal.originalRuntimeId,
+        detail: "restart recovery did not restore the exact original runtime and launch spec",
+      });
+    }
+    return finishRecoveredRollback(activeJournal, sourcePhase);
   };
   const rollbackBootstrapNow = ({
     handle,
@@ -2510,6 +2805,19 @@ export function createDockerManagedBootstrapAdapter(
     });
   };
   return {
+    async recoverUnfinishedTransactions() {
+      const receipts: ManagedBootstrapRecoveryReceipt[] = [];
+      for (const journal of deps.journalStore.listUnfinished()) {
+        const sourcePhase = journal.phase;
+        receipts.push(
+          journal.phase === "shared-state-committed"
+            ? finishRecoveredCommit(journal, sourcePhase)
+            : finishRecoveredRollbackPhase(journal, sourcePhase),
+        );
+      }
+      return Object.freeze(receipts);
+    },
+
     async createHeldWorkload(input) {
       if (
         input.plan.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
@@ -2757,6 +3065,7 @@ export function createDockerManagedBootstrapAdapter(
           phase: "staged",
           bootstrapIdentity: handle.bootstrapIdentity,
           providerId: handle.sandbox.driverId,
+          agent: handle.plan.profile.agent,
           sandbox: Object.freeze({ ...handle.sandbox }),
           planFingerprint: createManagedBootstrapPlanFingerprint(handle.plan),
           profileFingerprint: handle.plan.profile.fingerprint,
