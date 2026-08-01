@@ -109,7 +109,7 @@ function messagingPlan(sandboxName: string): SandboxMessagingPlan {
     runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
-  } as SandboxMessagingPlan;
+  } as unknown as SandboxMessagingPlan;
 }
 
 function handoff(
