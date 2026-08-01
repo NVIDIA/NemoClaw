@@ -76,11 +76,19 @@ function snapshotSource(
   };
 }
 
+function requireSupportedSurface<T extends { readonly supported: boolean }>(
+  surface: T,
+): Extract<T, { readonly supported: true }> {
+  expect(surface.supported).toBe(true);
+  return surface as Extract<T, { readonly supported: true }>;
+}
+
 describe("runtime provider snapshot surface", () => {
   it("binds the full runtime and lifecycle generation into opaque backup authority", () => {
     const observe = vi.fn(() => observation());
-    const surface = createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe));
-    if (!surface.supported) throw new Error("test surface must be supported");
+    const surface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe)),
+    );
 
     const preflight = surface.preflight("backup", sandbox());
     const receipt = surface.capture(sandbox(), preflight);
@@ -97,11 +105,12 @@ describe("runtime provider snapshot surface", () => {
 
   it("invokes the owning provider restore facet and returns managed profile/runtime proof", () => {
     const restoreManagedProfile = vi.fn(() => "provider-restore-proof");
-    const surface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => observation(), restoreManagedProfile),
+    const surface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => observation(), restoreManagedProfile),
+      ),
     );
-    if (!surface.supported) throw new Error("test surface must be supported");
     const target = sandbox();
     const preflight = surface.preflight("restore", target);
 
@@ -144,21 +153,23 @@ describe("runtime provider snapshot surface", () => {
           runtime: { kind: "session", handle: sourceHandle },
         },
       });
-      const sourceSurface = createRuntimeProviderSnapshotSurface(
-        "mxc",
-        surfaceDriver(() => sourceObservation),
+      const sourceSurface = requireSupportedSurface(
+        createRuntimeProviderSnapshotSurface(
+          "mxc",
+          surfaceDriver(() => sourceObservation),
+        ),
       );
-      if (!sourceSurface.supported) throw new Error("test surface must be supported");
       const sourcePreflight = sourceSurface.preflight("backup", target);
       const source = snapshotSource(
         sourcePreflight,
         sourceSurface.capture(target, sourcePreflight),
       );
-      const targetSurface = createRuntimeProviderSnapshotSurface(
-        "mxc",
-        surfaceDriver(() => targetObservation),
+      const targetSurface = requireSupportedSurface(
+        createRuntimeProviderSnapshotSurface(
+          "mxc",
+          surfaceDriver(() => targetObservation),
+        ),
       );
-      if (!targetSurface.supported) throw new Error("test surface must be supported");
       const targetPreflight = targetSurface.preflight("restore", target);
       return targetSurface.restore(target, targetPreflight, source, managedProfile);
     };
@@ -219,11 +230,9 @@ describe("runtime provider snapshot surface", () => {
     const restoreManagedProfile = vi.fn(() => "provider-restore-proof");
     const observe = vi.fn<() => RuntimeProviderSnapshotObservation>();
     for (const value of observations) observe.mockReturnValueOnce(value);
-    const surface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(observe, restoreManagedProfile),
+    const surface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe, restoreManagedProfile)),
     );
-    if (!surface.supported) throw new Error("test surface must be supported");
     const target = sandbox();
     const preflight = surface.preflight("restore", target);
     const source = snapshotSource(preflight, observation().runtime);
@@ -236,9 +245,11 @@ describe("runtime provider snapshot surface", () => {
 
   it("fails before provider restore when the target cannot represent source acceleration", () => {
     const restoreManagedProfile = vi.fn(() => "provider-restore-proof");
-    const targetSurface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => observation(), restoreManagedProfile),
+    const targetSurface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => observation(), restoreManagedProfile),
+      ),
     );
     const sourceObservation = observation("mxc", {
       runtime: {
@@ -246,13 +257,12 @@ describe("runtime provider snapshot surface", () => {
         acceleration: { kind: "gpu", vendor: "nvidia", devices: ["live-device-0"] },
       },
     });
-    const sourceSurface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => sourceObservation),
+    const sourceSurface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => sourceObservation),
+      ),
     );
-    if (!targetSurface.supported || !sourceSurface.supported) {
-      throw new Error("test surfaces must be supported");
-    }
     const target = sandbox();
     const sourcePreflight = sourceSurface.preflight("backup", target);
     const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
@@ -266,18 +276,19 @@ describe("runtime provider snapshot surface", () => {
 
   it("fails before provider restore when the target cannot represent source lifecycle", () => {
     const restoreManagedProfile = vi.fn(() => "provider-restore-proof");
-    const targetSurface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => observation(), restoreManagedProfile),
+    const targetSurface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => observation(), restoreManagedProfile),
+      ),
     );
     const stopped = observation("mxc", { lifecycleState: "stopped" });
-    const sourceSurface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => stopped),
+    const sourceSurface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => stopped),
+      ),
     );
-    if (!targetSurface.supported || !sourceSurface.supported) {
-      throw new Error("test surfaces must be supported");
-    }
     const target = sandbox();
     const sourcePreflight = sourceSurface.preflight("backup", target);
     const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
@@ -322,8 +333,9 @@ describe("runtime provider snapshot surface", () => {
       .fn<() => RuntimeProviderSnapshotObservation>()
       .mockReturnValueOnce(observation())
       .mockReturnValueOnce(changed);
-    const surface = createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe));
-    if (!surface.supported) throw new Error("test surface must be supported");
+    const surface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe)),
+    );
     const target = sandbox();
     const preflight = surface.preflight("backup", target);
 
@@ -331,11 +343,12 @@ describe("runtime provider snapshot surface", () => {
   });
 
   it("rejects a preflight receipt from another operation or sandbox", () => {
-    const surface = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => observation()),
+    const surface = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => observation()),
+      ),
     );
-    if (!surface.supported) throw new Error("test surface must be supported");
     const target = sandbox();
     const restorePreflight = surface.preflight("restore", target);
     const otherTarget = sandbox({ name: "other" });
@@ -354,21 +367,23 @@ describe("runtime provider snapshot surface", () => {
   });
 
   it("rejects invalid runtime receipts, restore authority, and provider proof", () => {
-    const invalidRuntime = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(() => observation("other-provider")),
-    );
-    if (!invalidRuntime.supported) throw new Error("test surface must be supported");
-    expect(() => invalidRuntime.preflight("backup", sandbox())).toThrow(/invalid runtime receipt/u);
-
-    const invalidProof = createRuntimeProviderSnapshotSurface(
-      "mxc",
-      surfaceDriver(
-        () => observation(),
-        vi.fn(() => "proof\ninjection"),
+    const invalidRuntime = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(() => observation("other-provider")),
       ),
     );
-    if (!invalidProof.supported) throw new Error("test surface must be supported");
+    expect(() => invalidRuntime.preflight("backup", sandbox())).toThrow(/invalid runtime receipt/u);
+
+    const invalidProof = requireSupportedSurface(
+      createRuntimeProviderSnapshotSurface(
+        "mxc",
+        surfaceDriver(
+          () => observation(),
+          vi.fn(() => "proof\ninjection"),
+        ),
+      ),
+    );
     const preflight = invalidProof.preflight("restore", sandbox());
     const source = snapshotSource(preflight, observation().runtime);
     expect(() => invalidProof.restore(sandbox(), preflight, source, managedProfile)).toThrow(
@@ -709,8 +724,9 @@ describe("Docker provider snapshot evidence", () => {
       captureOpenShell: captureOpenShell as never,
       queryRuntimeSnapshot: () => dockerSnapshot(),
     };
-    const surface = createDockerRuntimeProviderSnapshotSurface("docker", dependencies);
-    if (!surface.supported) throw new Error("Docker snapshot surface must be supported");
+    const surface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", dependencies),
+    );
     const target = sandbox({ agent, openshellDriver: "docker" });
     const preflight = surface.preflight("restore", target);
     const source = snapshotSource(preflight, {
@@ -747,16 +763,17 @@ describe("Docker provider snapshot evidence", () => {
       }),
     );
 
-    const denied = createDockerRuntimeProviderSnapshotSurface("docker", {
-      ...dependencies,
-      captureOpenShell: (() => ({
-        status: 1,
-        output: "profile mismatch",
-        stdout: "",
-        stderr: "",
-      })) as never,
-    });
-    if (!denied.supported) throw new Error("Docker snapshot surface must be supported");
+    const denied = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        ...dependencies,
+        captureOpenShell: (() => ({
+          status: 1,
+          output: "profile mismatch",
+          stdout: "",
+          stderr: "",
+        })) as never,
+      }),
+    );
     const deniedPreflight = denied.preflight("restore", target);
     const deniedSource = snapshotSource(deniedPreflight, source.runtime);
     expect(() => denied.restore(target, deniedPreflight, deniedSource, authority)).toThrow(

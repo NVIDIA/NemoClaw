@@ -18,11 +18,9 @@ const sandboxState = await import("../src/lib/state/sandbox.js");
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 
 afterAll(() => {
-  if (ORIGINAL_HOME === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = ORIGINAL_HOME;
-  }
+  void (ORIGINAL_HOME === undefined
+    ? Reflect.deleteProperty(process.env, "HOME")
+    : Reflect.set(process.env, "HOME", ORIGINAL_HOME));
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 

@@ -12,9 +12,8 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   const dockerRun = vi
     .fn()
     .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
-    .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(fields), stderr: "" });
-  if (Array.isArray(fields) && String(fields[5]).toLowerCase() === "nvidia") {
-    dockerRun.mockReturnValueOnce({
+    .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(fields), stderr: "" })
+    .mockReturnValueOnce({
       status: 0,
       stdout:
         nvidiaVisibleDevices === undefined
@@ -22,7 +21,6 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
           : `NVIDIA_VISIBLE_DEVICES=${nvidiaVisibleDevices}\n`,
       stderr: "",
     });
-  }
   return {
     dockerRun,
     result: queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }),

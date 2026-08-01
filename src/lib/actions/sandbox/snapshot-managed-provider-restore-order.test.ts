@@ -259,27 +259,26 @@ describe("legacy snapshot compatibility gate", () => {
     "source",
     "destination",
   ] as const)("rejects cross-clone when the current %s is managed", async (managedSide) => {
-    fixture.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
-          name,
-          agent: "openclaw",
-          openshellDriver: "docker",
-          imageTag: "legacy-source:test",
-          ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
-        };
-      }
-      if (name === "beta" && managedSide === "destination") {
-        return {
-          name,
-          agent: "openclaw",
-          openshellDriver: "docker",
-          imageTag: "managed-target@test",
-          workload: managedWorkload(),
-        };
-      }
-      return null;
-    });
+    const source = {
+      name: "alpha",
+      agent: "openclaw" as const,
+      openshellDriver: "docker",
+      imageTag: "legacy-source:test",
+      ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
+    };
+    const destination =
+      managedSide === "destination"
+        ? {
+            name: "beta",
+            agent: "openclaw" as const,
+            openshellDriver: "docker",
+            imageTag: "managed-target@test",
+            workload: managedWorkload(),
+          }
+        : null;
+    fixture.getSandboxMock.mockImplementation((name) =>
+      name === "alpha" ? source : name === "beta" ? destination : null,
+    );
     fixture.parseLiveSandboxNamesMock.mockReturnValue(
       new Set(managedSide === "destination" ? ["alpha", "beta"] : ["alpha"]),
     );
