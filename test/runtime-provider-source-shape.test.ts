@@ -143,6 +143,8 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/docker.ts",
       "src/lib/onboard/managed-bootstrap/envelope.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
+      "src/lib/onboard/managed-bootstrap/podman-held-workload.ts",
+      "src/lib/onboard/managed-bootstrap/podman-watcher-lease.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
     expect(providerPaths).toEqual([
@@ -150,6 +152,9 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/podman-preflight.ts",
+      "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
     ]);
