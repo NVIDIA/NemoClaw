@@ -76,12 +76,10 @@ const COMPATIBLE_MODEL = "mock/mcp-bridge";
 const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const selectedMcpBridgeShard = resolveMcpBridgeShard();
-
 function mcpBridgeShardTest(shard: McpBridgeShard) {
   return selectedMcpBridgeShard === shard ? e2eTest : e2eTest.skip;
 }
 const test = mcpBridgeShardTest("openclaw");
-
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
 type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
@@ -91,7 +89,6 @@ const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
 };
 const MCP_BRIDGE_ALREADY_ABSENT =
   /No MCP servers are registered|No MCP server '.+' is registered|MCP server '.+' not found/iu;
-
 async function cleanupMcpBridge(
   host: HostCliClient,
   sandboxName: string,
@@ -109,7 +106,6 @@ async function cleanupMcpBridge(
     `cleanup MCP bridge ${server} on sandbox ${sandboxName}`,
   );
 }
-
 async function onboardAgent(
   host: HostCliClient,
   cleanup: CleanupRegistry,
@@ -147,7 +143,6 @@ async function onboardAgent(
   );
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
 }
-
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -359,7 +354,6 @@ async function addBridgeAndReadStatus(
     },
   );
   expectExitZero(add, `${options.artifactPrefix} mcp add fake server`);
-
   const status = await host.nemoclaw(
     [options.sandboxName, "mcp", "status", SERVER_NAME, "--json"],
     {
