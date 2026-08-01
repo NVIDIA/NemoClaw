@@ -20,6 +20,8 @@ import {
 const BOOTSTRAP_IDENTITY = "1".repeat(64);
 const ORIGINAL_RUNTIME_ID = "2".repeat(64);
 const REPLACEMENT_RUNTIME_ID = "3".repeat(64);
+const STATE_VOLUME_NAME = "openshell-sandbox-alpha-nemoclaw-bootstrap-state-111111111111";
+const STATE_VOLUME_MOUNTPOINT = "/var/lib/containers/storage/volumes/bootstrap-state/_data";
 const journal = Object.freeze({
   schemaVersion: PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
   phase: "preparing-replacement",
@@ -32,6 +34,8 @@ const journal = Object.freeze({
   originalContainerName: "openshell-sandbox-alpha",
   originalImageContentId: `sha256:${"5".repeat(64)}`,
   originalSpecFingerprint: "6".repeat(64),
+  replacementStateVolumeName: STATE_VOLUME_NAME,
+  replacementStateVolumeMountpoint: null,
   replacementRuntimeId: null,
   replacementStagingName: "openshell-sandbox-alpha-nemoclaw-bootstrap",
   replacementImageContentId: `sha256:${"7".repeat(64)}`,
@@ -77,6 +81,14 @@ describe("Podman bootstrap phase journal", () => {
     const store = createFilePodmanBootstrapJournalStore(temporaryRoot());
     store.create(journal);
 
+    const volume = store.recordStateVolume(BOOTSTRAP_IDENTITY, STATE_VOLUME_MOUNTPOINT);
+    expect(volume.phase).toBe("state-volume-created");
+    expect(volume.replacementStateVolumeMountpoint).toBe(STATE_VOLUME_MOUNTPOINT);
+    expect(store.recordStateVolume(BOOTSTRAP_IDENTITY, STATE_VOLUME_MOUNTPOINT)).toEqual(volume);
+    expect(() =>
+      store.recordStateVolume(BOOTSTRAP_IDENTITY, "/var/lib/containers/storage/other"),
+    ).toThrow("changed for this bootstrap identity");
+
     const created = store.recordReplacement(BOOTSTRAP_IDENTITY, REPLACEMENT_RUNTIME_ID);
     expect(created.phase).toBe("replacement-created");
     expect(created.replacementRuntimeId).toBe(REPLACEMENT_RUNTIME_ID);
@@ -89,7 +101,7 @@ describe("Podman bootstrap phase journal", () => {
     expect(stopped.phase).toBe("original-stopped");
     expect(store.recordOriginalStopped(BOOTSTRAP_IDENTITY)).toEqual(stopped);
     expect(() => store.recordReplacement(BOOTSTRAP_IDENTITY, REPLACEMENT_RUNTIME_ID)).toThrow(
-      "requires preparing-replacement",
+      "requires state-volume-created",
     );
   });
 
@@ -97,6 +109,7 @@ describe("Podman bootstrap phase journal", () => {
     const root = temporaryRoot();
     const store = createFilePodmanBootstrapJournalStore(root);
     store.create(journal);
+    store.recordStateVolume(BOOTSTRAP_IDENTITY, STATE_VOLUME_MOUNTPOINT);
     store.recordReplacement(BOOTSTRAP_IDENTITY, REPLACEMENT_RUNTIME_ID);
 
     const rollback = store.authorizeRollback(BOOTSTRAP_IDENTITY, ["replacement-created"]);
@@ -112,6 +125,7 @@ describe("Podman bootstrap phase journal", () => {
     const root = temporaryRoot();
     const store = createFilePodmanBootstrapJournalStore(root);
     store.create(journal);
+    store.recordStateVolume(BOOTSTRAP_IDENTITY, STATE_VOLUME_MOUNTPOINT);
     store.recordReplacement(BOOTSTRAP_IDENTITY, REPLACEMENT_RUNTIME_ID);
     fs.writeFileSync(`${journalFile(root)}.decision`, "rollback-authorized\n", {
       flag: "wx",

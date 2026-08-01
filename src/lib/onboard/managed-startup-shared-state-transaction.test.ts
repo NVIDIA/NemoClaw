@@ -464,6 +464,10 @@ describe("managed startup shared-state transaction", () => {
       recursive: true,
       preserveTimestamps: true,
     });
+    // Node 22.23 normalizes copied directory modes to 0755. Recreate the
+    // protected modes that the container-copy fixture is intended to model.
+    fs.chmodSync(copiedReceipt, 0o700);
+    fs.chmodSync(path.join(copiedReceipt, "backups"), 0o700);
 
     expect(
       getManagedStartupSharedStateTransactionStatus(
