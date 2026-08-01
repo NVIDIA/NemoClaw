@@ -243,7 +243,7 @@ async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string)
     probe,
     container,
     "build-only Hermes paths are present in the runtime image",
-    'for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp; do test ! -e "$path" && test ! -L "$path"; done',
+    'for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do test ! -e "$path" && test ! -L "$path"; done',
   );
 }
 

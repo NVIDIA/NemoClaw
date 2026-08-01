@@ -413,6 +413,27 @@ export type RouteViolation = {
   resolved: string;
 };
 
+export type PublishedPageBody = {
+  route: string;
+  body: string;
+};
+
+export function renderPublishedPageBodies(
+  sourcePath: string,
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): PublishedPageBody[] {
+  const publishedRoutes = index.sourceToRoutes.get(sourcePath);
+  if (!publishedRoutes || publishedRoutes.length === 0) {
+    throw new Error(`${sourcePath} is not a published navigation page in docs/index.yml`);
+  }
+  const source = readFileSync(path.join(docsDir, sourcePath), "utf8");
+  return publishedRoutes.map((publishedRoute) => ({
+    route: publishedRoute.route,
+    body: renderBodyForPublishedRoute(source, sourcePath, publishedRoute),
+  }));
+}
+
 /**
  * Validate every internal cross-page link on a docs source page against the
  * published route map. Returns the links that resolve to no published route.
@@ -422,19 +443,14 @@ export function findBrokenPublishedRoutes(
   index: PublishedRouteIndex,
   docsDir: string = docsRoot,
 ): RouteViolation[] {
-  const publishedRoutes = index.sourceToRoutes.get(sourcePath);
-  if (!publishedRoutes || publishedRoutes.length === 0) {
-    throw new Error(`${sourcePath} is not a published navigation page in docs/index.yml`);
-  }
-  const source = readFileSync(path.join(docsDir, sourcePath), "utf8");
   const violations: RouteViolation[] = [];
-  for (const publishedRoute of publishedRoutes) {
-    const body = renderBodyForPublishedRoute(source, sourcePath, publishedRoute);
+  for (const publishedPage of renderPublishedPageBodies(sourcePath, index, docsDir)) {
+    const { body } = publishedPage;
     const links = extractMarkdownLinks(body).filter((link) => isInternalRouteLink(link.target));
     for (const link of links) {
-      const resolved = resolvePublishedRoute(publishedRoute.route, link.target);
+      const resolved = resolvePublishedRoute(publishedPage.route, link.target);
       if (!index.routes.has(resolved)) {
-        violations.push({ sourcePath, fromRoute: publishedRoute.route, ...link, resolved });
+        violations.push({ sourcePath, fromRoute: publishedPage.route, ...link, resolved });
       }
     }
   }
