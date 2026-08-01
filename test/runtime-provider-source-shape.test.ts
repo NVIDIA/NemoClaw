@@ -82,6 +82,10 @@ describe("runtime provider central source boundary", () => {
       join(repoRoot, "src/lib/onboard/runtime-provider/docker.ts"),
       "utf8",
     );
+    const persistedEngineAuthority = readFileSync(
+      join(repoRoot, "src/lib/onboard/runtime-provider/persisted-engine-authority.ts"),
+      "utf8",
+    );
     const productionPaths = trackedPaths(
       "src/lib/onboard.ts",
       "src/lib/onboard",
@@ -127,7 +131,13 @@ describe("runtime provider central source boundary", () => {
     const bootstrapProtocol = bootstrapProtocolPaths.map(read);
     const activationSources = activationPaths.map(read);
     const providerImplementationSources = providerPaths
-      .filter((path) => path !== "src/lib/onboard/runtime-provider/contract.ts")
+      .filter(
+        (path) =>
+          ![
+            "src/lib/onboard/runtime-provider/contract.ts",
+            "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+          ].includes(path),
+      )
       .map(read);
     const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
     const packagedBootstrapAsset =
@@ -143,6 +153,11 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/docker.ts",
       "src/lib/onboard/managed-bootstrap/envelope.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
+      "src/lib/onboard/managed-bootstrap/podman-bootstrap-journal.ts",
+      "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
+      "src/lib/onboard/managed-bootstrap/podman-held-workload.ts",
+      "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
+      "src/lib/onboard/managed-bootstrap/podman-watcher-lease.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
     expect(providerPaths).toEqual([
@@ -150,6 +165,11 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+      "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/podman-preflight.ts",
+      "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
     ]);
@@ -176,6 +196,9 @@ describe("runtime provider central source boundary", () => {
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
     );
     expect(providerImplementationSources.join("\n")).not.toMatch(/managed-bootstrap/iu);
+    expect(persistedEngineAuthority).not.toMatch(
+      /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
+    );
     expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
     expect(
       packagingSources

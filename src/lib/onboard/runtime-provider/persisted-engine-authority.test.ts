@@ -70,7 +70,7 @@ describe("persisted engine authority", () => {
     });
   });
 
-  it("persists one private canonical record and accepts an exact retry", () => {
+  it("writes one private canonical record and accepts an exact retry", () => {
     const root = temporaryRoot();
     const authority = createPersistedEngineAuthority("mxc", engine(), BINDING_SHA256);
     const store = createFilePersistedEngineAuthorityStore(root);

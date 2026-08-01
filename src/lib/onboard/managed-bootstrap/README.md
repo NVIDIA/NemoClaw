@@ -87,13 +87,14 @@ No production provider invokes the trampoline yet. Until the later provider
 activation and protected E2E slices pass, every production runtime provider
 keeps bootstrap unsupported.
 
-The next dormant lifecycle boundary persists only an operation-scoped provider,
-engine, endpoint-authority, and non-secret binding digest. A freshly qualified
-injected engine must match that immutable record exactly before later lifecycle
-recovery work can use it. The record does not persist an executable, endpoint,
-environment, or credential, does not activate an engine, and has no production
-consumer yet. Its contract is provider-neutral; tests use an MXC-style engine
-to ensure central persistence does not gain a Podman-specific selection branch.
+The dormant persisted-engine-authority boundary supports future snapshot,
+rebuild, restore, and recovery work by recording only an operation-scoped
+provider, engine, endpoint-authority, and non-secret binding digest. It adds an
+exact matcher for a freshly provider-qualified injected engine, but no
+production lifecycle calls that matcher yet. The record does not persist an
+executable, endpoint, environment, or credential and does not activate an
+engine. Its contract is provider-neutral; tests use an MXC-style engine to
+ensure central persistence does not gain a Podman-specific selection branch.
 
 Snapshot creation, clone, rebuild, backup, restore, and recovery can now prepare
 an inert provider-neutral lifecycle ledger against that exact injected engine.
