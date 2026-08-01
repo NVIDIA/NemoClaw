@@ -141,8 +141,9 @@ export function createPersistedEngineAuthority(
 }
 
 /**
- * Require a freshly provider-qualified engine to match durable identity before
- * a later slice is allowed to perform any lifecycle or destructive mutation.
+ * Reject a freshly provider-qualified engine unless it matches the recorded
+ * identity. Callers must perform this check before lifecycle or destructive
+ * mutation.
  */
 export function requirePersistedEngineAuthority(
   persisted: PersistedEngineAuthority,
