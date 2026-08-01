@@ -10,10 +10,11 @@ import type {
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
 import {
+  normalizePersistedEngineAuthority,
   type PersistedEngineAuthority,
   type PersistedEngineAuthorityStore,
-  normalizePersistedEngineAuthority,
   requirePersistedEngineAuthority,
+  serializePersistedEngineAuthority,
 } from "./persisted-engine-authority";
 
 export const PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION = 1 as const;
@@ -27,10 +28,7 @@ export type PersistedEngineLifecycleAction =
   | "restore"
   | "recovery";
 
-export type PersistedEngineLifecyclePhase =
-  | "prepared"
-  | "mutation-authorized"
-  | "completed";
+export type PersistedEngineLifecyclePhase = "prepared" | "mutation-authorized" | "completed";
 
 export type PersistedEngineLifecycleResourceRole = "source" | "target";
 
@@ -195,7 +193,9 @@ function normalizeResources(
     resources.map((resource) => resource.role).join(",") !== expectedRoles.join(",") ||
     new Set(resources.map((resource) => resource.runtimeId)).size !== resources.length
   ) {
-    fail(`${action} resources must contain exact distinct ${expectedRoles.join(" and ")} authority`);
+    fail(
+      `${action} resources must contain exact distinct ${expectedRoles.join(" and ")} authority`,
+    );
   }
   return Object.freeze(resources);
 }
@@ -287,8 +287,7 @@ function currentUid(fallback: number | bigint): bigint {
   return BigInt(typeof process.getuid === "function" ? process.getuid() : fallback);
 }
 
-function requirePrivateDirectory(directory: string): void {
-  fs.mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE });
+function verifyPrivateDirectory(directory: string): void {
   const metadata = fs.lstatSync(directory);
   if (
     !metadata.isDirectory() ||
@@ -298,6 +297,11 @@ function requirePrivateDirectory(directory: string): void {
   ) {
     fail("ledger directory must be a private real directory owned by the current user");
   }
+}
+
+function requirePrivateDirectory(directory: string): void {
+  fs.mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE });
+  verifyPrivateDirectory(directory);
 }
 
 function sameStableMetadata(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
@@ -455,7 +459,7 @@ function loadTransaction(
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
     fail("transaction path must be a private real directory");
   }
-  requirePrivateDirectory(directory);
+  verifyPrivateDirectory(directory);
   const entries = fs.readdirSync(directory).sort();
   if (entries.some((entry) => !PHASE_FILES.some((phase) => entry === `${phase}.json`))) {
     fail("transaction directory contains an unsupported entry");
@@ -501,7 +505,18 @@ export function createFilePersistedEngineLifecycleStore(
       const records: PersistedEngineLifecycleRecord[] = [];
       for (const entry of fs.readdirSync(root).sort()) {
         if (entry.endsWith(".retired")) {
-          exactSha256(entry.slice(0, -".retired".length), "retired transaction identity");
+          const transactionId = exactSha256(
+            entry.slice(0, -".retired".length),
+            "retired transaction identity",
+          );
+          const receipt = readPrivateFile(tombstonePath(root, transactionId));
+          if (
+            receipt === null ||
+            !SHA256.test(receipt.trim()) ||
+            receipt !== `${receipt.trim()}\n`
+          ) {
+            fail("retirement receipt is malformed");
+          }
           continue;
         }
         exactSha256(entry, "transaction directory identity");
@@ -521,14 +536,8 @@ export function createFilePersistedEngineLifecycleStore(
       }
       const existing = loadTransaction(root, record.transactionId);
       if (existing) {
-        if (
-          existing.phase === "prepared" &&
-          serializePersistedEngineLifecycleRecord(existing) ===
-            serializePersistedEngineLifecycleRecord(record)
-        ) {
-          return existing;
-        }
-        fail("transaction identity already exists");
+        requireSameLifecycle(record, existing);
+        return existing;
       }
       return publishPhase(root, record);
     },
@@ -577,7 +586,7 @@ export function createFilePersistedEngineLifecycleStore(
           if (remaining.phase !== "completed" || remaining.resultSha256 !== result) {
             fail("retirement tombstone does not match the remaining transaction");
           }
-          fs.rmSync(transactionDirectory(root, transactionId), { recursive: true });
+          fs.rmSync(transactionDirectory(root, transactionId), { force: true, recursive: true });
           fsyncDirectory(root);
         }
         return;
@@ -590,7 +599,7 @@ export function createFilePersistedEngineLifecycleStore(
         const raced = readPrivateFile(tombstone);
         if (raced !== `${result}\n`) fail("retirement receipt digest changed");
       }
-      fs.rmSync(transactionDirectory(root, transactionId), { recursive: true });
+      fs.rmSync(transactionDirectory(root, transactionId), { force: true, recursive: true });
       fsyncDirectory(root);
     },
   });
@@ -612,23 +621,20 @@ function requireCurrentEngineAuthority(
   }
   requirePersistedEngineAuthority(current, providerId, engine, bindingSha256);
   if (
-    JSON.stringify(normalizePersistedEngineAuthority(current)) !==
-    JSON.stringify(normalizePersistedEngineAuthority(expected))
+    serializePersistedEngineAuthority(normalizePersistedEngineAuthority(current)) !==
+    serializePersistedEngineAuthority(normalizePersistedEngineAuthority(expected))
   ) {
     throw new Error("Persisted lifecycle engine authority changed after preparation.");
   }
   return current;
 }
 
-function expectedRecord(input: PreparePersistedEngineLifecycleInput): PersistedEngineLifecycleRecord {
+function expectedRecord(
+  input: PreparePersistedEngineLifecycleInput,
+): PersistedEngineLifecycleRecord {
   const authority = input.engineAuthorityStore.load("sandbox-lifecycle");
   if (!authority) throw new Error("Persisted sandbox-lifecycle engine authority is missing.");
-  requirePersistedEngineAuthority(
-    authority,
-    input.providerId,
-    input.engine,
-    input.bindingSha256,
-  );
+  requirePersistedEngineAuthority(authority, input.providerId, input.engine, input.bindingSha256);
   return normalizePersistedEngineLifecycleRecord({
     schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
     transactionId: input.transactionId,
@@ -665,10 +671,7 @@ function requireExpectedLifecycle(
   return current;
 }
 
-function exactArguments(
-  args: readonly string[],
-  runtimeId: string,
-): readonly string[] {
+function exactArguments(args: readonly string[], runtimeId: string): readonly string[] {
   if (!Array.isArray(args) || args.length === 0 || args.length > MAX_ARGUMENTS) {
     throw new Error("Exact runtime command has an invalid argument count.");
   }
@@ -743,7 +746,9 @@ export async function executePersistedEngineLifecycle<T>(
   input: PersistedEngineLifecycleExecutionInput,
   mutate: (
     scope: AuthorizedPersistedEngineLifecycle,
-  ) => Promise<PersistedEngineLifecycleMutationResult<T>> | PersistedEngineLifecycleMutationResult<T>,
+  ) =>
+    | Promise<PersistedEngineLifecycleMutationResult<T>>
+    | PersistedEngineLifecycleMutationResult<T>,
 ): Promise<{
   readonly record: PersistedEngineLifecycleRecord;
   readonly value: T;

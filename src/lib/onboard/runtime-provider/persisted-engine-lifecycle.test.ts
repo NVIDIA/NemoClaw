@@ -17,10 +17,10 @@ import {
   createFilePersistedEngineLifecycleStore,
   executePersistedEngineLifecycle,
   normalizePersistedEngineLifecycleRecord,
-  parsePersistedEngineLifecycleRecord,
   PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
   type PersistedEngineLifecycleAction,
   type PersistedEngineLifecycleResource,
+  parsePersistedEngineLifecycleRecord,
   preparePersistedEngineLifecycle,
   serializePersistedEngineLifecycleRecord,
 } from "./persisted-engine-lifecycle";
@@ -55,7 +55,9 @@ function lifecycleEngine(
   });
 }
 
-function resources(action: PersistedEngineLifecycleAction): readonly PersistedEngineLifecycleResource[] {
+function resources(
+  action: PersistedEngineLifecycleAction,
+): readonly PersistedEngineLifecycleResource[] {
   switch (action) {
     case "snapshot-create":
     case "backup":
@@ -72,14 +74,16 @@ function resources(action: PersistedEngineLifecycleAction): readonly PersistedEn
   }
 }
 
-function harness(options: {
-  readonly root?: string;
-  readonly action?: PersistedEngineLifecycleAction;
-  readonly capture?: ReturnType<typeof vi.fn>;
-  readonly authorityId?: string;
-  readonly transactionId?: string;
-  readonly runtimeStateSha256?: string;
-} = {}) {
+function harness(
+  options: {
+    readonly root?: string;
+    readonly action?: PersistedEngineLifecycleAction;
+    readonly capture?: ReturnType<typeof vi.fn>;
+    readonly authorityId?: string;
+    readonly transactionId?: string;
+    readonly runtimeStateSha256?: string;
+  } = {},
+) {
   const root = options.root ?? temporaryRoot();
   const action = options.action ?? "rebuild";
   const engine = lifecycleEngine(options.capture, options.authorityId);
@@ -171,13 +175,10 @@ describe("persisted engine lifecycle", () => {
       },
     };
 
-    await executePersistedEngineLifecycle(
-      { ...runtime.input, lifecycleStore },
-      (scope) => {
-        scope.captureExact("source", (runtimeId) => ["stop", runtimeId]);
-        return { resultSha256: RESULT_SHA256, value: undefined };
-      },
-    );
+    await executePersistedEngineLifecycle({ ...runtime.input, lifecycleStore }, (scope) => {
+      scope.captureExact("source", (runtimeId) => ["stop", runtimeId]);
+      return { resultSha256: RESULT_SHA256, value: undefined };
+    });
 
     expect(events).toEqual(["ledger:mutation-authorized", "engine:mutate"]);
   });
@@ -196,6 +197,7 @@ describe("persisted engine lifecycle", () => {
       }),
     ).rejects.toThrow("injected process crash");
     expect(first.lifecycleStore.load(TRANSACTION_ID)?.phase).toBe("mutation-authorized");
+    expect(preparePersistedEngineLifecycle(first.input).phase).toBe("mutation-authorized");
 
     const recoveredCapture = vi.fn(() => ({ status: 0, stdout: "recovered", stderr: "" }));
     const recoveredEngine = lifecycleEngine(recoveredCapture);
@@ -334,11 +336,7 @@ describe("persisted engine lifecycle", () => {
     );
     expect(
       fs.readFileSync(
-        path.join(
-          runtime.root,
-          PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-          `${TRANSACTION_ID}.retired`,
-        ),
+        path.join(runtime.root, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY, `${TRANSACTION_ID}.retired`),
         "utf8",
       ),
     ).toBe(`${RESULT_SHA256}\n`);
@@ -356,9 +354,7 @@ describe("persisted engine lifecycle", () => {
     expect(() => parsePersistedEngineLifecycleRecord(JSON.stringify(prepared))).toThrow(
       "not canonical",
     );
-    expect(serializePersistedEngineLifecycleRecord(prepared)).toBe(
-      `${JSON.stringify(prepared)}\n`,
-    );
+    expect(serializePersistedEngineLifecycleRecord(prepared)).toBe(`${JSON.stringify(prepared)}\n`);
 
     const preparedPath = path.join(
       runtime.root,
