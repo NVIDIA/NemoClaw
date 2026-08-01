@@ -30,6 +30,7 @@ import { registerCreatedSandbox } from "../sandbox-registration";
 import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
+import type { HostLocalInferenceRuntime } from "./host-local-inference";
 import {
   createRuntimeProviderBundleRegistry,
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
@@ -94,6 +95,22 @@ function mxcBundle(): InMemoryRuntimeProviderBundle {
   });
 }
 
+function mxcInferenceRuntime(): HostLocalInferenceRuntime {
+  const unavailable = () => {
+    throw new Error("not exercised by the registry contract test");
+  };
+  return {
+    providerId: "mxc",
+    services: ["ollama", "nim", "vllm"],
+    translateContainerArgs: (args) => args,
+    qualifyOllama: unavailable,
+    startManaged: unavailable,
+    inspectManaged: unavailable,
+    stopManaged: unavailable,
+    preserveForRebuild: unavailable,
+  };
+}
+
 function replaceSurface(
   bundle: RuntimeProviderBundle,
   surface: keyof RuntimeProviderBundle,
@@ -119,6 +136,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         "preflightDoctor",
         "gateway",
         "workload",
+        "hostLocalInference",
         "lifecycle",
         "mutationAuthority",
         "bootstrap",
@@ -247,6 +265,25 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(createLifecycle).not.toHaveBeenCalled();
   });
 
+  it("registers MXC-style host-local inference without a Podman-specific switch", () => {
+    const runtime = mxcInferenceRuntime();
+    const bundle = createInMemoryRuntimeProviderBundle({
+      providerId: "mxc",
+      workloadProfile: PORTABLE_PROFILE,
+      hostLocalInferenceRuntime: runtime,
+    });
+    const registered = createRuntimeProviderBundleRegistry([["mxc", bundle]]).mxc!;
+
+    expectSupportedSurface(registered.hostLocalInference);
+    expect(registered.hostLocalInference.runtime.providerId).toBe("mxc");
+    expect(registered.hostLocalInference.runtime.services).toEqual(["ollama", "nim", "vllm"]);
+    expect(registered.containerEngine).toMatchObject({
+      identities: expect.arrayContaining([
+        expect.objectContaining({ operation: "host-local-inference", engineId: "memory" }),
+      ]),
+    });
+  });
+
   it("rejects an omitted managed platform without changing legacy receipt acceptance", () => {
     const { platform: _omittedPlatform, ...managedWithoutPlatform } = MANAGED_RECEIPT;
     const persistedManaged = cloneSandboxWorkloadReceipt(managedWithoutPlatform);
@@ -298,6 +335,7 @@ describe("RuntimeProviderBundle registry contract", () => {
       "preflightDoctor",
       "gateway",
       "workload",
+      "hostLocalInference",
       "lifecycle",
       "mutationAuthority",
       "bootstrap",
@@ -354,6 +392,14 @@ describe("RuntimeProviderBundle registry contract", () => {
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.workload,
         profile: { ...bundle.workload.profile, hostArchitectures: ["amd64", "amd64"] },
+      }),
+    ],
+    [
+      "hostLocalInference",
+      (bundle: RuntimeProviderBundle) => ({
+        ...bundle.hostLocalInference,
+        supported: true,
+        reason: undefined,
       }),
     ],
     [

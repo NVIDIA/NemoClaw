@@ -9,6 +9,7 @@ import type {
   ManagedBootstrapRuntimeOnboardRouting,
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "../managed-bootstrap/runtime-create";
+import type { HostLocalInferenceRuntime } from "./host-local-inference";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
@@ -245,6 +246,12 @@ export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   acceptsReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean;
 }>;
 
+export type RuntimeProviderHostLocalInferenceSurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly runtime: HostLocalInferenceRuntime;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
@@ -359,6 +366,7 @@ export interface RuntimeProviderBundle {
   readonly preflightDoctor: RuntimeProviderPreflightDoctorSurface;
   readonly gateway: RuntimeProviderGatewaySurface;
   readonly workload: RuntimeProviderWorkloadSurface;
+  readonly hostLocalInference: RuntimeProviderHostLocalInferenceSurface;
   readonly lifecycle: RuntimeProviderLifecycleSurface;
   readonly mutationAuthority: RuntimeProviderMutationAuthoritySurface;
   readonly bootstrap: RuntimeProviderBootstrapSurface;

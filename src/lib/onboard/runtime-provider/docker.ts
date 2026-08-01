@@ -330,6 +330,10 @@ export function createDockerRuntimeProviderBundle(
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
       acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
     },
+    hostLocalInference: unsupported(
+      providerId,
+      "The legacy Docker inference path has not migrated to the provider-owned runtime surface.",
+    ),
     lifecycle: {
       providerId,
       supported: true,
@@ -424,6 +428,10 @@ export function createKubernetesRuntimeProviderBundle(
       profile,
       acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt),
     },
+    hostLocalInference: unsupported(
+      providerId,
+      "The legacy Kubernetes inference path has not migrated to the provider-owned runtime surface.",
+    ),
     lifecycle: unsupported(
       providerId,
       "Direct local lifecycle control is unavailable for the Kubernetes provider.",

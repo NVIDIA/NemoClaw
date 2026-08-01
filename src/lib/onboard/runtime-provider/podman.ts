@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ContainerEngine } from "../../adapters/container-engine";
+import type { HostLocalInferenceRuntime } from "./host-local-inference";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -18,11 +19,13 @@ import {
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: ContainerEngine;
+  readonly hostLocalInference?: ContainerEngine;
   readonly sandboxLifecycle: ContainerEngine;
 }
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
+  readonly hostLocalInference?: HostLocalInferenceRuntime;
   readonly preflight?: PodmanHostPreflightOptions;
 }
 
@@ -39,7 +42,7 @@ function unsupported(providerId: string, reason: string) {
 
 function requireEngine(
   engine: ContainerEngine,
-  operation: "host-doctor" | "sandbox-lifecycle",
+  operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
 ): void {
   if (engine.engineId !== "podman" || engine.operation !== operation) {
     throw new Error(`Podman provider requires a '${operation}' Podman engine.`);
@@ -72,11 +75,30 @@ export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
 ): RuntimeProviderBundle {
   const providerId = "podman";
-  const { hostDoctor, sandboxLifecycle } = options.engines;
+  const { hostDoctor, hostLocalInference: hostLocalInferenceEngine, sandboxLifecycle } =
+    options.engines;
+  const hostLocalInference = options.hostLocalInference;
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
   if (hostDoctor.authorityId !== sandboxLifecycle.authorityId) {
     throw new Error("Podman provider engines must bind the same endpoint authority.");
+  }
+  if ((hostLocalInferenceEngine === undefined) !== (hostLocalInference === undefined)) {
+    throw new Error(
+      "Podman provider requires its host-local inference engine and runtime together.",
+    );
+  }
+  if (hostLocalInferenceEngine && hostLocalInference) {
+    requireEngine(hostLocalInferenceEngine, "host-local-inference");
+    if (
+      hostLocalInferenceEngine.authorityId !== hostDoctor.authorityId ||
+      hostLocalInference.providerId !== providerId ||
+      [...hostLocalInference.services].sort().join(",") !== "nim,ollama,vllm"
+    ) {
+      throw new Error(
+        "Podman host-local inference must bind the provider endpoint and all inference services.",
+      );
+    }
   }
   const preflight = options.preflight ?? {};
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
@@ -91,7 +113,7 @@ export function createPodmanRuntimeProviderBundle(
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: false,
+      hostLocalInference: hostLocalInference !== undefined,
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
@@ -114,6 +136,9 @@ export function createPodmanRuntimeProviderBundle(
       profile: DORMANT_WORKLOAD_PROFILE,
       acceptsReceipt: () => false,
     },
+    hostLocalInference: hostLocalInference
+      ? { providerId, supported: true, runtime: hostLocalInference }
+      : unsupported(providerId, deferred),
     lifecycle: {
       providerId,
       supported: true,
@@ -140,6 +165,15 @@ export function createPodmanRuntimeProviderBundle(
           engineId: hostDoctor.engineId,
           displayName: hostDoctor.displayName,
         },
+        ...(hostLocalInferenceEngine
+          ? [
+              {
+                operation: "host-local-inference" as const,
+                engineId: hostLocalInferenceEngine.engineId,
+                displayName: hostLocalInferenceEngine.displayName,
+              },
+            ]
+          : []),
         {
           operation: "sandbox-lifecycle",
           engineId: sandboxLifecycle.engineId,
