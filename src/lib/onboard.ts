@@ -2768,33 +2768,19 @@ async function createSandboxWithBaseImageResolution(
   }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    try {
-      dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
-        effectiveSandboxGpuConfig,
-        provider,
-        {
-          sandboxName,
-          dockerDriverGateway,
-          selectedRoute: selectedGpuRoute,
-          verifyDirectSandboxGpu,
-          verifyGpuOrExit: runtimePatch.verifyGpuOrExit,
-          selectedMode: runtimePatch.selectedMode,
-          runCaptureOpenshell,
-          log: console.log,
-        },
-      );
-      await runtimePatch.commitAfterReady();
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      try {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-      } catch (rollbackError) {
-        (
-          failure as Error & { managedBootstrapRollbackError?: unknown }
-        ).managedBootstrapRollbackError = rollbackError;
-      }
-      throw failure;
-    }
+    await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+      effectiveSandboxGpuConfig,
+      provider,
+      {
+        sandboxName,
+        dockerDriverGateway,
+        selectedRoute: selectedGpuRoute,
+        verifyDirectSandboxGpu,
+        runCaptureOpenshell,
+        log: console.log,
+      },
+      runtimePatch,
+    );
   }
 
   let actualDashboardPort = 0;
