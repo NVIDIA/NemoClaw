@@ -468,7 +468,7 @@ describe("Podman image-owned bootstrap transaction", () => {
     ).toThrow("does not match its exact transaction authority");
   });
 
-  it("rejects endpoint-authority or watcher-lease drift before polling", () => {
+  it("rejects engine-authority or watcher-lease drift before polling", () => {
     const fake = harness("openclaw");
     const transaction = startPodmanBootstrapImageTransaction(startInput("openclaw", fake));
     const commandsBefore = fake.commands.length;
