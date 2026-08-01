@@ -80,6 +80,27 @@ export interface HostLocalManagedInferenceInspection {
   readonly receipt: HostLocalInferenceReceipt;
 }
 
+export interface HostLocalInferenceRouteAuthority {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly service: "ollama";
+  readonly authorityId: string;
+  /** Digest of the provider-owned route and probe authority, excluding secrets. */
+  readonly receiptSha256: string;
+}
+
+/**
+ * Provider-owned protected storage for host-process route identity. A runtime
+ * must inject a durable implementation before production activation; tests
+ * use a write-once memory implementation.
+ */
+export interface HostLocalInferenceRouteAuthorityStore {
+  readonly load: (service: "ollama") => HostLocalInferenceRouteAuthority | null;
+  readonly record: (
+    authority: HostLocalInferenceRouteAuthority,
+  ) => HostLocalInferenceRouteAuthority;
+}
+
 export interface HostLocalInferenceRuntime {
   readonly providerId: string;
   /** Exact opaque endpoint identity shared with the operation-scoped engine. */
