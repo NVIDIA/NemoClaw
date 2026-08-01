@@ -10,6 +10,7 @@ import { createRuntimeProviderBundleRegistry } from "./registry";
 
 const SOURCE_IMAGE = "openshell/sandbox-from:old";
 const REPLACEMENT_IMAGE = "openshell/sandbox-from:new";
+const TARGET_IDENTITY = "target-identity";
 
 function entry(imageTag: string, generation: string): SandboxEntry {
   return {
@@ -45,6 +46,7 @@ describe("same-name replacement workload cleanup", () => {
       retireReplacedSandboxWorkload(
         "alpha",
         "target",
+        TARGET_IDENTITY,
         entry(SOURCE_IMAGE, "source"),
         entry(REPLACEMENT_IMAGE, "target"),
         {
@@ -66,6 +68,7 @@ describe("same-name replacement workload cleanup", () => {
       retireReplacedSandboxWorkload(
         "alpha",
         "target",
+        TARGET_IDENTITY,
         entry(SOURCE_IMAGE, "source"),
         entry(SOURCE_IMAGE, "target"),
         {
@@ -85,9 +88,14 @@ describe("same-name replacement workload cleanup", () => {
     } as unknown as SandboxEntry;
 
     expect(
-      retireReplacedSandboxWorkload("alpha", "target", source, entry(REPLACEMENT_IMAGE, "target"), {
-        runtimeProviders: providers(removeImage),
-      }),
+      retireReplacedSandboxWorkload(
+        "alpha",
+        "target",
+        TARGET_IDENTITY,
+        source,
+        entry(REPLACEMENT_IMAGE, "target"),
+        { runtimeProviders: providers(removeImage) },
+      ),
     ).toEqual({ status: "skipped", reason: "shared-image" });
     expect(removeImage).not.toHaveBeenCalled();
   });
@@ -100,9 +108,14 @@ describe("same-name replacement workload cleanup", () => {
     );
 
     expect(
-      retireReplacedSandboxWorkload("alpha", "target", entry(SOURCE_IMAGE, "source"), replacement, {
-        runtimeProviders: providers(removeImage),
-      }),
+      retireReplacedSandboxWorkload(
+        "alpha",
+        "target",
+        TARGET_IDENTITY,
+        entry(SOURCE_IMAGE, "source"),
+        replacement,
+        { runtimeProviders: providers(removeImage) },
+      ),
     ).toEqual({ status: "skipped", reason: "replacement-unproven" });
     expect(removeImage).not.toHaveBeenCalled();
   });
@@ -114,8 +127,25 @@ describe("same-name replacement workload cleanup", () => {
       retireReplacedSandboxWorkload(
         "alpha",
         "expected-target",
+        "foreign-target-identity",
         entry(SOURCE_IMAGE, "source"),
         entry(REPLACEMENT_IMAGE, "foreign-target"),
+        { runtimeProviders: providers(removeImage) },
+      ),
+    ).toEqual({ status: "skipped", reason: "replacement-unproven" });
+    expect(removeImage).not.toHaveBeenCalled();
+  });
+
+  it("does not trust a replacement whose live identity differs from the journal", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        "target",
+        "different-target-identity",
+        entry(SOURCE_IMAGE, "source"),
+        entry(REPLACEMENT_IMAGE, "target"),
         { runtimeProviders: providers(removeImage) },
       ),
     ).toEqual({ status: "skipped", reason: "replacement-unproven" });
@@ -129,6 +159,7 @@ describe("same-name replacement workload cleanup", () => {
       retireReplacedSandboxWorkload(
         "alpha",
         "target",
+        TARGET_IDENTITY,
         entry(SOURCE_IMAGE, "source"),
         entry(REPLACEMENT_IMAGE, "target"),
         { runtimeProviders: {} },
@@ -151,6 +182,7 @@ describe("same-name replacement workload cleanup", () => {
       retireReplacedSandboxWorkload(
         "alpha",
         "target",
+        TARGET_IDENTITY,
         entry(SOURCE_IMAGE, "source"),
         entry(REPLACEMENT_IMAGE, "target"),
         { runtimeProviders: brokenProviders },

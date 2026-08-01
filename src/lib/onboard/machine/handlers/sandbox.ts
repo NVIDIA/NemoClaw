@@ -203,6 +203,7 @@ export interface SandboxStateOptions<
     retireReplacedSandboxWorkload?(
       sandboxName: string,
       targetGeneration: string,
+      targetLiveIdentityFingerprint: string | null,
       source: ReplacedSandboxSourceEntry,
       replacement: SandboxEntry | null,
     ): ReplacedSandboxWorkloadCleanupResult;
@@ -1368,6 +1369,17 @@ class SandboxStateFlow<
     this.recordSandboxRecreatePhase(transaction, "registry_committing");
   }
 
+  private reloadSandboxRecreateTransaction(
+    transaction: CheckpointSandboxRecreateTransaction | null,
+  ): CheckpointSandboxRecreateTransaction | null {
+    if (!transaction) return null;
+    const current = this.deps.updateSession((session) => session).checkpoint?.sandboxRecreate;
+    if (!current || current.id !== transaction.id) {
+      throw new Error("Sandbox recreate transaction ownership changed after replacement creation.");
+    }
+    return current;
+  }
+
   private retireSandboxRecreateSourceWorkload(
     transaction: CheckpointSandboxRecreateTransaction | null,
     sourceEntry: ReplacedSandboxSourceEntry | null,
@@ -1379,6 +1391,7 @@ class SandboxStateFlow<
     )(
       sandboxName,
       transaction.targetGeneration,
+      transaction.targetLiveIdentityFingerprint,
       sourceEntry,
       this.deps.getSandboxRegistryEntry(sandboxName),
     );
@@ -1514,9 +1527,10 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
-      this.retireSandboxRecreateSourceWorkload(transaction, sourceEntry, sandboxName);
-      await this.recordSandboxRecreateRepairSuccess(transaction, repairMetadata);
-      this.recordSandboxRecreateRegistryCommit(transaction);
+      const recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
+      this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
+      await this.recordSandboxRecreateRepairSuccess(recordedTransaction, repairMetadata);
+      this.recordSandboxRecreateRegistryCommit(recordedTransaction);
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
       const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =

@@ -77,11 +77,23 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   );
   let currentEntry = sourceEntry;
   const createSandbox = vi.fn(async () => {
+    const transaction =
+      session.checkpoint?.sandboxRecreate ??
+      (() => {
+        throw new Error("missing recreate transaction");
+      })();
+    advanceSandboxRecreateTransaction(session, transaction.id, "deleting");
+    advanceSandboxRecreateTransaction(session, transaction.id, "deleted");
+    advanceSandboxRecreateTransaction(session, transaction.id, "creating");
     replacementEntry = {
       ...replacementEntry,
-      lifecycleGeneration: session.checkpoint?.sandboxRecreate?.targetGeneration ?? "missing",
+      lifecycleGeneration: transaction.targetGeneration,
     };
     currentEntry = replacementEntry;
+    recordSandboxRecreateTargetCreated(session, transaction.id, {
+      state: "ready",
+      liveIdentityFingerprint: replacementEntry.lifecycleLiveIdentityFingerprint,
+    });
     return "saved";
   });
   const retireReplacedSandboxWorkload = vi.fn(() => ({
@@ -124,6 +136,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   expect(retireReplacedSandboxWorkload).toHaveBeenCalledExactlyOnceWith(
     "saved",
     replacementEntry.lifecycleGeneration,
+    replacementEntry.lifecycleLiveIdentityFingerprint,
     expect.objectContaining({
       name: "saved",
       imageTag: sourceEntry.imageTag,
@@ -136,7 +149,14 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   );
   expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("run 'nemohermes gc'"));
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
-  expect(orderedPhases).toEqual([null, "planned", "registry_committing", "completed", null]);
+  expect(orderedPhases).toEqual([
+    null,
+    "planned",
+    "created",
+    "registry_committing",
+    "completed",
+    null,
+  ]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
@@ -262,6 +282,7 @@ it("removes the journaled source image after resuming a registered replacement",
     2,
     "saved",
     journal?.targetGeneration,
+    journal?.targetLiveIdentityFingerprint,
     expect.objectContaining({
       name: "saved",
       openshellDriver: "docker",

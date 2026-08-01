@@ -165,6 +165,7 @@ describe("sandbox recreate journal", () => {
       retireReplacedSandboxWorkload(
         "alpha",
         TARGET_GENERATION,
+        TARGET_ID,
         restoredSource ?? SOURCE_ENTRY,
         replacement,
         { runtimeProviders },

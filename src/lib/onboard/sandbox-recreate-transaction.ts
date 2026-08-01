@@ -61,6 +61,7 @@ function providerCleanupSource(source: ReplacedSandboxSourceEntry): SandboxEntry
 export function retireReplacedSandboxWorkload(
   sandboxName: string,
   targetGeneration: string,
+  targetLiveIdentityFingerprint: string | null,
   source: ReplacedSandboxSourceEntry,
   replacement: SandboxEntry | null,
   deps: ReplacedSandboxWorkloadCleanupDeps = {},
@@ -69,7 +70,8 @@ export function retireReplacedSandboxWorkload(
     source.name !== sandboxName ||
     replacement?.name !== sandboxName ||
     replacement.lifecycleGeneration !== targetGeneration ||
-    !replacement.lifecycleLiveIdentityFingerprint
+    !targetLiveIdentityFingerprint ||
+    replacement.lifecycleLiveIdentityFingerprint !== targetLiveIdentityFingerprint
   ) {
     return { status: "skipped", reason: "replacement-unproven" };
   }
