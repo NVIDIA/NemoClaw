@@ -25,6 +25,7 @@ export interface PodmanSocketAuthority {
   readonly directoryChain: readonly PodmanSocketDirectoryAuthority[];
   readonly device: string;
   readonly inode: string;
+  readonly mode: string;
   readonly ownerUid: string;
   readonly socketPath: string;
 }
@@ -33,6 +34,11 @@ export interface PodmanSocketAuthorityDeps {
   readonly lstat?: (filePath: string) => PodmanSocketStat;
   readonly uid?: number;
 }
+
+// A rootless Podman service and its client intentionally share one Unix UID,
+// which is the trust principal for this boundary. The captured authority
+// excludes path control by other principals and detects endpoint rotation; it
+// does not claim isolation from another process already running as that UID.
 
 function integerIdentity(value: bigint | number, label: string): string {
   if (typeof value === "bigint") {
@@ -133,10 +139,15 @@ export function capturePodmanSocketAuthority(
       `Podman socket authority is owned by uid ${ownerUid}; expected current uid ${String(uid)}.`,
     );
   }
+  const mode = integerValue(stat.mode, "mode");
+  if ((mode & 0o022n) !== 0n) {
+    throw new Error("Podman socket authority is writable by another user or group.");
+  }
   return Object.freeze({
     directoryChain: captureDirectoryChain(normalized, uid, lstat),
     device: integerIdentity(stat.dev, "device"),
     inode: integerIdentity(stat.ino, "inode"),
+    mode: mode.toString(10),
     ownerUid,
     socketPath: normalized,
   });
@@ -150,6 +161,7 @@ export function assertPodmanSocketAuthority(
   if (
     actual.device !== expected.device ||
     actual.inode !== expected.inode ||
+    actual.mode !== expected.mode ||
     actual.ownerUid !== expected.ownerUid ||
     actual.directoryChain.length !== expected.directoryChain.length ||
     actual.directoryChain.some((component, index) => {

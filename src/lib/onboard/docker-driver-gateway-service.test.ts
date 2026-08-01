@@ -573,6 +573,7 @@ describe("docker-driver-gateway-service", () => {
 
     expect(result).toEqual({
       attempted: true,
+      standaloneFallbackAllowed: false,
       manager: "systemd",
       serviceName: "nemoclaw-openshell-gateway",
       statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
@@ -626,6 +627,7 @@ describe("docker-driver-gateway-service", () => {
 
     expect(result).toEqual({
       attempted: true,
+      standaloneFallbackAllowed: false,
       manager: "homebrew",
       serviceName: "openshell",
       statusCommand: "brew services info openshell",
@@ -674,7 +676,53 @@ describe("docker-driver-gateway-service", () => {
   ])("reports nothing to stop when %s (#7904)", (_case, opts, reason) => {
     expect(stopOpenShellGatewayUserService({ commandExists: () => true, ...opts })).toEqual({
       attempted: false,
+      standaloneFallbackAllowed: false,
       reason,
+      stopped: false,
+    });
+  });
+
+  it("reports standalone fallback eligibility when the systemd user manager is unavailable", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackAllowed: true,
+      stopped: false,
+    });
+  });
+
+  it("refuses standalone fallback when the systemd service can activate automatically", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const activationPath = `${home}/.config/systemd/user/default.target.wants/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath || candidate === activationPath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackAllowed: false,
       stopped: false,
     });
   });

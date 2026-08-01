@@ -82,6 +82,7 @@ function engineWith(
   const capture = vi.fn(() => queue.shift() as ContainerEngineCommandResult);
   const engine: ContainerEngine = {
     operation: "managed-bootstrap",
+    authorityId: "test:podman-socket",
     engineId: "podman",
     displayName: "Podman",
     capture,

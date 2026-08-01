@@ -23,6 +23,7 @@ import {
   type CheckpointResourceProfile,
   type CheckpointSandboxIdentity,
   type CheckpointSandboxRecreatePhase,
+  type CheckpointSandboxRecreateSourceWorkload,
   type CheckpointSandboxRecreateTransaction,
   type OnboardCheckpoint,
 } from "./onboard-checkpoint-types";
@@ -254,6 +255,54 @@ function readNullableSha256(value: unknown): string | null | undefined {
   return typeof value === "string" && SHA256_PATTERN.test(value) ? value : undefined;
 }
 
+function readBoundedJournalString(value: unknown, maxLength: number): string | null {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    !/[\u0000\r\n]/u.test(value)
+    ? value
+    : null;
+}
+
+function parseSandboxRecreateSourceWorkload(
+  value: unknown,
+): CheckpointSandboxRecreateSourceWorkload | null | undefined {
+  // Journals written before the source-workload cleanup receipt remain resumable.
+  if (value === undefined || value === null) return null;
+  if (!isObjectRecord(value)) return undefined;
+  const rawOpenshellDriver = value.openshellDriver;
+  const openshellDriver =
+    rawOpenshellDriver === null ? null : readBoundedJournalString(rawOpenshellDriver, 128);
+  if (
+    openshellDriver === null
+      ? rawOpenshellDriver !== null
+      : !/^[a-z0-9][a-z0-9._-]*$/u.test(openshellDriver)
+  ) {
+    return undefined;
+  }
+  const imageTag = readBoundedJournalString(value.imageTag, 4096);
+  if (!imageTag) return undefined;
+  const rawWorkload = value.workload;
+  if (rawWorkload === null) return { openshellDriver, imageTag, workload: null };
+  if (
+    !isObjectRecord(rawWorkload) ||
+    rawWorkload.kind !== "legacy-dockerfile" ||
+    typeof rawWorkload.shared !== "boolean"
+  ) {
+    return undefined;
+  }
+  const rawReference = rawWorkload.reference;
+  const reference = rawReference === null ? null : readBoundedJournalString(rawReference, 4096);
+  if (reference === null ? rawReference !== null : reference !== imageTag) {
+    return undefined;
+  }
+  return {
+    openshellDriver,
+    imageTag,
+    workload: { kind: "legacy-dockerfile", reference, shared: rawWorkload.shared },
+  };
+}
+
 function parseSandboxRecreateTransaction(
   value: unknown,
 ): CheckpointSandboxRecreateTransaction | null {
@@ -264,6 +313,7 @@ function parseSandboxRecreateTransaction(
   const gatewayPort = value.gatewayPort;
   const sourceRegistryFingerprint = readString(value.sourceRegistryFingerprint);
   const sourceLiveIdentityFingerprint = readNullableSha256(value.sourceLiveIdentityFingerprint);
+  const sourceWorkload = parseSandboxRecreateSourceWorkload(value.sourceWorkload);
   const targetIntentFingerprint = readString(value.targetIntentFingerprint);
   const targetGeneration = readString(value.targetGeneration);
   const targetLiveIdentityFingerprint = readNullableSha256(value.targetLiveIdentityFingerprint);
@@ -286,6 +336,7 @@ function parseSandboxRecreateTransaction(
     !sourceRegistryFingerprint ||
     !SHA256_PATTERN.test(sourceRegistryFingerprint) ||
     sourceLiveIdentityFingerprint === undefined ||
+    sourceWorkload === undefined ||
     !targetIntentFingerprint ||
     !SHA256_PATTERN.test(targetIntentFingerprint) ||
     !targetGeneration ||
@@ -309,6 +360,7 @@ function parseSandboxRecreateTransaction(
     gatewayPort: Number(gatewayPort),
     sourceRegistryFingerprint,
     sourceLiveIdentityFingerprint,
+    sourceWorkload,
     targetIntentFingerprint,
     targetGeneration,
     targetLiveIdentityFingerprint,
