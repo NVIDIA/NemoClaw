@@ -145,7 +145,10 @@ describe("persisted engine lifecycle", () => {
       expect(scope.record.phase).toBe("mutation-authorized");
       expect(scope.record.engineAuthority).toEqual(runtime.authority);
       expect(
-        scope.captureExact(role, (runtimeId) => ["inspect", "--exact", runtimeId]),
+        scope.captureExact(role, (runtimeId) => ({
+          args: ["inspect", "--exact", runtimeId],
+          targetIndex: 2,
+        })),
       ).toMatchObject({ status: 0 });
       return { resultSha256: RESULT_SHA256, value: action };
     });
@@ -161,7 +164,7 @@ describe("persisted engine lifecycle", () => {
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
   });
 
-  it("publishes prepared authority before the exact runtime mutation", async () => {
+  it("publishes mutation authorization before the exact runtime mutation", async () => {
     const events: string[] = [];
     const runtime = harness({
       capture: vi.fn(() => {
@@ -181,14 +184,50 @@ describe("persisted engine lifecycle", () => {
     };
 
     await executePersistedEngineLifecycle({ ...runtime.input, lifecycleStore }, (scope) => {
-      scope.captureExact("source", (runtimeId) => ["stop", runtimeId]);
+      scope.captureExact("source", (runtimeId) => ({
+        args: ["stop", runtimeId],
+        targetIndex: 1,
+      }));
       return { resultSha256: RESULT_SHA256, value: undefined };
     });
 
     expect(events).toEqual(["ledger:mutation-authorized", "engine:mutate"]);
   });
 
-  it("reconstructs mutation-authorized recovery in a fresh process", async () => {
+  it("admits only one concurrent executor for a lifecycle transaction", async () => {
+    const runtime = harness();
+    preparePersistedEngineLifecycle(runtime.input);
+    let releaseFirst: (() => void) | undefined;
+    let announceFirst: (() => void) | undefined;
+    const firstEntered = new Promise<void>((resolve) => {
+      announceFirst = resolve;
+    });
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstMutation = vi.fn(async () => {
+      announceFirst?.();
+      await holdFirst;
+      return { resultSha256: RESULT_SHA256, value: "first" };
+    });
+    const competingMutation = vi.fn(() => ({
+      resultSha256: RESULT_SHA256,
+      value: "competing",
+    }));
+
+    const first = executePersistedEngineLifecycle(runtime.input, firstMutation);
+    await firstEntered;
+    await expect(executePersistedEngineLifecycle(runtime.input, competingMutation)).rejects.toThrow(
+      "already owned by a live process",
+    );
+    expect(firstMutation).toHaveBeenCalledOnce();
+    expect(competingMutation).not.toHaveBeenCalled();
+
+    releaseFirst?.();
+    await expect(first).resolves.toMatchObject({ value: "first" });
+  });
+
+  it("reconstructs mutation-authorized recovery after process-local state is rebuilt", async () => {
     const firstCapture = vi.fn(() => {
       throw new Error("injected process crash after exact stop");
     });
@@ -197,7 +236,10 @@ describe("persisted engine lifecycle", () => {
 
     await expect(
       executePersistedEngineLifecycle(first.input, (scope) => {
-        scope.captureExact("target", (runtimeId) => ["recover", runtimeId]);
+        scope.captureExact("target", (runtimeId) => ({
+          args: ["recover", runtimeId],
+          targetIndex: 1,
+        }));
         return { resultSha256: RESULT_SHA256, value: undefined };
       }),
     ).rejects.toThrow("injected process crash");
@@ -213,7 +255,10 @@ describe("persisted engine lifecycle", () => {
       lifecycleStore: createFilePersistedEngineLifecycleStore(first.root),
     };
     const recovered = await executePersistedEngineLifecycle(recoveredInput, (scope) => {
-      scope.captureExact("target", (runtimeId) => ["recover", runtimeId]);
+      scope.captureExact("target", (runtimeId) => ({
+        args: ["recover", runtimeId],
+        targetIndex: 1,
+      }));
       return { resultSha256: RESULT_SHA256, value: "recovered" };
     });
 
@@ -224,6 +269,39 @@ describe("persisted engine lifecycle", () => {
       ["--endpoint", "unix:///run/mxc/runtime.sock", "recover", TARGET_ID],
       15_000,
     );
+  });
+
+  it("recovers a durable execution lease only after its process owner is dead", async () => {
+    const transactionId = "b".repeat(64);
+    const first = harness({ action: "recovery", transactionId });
+    preparePersistedEngineLifecycle(first.input);
+    first.lifecycleStore.authorizeMutation(transactionId);
+    first.lifecycleStore.acquireMutationExecution(transactionId);
+    const leasePath = path.join(
+      first.root,
+      PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
+      transactionId,
+      "mutation-execution.json",
+    );
+    const abandoned = JSON.parse(fs.readFileSync(leasePath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(leasePath, `${JSON.stringify({ ...abandoned, ownerPid: 0x7fffffff })}\n`, {
+      mode: 0o600,
+    });
+
+    const restartedStore = createFilePersistedEngineLifecycleStore(first.root);
+    const recovered = await executePersistedEngineLifecycle(
+      { ...first.input, lifecycleStore: restartedStore },
+      (scope) => {
+        scope.captureExact("target", (runtimeId) => ({
+          args: ["recover", runtimeId],
+          targetIndex: 1,
+        }));
+        return { resultSha256: RESULT_SHA256, value: "recovered-dead-owner" };
+      },
+    );
+
+    expect(recovered.value).toBe("recovered-dead-owner");
+    expect(fs.existsSync(leasePath)).toBe(false);
   });
 
   it.each([
@@ -293,7 +371,10 @@ describe("persisted engine lifecycle", () => {
 
     await expect(
       executePersistedEngineLifecycle(guardedInput, (scope) => {
-        scope.captureExact("source", (runtimeId) => ["stop", runtimeId]);
+        scope.captureExact("source", (runtimeId) => ({
+          args: ["stop", runtimeId],
+          targetIndex: 1,
+        }));
         return { resultSha256: RESULT_SHA256, value: undefined };
       }),
     ).rejects.toThrow(/authority changed|endpoint does not match/u);
@@ -308,12 +389,23 @@ describe("persisted engine lifecycle", () => {
 
     await expect(
       executePersistedEngineLifecycle(runtime.input, (scope) => {
-        scope.captureExact("source", () => ["rm", "alpha"]);
+        scope.captureExact("source", () => ({ args: ["rm", "alpha"], targetIndex: 1 }));
         return { resultSha256: RESULT_SHA256, value: undefined };
       }),
     ).rejects.toThrow("persisted runtime ID exactly once");
     expect(capture).not.toHaveBeenCalled();
     expect(runtime.lifecycleStore.load(TRANSACTION_ID)?.phase).toBe("mutation-authorized");
+
+    await expect(
+      executePersistedEngineLifecycle(runtime.input, (scope) => {
+        scope.captureExact("source", (runtimeId) => ({
+          args: ["rm", "other-runtime", "--authorized-id", runtimeId],
+          targetIndex: 1,
+        }));
+        return { resultSha256: RESULT_SHA256, value: undefined };
+      }),
+    ).rejects.toThrow("target must be its persisted runtime ID");
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("revalidates persisted engine authority before publishing completion", async () => {
