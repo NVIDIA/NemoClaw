@@ -1817,22 +1817,19 @@ export function createDockerManagedBootstrapAdapter(
   const finalizationRecord = (
     handle: ManagedBootstrapHeldWorkloadHandle,
   ): DockerManagedBootstrapFinalizationRecord | null => {
-    const record = deps.journalStore.loadFinalization(
-      handle.bootstrapIdentity,
-      finalizationContext(handle),
-    );
+    const context = finalizationContext(handle);
+    const record = deps.journalStore.loadFinalization(handle.bootstrapIdentity, context);
     if (!record) return null;
     if (
-      record.bootstrapIdentity !== handle.bootstrapIdentity ||
-      record.providerId !== handle.sandbox.driverId ||
-      record.agent !== handle.plan.profile.agent ||
-      record.sandbox.sandboxName !== handle.sandbox.sandboxName ||
-      record.sandbox.sandboxId !== handle.sandbox.sandboxId ||
-      record.sandbox.driverId !== handle.sandbox.driverId ||
-      record.planFingerprint !== createManagedBootstrapPlanFingerprint(handle.plan) ||
-      record.profileFingerprint !== handle.plan.profile.fingerprint ||
-      record.imageReference !==
-        expectedImageReference(handle.plan.image.repository, handle.plan.image.manifestDigest)
+      record.bootstrapIdentity !== context.bootstrapIdentity ||
+      record.providerId !== context.providerId ||
+      record.agent !== context.agent ||
+      record.sandbox.sandboxName !== context.sandbox.sandboxName ||
+      record.sandbox.sandboxId !== context.sandbox.sandboxId ||
+      record.sandbox.driverId !== context.sandbox.driverId ||
+      record.planFingerprint !== context.planFingerprint ||
+      record.profileFingerprint !== context.profileFingerprint ||
+      record.imageReference !== context.imageReference
     ) {
       throw new Error("Managed bootstrap finalization record does not match its durable identity.");
     }
@@ -1844,30 +1841,25 @@ export function createDockerManagedBootstrapAdapter(
     commitReceipt: ManagedBootstrapCompletionReceipt | null,
     cleanupReceipt: ManagedBootstrapFinalizationReceipt,
   ): ManagedBootstrapFinalizationReceipt => {
+    const context = finalizationContext(handle);
     const record = Object.freeze({
       schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
       phase,
-      bootstrapIdentity: handle.bootstrapIdentity,
-      providerId: handle.sandbox.driverId,
-      agent: handle.plan.profile.agent,
-      sandbox: handle.sandbox,
-      planFingerprint: createManagedBootstrapPlanFingerprint(handle.plan),
-      profileFingerprint: handle.plan.profile.fingerprint,
-      imageReference: expectedImageReference(
-        handle.plan.image.repository,
-        handle.plan.image.manifestDigest,
-      ),
+      bootstrapIdentity: context.bootstrapIdentity,
+      providerId: context.providerId,
+      agent: context.agent,
+      sandbox: context.sandbox,
+      planFingerprint: context.planFingerprint,
+      profileFingerprint: context.profileFingerprint,
+      imageReference: context.imageReference,
       commitReceipt,
       cleanupReceipt,
     } satisfies DockerManagedBootstrapFinalizationRecord);
     const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
     try {
-      deps.journalStore.recordFinalization(record, finalizationContext(handle));
+      deps.journalStore.recordFinalization(record, context);
     } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(
-        handle.bootstrapIdentity,
-        finalizationContext(handle),
-      );
+      const recovered = deps.journalStore.loadFinalization(handle.bootstrapIdentity, context);
       if (
         !recovered ||
         serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
@@ -1875,10 +1867,7 @@ export function createDockerManagedBootstrapAdapter(
         throw error;
       }
     }
-    const persisted = deps.journalStore.loadFinalization(
-      handle.bootstrapIdentity,
-      finalizationContext(handle),
-    );
+    const persisted = deps.journalStore.loadFinalization(handle.bootstrapIdentity, context);
     if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
       throw new Error("Managed bootstrap finalization receipt was not durably re-readable.");
     }
@@ -3166,6 +3155,14 @@ export function createDockerManagedBootstrapAdapter(
         request.profileFingerprint !== handle.plan.profile.fingerprint
       ) {
         throw new Error("Managed bootstrap Docker replacement identities do not match.");
+      }
+      if (
+        snapshot.image.repository !== handle.plan.image.repository ||
+        snapshot.image.manifestDigest !== handle.plan.image.manifestDigest
+      ) {
+        throw new Error(
+          "Managed bootstrap Docker replacement snapshot image does not match its plan.",
+        );
       }
       const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
       const normalizedOriginal = normalizeDockerManagedBootstrapLaunchSpec(parsed.inspect);

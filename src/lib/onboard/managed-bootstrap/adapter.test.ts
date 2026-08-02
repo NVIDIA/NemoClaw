@@ -33,6 +33,7 @@ import {
   sameManagedBootstrapCompletionReceipt,
   sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 const IDENTITY = "1".repeat(64);
 const CONFIG_ID = `sha256:${"2".repeat(64)}`;
@@ -45,10 +46,6 @@ const ACTIVATED_SPEC_JSON = '{"name":"active"}\n';
 const ACTIVATED_HASH = createHash("sha256").update(ACTIVATED_SPEC_JSON, "utf8").digest("hex");
 const RUNTIME_ID = "7".repeat(64);
 const PREPARED_ID = "8".repeat(64);
-
-function reverseKeys<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).reverse()) as T;
-}
 
 function requestFor(agent: ManagedStartupAgent) {
   return createManagedStartupRootApplyRequest({

@@ -120,20 +120,27 @@ export class DockerManagedBootstrapJournalAcknowledgementLostError extends Error
 export class DockerManagedBootstrapLegacyRecordRequiresAgentError extends Error {
   readonly bootstrapIdentity: string;
   readonly recordKind: "finalization" | "journal";
+  readonly reason: "context-mismatch" | "missing-context" | undefined;
   readonly schemaVersion: number;
 
   constructor(input: {
     readonly bootstrapIdentity: string;
     readonly recordKind: "finalization" | "journal";
+    readonly reason?: "context-mismatch" | "missing-context";
     readonly schemaVersion: number;
   }) {
+    const reason = input.reason;
     super(
       `Managed bootstrap Docker ${input.recordKind} schema ${input.schemaVersion} for ` +
-        `${input.bootstrapIdentity} lacks durable agent identity`,
+        `${input.bootstrapIdentity} lacks durable agent identity` +
+        (reason === "context-mismatch"
+          ? "; supplied durable context does not match this record"
+          : ""),
     );
     this.name = "DockerManagedBootstrapLegacyRecordRequiresAgentError";
     this.bootstrapIdentity = input.bootstrapIdentity;
     this.recordKind = input.recordKind;
+    this.reason = reason;
     this.schemaVersion = input.schemaVersion;
   }
 }
@@ -160,7 +167,12 @@ function fail(message: string): never {
 }
 
 function hasExactKeys(record: Readonly<Record<string, unknown>>, expected: readonly string[]) {
-  return Object.keys(record).sort().join(",") === [...expected].sort().join(",");
+  const actualKeys = Object.keys(record).sort();
+  const expectedKeys = [...expected].sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index])
+  );
 }
 
 function exactString(value: unknown, label: string, maxBytes = 4096): string {
@@ -242,6 +254,9 @@ function sameSandboxIdentity(
   );
 }
 
+// Frozen historical schemas: these branches must reproduce the exact canonical
+// bytes written by schema 1 and schema 2. Do not share their implementation with
+// the current normalizer or update them when the current schema changes.
 function normalizeLegacyDockerManagedBootstrapJournal(
   journal: Readonly<Record<string, unknown>>,
   schemaVersion: 1 | 2,
@@ -827,14 +842,28 @@ function matchesFinalizationContext(
   );
 }
 
+function assertFinalizationMatchesContext(
+  record: DockerManagedBootstrapFinalizationRecord,
+  context: DockerManagedBootstrapFinalizationContext,
+): void {
+  const normalizedContext = normalizeFinalizationContext(context);
+  if (
+    record.agent !== normalizedContext.agent ||
+    !matchesFinalizationContext(record, normalizedContext)
+  ) {
+    fail("finalization record does not match supplied durable context");
+  }
+}
+
 function upgradeLegacyFinalization(
   legacy: DockerManagedBootstrapFinalizationWithoutAgent,
   context: DockerManagedBootstrapFinalizationContext | undefined,
 ): DockerManagedBootstrapFinalizationRecord {
-  const missingAgent = () =>
+  const missingAgent = (reason: "context-mismatch" | "missing-context" = "missing-context") =>
     new DockerManagedBootstrapLegacyRecordRequiresAgentError({
       bootstrapIdentity: legacy.bootstrapIdentity,
       recordKind: "finalization",
+      reason,
       schemaVersion: 1,
     });
   // Runtime names and image repositories are mutable descriptions, never
@@ -842,7 +871,9 @@ function upgradeLegacyFinalization(
   // the field omitted by schema v1.
   if (!context) throw missingAgent();
   const normalizedContext = normalizeFinalizationContext(context);
-  if (!matchesFinalizationContext(legacy, normalizedContext)) throw missingAgent();
+  if (!matchesFinalizationContext(legacy, normalizedContext)) {
+    throw missingAgent("context-mismatch");
+  }
   return Object.freeze({
     schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
     phase: legacy.phase,
@@ -949,15 +980,7 @@ function parseDockerManagedBootstrapFinalizationRecordWithContext(
   if (serializeDockerManagedBootstrapFinalizationRecord(record) !== text) {
     fail("serialized finalization record is not canonical");
   }
-  if (context) {
-    const normalizedContext = normalizeFinalizationContext(context);
-    if (
-      record.agent !== normalizedContext.agent ||
-      !matchesFinalizationContext(record, normalizedContext)
-    ) {
-      fail("finalization record does not match supplied durable context");
-    }
-  }
+  if (context) assertFinalizationMatchesContext(record, context);
   return { record, upgradedLegacy: false };
 }
 
@@ -1287,6 +1310,7 @@ export function createFileDockerManagedBootstrapJournalStore(
       context?: DockerManagedBootstrapFinalizationContext,
     ) {
       const normalized = normalizeDockerManagedBootstrapFinalizationRecord(record);
+      if (context) assertFinalizationMatchesContext(normalized, context);
       assertDirectory(directory);
       const target = finalizationPath(journalPath(directory, normalized.bootstrapIdentity));
       const serialized = serializeDockerManagedBootstrapFinalizationRecord(normalized);

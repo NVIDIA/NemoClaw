@@ -16,10 +16,7 @@ import {
   OLD_ID,
   SUPPORTED_AGENTS,
 } from "./docker-test-fixture";
-
-function reverseKeys<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).reverse()) as T;
-}
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 function expectEventBefore(events: readonly string[], before: string, after: string): void {
   expect(events).toContain(before);
@@ -274,6 +271,31 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
     expect(fake.replacement).toBeNull();
+  });
+
+  it("rejects a divergent snapshot image before creating durable recovery state", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request: rootRequest, snapshot } = authority();
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot: {
+          ...snapshot,
+          image: {
+            ...snapshot.image,
+            repository: "registry.example/nemoclaw/divergent",
+          },
+        },
+        request: rootRequest,
+        replacementOptions: { values: {} },
+      }),
+    ).rejects.toThrow("replacement snapshot image does not match its plan");
+    expect(fake.replacement).toBeNull();
+    expect(fake.journal).toBeNull();
+    expect(fake.events).not.toContain("create:replacement");
+    expect(fake.events).not.toContain("journal:staged");
   });
 
   it.each(
