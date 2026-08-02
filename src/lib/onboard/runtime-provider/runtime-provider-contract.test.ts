@@ -909,6 +909,8 @@ describe("socket-free MXC action contract", () => {
       executeSandboxDestroy({
         cleanupShieldsArtifacts,
         force: false,
+        getSandbox,
+        listSandboxes: () => ({ sandboxes: [entry] }),
         runOpenshell,
         sandbox: entry,
         sandboxConfirmedAbsent: false,
