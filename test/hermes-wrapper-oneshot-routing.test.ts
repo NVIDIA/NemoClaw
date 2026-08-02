@@ -22,7 +22,13 @@ import path from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { ADAPTER, canRun, runWrapper, WRAPPER } from "./helpers/hermes-wrapper-harness.ts";
+import {
+  ADAPTER,
+  canRun,
+  runWrapper,
+  WRAPPER,
+  writeSessionCoalescerFixture,
+} from "./helpers/hermes-wrapper-harness.ts";
 
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () => {
   // Surface a hard error in CI when the prerequisites are missing instead of
@@ -287,6 +293,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
       fs.copyFileSync(ADAPTER, path.join(dir, "hermes-cli-adapter-v1.json"));
+      writeSessionCoalescerFixture(dir);
       fs.chmodSync(path.join(dir, "hermes"), 0o755);
       const statePath = path.join(dir, "sessions.json");
       fs.writeFileSync(
