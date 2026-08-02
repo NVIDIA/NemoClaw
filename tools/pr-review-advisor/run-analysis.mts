@@ -86,6 +86,11 @@ function writeBootstrapUnavailableResult(
       oneLine: `PR review advisor skipped: ${reason}`,
     },
     findings: [],
+    terminologyReview: {
+      status: "limited",
+      decisions: [],
+      noChangesReason: reason,
+    },
     acceptanceCoverage: [],
     securityCategories: [
       {

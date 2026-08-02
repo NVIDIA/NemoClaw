@@ -157,6 +157,6 @@ Before merge, the reviewed PR head must still pass:
 
 - normal commit hooks and required GitHub checks;
 - automated review with no unresolved actionable finding;
-- documentation writer review tied to the final pushed head.
+- documentation writer review.
 
 No live E2E, sandbox build, migration, rollback, compatibility shim, or changelog entry is required because the dependency is not part of a supported runtime or user-visible product behavior.
