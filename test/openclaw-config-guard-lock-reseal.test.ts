@@ -120,11 +120,10 @@ function runScenario(scenario: string) {
     encoding: "utf8",
     env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
   });
-  if (result.status !== 0) {
-    throw new Error(
-      `guard harness '${scenario}' exited ${String(result.status)}:\n${result.stderr}${result.stdout}`,
-    );
-  }
+  expect(
+    result.status,
+    `guard harness '${scenario}' exited ${String(result.status)}:\n${result.stderr}${result.stdout}`,
+  ).toBe(0);
   return result.stdout.trim();
 }
 
