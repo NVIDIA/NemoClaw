@@ -15,11 +15,11 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
   The installer records durable controller and pair ownership, stops for manual reboots, resumes from owner-only receipts, and cleans up the recorded pair during full uninstall.
   If no trusted pair qualifies, automatic selection keeps the single-Station Ultra path, while an explicitly selected peer must qualify.
   The two-Station path remains a Deferred evaluation and does not change single-Station support status.
-  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and [Set Up vLLM on Two DGX Stations](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-stations).
 - The direct OpenClaw blueprint runner now has an experimental, explicit opt-in provider-neutral runtime identity component with a bundled data-only Okta reference profile.
   The runner validates the complete profile and DNS destinations before mutation, keeps refresh material out of plans and command arguments, records resource ownership as it applies changes, and uses those receipts for compensation and rollback.
   The shipped blueprint and normal onboarding do not enable this component, custom Okta domains are outside the reviewed policy, and this release does not add Entra, OBO, OAuth bootstrap, production middleware, or real-tenant certification.
-  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
+  For more information, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
 - OpenClaw-compatible endpoints can now set `NEMOCLAW_REASONING_EFFORT` or pass `inference set --reasoning-effort` with `low`, `medium`, `high`, or `default` on `openai-completions` routes.
   NemoClaw validates the value, provider, and API before mutation, records the effective state for diagnostics, preserves it through resume, rebuild, and restart, and clears it when the resulting route no longer supports the setting.
   For more information, refer to [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities), [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
@@ -27,7 +27,7 @@ It also hardens compatible-provider switching, managed sandbox images, Jetson GP
   An existing direct provider is reused only when its recorded endpoint and credential environment exactly match the request; NemoClaw refuses an endpoint replacement that OpenShell cannot expose safely enough to roll back.
   Host-side `config set` also accepts the exact `http://host.openshell.internal:<unprivileged-port>` shape only for supported provider `baseUrl` fields, while generic keys and other private URL shapes remain rejected.
   Retired NVIDIA Build MiniMax and Qwen model paths are no longer offered.
-  For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers), [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), and [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+  For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers), [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), and [Configure Memory Search](/user-guide/openclaw/configure-agents/configure-memory-search).
 - Docker-driver post-reboot recovery now waits for the labeled container to reach Docker readiness.
   It restores the in-sandbox gateway and host forwards before reporting success, refreshes stale stopped-container evidence, and fails closed when delivery cannot be proven.
   Recovery also unpauses a paused original container before reporting success.

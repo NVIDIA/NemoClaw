@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withLocalNoProxy } from "./proxy/local-no-proxy";
+
 /**
  * Subprocess environment allowlist.
  *
@@ -90,33 +92,7 @@ export function isSubprocessEnvNameAllowed(name: string): boolean {
  * consults the caller's NO_PROXY for sandbox-create env decisions, this
  * augmentation can be dropped.
  */
-export function withLocalNoProxy(env: Record<string, string>): void {
-  const hasProxy = env.HTTP_PROXY || env.HTTPS_PROXY || env.http_proxy || env.https_proxy;
-  if (!hasProxy) return;
-  for (const key of ["NO_PROXY", "no_proxy"] as const) {
-    const current = env[key] ?? "";
-    const parts = current
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    let changed = false;
-    for (const host of [
-      "localhost",
-      "127.0.0.1",
-      "host.docker.internal",
-      "host.containers.internal",
-      "::1",
-      "0.0.0.0",
-      "inference.local",
-    ]) {
-      if (!parts.includes(host)) {
-        parts.push(host);
-        changed = true;
-      }
-    }
-    if (changed) env[key] = parts.join(",");
-  }
-}
+export { withLocalNoProxy };
 
 export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};

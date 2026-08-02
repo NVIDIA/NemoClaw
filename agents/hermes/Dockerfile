@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:61feb0e33fae77ad2fcd1ae3aca2d6c484d7ef2c6ed8ebd431d3e514eab6cf2b
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c4899e00817acb3421037efba013c720a79895bc8c4448b47aa9aca0def3104b
 ARG NEMOCLAW_CORPORATE_CA_B64=
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
@@ -32,7 +32,10 @@ FROM scratch AS hermes-agent-payload
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
+COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
+COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -138,7 +141,7 @@ RUN set -eu; \
             exit 1; \
         fi; \
     fi; \
-    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp; \
+    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
@@ -191,6 +194,13 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/openclaw-npm-remediation.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
+
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=50f5cf638e2c11868fe5128dccc0f6289082ba11ea116efcd030b07286591c00
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
+    | sha256sum -c - \
+    || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }
 
 COPY --from=hermes-runtime-payload / /
 
@@ -274,65 +284,8 @@ RUN set -eu; \
     test -d "$profile_probe_home"; \
     test ! -e "$profile_probe_home/config.yaml"; \
     HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
-        /opt/hermes/.venv/bin/python -I - <<'PY'
-from pathlib import Path
-from types import SimpleNamespace
-
-from cli import CLI_CONFIG
-from gateway.config import SessionResetPolicy, load_gateway_config
-from hermes_cli import config as hermes_config
-from hermes_cli.config import load_config_readonly
-from hermes_cli.main import _resolve_pre_update_backup_mode
-from tools.browser_tool import (
-    _allow_unsafe_browser_evaluate,
-    _restrict_browser_evaluate,
-)
-from tui_gateway.server import _load_show_reasoning
-
-config = load_config_readonly()
-assert config["approvals"]["mode"] == "manual", config["approvals"]
-assert config["browser"]["allow_unsafe_evaluate"] is False, config["browser"]
-assert config["browser"]["restrict_evaluate"] is True, config["browser"]
-assert config["display"]["show_reasoning"] is False, config["display"]
-assert config["display"]["show_commentary"] is False, config["display"]
-assert config["updates"]["pre_update_backup"] is False, config["updates"]
-assert config["updates"]["refresh_cua_driver"] is False, config["updates"]
-assert CLI_CONFIG["display"]["show_reasoning"] is False, CLI_CONFIG["display"]
-assert _allow_unsafe_browser_evaluate() is False
-assert _restrict_browser_evaluate() is True
-assert _load_show_reasoning() is False
-assert SessionResetPolicy().mode == "both"
-assert SessionResetPolicy.from_dict({}).mode == "both"
-gateway = load_gateway_config()
-assert gateway.default_reset_policy.mode == "both", gateway.default_reset_policy
-assert gateway.default_reset_policy.at_hour == 4, gateway.default_reset_policy
-assert gateway.default_reset_policy.idle_minutes == 1440, gateway.default_reset_policy
-tui_source = Path("/opt/hermes/tui_gateway/server.py").read_text(encoding="utf-8")
-assert tui_source.count('.get("show_reasoning", True)') == 0
-assert tui_source.count('.get("show_reasoning", False)') == 2
-agent_source = Path("/opt/hermes/agent/agent_init.py").read_text(encoding="utf-8")
-assert agent_source.count("agent.show_commentary = True") == 0
-assert agent_source.count("agent.show_commentary = False") == 2
-assert agent_source.count('.get("show_commentary", True)') == 0
-assert agent_source.count('.get("show_commentary", False)') == 1
-original_load_config = hermes_config.load_config
-try:
-    def fail_config_load():
-        raise RuntimeError("nemoclaw build probe")
-
-    hermes_config.load_config = fail_config_load
-    args = SimpleNamespace(no_backup=False, backup=False)
-    assert _resolve_pre_update_backup_mode(args) == "off"
-finally:
-    hermes_config.load_config = original_load_config
-main_source = Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-assert main_source.count('updates_cfg.get("pre_update_backup", "quick")') == 0
-assert main_source.count('updates_cfg.get("pre_update_backup", False)') == 1
-assert main_source.count("refresh_cua_driver = True") == 0
-assert main_source.count("refresh_cua_driver = False") == 1
-assert main_source.count('_update_cfg.get("refresh_cua_driver", True)') == 0
-assert main_source.count('_update_cfg.get("refresh_cua_driver", False)') == 1
-PY
+        /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
 
 # Hermes v0.19.0 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Shields-up deliberately makes that config root root-owned and non-writable,
@@ -351,28 +304,52 @@ RUN printf '%s  %s\n' \
 RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
         /opt/hermes/gateway/status.py \
-    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python - <<'PY'
-from pathlib import Path
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py gateway-runtime-metadata
 
-from gateway.status import (
-    _get_gateway_lock_path,
-    _get_pid_path,
-    _get_process_hermes_home,
-    _get_runtime_status_path,
-)
+# NemoClaw installs its wrapper as `hermes` and moves the real entrypoint to
+# `hermes.real`, so every managed gateway command line carries that basename.
+# Hermes only accepts `hermes`/`hermes.exe` as the entry token, which defeats
+# both the PID-file liveness re-check and the process-table fallback, so
+# `hermes status` reports a running foreground gateway as stopped (#7804).
+ARG NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256=1720f557e57c4755b9de47eece2c9c8ad182e1196c40d2783f1768fc5a426681
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-gateway-process-identity.py hash mismatch (update NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256)" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/hermes/gateway/status.py \
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py gateway-process-identity
 
-home = _get_process_hermes_home()
-runtime = home / "runtime"
-assert _get_pid_path() == runtime / "gateway.pid"
-assert _get_gateway_lock_path() == runtime / "gateway.lock"
-assert _get_runtime_status_path() == runtime / "gateway_state.json"
-assert all(path.parent == runtime for path in (
-    _get_pid_path(),
-    _get_gateway_lock_path(),
-    _get_runtime_status_path(),
-))
-assert isinstance(home, Path)
-PY
+# Hermes v0.19.0 creates its writable cron execution-history database below
+# the high-risk directory that contains cron job definitions. When Shields up
+# is active, NemoClaw seals that directory, so a managed gateway restart cannot
+# reopen the ledger. Relocate
+# only this audit database to the existing cross-UID runtime boundary, and keep
+# Hermes' quick snapshot inventory aligned. Full source hashes plus exact-shape
+# patching force a fresh review when either pinned upstream module changes.
+ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=2f0d3eacc02ee72608cd96d521a457ef57425bdddc00291ed90ae553f7a36039
+ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b37215a27a453191420622f78dc8962fa44feac2521a6f51d71b18831e7cacb7
+ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=1bcef6f736f1d52055837789f24becdba4a670f0a1abb5ac9973b1a1a7306f35
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        "$NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256" /opt/hermes/cron/executions.py \
+        "$NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256" /opt/hermes/hermes_cli/backup.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes cron execution runtime source identity mismatch" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        --executions /opt/hermes/cron/executions.py \
+        --backup /opt/hermes/hermes_cli/backup.py
+RUN set -eu; \
+    probe_home="$(mktemp -d)"; \
+    trap 'rm -rf "$probe_home"' EXIT; \
+    HERMES_HOME="$probe_home" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-runtime-source
 
 # Hermes v0.19.0 computes `sessions list` preview from the first user message,
 # while #5254's user-facing expectation is that the existing row reflects the
@@ -381,19 +358,8 @@ PY
 # silently drift.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
     && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
-    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python - <<'PY'
-from hermes_state import SessionDB
-
-db = SessionDB()
-session_id = "nemoclaw-preview-smoke"
-db.create_session(session_id, "cli")
-db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_FIRST")
-db.append_message(session_id, "assistant", "ack")
-db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_LATEST")
-rows = db.list_sessions_rich(limit=1)
-assert rows and rows[0]["id"] == session_id, rows
-assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
-PY
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-preview
 
 # Hermes v0.19.0 forces the gateway-created Discord recovery ledger to 0600,
 # which prevents sandbox-owned online backup and makes a sandbox-restored
@@ -408,15 +374,8 @@ RUN printf '%s  %s\n' \
     || { echo "ERROR: patch-hermes-discord-recovery-permissions.py hash mismatch (update NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256)" >&2; exit 1; }
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py \
         /opt/hermes/plugins/platforms/discord/recovery.py \
-    && /usr/bin/python3 -I - <<'PY'
-from pathlib import Path
-
-source = Path("/opt/hermes/plugins/platforms/discord/recovery.py").read_text()
-assert source.count('_DB_FILENAME = "discord_message_recovery.db"') == 1
-assert source.count('directory = self._hermes_home / "gateway"') == 1
-assert source.count("os.chmod(path, 0o600)") == 0
-assert source.count("os.chmod(path, 0o660)") == 1
-PY
+    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
+        discord-recovery-source
 
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
@@ -432,36 +391,8 @@ RUN printf '%s  %s\n' \
 RUN node --experimental-strip-types \
         /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
         /opt/hermes/plugins/observability/langfuse/__init__.py \
-    && /opt/hermes/.venv/bin/python - <<'PY'
-import importlib.util
-import sys
-
-path = "/opt/hermes/plugins/observability/langfuse/__init__.py"
-spec = importlib.util.spec_from_file_location("nemoclaw_langfuse_contract", path)
-assert spec and spec.loader
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-validate = module._validate_langfuse_key
-assert validate("HERMES_LANGFUSE_PUBLIC_KEY", "pk-lf-public") is None
-assert validate("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is None
-assert validate(
-    "HERMES_LANGFUSE_PUBLIC_KEY",
-    "openshell:resolve:env:LANGFUSE_PUBLIC_KEY",
-) is None
-assert validate(
-    "HERMES_LANGFUSE_SECRET_KEY",
-    "openshell:resolve:env:v1_LANGFUSE_SECRET_KEY",
-) is None
-assert validate(
-    "HERMES_LANGFUSE_PUBLIC_KEY",
-    "openshell:resolve:env:LANGFUSE_SECRET_KEY",
-) is not None
-assert validate(
-    "HERMES_LANGFUSE_SECRET_KEY",
-    "openshell:resolve:env:v1_LANGFUSE_PUBLIC_KEY",
-) is not None
-PY
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py langfuse-credentials
 
 # Cryptographic integrity gate for the security-critical Python entrypoints:
 # the wrapper and validator that enforce the runtime env secret boundary, plus
@@ -471,7 +402,7 @@ PY
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=cd851746da14162ac4701d56c274dac20024ea6a11f6ffcf2ce7fb89dff388a0
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=87c1b02e0fb2becd26f79ae5dec6e0d21f78c6b08862b880e926708faf46ecb3
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -521,65 +452,8 @@ RUN /usr/bin/python3 -I -c 'import ast, pathlib, re, subprocess, sys; source = p
 # help (for example, `console` is not a boundary). Bind that upstream AST set
 # independently so a new command cannot silently change wrapper parsing.
 # hadolint ignore=DL3059
-RUN /usr/bin/python3 -I - <<'PY'
-import ast
-from pathlib import Path
-
-wrapper_tree = ast.parse(
-    Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(encoding="utf-8")
-)
-wrapper_assignments = [
-    node
-    for node in wrapper_tree.body
-    if isinstance(node, ast.Assign)
-    and len(node.targets) == 1
-    and isinstance(node.targets[0], ast.Name)
-    and node.targets[0].id == "_HERMES_SESSION_NAME_BOUNDARIES"
-]
-if len(wrapper_assignments) != 1:
-    raise SystemExit("ERROR: expected one wrapper session-name boundary constant")
-wrapper_value = wrapper_assignments[0].value
-if not (
-    isinstance(wrapper_value, ast.Call)
-    and isinstance(wrapper_value.func, ast.Name)
-    and wrapper_value.func.id == "frozenset"
-    and len(wrapper_value.args) == 1
-    and not wrapper_value.keywords
-):
-    raise SystemExit("ERROR: wrapper session-name boundaries are not a literal frozenset")
-wrapper_boundaries = set(ast.literal_eval(wrapper_value.args[0]))
-
-upstream_tree = ast.parse(
-    Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-)
-coalescers = [
-    node
-    for node in upstream_tree.body
-    if isinstance(node, ast.FunctionDef)
-    and node.name == "_coalesce_session_name_args"
-]
-if len(coalescers) != 1:
-    raise SystemExit("ERROR: expected one pinned Hermes session-name coalescer")
-upstream_assignments = [
-    node
-    for node in coalescers[0].body
-    if isinstance(node, ast.Assign)
-    and len(node.targets) == 1
-    and isinstance(node.targets[0], ast.Name)
-    and node.targets[0].id == "_SUBCOMMANDS"
-]
-if len(upstream_assignments) != 1:
-    raise SystemExit("ERROR: expected one pinned Hermes coalescer boundary set")
-upstream_boundaries = set(ast.literal_eval(upstream_assignments[0].value))
-
-missing = sorted(upstream_boundaries - wrapper_boundaries)
-stale = sorted(wrapper_boundaries - upstream_boundaries)
-if missing or stale:
-    raise SystemExit(
-        "ERROR: Hermes wrapper session-name boundaries drifted from pinned coalescer: "
-        f"missing={','.join(missing)} stale={','.join(stale)}"
-    )
-PY
+RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
+    wrapper-session-boundaries
 
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -706,38 +580,9 @@ RUN dashboard_probe=/tmp/nemoclaw-dashboard-policy-probe.yaml \
     && /opt/hermes/.venv/bin/python -I \
         /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py \
         /sandbox/.hermes/config.yaml "$dashboard_probe" \
-    && /opt/hermes/.venv/bin/python -I - "$dashboard_probe" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-path = Path(sys.argv[1])
-config = yaml.safe_load(path.read_text(encoding="utf-8"))
-expected = {
-    "approvals": {"mode": "manual"},
-    "browser": {"restrict_evaluate": True},
-    "session_reset": {
-        "mode": "both",
-        "at_hour": 4,
-        "idle_minutes": 1440,
-        "notify": True,
-        "notify_exclude_platforms": ["api_server", "webhook"],
-        "bg_process_max_age_hours": 24,
-    },
-    "display": {
-        "show_reasoning": False,
-        "show_commentary": False,
-    },
-    "updates": {
-        "pre_update_backup": False,
-        "refresh_cua_driver": False,
-    },
-}
-for section, values in expected.items():
-    assert config.get(section) == values, (section, config.get(section), values)
-path.unlink()
-PY
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py \
+        dashboard-policy "$dashboard_probe"
 
 # Install NemoClaw plugin into Hermes
 # hadolint ignore=DL3059
@@ -949,72 +794,31 @@ RUN set -eu; \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
-# Prove the cron ledger contract across the real image identities. Hermes'
-# gateway-side scheduler creates the live WAL-backed database, sandbox reads
-# and online-copies it before atomically restoring a sandbox-owned replacement,
-# and gateway then reopens that replacement through the upstream ledger API.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron)" = "gateway:sandbox 2770" \
+# Prove the cron execution ledger contract across the real image identities.
+# Hermes' gateway-side scheduler creates the live WAL-backed database in the
+# writable runtime boundary, sandbox reads and online-copies it before
+# atomically restoring a sandbox-owned replacement, and gateway then reopens
+# that replacement through the upstream ledger API.
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
+    && test ! -e /sandbox/.hermes/cron/executions.db \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
-from cron.executions import create_execution
+    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-create
 
-created = create_execution(
-    "nemoclaw-cross-uid-create-probe",
-    source="nemoclaw-image-build",
-)
-assert created["job_id"] == "nemoclaw-cross-uid-create-probe"
-assert created["status"] == "claimed"
-PY
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "gateway:sandbox 640" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "gateway:sandbox 640" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I - <<'PY'
-import os
-import sqlite3
-from pathlib import Path
+    && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-backup
 
-path = Path("/sandbox/.hermes/cron/executions.db")
-staged = path.with_name(".nemoclaw-cron-executions-staged")
-staged.unlink(missing_ok=True)
-source = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
-target = sqlite3.connect(staged, timeout=30)
-try:
-    assert source.execute(
-        "SELECT job_id, status FROM executions"
-    ).fetchone() == ("nemoclaw-cross-uid-create-probe", "claimed")
-    source.backup(target)
-    assert target.execute("PRAGMA quick_check").fetchone() == ("ok",)
-finally:
-    target.close()
-    source.close()
-os.chmod(staged, 0o660)
-os.replace(staged, path)
-for suffix in ("-wal", "-shm"):
-    path.with_name(f"{path.name}{suffix}").unlink(missing_ok=True)
-PY
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
-from cron.executions import create_execution, list_executions
+    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-reopen
 
-created = create_execution(
-    "nemoclaw-cross-uid-reopen-probe",
-    source="nemoclaw-image-build",
-)
-assert created["job_id"] == "nemoclaw-cross-uid-reopen-probe"
-assert {
-    row["job_id"] for row in list_executions(limit=10)
-} == {
-    "nemoclaw-cross-uid-create-probe",
-    "nemoclaw-cross-uid-reopen-probe",
-}
-PY
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:sandbox 660" \
-    && rm -f /sandbox/.hermes/cron/executions.db \
-        /sandbox/.hermes/cron/executions.db-wal \
-        /sandbox/.hermes/cron/executions.db-shm
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
+    && rm -f /sandbox/.hermes/runtime/cron-executions.db \
+        /sandbox/.hermes/runtime/cron-executions.db-wal \
+        /sandbox/.hermes/runtime/cron-executions.db-shm
 
 # Prove the Discord ledger contract across the real image identities. The
 # gateway creates the live WAL-backed database, sandbox reads and online-copies
@@ -1022,82 +826,24 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/cron/executions.db)" = "sandbox:
 # reopens that replacement for a write.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
-from pathlib import Path
-
-from plugins.platforms.discord.recovery import DiscordRecoveryStore
-
-store = DiscordRecoveryStore(Path("/sandbox/.hermes"))
-
-
-def create_probe(conn):
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS nemoclaw_identity_probe "
-        "(value TEXT NOT NULL)"
-    )
-    conn.execute("DELETE FROM nemoclaw_identity_probe")
-    conn.execute(
-        "INSERT INTO nemoclaw_identity_probe(value) VALUES (?)",
-        ("gateway-created",),
-    )
-    return True
-
-
-assert store.call(create_probe, default=False) is True
-PY
+    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py discord-create
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "gateway:sandbox 660" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I - <<'PY'
-import os
-import sqlite3
-from pathlib import Path
-
-path = Path("/sandbox/.hermes/gateway/discord_message_recovery.db")
-staged = path.with_name(".nemoclaw-discord-recovery-staged")
-staged.unlink(missing_ok=True)
-source = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
-target = sqlite3.connect(staged, timeout=30)
-try:
-    assert source.execute(
-        "SELECT value FROM nemoclaw_identity_probe"
-    ).fetchone() == ("gateway-created",)
-    source.backup(target)
-    assert target.execute("PRAGMA quick_check").fetchone() == ("ok",)
-finally:
-    target.close()
-    source.close()
-os.chmod(staged, 0o660)
-os.replace(staged, path)
-PY
+    && HERMES_HOME=/sandbox/.hermes gosu sandbox /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
-    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'
-from pathlib import Path
-
-from plugins.platforms.discord.recovery import DiscordRecoveryStore
-
-store = DiscordRecoveryStore(Path("/sandbox/.hermes"))
-
-
-def reopen_probe(conn):
-    conn.execute(
-        "UPDATE nemoclaw_identity_probe SET value = ?",
-        ("gateway-reopened",),
-    )
-    return conn.execute(
-        "SELECT value FROM nemoclaw_identity_probe"
-    ).fetchone()
-
-
-assert store.call(reopen_probe) == ("gateway-reopened",)
-PY
+    && HERMES_HOME=/sandbox/.hermes gosu gateway /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py discord-reopen
 
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
     && rm -f /sandbox/.hermes/gateway/discord_message_recovery.db \
         /sandbox/.hermes/gateway/discord_message_recovery.db-wal \
-        /sandbox/.hermes/gateway/discord_message_recovery.db-shm
+        /sandbox/.hermes/gateway/discord_message_recovery.db-shm \
+    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py
 
 # Pin config hash at build time for integrity verification at startup. Invoke
 # the installed runtime guard's `_canonical_mcp_servers_digest` directly so
@@ -1150,9 +896,11 @@ RUN check_metadata() { \
             || { echo "ERROR: build-only Hermes path leaked into the final image: $path" >&2; return 1; }; \
     }; \
     check_absent /opt/hermes/tests \
+    && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /root/.npm \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \
+    && check_absent /root/.cache/uv \
     && check_absent /sandbox/.cache \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
@@ -1188,6 +936,8 @@ RUN set -eu; \
         "vim-tiny=2:9.2.0782-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
     test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
@@ -1197,6 +947,9 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
+    test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \

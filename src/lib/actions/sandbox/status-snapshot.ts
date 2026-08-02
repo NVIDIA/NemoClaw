@@ -414,13 +414,21 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   const dockerRecovered = lookup.recoveredSandbox === true;
-  if (lookup.state === "present" && lookup.recoveredSandbox) {
+  const managedOpenClawDeliveryMustBeProven =
+    lookup.state === "present" &&
+    sb?.openshellDriver === "docker" &&
+    (sb.agent ?? "openclaw") === "openclaw" &&
+    parseSandboxPhase(lookup.output || "") === "Ready" &&
+    !opts.preflight?.failure;
+  if (
+    lookup.state === "present" &&
+    (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
+  ) {
     let failure: SandboxProcessRecoveryFailure | null;
     try {
-      // Docker recovery makes the sandbox visible to OpenShell again, but a
-      // host reboot also tears down the managed agent process and port-forward.
-      // Reuse the guarded connect recovery only for this explicit mutation
-      // path, before status probes the delivery chain.
+      // The managed gateway service can restart a Docker sandbox before status
+      // runs. OpenShell then reports Ready without a recoveredSandbox marker,
+      // while the OpenClaw gateway and host forward can still be absent.
       const recovery = (opts.deps?.recoverSandboxProcesses ?? loadRecoverSandboxProcesses())(
         sandboxName,
         {
@@ -439,7 +447,7 @@ export async function collectSandboxStatusSnapshot(
         ...lookup,
         state: "sandbox_recovery_failed",
         output:
-          `  Docker restored sandbox '${sandboxName}', but its agent delivery chain is not ready ` +
+          `  Sandbox '${sandboxName}' is present, but its agent delivery chain could not be proven ` +
           `(${failure.layer}: ${failure.detail}).`,
       };
     }

@@ -93,6 +93,7 @@ export interface SessionFailure {
   step: string | null;
   message: string | null;
   recordedAt: string;
+  interrupted?: boolean;
 }
 
 export interface SessionMetadata {
@@ -558,7 +559,12 @@ export { redactSensitiveText, redactUrl };
 
 export function sanitizeFailure(
   input:
-    | { step?: SessionJsonValue; message?: SessionJsonValue; recordedAt?: SessionJsonValue }
+    | {
+        step?: SessionJsonValue;
+        message?: SessionJsonValue;
+        recordedAt?: SessionJsonValue;
+        interrupted?: SessionJsonValue;
+      }
     | null
     | undefined,
 ): SessionFailure | null {
@@ -566,7 +572,8 @@ export function sanitizeFailure(
   const step = readString(input.step);
   const message = redactSensitiveText(input.message);
   const recordedAt = readString(input.recordedAt) ?? new Date().toISOString();
-  return step || message ? { step, message, recordedAt } : null;
+  const interrupted = input.interrupted === true;
+  return step || message ? { step, message, recordedAt, interrupted } : null;
 }
 
 // ── Session CRUD ─────────────────────────────────────────────────
@@ -1528,7 +1535,12 @@ function markStepFailedWithOptions(
     step.error = redactSensitiveText(message);
     shouldEmit = shouldUpdateMachine(options);
     if (shouldEmit) {
-      session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
+      session.failure = sanitizeFailure({
+        step: stepName,
+        message,
+        recordedAt: now,
+        interrupted: false,
+      });
       session.status = "failed";
       transitionMachineSnapshot(session, "failed", now);
     }
@@ -1582,6 +1594,7 @@ export function markStepFailedRecordOnly(stepName: string, message: string | nul
 export function finalizeIncompleteOnboardStep(
   stepName: string,
   message: string | null = null,
+  interrupted = false,
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
@@ -1599,7 +1612,12 @@ export function finalizeIncompleteOnboardStep(
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
-    session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
+    session.failure = sanitizeFailure({
+      step: stepName,
+      message,
+      recordedAt: now,
+      interrupted,
+    });
     session.status = "failed";
     transitionMachineSnapshot(session, "failed", now);
     emitted = true;

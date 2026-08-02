@@ -89,7 +89,6 @@ export interface SandboxInventoryRow {
   dashboardPort?: number | null;
   isDefault: boolean;
   activeSessionCount: number | null;
-  connected: boolean;
   // #5714: row recovered display-only from the live gateway. Its agent/GPU/
   // inference state is unknown (the gateway sandbox list does not expose it),
   // so the renderer shows "unknown" rather than asserting OpenClaw/CPU defaults.
@@ -130,7 +129,7 @@ export interface ShowStatusCommandDeps {
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
    * Active SSH-session count for a sandbox. When provided, `showStatusCommand`
-   * emits a `Connected:` line under each sandbox row. Returns null when the
+   * emits an `SSH sessions:` line under each sandbox row. Returns null when the
    * probe is not available (e.g. no openshell binary); the line is omitted in
    * that case. #2604.
    */
@@ -233,7 +232,6 @@ function buildSandboxInventoryRow(
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
-    connected: activeSessionCount !== null && activeSessionCount > 0,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
     ...(sandbox.recoveredFromGateway ? { livePhase: sandbox.livePhase ?? null } : {}),
   };
@@ -346,13 +344,13 @@ export function renderSandboxInventoryText(
         ? "sandbox GPU"
         : "CPU sandbox";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
-    const connected = sandbox.connected ? " ●" : "";
+    const sessionDot = (sandbox.activeSessionCount ?? 0) > 0 ? " ●" : "";
     const agent = sandbox.agent || "openclaw";
     // #5714: for a gateway-recovered row, surface the trusted live PHASE
     // (e.g. Ready) from `openshell sandbox list` so `list` agrees with
     // `nemoclaw <name> status`; normal registry rows have no live phase.
     const phase = sandbox.recoveredFromGateway ? `  phase: ${sandbox.livePhase || "unknown"}` : "";
-    log(`    ${sandbox.name}${def}${connected}`);
+    log(`    ${sandbox.name}${def}${sessionDot}`);
     log(
       `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}${phase}  policies: ${presets}`,
     );
@@ -536,11 +534,10 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       if (isDefault && liveModel && liveModel !== inference.model) {
         log(`      (onboarded: ${inference.model || "unknown"})`);
       }
-      // #2604: surface the configured Inference (provider/model) and
-      // Connected (active-session count) as labeled fields. Bare
-      // `nemoclaw status` previously only had the model in parens above —
-      // users had to run `nemoclaw <name> status` to see provider and
-      // connection state.
+      // #2604: surface the configured Inference (provider/model) and the
+      // SSH-session count as labeled fields. Bare `nemoclaw status` previously
+      // only had the model in parens above — users had to run
+      // `nemoclaw <name> status` to see provider and session state.
       if (provider || model) {
         const parts = [provider, model].filter(Boolean).join(" / ");
         log(`      Inference: ${parts}`);
@@ -548,9 +545,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       if (deps.getActiveSessionCount) {
         const count = deps.getActiveSessionCount(sb.name);
         if (count !== null) {
-          log(
-            `      Connected: ${count > 0 ? `yes (${count} session${count > 1 ? "s" : ""})` : "no"}`,
-          );
+          log(`      SSH sessions: ${count > 0 ? count : "none"}`);
         }
       }
     }

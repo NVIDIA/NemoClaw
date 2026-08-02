@@ -94,14 +94,9 @@ describe("release E2E evidence", () => {
       targets: "",
     });
     const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
-    expect(parallelExplicitJobs).toHaveLength(4);
+    expect(parallelExplicitJobs).toHaveLength(3);
     expect(new Set(parallelExplicitJobs)).toEqual(
-      new Set([
-        "openshell-gateway-auth-contract",
-        "mcp-bridge-dev",
-        "hermes-gpu-startup",
-        "sandbox-rlimits-connect",
-      ]),
+      new Set(["openshell-gateway-auth-contract", "mcp-bridge-dev", "hermes-gpu-startup"]),
     );
     expect(plan.dispatches.conditional).toEqual([
       expect.objectContaining({ allowJetsonRunnerQueue: false, jobs: "jetson-nvmap-gpu" }),

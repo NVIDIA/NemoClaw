@@ -117,7 +117,6 @@ export function buildHermesConfig(
     },
     agent: {
       max_turns: 60,
-      reasoning_effort: "medium",
       // Hermes config migrations v30 -> v32 disable the old implicit
       // verify-on-stop behavior once. Generated configs start at v32, so
       // persist the same migrated value instead of inheriting "auto".

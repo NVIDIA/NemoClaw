@@ -72,7 +72,7 @@ describe("legacy Hermes shields compatibility", () => {
 
     const runner = requireSource("../runner.js");
     const policy = requireSource("../policy/index.js");
-    const config = requireSource("../sandbox/config.js");
+    const agentConfig = requireSource("../sandbox/agent-config.js");
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
     const dockerExec = requireSource("../adapters/docker/exec.js");
     const stateDirLock = requireSource("./state-dir-lock.js");
@@ -102,7 +102,7 @@ describe("legacy Hermes shields compatibility", () => {
         ]),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue("/mock/permissive.yaml"),
-      vi.spyOn(config, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
+      vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       privilegedExecArgvSpy,
       dockerExecSpy,
       applyStateDirLockModeSpy,
@@ -365,7 +365,7 @@ describe("legacy Hermes shields compatibility", () => {
           return cmd.at(-1) === "/sandbox"
             ? "1775 root:sandbox"
             : cmd.at(-1) === "/sandbox/.hermes"
-              ? "755 root:root"
+              ? "3770 root:sandbox"
               : "444 root:root";
         case cmd[0] === "lsattr":
           return `----i----------- ${cmd.at(-1)}`;
@@ -405,7 +405,7 @@ describe("legacy Hermes shields compatibility", () => {
           return cmd.at(-1) === "/sandbox"
             ? "755 sandbox:sandbox"
             : cmd.at(-1) === "/sandbox/.hermes"
-              ? "755 root:root"
+              ? "3770 root:sandbox"
               : "444 root:root";
         case cmd[0] === "lsattr":
           return `----i----------- ${cmd.at(-1)}`;

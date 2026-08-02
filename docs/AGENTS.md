@@ -75,10 +75,10 @@ Apply these rules to documentation, examples, headings, UI text, and release not
 
 ## Use DORI for Complete NVIDIA Doc Tools
 
-Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing) before checking for DORI.
-Only an `authorized` value can select the DORI path.
-When root routing selects that path, you can use DORI for additional documentation tools.
-Complete the documentation before the developer opens the pull or merge request.
+Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing).
+Use the following DORI workflow only when current host capabilities include the
+verified NVIDIA documentation Skill Library. Complete the documentation before
+the developer opens the pull or merge request.
 
 1. Route the documentation task through DORI. Include the changed source files,
    the user-visible impact, the documentation that might need updates, and the
@@ -91,8 +91,9 @@ Complete the documentation before the developer opens the pull or merge request.
 4. When the host does not support subagents, complete the same documentation
    work in the primary task.
 
-If root routing directs you to the Writing Style Guide, or if DORI is unavailable, inaccessible, declined, or fails, do not block the change.
-Continue using the Writing Style Guide above.
+If the verified Skill Library is unavailable, inaccessible, or fails, skip DORI.
+Do not attempt routing, prompt for setup, or ask for or persist a user
+classification. Continue using the Writing Style Guide above.
 
 ## Before Editing
 
@@ -102,12 +103,17 @@ Continue using the Writing Style Guide above.
 - Check `docs/.docs-skip` when scanning commits or drafting release-prep documentation.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
+- For every target page, determine which agent runtimes execute the documented behavior and which guide variants must publish it.
+- Use source code, tests, or accepted product scope as evidence for each inclusion or exclusion.
+- Do not infer agent applicability from the page's current navigation placement.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
 ## NemoClaw Doc Patterns
 
-- Use `$$nemoclaw` for host CLI command examples on shared OpenClaw, Hermes, and Deep Agents pages.
-- Use literal command names on pages that have only one agent variant.
+- Use `$$nemoclaw` for host CLI command examples on source pages shared by OpenClaw, Hermes, and Deep Agents guide variants.
+- Use literal command names on source pages published for one guide variant.
+- Publish shared source pages through generated navigation targets in every applicable guide variant.
+- Declare `agent-variants` in frontmatter when a source page intentionally applies to fewer than all three guide variants.
 - Use `<AgentOnly>` blocks only when content differs by behavior, setup flow, state layout, or agent-specific wording.
 - Treat `<AgentOnly>` as a non-nested build-time directive with opening and closing tags at the first column on their own lines; do not import a runtime component for it.
 - Use route-style links without `.mdx` extensions for links between docs pages.

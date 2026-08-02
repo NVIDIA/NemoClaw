@@ -92,12 +92,12 @@ By default, it publishes to the `nvidia-nemoclaw-staging.docs.buildwithfern.com/
 Set `FERN_STAGING_INSTANCE` to a `<hostname>/<path>` value when you need to target a different Fern docs instance.
 The watcher rejects blank or malformed overrides before it starts Fern.
 
-Fern `.mdx` pages are the canonical docs source.
+Fern `.mdx` pages are the docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
 
 ## Updating the Changelog
 
-The native Fern changelog under `docs/changelog/` is the canonical release history.
+The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
 Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
 
@@ -129,7 +129,7 @@ If the tag does not point to a commit on `main`, the job stops before installing
 
 ## Starter Prompt Generation
 
-The canonical coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
+The coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
 Edit that Markdown file instead of placing prompt text in a React component.
 Keep conditional platform instructions in focused Markdown files under `docs/resources/prompt-assets/` and link to their raw GitHub URLs from the starter prompt.
 The main prompt should tell the coding agent when to load each asset and should not repeat the asset's detailed instructions.
@@ -170,6 +170,12 @@ The `scripts/sync-agent-variant-docs.mts` script reads `docs/index.yml` and rend
 The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
 OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.
+
+Determine page applicability from the implementation, tests, or accepted product scope before adding or moving navigation entries.
+Do not use the current navigation tree as evidence that a page is agent-specific.
+Publish a shared source page through generated navigation targets in every applicable variant.
+When a page intentionally applies to fewer than all three variants, declare the exact subset in frontmatter, for example `agent-variants: ["openclaw", "hermes"]`.
+The sync command fails when a subset declaration is missing or differs from navigation membership.
 
 When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
 Do not duplicate fenced code blocks or inline command examples only to switch among `nemoclaw`,
@@ -260,6 +266,12 @@ description-agent: "Third-person verb summary for agent routing. Add 'Use when..
 keywords: "primary keyword, secondary keyword phrase"
 position: 1
 ---
+```
+
+When the page intentionally applies to fewer than OpenClaw, Hermes, and Deep Agents, add the exact subset to frontmatter:
+
+```yaml
+agent-variants: ["openclaw", "hermes"]
 ```
 
 ### Page Structure

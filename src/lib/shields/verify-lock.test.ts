@@ -75,7 +75,10 @@ describe("verifyShieldsLockState", () => {
       "/sandbox/.hermes/config.yaml": "444 root:root",
       "/sandbox/.hermes/.env": "444 root:root",
       "/sandbox/.hermes/.config-hash": "444 root:root",
-      "/sandbox/.hermes": "755 root:root",
+      // Root-owned in the sandbox group with set-id/sticky: Hermes keeps
+      // writing top-level runtime state while the sticky bit stops the sandbox
+      // identity unlinking the sealed root-owned files (#7865).
+      "/sandbox/.hermes": "3770 root:sandbox",
       "/sandbox": "1775 root:sandbox",
     });
 
@@ -90,7 +93,7 @@ describe("verifyShieldsLockState", () => {
       "/sandbox/.hermes/config.yaml": "444 root:root",
       "/sandbox/.hermes/.env": "444 root:root",
       "/sandbox/.hermes/.config-hash": "444 root:root",
-      "/sandbox/.hermes": "755 root:root",
+      "/sandbox/.hermes": "3770 root:sandbox",
       "/sandbox": "755 sandbox:sandbox",
     });
     const drifted = verifyShieldsLockState("hermes", hermesTarget, {
@@ -104,6 +107,59 @@ describe("verifyShieldsLockState", () => {
         "parent dir owner=sandbox:sandbox (expected root:sandbox)",
       ]),
     );
+  });
+
+  it("reports the previous root-owned Hermes config root as drift (#7865)", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const hermesTarget = {
+      agentName: "hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configDir: "/sandbox/.hermes",
+      sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
+    };
+    // A Hermes root left at the old 755 root:root cannot run a gateway at all,
+    // so it must surface as drift for the caller's re-lock to repair rather
+    // than passing as a healthy lock.
+    const legacyLocked = makeExec({
+      "/sandbox/.hermes/config.yaml": "444 root:root",
+      "/sandbox/.hermes/.env": "444 root:root",
+      "/sandbox/.hermes/.config-hash": "444 root:root",
+      "/sandbox/.hermes": "755 root:root",
+      "/sandbox": "1775 root:sandbox",
+    });
+
+    const result = verifyShieldsLockState("hermes", hermesTarget, {
+      exec: legacyLocked,
+      verifyParentProtection: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        "dir mode=755 (expected 3770)",
+        "dir owner=root:root (expected root:sandbox)",
+      ]),
+    );
+  });
+
+  it("keeps the OpenClaw locked config root at 755 root:root", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const openClawTarget = {
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    };
+    const exec = makeExec({
+      "/sandbox/.openclaw/openclaw.json": "444 root:root",
+      "/sandbox/.openclaw/.config-hash": "444 root:root",
+      "/sandbox/.openclaw": "755 root:root",
+    });
+
+    expect(verifyShieldsLockState("openclaw", openClawTarget, { exec })).toEqual({
+      ok: true,
+      issues: [],
+    });
   });
 
   it("requires the same protected parent for OpenClaw but does not impose it on custom agents", async () => {

@@ -17,6 +17,16 @@
       "category": "security"
     },
     {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every stock Docker ARG as startup-affordance or deliberate exclusion",
+      "category": "compatibility"
+    },
+    {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every centralized runtime input as profile intent or an explicit deferral",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -267,6 +277,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
+      "category": "security"
+    },
+    {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
       "test": "locks recovery identities to the source workflows' runtime names (#7140)",
       "category": "security"
@@ -407,11 +422,6 @@
       "category": "security"
     },
     {
-      "file": "test/perl-critical-cve-remediation.test.ts",
-      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
-      "category": "security"
-    },
-    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
@@ -495,6 +505,11 @@
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "requires one advisor lane to publish the PR comment",
       "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps migrated provider identities and implementations behind the one bundle composition",
+      "category": "compatibility"
     },
     {
       "file": "test/pr-limit-policy.test.ts",

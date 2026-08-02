@@ -27,10 +27,6 @@ const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: s
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
   ],
   [
-    "bedrock-runtime-compatible-anthropic",
-    { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
-  ],
-  [
     "channels-stop-start",
     { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
   ],
@@ -140,7 +136,7 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep runner diagnostics to 13 routed workflow lane identities / 16 concrete
+ * Keep runner diagnostics to 12 routed workflow lane identities / 14 concrete
  * trusted-main job executions. Telemetry is best-effort, but it must span the
  * complete stable-capacity job and finish before evidence is scanned or
  * uploaded. Rebuild jobs establish their fixed swap capacity first because the
@@ -150,10 +146,6 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
   const jobs = record(record(workflowValue).jobs);
   const errors: string[] = [];
 
-  requireExactMatrixValues(errors, jobs, "bedrock-runtime-compatible-anthropic", "agent", [
-    "openclaw",
-    "hermes",
-  ]);
   requireExactMatrixValues(errors, jobs, "channels-stop-start", "agent", ["openclaw", "hermes"]);
   requireExactMatrixValues(errors, jobs, "common-egress-agent", "scenario", [
     "openclaw-balanced-weather",
@@ -166,10 +158,7 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
     "deepagents",
   ]);
   requireExactMatrixValues(errors, jobs, "security-posture", "agent", ["openclaw", "hermes"]);
-  requireExactMatrixValues(errors, jobs, "hermes-inference-switch", "mode", [
-    "hosted",
-    "anthropic",
-  ]);
+  requireExactMatrixValues(errors, jobs, "hermes-inference-switch", "mode", ["anthropic"]);
 
   for (const [jobId, value] of Object.entries(jobs)) {
     const jobSteps = steps(record(value).steps);

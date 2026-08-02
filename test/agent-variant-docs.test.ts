@@ -292,6 +292,44 @@ import { AgentOnly } from "../_components/AgentGuide";
     expect(deepAgents).not.toContain(namedSandboxSyntax);
   });
 
+  it("excludes OpenClaw gateway behavior from Hermes provider switching (#7902)", () => {
+    const source = readFileSync(
+      new URL("../docs/inference/switch-providers.mdx", import.meta.url),
+      "utf8",
+    );
+    const render = (variant: "openclaw" | "hermes") =>
+      renderAgentVariantPage(source, variant, {
+        sourcePath: "/repo/docs/inference/switch-providers.mdx",
+      });
+    const openclaw = render("openclaw");
+    const hermes = render("hermes");
+    const openClawGatewayBehavior = "restarts only the OpenClaw gateway and verifies its health";
+
+    expect(openclaw).toContain(openClawGatewayBehavior);
+    expect(hermes).not.toContain(
+      "updates the provider namespace and selected model in the running configuration",
+    );
+    expect(hermes).not.toContain(
+      "Changes within the current API family hot-reload without replacing the gateway process",
+    );
+    expect(hermes).not.toContain(openClawGatewayBehavior);
+    expect(hermes).toContain("a normal runtime route change does not rebuild or restart Hermes");
+  });
+
+  it("renders the Hermes baseline-policy explanation once (#7903)", () => {
+    const source = readFileSync(
+      new URL("../docs/reference/network-policies.mdx", import.meta.url),
+      "utf8",
+    );
+    const hermes = renderAgentVariantPage(source, "hermes", {
+      sourcePath: "/repo/docs/reference/network-policies.mdx",
+    });
+    const baselineExplanation =
+      "Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml`";
+
+    expect(hermes.split(baselineExplanation)).toHaveLength(2);
+  });
+
   it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {
     const troubleshooting = readFileSync(
       new URL("../docs/reference/troubleshooting.mdx", import.meta.url),

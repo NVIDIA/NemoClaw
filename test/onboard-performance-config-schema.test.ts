@@ -85,6 +85,54 @@ interface Calibration {
       sandboxPhaseBudgetMs: number;
     };
   };
+  restartSafeStartupAdjustment?: {
+    validatedAt: string;
+    changeSha: string;
+    runtimeInputsVerifiedThroughSha: string;
+    runtimeInputPaths: string[];
+    triggerOutput: string;
+    adjustedMetrics: string[];
+    derivation: {
+      statistic: string;
+      minimumHeadroomMs: number;
+      relativeHeadroomPercent: number;
+      roundUpMs: number;
+    };
+    runs: Array<{
+      runId: number;
+      runUrl: string;
+      jobId: number;
+      workflowHeadSha: string;
+      testedSha: string;
+      conclusion: string;
+      installExitCode: number;
+      firstTurnExitCode: number;
+      firstTurnSentinelMatched: boolean;
+      performancePassed: boolean;
+      usedBuildKitPrebuild: boolean;
+      buildKitFallback: boolean;
+      maxSilenceSecs: number;
+      responseChars: number;
+      triggerEvidence: {
+        artifact: string;
+        path: string;
+        output: string;
+      };
+      rootStartToFirstTurnCompletionMs: number;
+      sandboxPhaseMs: number;
+    }>;
+    retirement: {
+      trigger: string;
+      minimumSampleCount: number;
+      allSamplesSameHead: boolean;
+      runtimeChangeMustBeAncestor: boolean;
+      action: string;
+    };
+    derivedCapsMs: {
+      rootStartToFirstTurnCompletionBudgetMs: number;
+      sandboxPhaseBudgetMs: number;
+    };
+  };
   authoritativeLocalBaseBuildAdjustment: {
     validatedAt: string;
     triggerOutput: string;
@@ -261,21 +309,26 @@ function validationThreshold(
 
 function effectiveBudgets(input: Calibration): ColdPathBudget {
   const baseline = input.derivedBudgetsMs;
-  const adjustment = input.validationAdjustment?.derivedCapsMs;
+  const imageAdjustment = input.validationAdjustment?.derivedCapsMs;
+  const startupAdjustment = input.restartSafeStartupAdjustment?.derivedCapsMs;
   return {
     authoritativeLocalBaseBuildAllowanceMs:
       input.authoritativeLocalBaseBuildAdjustment.derivedAllowanceMs,
     ...baseline,
     rootStartToFirstTurnCompletionBudgetMs: Math.max(
       baseline.rootStartToFirstTurnCompletionBudgetMs,
-      adjustment?.rootStartToFirstTurnCompletionBudgetMs ??
+      imageAdjustment?.rootStartToFirstTurnCompletionBudgetMs ??
+        baseline.rootStartToFirstTurnCompletionBudgetMs,
+      startupAdjustment?.rootStartToFirstTurnCompletionBudgetMs ??
         baseline.rootStartToFirstTurnCompletionBudgetMs,
     ),
     phaseBudgetsMs: {
       ...baseline.phaseBudgetsMs,
       "nemoclaw.onboard.phase.sandbox": Math.max(
         baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
-        adjustment?.sandboxPhaseBudgetMs ??
+        imageAdjustment?.sandboxPhaseBudgetMs ??
+          baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
+        startupAdjustment?.sandboxPhaseBudgetMs ??
           baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
       ),
     },
@@ -306,11 +359,7 @@ function gitRevision(revision: string): string {
   }).trim();
 }
 
-function changedImageInputs(
-  fromSha: string,
-  throughSha: string,
-  imageInputPaths: string[],
-): string[] {
+function changedInputs(fromSha: string, throughSha: string, imageInputPaths: string[]): string[] {
   const output = execFileSync(
     "git",
     ["diff", "--name-only", fromSha, throughSha, "--", ...imageInputPaths],
@@ -325,7 +374,7 @@ function validationProvenanceViolations(
   const runHeadsWithChangedImageInputs = validation.runs
     .map((run) => ({
       headSha: run.headSha,
-      changedPaths: changedImageInputs(
+      changedPaths: changedInputs(
         validation.imageChangeSha,
         run.headSha,
         validation.imageInputPaths,
@@ -340,7 +389,7 @@ function validationProvenanceViolations(
       .map((run) => run.headSha)
       .filter((headSha) => !gitIsAncestor(headSha, validation.imageInputsVerifiedThroughSha)),
     runHeadsWithChangedImageInputs,
-    changedImageInputsThroughBoundary: changedImageInputs(
+    changedImageInputsThroughBoundary: changedInputs(
       validation.imageChangeSha,
       validation.imageInputsVerifiedThroughSha,
       validation.imageInputPaths,
@@ -498,11 +547,109 @@ describe("full-E2E cold-path calibration", () => {
       ),
     });
     expect(checkedInConfig.fullE2eColdPath).toEqual(effectiveBudgets(calibration));
-    expect(effectiveBudgets({ ...calibration, validationAdjustment: undefined })).toEqual({
+    expect(
+      effectiveBudgets({
+        ...calibration,
+        validationAdjustment: undefined,
+        restartSafeStartupAdjustment: undefined,
+      }),
+    ).toEqual({
       authoritativeLocalBaseBuildAllowanceMs:
         calibration.authoritativeLocalBaseBuildAdjustment.derivedAllowanceMs,
       ...calibration.derivedBudgetsMs,
     });
+
+    const startupAdjustment = calibration.restartSafeStartupAdjustment!;
+    expect(startupAdjustment.validatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(startupAdjustment.changeSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(startupAdjustment.runtimeInputsVerifiedThroughSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(startupAdjustment.triggerOutput).toBe(
+      "Recreating OpenShell Docker sandbox container with restart-safe startup...",
+    );
+    expect(startupAdjustment.adjustedMetrics).toEqual([
+      "rootStartToFirstTurnCompletion",
+      "nemoclaw.onboard.phase.sandbox",
+    ]);
+    expect(startupAdjustment.derivation.statistic).toBe("maximum");
+    expect(startupAdjustment.runs).toHaveLength(5);
+    expect(new Set(startupAdjustment.runs.map((run) => run.runId)).size).toBe(5);
+    expect(new Set(startupAdjustment.runs.map((run) => run.jobId)).size).toBe(5);
+    expect(new Set(startupAdjustment.runs.map((run) => run.testedSha)).size).toBe(5);
+    expect(
+      Object.fromEntries(startupAdjustment.runs.map((run) => [run.runId, run.testedSha])),
+    ).toEqual({
+      30614075121: "387cb08644fe030bb85146255f4b77e3c54697d2",
+      30615995748: "915b25c522d982fc7d40d01e583bc8f15bcf975f",
+      30619965759: "c3106eea0669aa645c0ff6f51adce0badf24477f",
+      30620296004: "f8fb820159c4843a19759efc9b0e28d4aa122440",
+      30620879680: "d1b24c97c348215574fd8c55435a2e8c5e0d86e1",
+    });
+    expect(
+      changedInputs(
+        startupAdjustment.changeSha,
+        startupAdjustment.runtimeInputsVerifiedThroughSha,
+        startupAdjustment.runtimeInputPaths,
+      ),
+    ).toEqual([]);
+
+    for (const run of startupAdjustment.runs) {
+      expect(run.runUrl).toBe(`https://github.com/NVIDIA/NemoClaw/actions/runs/${run.runId}`);
+      expect(run.workflowHeadSha).toMatch(/^[0-9a-f]{40}$/u);
+      expect(run.testedSha).toMatch(/^[0-9a-f]{40}$/u);
+      expect(gitIsAncestor(startupAdjustment.changeSha, run.workflowHeadSha)).toBe(true);
+      // A tested revision can be a PR merge or head commit that GitHub stops
+      // advertising after the PR closes. The run and job receipts bind that
+      // exact SHA; local ancestry uses the durable workflow head instead.
+      expect(
+        gitIsAncestor(run.workflowHeadSha, startupAdjustment.runtimeInputsVerifiedThroughSha),
+      ).toBe(true);
+      expect(run).toMatchObject({
+        installExitCode: 0,
+        firstTurnExitCode: 0,
+        firstTurnSentinelMatched: true,
+        usedBuildKitPrebuild: true,
+        buildKitFallback: false,
+        responseChars: 23,
+        triggerEvidence: {
+          artifact: "e2e-full-e2e",
+          path: "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stdout.txt",
+          output: startupAdjustment.triggerOutput,
+        },
+      });
+      expect(run.maxSilenceSecs).toBeLessThanOrEqual(60);
+    }
+    expect(startupAdjustment.runs.map((run) => run.conclusion).sort()).toEqual([
+      "failure",
+      "failure",
+      "failure",
+      "failure",
+      "success",
+    ]);
+    expect(startupAdjustment.runs.map((run) => run.performancePassed).sort()).toEqual([
+      false,
+      false,
+      false,
+      false,
+      true,
+    ]);
+    expect(startupAdjustment.retirement).toEqual({
+      trigger: "successful-single-sha-calibration",
+      minimumSampleCount: 5,
+      allSamplesSameHead: true,
+      runtimeChangeMustBeAncestor: true,
+      action: "replace-baseline-and-remove-adjustment",
+    });
+    expect(startupAdjustment.derivedCapsMs).toEqual({
+      rootStartToFirstTurnCompletionBudgetMs: validationThreshold(
+        startupAdjustment.runs.map((run) => run.rootStartToFirstTurnCompletionMs),
+        startupAdjustment.derivation,
+      ),
+      sandboxPhaseBudgetMs: validationThreshold(
+        startupAdjustment.runs.map((run) => run.sandboxPhaseMs),
+        startupAdjustment.derivation,
+      ),
+    });
+    expect(checkedInConfig.fullE2eColdPath).toEqual(effectiveBudgets(calibration));
   });
 
   // source-shape-contract: compatibility -- Exact PR run evidence keeps the local-build allowance bounded and reproducible

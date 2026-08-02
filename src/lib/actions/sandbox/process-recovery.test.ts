@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
@@ -39,6 +40,36 @@ const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is
 `;
 const OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR =
   "Error: sandbox 'recreated-box' is not ready (phase: Error); wait for it to reach Ready state.\n";
+
+describe("managed gateway control completion", () => {
+  const nonce = "a".repeat(64);
+
+  it.each([
+    ["ok", 0, 4242],
+    ["ok", 4242, 4242],
+    ["already-running", 4242, 4242],
+    ["already-running", 4242, 5252],
+  ] as const)("preserves the exact %s controller disposition (#7919)", (disposition, oldPid, newPid) => {
+    expect(
+      parseManagedGatewayControlCompletion({
+        status: 0,
+        stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
+        stderr: "",
+      }),
+    ).toEqual({ disposition, oldPid, newPid });
+  });
+
+  it.each([
+    [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
+    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242\nextra`, ""],
+    [`v1 ${nonce} complete changed 0 4242\nGATEWAY_PID=4242`, ""],
+    [`v1 ${nonce} complete ok 0 9007199254740992\nGATEWAY_PID=9007199254740992`, ""],
+    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242`, "unexpected warning"],
+    ["GATEWAY_PID=4242", ""],
+  ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
+    expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
+  });
+});
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -105,6 +136,32 @@ describe("recreated sandbox OpenShell readiness", () => {
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("retries the exact same-sandbox Error phase when OpenShell also emits informational stdout", () => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output:
+          `Waiting for sandbox registration\n${OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR}`.trim(),
+        stdout: "Waiting for sandbox registration\n",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
     expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });

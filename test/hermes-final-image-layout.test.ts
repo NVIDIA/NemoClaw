@@ -12,6 +12,11 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_INTEGRITY_FILES = [
   {
+    arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
+    source: "agents/hermes/image-build-probes.py",
+    target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
     source: "agents/hermes/hermes-wrapper.py",
     target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
@@ -45,6 +50,16 @@ const HERMES_INTEGRITY_FILES = [
     arg: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
     source: "agents/hermes/patch-gateway-runtime-metadata.py",
     target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+    source: "agents/hermes/patch-gateway-process-identity.py",
+    target: "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+    source: "agents/hermes/patch-cron-execution-runtime.py",
+    target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
   },
 ] as const;
 
@@ -202,7 +217,10 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/",
           "COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts",
           "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
+          "COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py",
           "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+          "COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+          "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
@@ -336,6 +354,9 @@ describe("Hermes final image layout", () => {
     );
     expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
     expect(finalStage).toContain("check_absent /opt/hermes/tests \\");
+    expect(finalStage).toContain(
+      "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",
+    );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
   });
 
