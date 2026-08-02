@@ -8,10 +8,6 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import {
-  type AuthenticatedNativeRuntimeQualificationRun,
-  verifyNativeRuntimeQualificationFromTrustedController,
-} from "../../../tools/e2e/native-runtime-qualification-controller.mts";
-import {
   assertNativeRuntimeQualificationEvidence as assertVerifiedNativeRuntimeQualificationEvidence,
   compileNativeRuntimeQualification,
   createNativeRuntimeQualificationReporterRecord,
@@ -174,21 +170,6 @@ function qualificationFixture(): {
     })),
     cleanup: () => fs.rmSync(artifactRoot, { force: true, recursive: true }),
   };
-}
-
-function authenticatedControllerRuns(
-  artifactRoot: string,
-): AuthenticatedNativeRuntimeQualificationRun[] {
-  return PODMAN_NATIVE_ACTIVATION_QUALIFICATION.cases.map((_qualificationCase, index) => ({
-    repository: "NVIDIA/NemoClaw",
-    workflow: "E2E / PR Gate",
-    workflowSha: BASE_SHA,
-    runId: 1000 + index,
-    attempt: 1,
-    headSha: HEAD_SHA,
-    baseSha: BASE_SHA,
-    jobs: [{ id: 2000 + index, artifactRoot }],
-  }));
 }
 
 function writeEvidenceArtifacts(
@@ -402,88 +383,6 @@ describe("native runtime activation qualification", () => {
         inventedDigest,
       ),
     ).toThrow(/digest does not match its receipt/u);
-  });
-
-  it("accepts only verified evidence bound from authenticated controller run jobs", () => {
-    const evidence = completeEvidence();
-    const materialized = qualificationFixture();
-    try {
-      writeEvidenceArtifacts(materialized.artifactRoot, evidence);
-      const authenticatedRuns = authenticatedControllerRuns(materialized.artifactRoot);
-      const verified = verifyNativeRuntimeQualificationFromTrustedController({
-        definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-        evidence,
-        authenticatedRuns,
-      });
-      expect(() =>
-        assertVerifiedNativeRuntimeQualificationEvidence(
-          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-          verified,
-        ),
-      ).not.toThrow();
-      expect(() =>
-        assertVerifiedNativeRuntimeQualificationEvidence(
-          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-          evidence as unknown as VerifiedNativeRuntimeQualificationEvidence,
-        ),
-      ).toThrow(/verified canonical reporter evidence/u);
-
-      const workerInventedRun = structuredClone(evidence);
-      workerInventedRun[0]!.protectedRun.runId = 999_999;
-      expect(() =>
-        verifyNativeRuntimeQualificationFromTrustedController({
-          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-          evidence: workerInventedRun,
-          authenticatedRuns,
-        }),
-      ).toThrow(/no trusted protected-run binding/u);
-    } finally {
-      materialized.cleanup();
-    }
-  });
-
-  it("binds one authenticated protected run to its exact matrix job set", () => {
-    const evidence = completeEvidence();
-    const materialized = qualificationFixture();
-    try {
-      const { jobId: _jobId, ...sharedRun } = structuredClone(evidence[0]!.protectedRun);
-      for (const entry of evidence) {
-        entry.protectedRun = { ...sharedRun, jobId: entry.protectedRun.jobId };
-      }
-      const jobs = evidence.map((entry) => ({
-        id: entry.protectedRun.jobId,
-        artifactRoot: materialized.artifactRoot,
-      }));
-      writeEvidenceArtifacts(materialized.artifactRoot, evidence);
-      expect(() =>
-        verifyNativeRuntimeQualificationFromTrustedController({
-          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-          evidence,
-          authenticatedRuns: [{ ...sharedRun, jobs }],
-        }),
-      ).not.toThrow();
-      expect(() =>
-        verifyNativeRuntimeQualificationFromTrustedController({
-          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-          evidence,
-          authenticatedRuns: [{ ...sharedRun, jobs: jobs.slice(1) }],
-        }),
-      ).toThrow(/has no trusted protected-run binding/u);
-      expect(() =>
-        verifyNativeRuntimeQualificationFromTrustedController({
-          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
-          evidence,
-          authenticatedRuns: [
-            {
-              ...sharedRun,
-              jobs: [...jobs, { id: 9999, artifactRoot: materialized.artifactRoot }],
-            },
-          ],
-        }),
-      ).toThrow(/unused protected-run binding/u);
-    } finally {
-      materialized.cleanup();
-    }
   });
 
   it("binds receipts to independent run metadata and snapshots them before verification", () => {

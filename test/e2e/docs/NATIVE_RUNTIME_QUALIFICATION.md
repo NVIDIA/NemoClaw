@@ -65,12 +65,11 @@ must supply one or more independent bindings constructed from authenticated
 GitHub state. Each binding names the repository, workflow revision, run,
 attempt, exact head/base pair, numeric job, and that job's downloaded artifact
 root; bindings must not be derived from candidate receipt fields.
-`tools/e2e/native-runtime-qualification-controller.mts` is the named
-controller-side acceptance adapter: callers provide authenticated run records
-and jobs, and the adapter constructs bindings without accepting a worker-owned
-binding argument. The compiler defensively clones and freezes the receipts,
-requires every receipt and binding to match exactly, and returns a
-runtime-branded canonical reporter record.
+The compiler defensively clones and freezes the receipts, requires every
+receipt and binding to match exactly, and returns a runtime-branded canonical
+reporter record. The later protected collector must own the authenticated
+GitHub lookup and invoke this canonical reporter boundary directly; this
+contract slice does not add an unconsumed controller wrapper.
 
 The aggregate validator then resolves every receipt below its bound artifact
 root, rejects missing, escaping, linked, conflicting, changing, or oversized
@@ -80,10 +79,8 @@ A syntactically complete receipt with invented provenance or artifact digests
 therefore cannot qualify a runtime.
 
 These are evidence requirements, not generated evidence. A later protected
-collector must publish the receipts from real runners, while its trusted
-controller supplies authenticated GitHub run/job state to the dormant
-controller adapter before activation can consume them. No workflow invokes the
-adapter in this slice.
+collector must publish the receipts from real runners and supply authenticated
+GitHub run/job state before activation can consume them.
 
 ## Activation boundary
 
