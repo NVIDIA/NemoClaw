@@ -495,13 +495,19 @@ describe("registerCreatedSandbox", () => {
     expect(entry.openclawImagePluginInstalls).toEqual([]);
     expect(entry.workload).toEqual(input.workload);
     expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+    const clearedEntry = registerCreatedSandbox({
+      ...input,
+      hostLocalInferenceReceipt: null,
+    });
+    expect(clearedEntry.hostLocalInferenceReceipt).toBeNull();
+    expect(registerSandbox).toHaveBeenLastCalledWith(clearedEntry);
     expect(() =>
       registerCreatedSandbox({
         ...input,
         workload: { ...input.workload, reference: "" },
       }),
     ).toThrow(/workload ownership receipt failed closed validation/u);
-    expect(registerSandbox).toHaveBeenCalledTimes(1);
+    expect(registerSandbox).toHaveBeenCalledTimes(2);
     getSandbox.mockRestore();
   });
 
