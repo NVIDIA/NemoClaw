@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import {
   applyDescriptorSnapshotActions,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
+  installDescriptorSnapshotFile,
   resolveTrustedSnapshotSanitizerPythonPath,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
@@ -17,6 +18,8 @@ import {
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
 const roots: string[] = [];
+
+const LARGE_INSTALL_CONTENT = "x".repeat(15 * 1024 * 1024);
 
 function makeRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-sanitizer-failure-"));
@@ -80,6 +83,112 @@ describe("migration snapshot sanitizer fallbacks", () => {
       ]),
     ).toBe(false);
   });
+
+  it("fails closed when the descriptor install helper is unavailable", () => {
+    const root = inspectDescriptorSnapshotRoot(makeRoot());
+    expect(root).not.toBeNull();
+    setSnapshotSanitizerPythonPathForTest(null);
+
+    expect(
+      installDescriptorSnapshotFile(root as NonNullable<typeof root>, "openclaw.json", "{}"),
+    ).toBe(false);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a destination swap before exclusive config installation",
+    () => {
+      const rootPath = makeRoot();
+      const outsideRoot = makeRoot();
+      const outsideConfig = path.join(outsideRoot, "outside.json");
+      const original = JSON.stringify({ mustRemain: true });
+      writeFileSync(outsideConfig, original, { mode: 0o640 });
+      const originalMode = statSync(outsideConfig).mode & 0o777;
+      const root = inspectDescriptorSnapshotRoot(rootPath);
+      expect(root).not.toBeNull();
+      const python = requireTrustedPython();
+      writePythonWrapper([
+        `if [ "\${4-}" = install ]; then ln -s ${shellQuote(outsideConfig)} ${shellQuote(
+          path.join(rootPath, "openclaw.json"),
+        )}; fi`,
+        `exec ${shellQuote(python)} "$@"`,
+      ]);
+
+      expect(
+        installDescriptorSnapshotFile(
+          root as NonNullable<typeof root>,
+          "openclaw.json",
+          JSON.stringify({ installed: true }),
+        ),
+      ).toBe(false);
+      expect(readFileSync(outsideConfig, "utf-8")).toBe(original);
+      expect(statSync(outsideConfig).mode & 0o777).toBe(originalMode);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a persistent hard link created while sanitized config is installed",
+    () => {
+      const rootPath = makeRoot();
+      const targetPath = path.join(rootPath, "openclaw.json");
+      const aliasPath = path.join(rootPath, "openclaw-alias.json");
+      const root = inspectDescriptorSnapshotRoot(rootPath);
+      expect(root).not.toBeNull();
+      const python = requireTrustedPython();
+      writePythonWrapper([
+        `if [ "\${4-}" = install ]; then`,
+        "  (",
+        `    while [ ! -s ${shellQuote(targetPath)} ]; do :; done`,
+        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
+        "  ) &",
+        "fi",
+        `exec ${shellQuote(python)} "$@"`,
+      ]);
+
+      expect(
+        installDescriptorSnapshotFile(
+          root as NonNullable<typeof root>,
+          "openclaw.json",
+          LARGE_INSTALL_CONTENT,
+        ),
+      ).toBe(false);
+      expect(() => statSync(targetPath)).toThrow();
+      expect(statSync(aliasPath).isFile()).toBe(true);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a transient hard-link mutation while sanitized config is installed",
+    () => {
+      const rootPath = makeRoot();
+      const targetPath = path.join(rootPath, "openclaw.json");
+      const aliasPath = path.join(rootPath, "openclaw-alias.json");
+      const root = inspectDescriptorSnapshotRoot(rootPath);
+      expect(root).not.toBeNull();
+      const python = requireTrustedPython();
+      writePythonWrapper([
+        `if [ "\${4-}" = install ]; then`,
+        "  (",
+        `    while [ ! -s ${shellQuote(targetPath)} ]; do :; done`,
+        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
+        `    while [ "$(wc -c < ${shellQuote(aliasPath)})" -lt ${LARGE_INSTALL_CONTENT.length} ]; do :; done`,
+        `    printf M | dd of=${shellQuote(aliasPath)} bs=1 count=1 conv=notrunc 2>/dev/null`,
+        `    rm ${shellQuote(aliasPath)}`,
+        "  ) &",
+        "fi",
+        `exec ${shellQuote(python)} "$@"`,
+      ]);
+
+      expect(
+        installDescriptorSnapshotFile(
+          root as NonNullable<typeof root>,
+          "openclaw.json",
+          LARGE_INSTALL_CONTENT,
+        ),
+      ).toBe(false);
+      expect(() => statSync(targetPath)).toThrow();
+      expect(() => statSync(aliasPath)).toThrow();
+    },
+  );
 
   it("accepts only absolute helper substitutions under Vitest", () => {
     expect(() => setSnapshotSanitizerPythonPathForTest("python3")).toThrow(
