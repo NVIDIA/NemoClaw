@@ -45,6 +45,7 @@ function completeEvidence(): NativeRuntimeQualificationEvidence[] {
       protectedRun: {
         repository: "NVIDIA/NemoClaw",
         workflow: "E2E / PR Gate",
+        workflowSha: BASE_SHA,
         runId: 1000 + index,
         attempt: 1,
         jobId: 2000 + index,
@@ -301,6 +302,15 @@ describe("native runtime activation qualification", () => {
       ),
     ).toThrow(/wrong workflow/u);
 
+    const wrongWorkflowSource = structuredClone(completeEvidence());
+    wrongWorkflowSource[0]!.protectedRun.workflowSha = "main";
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        wrongWorkflowSource,
+      ),
+    ).toThrow(/protected workflow SHA/u);
+
     const mixedSourcePair = completeEvidence();
     mixedSourcePair[0]!.protectedRun.headSha = "3".repeat(40);
     expect(() =>
@@ -308,7 +318,16 @@ describe("native runtime activation qualification", () => {
         PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
         mixedSourcePair,
       ),
-    ).toThrow(/one exact head\/base pair/u);
+    ).toThrow(/one exact head\/base\/workflow source/u);
+
+    const mixedWorkflowSource = structuredClone(completeEvidence());
+    mixedWorkflowSource[0]!.protectedRun.workflowSha = "4".repeat(40);
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        mixedWorkflowSource,
+      ),
+    ).toThrow(/one exact head\/base\/workflow source/u);
 
     const badImage = completeEvidence();
     badImage[0]!.runtime.managedImages = [

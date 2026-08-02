@@ -35,7 +35,8 @@ or `langchain-deepagents-code` for DCode.
 
 Activation evidence is complete only when every compiled case has:
 
-- the exact protected workflow run, job, attempt, head SHA, and base SHA;
+- the exact protected workflow revision, run, job, attempt, head SHA, and base
+  SHA;
 - hashed installer script and invocation artifacts with a successful result;
 - an exact provider/profile/architecture/acceleration identity and persisted
   host-local engine authority;
@@ -57,7 +58,7 @@ Activation evidence is complete only when every compiled case has:
 Evidence paths must be relative and traversal-free. SHA and SHA-256 fields are
 strict lowercase hexadecimal values. Missing, duplicate, unknown, or inexact
 case evidence fails the aggregate qualification check. All cases must use the
-configured protected workflow and one exact head/base pair.
+configured protected workflow and one exact head/base/workflow source.
 
 These are evidence requirements, not generated evidence. A later protected
 collector must publish the receipts from real runners before activation can

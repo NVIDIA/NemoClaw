@@ -120,6 +120,8 @@ export interface NativeRuntimeQualificationEvidence {
   protectedRun: {
     repository: string;
     workflow: string;
+    /** Exact trusted revision from which GitHub loaded the protected workflow. */
+    workflowSha: string;
     runId: number;
     attempt: number;
     jobId: number;
@@ -576,6 +578,11 @@ function assertCaseEvidence(
   if (evidence.protectedRun.workflow !== definition.protectedWorkflow) {
     throw new Error(`Qualification evidence '${evidence.caseId}' belongs to the wrong workflow`);
   }
+  if (!SHA_PATTERN.test(evidence.protectedRun.workflowSha)) {
+    throw new Error(
+      `Qualification evidence '${evidence.caseId}' must name the exact protected workflow SHA`,
+    );
+  }
   assertPositiveInteger(evidence.protectedRun.runId, "Protected run id");
   assertPositiveInteger(evidence.protectedRun.attempt, "Protected run attempt");
   assertPositiveInteger(evidence.protectedRun.jobId, "Protected run job id");
@@ -669,7 +676,9 @@ export function assertNativeRuntimeQualificationEvidence(
       throw new Error(`Native runtime qualification evidence names unknown case '${entry.caseId}'`);
     }
     assertCaseEvidence(definition, qualificationCase, entry);
-    sourcePairs.add(`${entry.protectedRun.headSha}:${entry.protectedRun.baseSha}`);
+    sourcePairs.add(
+      `${entry.protectedRun.headSha}:${entry.protectedRun.baseSha}:${entry.protectedRun.workflowSha}`,
+    );
     evidenceById.set(entry.caseId, entry);
   }
   const missing = definition.cases.filter((entry) => !evidenceById.has(entry.id));
@@ -679,6 +688,8 @@ export function assertNativeRuntimeQualificationEvidence(
     );
   }
   if (sourcePairs.size !== 1) {
-    throw new Error("Native runtime qualification evidence must use one exact head/base pair");
+    throw new Error(
+      "Native runtime qualification evidence must use one exact head/base/workflow source",
+    );
   }
 }
