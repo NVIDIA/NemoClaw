@@ -92,12 +92,12 @@ By default, it publishes to the `nvidia-nemoclaw-staging.docs.buildwithfern.com/
 Set `FERN_STAGING_INSTANCE` to a `<hostname>/<path>` value when you need to target a different Fern docs instance.
 The watcher rejects blank or malformed overrides before it starts Fern.
 
-Fern `.mdx` pages are the canonical docs source.
+Fern `.mdx` pages are the docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
 
 ## Updating the Changelog
 
-The native Fern changelog under `docs/changelog/` is the canonical release history.
+The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
 Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
 
@@ -129,7 +129,7 @@ If the tag does not point to a commit on `main`, the job stops before installing
 
 ## Starter Prompt Generation
 
-The canonical coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
+The coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
 Edit that Markdown file instead of placing prompt text in a React component.
 Keep conditional platform instructions in focused Markdown files under `docs/resources/prompt-assets/` and link to their raw GitHub URLs from the starter prompt.
 The main prompt should tell the coding agent when to load each asset and should not repeat the asset's detailed instructions.

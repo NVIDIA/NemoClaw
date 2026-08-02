@@ -44,7 +44,10 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
+import {
+  normalizeE2eSelectorIds,
+  selectorsForCanonicalE2eId,
+} from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -1036,10 +1039,16 @@ function requireNoDispatchInputInterpolation(
 }
 
 function freeStandingJobIf(jobName: string, targetName?: string): string {
-  const targetSelector = targetName
-    ? ` || contains(format(',{0},', inputs.targets), ',${targetName},')`
-    : "";
-  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',${jobName},')${targetSelector} }}`;
+  const jobSelectors = selectorsForCanonicalE2eId(jobName).map(
+    (selector) => `contains(format(',{0},', inputs.jobs), ',${selector},')`,
+  );
+  const targetSelectors = targetName
+    ? selectorsForCanonicalE2eId(targetName).map(
+        (selector) => `contains(format(',{0},', inputs.targets), ',${selector},')`,
+      )
+    : [];
+  const selectors = [...jobSelectors, ...targetSelectors].join(" || ");
+  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || ${selectors} }}`;
 }
 
 function explicitOnlyFreeStandingJobIf(jobName: string, targetName?: string): string {
@@ -3918,54 +3927,6 @@ export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[
   return errors;
 }
 
-function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "sandbox-rlimits-connect";
-  const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
-    errors.push(`${jobName} job must depend on generate-matrix`);
-  }
-  if (job.if !== explicitOnlyFreeStandingJobIf(jobName, jobName)) {
-    errors.push(`${jobName} job must run only when explicitly selected`);
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push(`${jobName} job must run on ubuntu-latest`);
-  }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push(`${jobName} job must retain its 60 minute connect budget`);
-  }
-
-  const env = asRecord(job.env);
-  if (env.E2E_DEFAULT_ENABLED !== "0") {
-    errors.push(`${jobName} job must remain explicit-only`);
-  }
-  if (env.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push(`${jobName} job must set NEMOCLAW_RUN_LIVE_E2E=1`);
-  }
-  if (env.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
-    errors.push(`${jobName} job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1`);
-  }
-  if (env.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push(`${jobName} job must use the repo CLI launcher`);
-  }
-  if (
-    env.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
-  ) {
-    errors.push(`${jobName} job must write artifacts under e2e-artifacts/live/${jobName}`);
-  }
-
-  const run = namedStep(asSteps(job.steps), "Run sandbox rlimit connect live test");
-  if (!run) {
-    errors.push(`${jobName} job missing step: Run sandbox rlimit connect live test`);
-    return;
-  }
-  if (!stringValue(run.run).includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
-    errors.push(`${jobName} job must run sandbox-rlimits-connect.test.ts`);
-  }
-  if (asRecord(run.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-    errors.push(`${jobName} step must receive NVIDIA_API_KEY from secrets`);
-  }
-}
-
 function validateInferenceModeInput(
   errors: string[],
   workflow: WorkflowRecord,
@@ -4859,8 +4820,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateIssue2478CrashLoopRecoveryJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
-
-  validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,
