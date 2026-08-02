@@ -126,6 +126,7 @@ import stat
 import sys
 
 MAX_FILE_BYTES = ${MAX_SNAPSHOT_FILE_BYTES}
+MAX_FILE_BASE64_LENGTH = ((MAX_FILE_BYTES + 2) // 3) * 4
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_ENTRIES = 100_000
 O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -500,10 +501,14 @@ def apply(root_path, plan):
                     raw = action.get("content")
                     if not isinstance(raw, str):
                         fail("snapshot replacement content is invalid")
+                    if len(raw) > MAX_FILE_BASE64_LENGTH:
+                        fail("snapshot replacement content exceeds the encoded size limit")
                     try:
                         payload = base64.b64decode(raw, validate=True)
                     except ValueError:
                         fail("snapshot replacement content is invalid")
+                    if base64.b64encode(payload).decode("ascii") != raw:
+                        fail("snapshot replacement content is not canonical base64")
                     if len(payload) > MAX_FILE_BYTES:
                         fail("snapshot replacement content exceeds the size limit")
                     replace_file(parent_fd, name, expected, payload)

@@ -213,10 +213,31 @@ describe("migration snapshot sanitizer fallbacks", () => {
       "====",
       "YWJj=",
       "AB==",
+      "AAB=",
       "/w==",
       "YWJj\n",
     ]) {
       expect(decodeDescriptorSnapshotContent(rejected)).toBeNull();
+    }
+  });
+
+  it("rejects non-canonical base64 at the descriptor apply boundary", () => {
+    const rootPath = makeRoot();
+    const configPath = path.join(rootPath, "config.json");
+    writeFileSync(configPath, "original");
+    const root = inspectDescriptorSnapshotRoot(rootPath)!;
+    const scan = scanDescriptorSnapshot(root, new Set())!;
+    const config = scan.files.find((file) => file.path === "config.json")!;
+
+    expect(scan).not.toBeNull();
+    expect(config).toBeDefined();
+    for (const content of ["AB==", "AAB="]) {
+      expect(
+        applyDescriptorSnapshotActions(root, scan, [
+          { kind: "replace", path: config.path, metadata: config.metadata, content },
+        ]),
+      ).toBe(false);
+      expect(readFileSync(configPath, "utf-8")).toBe("original");
     }
   });
 
