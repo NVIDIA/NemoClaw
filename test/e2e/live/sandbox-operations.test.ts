@@ -26,6 +26,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { containsSecurityResourceLimitDiagnostic } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
@@ -35,6 +36,65 @@ const SANDBOX_B = "e2e-sbx-b";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
+
+function numericProbe(text: string, key: string): number {
+  const match = text.match(new RegExp(`${key}=(\\d+)`));
+  expect(match, `Missing ${key} in connect output:\n${text}`).not.toBeNull();
+  return Number(match?.[1] ?? "NaN");
+}
+
+function connectRlimitProbeScript(cliPath: string): string {
+  const cli = JSON.stringify(cliPath);
+  const shellProbe = [
+    "set +e",
+    'nproc_soft="$(builtin ulimit -Su)"',
+    'nproc_hard="$(builtin ulimit -Hu)"',
+    'nofile_soft="$(builtin ulimit -Sn)"',
+    'nofile_hard="$(builtin ulimit -Hn)"',
+    "(builtin ulimit -Su 5000) >/dev/null 2>&1",
+    'raise_nproc="$?"',
+    "(builtin ulimit -Sn 1048576) >/dev/null 2>&1",
+    'raise_nofile="$?"',
+    "set -e",
+    'printf "nproc_soft=%s\\nnproc_hard=%s\\nnofile_soft=%s\\nnofile_hard=%s\\nraise_nproc=%s\\nraise_nofile=%s\\n" "$nproc_soft" "$nproc_hard" "$nofile_soft" "$nofile_hard" "$raise_nproc" "$raise_nofile"',
+  ].join("; ");
+  return [
+    "set -euo pipefail",
+    `cat <<'NEMOCLAW_CONNECT_RLIMITS' | ${cli} connect`,
+    "set -euo pipefail",
+    'printf "__NEMOCLAW_RLIMIT_CONNECT_BEGIN__\\n"',
+    `bash -lc '${shellProbe}' | sed 's/^/login_/'`,
+    `bash -ic '${shellProbe}' 2>&1 | sed 's/^/interactive_/'`,
+    'printf "__NEMOCLAW_RLIMIT_CONNECT_END__\\n"',
+    "exit",
+    "NEMOCLAW_CONNECT_RLIMITS",
+  ].join("\n");
+}
+
+async function assertConnectResourceLimits(host: HostCliClient): Promise<string> {
+  const connect = await host.command("bash", ["-lc", connectRlimitProbeScript(host.commandPath)], {
+    artifactName: "tc-sbx-13-connect-rlimits",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 3 * 60_000,
+  });
+  const output = resultText(connect);
+  expectExitZero(connect, "nemoclaw connect resource-limit probe");
+  expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_BEGIN__");
+  expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
+  expect(
+    containsSecurityResourceLimitDiagnostic(output),
+    "connect shell startup must not print resource-limit security diagnostics",
+  ).toBe(false);
+  for (const shell of ["login", "interactive"]) {
+    expect(numericProbe(output, `${shell}_nproc_soft`)).toBeLessThanOrEqual(4096);
+    expect(numericProbe(output, `${shell}_nproc_hard`)).toBeLessThanOrEqual(4096);
+    expect(numericProbe(output, `${shell}_nofile_soft`)).toBeLessThanOrEqual(65536);
+    expect(numericProbe(output, `${shell}_nofile_hard`)).toBeLessThanOrEqual(65536);
+    expect(numericProbe(output, `${shell}_raise_nproc`)).not.toBe(0);
+    expect(numericProbe(output, `${shell}_raise_nofile`)).not.toBe(0);
+  }
+  return output;
+}
 
 async function onboardSandbox(
   host: HostCliClient,
@@ -627,6 +687,7 @@ test(
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",
         "onboard the primary sandbox",
+        "validate connected shell resource limits",
         "exercise primary CLI inference and logs",
         "exercise terminal registry and process recovery",
         "onboard the secondary sandbox",
@@ -657,6 +718,7 @@ test(
         "TC-SBX-10 two sandboxes list with model/provider metadata",
         "TC-SBX-11 sandboxes cannot reach each other by hostname",
         "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port through the macOS default or explicit non-macOS cleanup",
+        "TC-SBX-13 bare connect routes to the default sandbox and enforces login and interactive shell resource limits without startup diagnostics (#2173)",
       ],
     });
 
@@ -672,6 +734,10 @@ test(
 
     progress.phase("onboard the primary sandbox");
     await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
+
+    progress.phase("validate connected shell resource limits");
+    const connectRlimitOutput = await assertConnectResourceLimits(host);
+    await artifacts.writeText("connect-rlimits-output.txt", connectRlimitOutput);
 
     progress.phase("exercise primary CLI inference and logs");
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
@@ -717,6 +783,7 @@ test(
       finalDestroyCleanupMode,
       finalGatewayPortReleased: true,
       gatewayRecovery,
+      connectRlimitsValidated: true,
       legacySource: "test/e2e/test-sandbox-operations.sh",
     });
   },
