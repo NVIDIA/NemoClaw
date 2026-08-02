@@ -6,7 +6,7 @@
 // restores the captured policy snapshot.
 //
 // Usage (internal — called by shields.ts via fork()):
-//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token> <allow-legacy-hermes>
+//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token> <allow-legacy-hermes> <lease-owner-pid> <lease-owner-start> <agent-name>
 
 import fs from "node:fs";
 import path from "node:path";
@@ -42,6 +42,7 @@ interface TimerArgs {
   markerPath: string;
   configPath?: string;
   configDir?: string;
+  agentName?: string;
   processToken?: string;
   allowLegacyHermesProtocol: boolean;
   leaseOwnerPid?: number;
@@ -64,6 +65,7 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     allowLegacyHermes,
     leaseOwnerPidRaw,
     leaseOwnerStartIdentityRaw,
+    agentNameRaw,
   ] = argv;
   const restoreAtMs = restoreAtIso ? new Date(restoreAtIso).getTime() : Number.NaN;
   const leaseOwnerPid = leaseOwnerPidRaw ? Number(leaseOwnerPidRaw) : undefined;
@@ -91,6 +93,7 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     markerPath: path.join(STATE_DIR, `shields-timer-${sandboxName}.json`),
     configPath,
     configDir,
+    ...(agentNameRaw ? { agentName: agentNameRaw } : {}),
     processToken,
     allowLegacyHermesProtocol: allowLegacyHermes === "1",
     ...(leaseOwnerPid && leaseOwnerStartIdentity ? { leaseOwnerPid, leaseOwnerStartIdentity } : {}),
@@ -172,7 +175,10 @@ function markerRecordMatchesCurrentTimer(marker: UnknownRecord | null, args: Tim
     marker.processToken === args.processToken &&
     (marker.allowLegacyHermesProtocol === true) === args.allowLegacyHermesProtocol &&
     marker.leaseOwnerPid === args.leaseOwnerPid &&
-    marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity
+    marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity &&
+    marker.agentName === args.agentName &&
+    (marker.configPath === undefined || marker.configPath === args.configPath) &&
+    (marker.configDir === undefined || marker.configDir === args.configDir)
   );
 }
 
@@ -332,34 +338,46 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
               configDir: string;
               sensitiveFiles?: string[];
             } | null = null;
+            const persistedLockTarget = args.configDir
+              ? {
+                  ...(args.agentName ? { agentName: args.agentName } : {}),
+                  configPath: args.configPath,
+                  configDir: args.configDir,
+                  sensitiveFiles: [
+                    `${args.configDir}/.config-hash`,
+                    ...(args.agentName === "hermes" ? [`${args.configDir}/.env`] : []),
+                  ],
+                }
+              : null;
             try {
               // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
               // carries the OpenClaw sensitiveFiles (.config-hash) that
               // shields-up locks and that the content seal hashes. Dropping
               // them here would persist a partial fileHashes map and the next
               // `shields status` would flag the missing entries as drift.
-              lockTarget = resolveAgentConfig(args.sandboxName);
+              const resolved = resolveAgentConfig(args.sandboxName);
+              lockTarget =
+                resolved.configPath === args.configPath &&
+                resolved.configDir === args.configDir &&
+                (!args.agentName || resolved.agentName === args.agentName)
+                  ? resolved
+                  : persistedLockTarget;
             } catch {
               // Resolver itself threw (registry unavailable). Fall back to
               // argv-supplied paths, but still infer sensitiveFiles from
               // configDir so the locked set matches what shields-up uses.
-              if (args.configDir) {
-                lockTarget = {
-                  configPath: args.configPath,
-                  configDir: args.configDir,
-                  sensitiveFiles: [`${args.configDir}/.config-hash`],
-                };
-              } else {
-                lockVerified = false;
-                appendAudit({
-                  action: "shields_auto_restore_lock_warning",
-                  sandbox: args.sandboxName,
-                  timestamp: now,
-                  restored_by: "auto_timer",
-                  warning: "Missing config directory for auto-restore re-lock verification",
-                  lock_verified: false,
-                });
-              }
+              lockTarget = persistedLockTarget;
+            }
+            if (!lockTarget) {
+              lockVerified = false;
+              appendAudit({
+                action: "shields_auto_restore_lock_warning",
+                sandbox: args.sandboxName,
+                timestamp: now,
+                restored_by: "auto_timer",
+                warning: "Missing config directory for auto-restore re-lock verification",
+                lock_verified: false,
+              });
             }
             if (lockTarget) {
               try {

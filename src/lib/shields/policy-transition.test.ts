@@ -10,6 +10,20 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 const requireSource = createRequire(import.meta.url);
 const SHIELDS_MODULE = "./index.js";
+const DEEP_AGENTS_LOCK_ERROR_PREFIX = "NEMOCLAW_DEEP_AGENTS_CONFIG_LOCK_ERROR_V1";
+const DEEP_AGENTS_LOCK_GENERIC_ERROR = "Deep Agents config lock transaction failed.";
+
+function lockFailure(status: string): string {
+  return `${DEEP_AGENTS_LOCK_ERROR_PREFIX}:${status}\n`;
+}
+
+function sandboxCommandFailure(
+  stderr: string | Buffer | undefined,
+  message = "sandbox command failed",
+  stdout: string | Buffer | undefined = undefined,
+): Error {
+  return Object.assign(new Error(message), { stderr, stdout });
+}
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
 describe("shields policy transition", () => {
@@ -92,7 +106,13 @@ describe("shields config lock without a shipped config hash", () => {
   let homeDir: string;
   let shields: typeof import("./index.js");
   let entries: Map<string, SandboxEntry>;
-  let repairCalls: string[][];
+  let immutablePaths: Set<string>;
+  let lockCalls: string[][];
+  let unlockCalls: string[][];
+  let applyStateDirLockModeSpy: MockInstance;
+  let restoreStateDirLockPostureSpy: MockInstance;
+  let resolveAgentConfigSpy: MockInstance;
+  let errorSpy: MockInstance;
   let commandHandlers: Map<string, (args: string[], command: string[]) => string>;
 
   function target() {
@@ -127,7 +147,9 @@ describe("shields config lock without a shipped config hash", () => {
   beforeEach(() => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-config-lock-"));
     vi.stubEnv("HOME", homeDir);
-    repairCalls = [];
+    lockCalls = [];
+    unlockCalls = [];
+    immutablePaths = new Set<string>();
     entries = new Map<string, SandboxEntry>([
       ["/sandbox", { mode: "1775", owner: "root:sandbox" }],
       [CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" }],
@@ -137,10 +159,26 @@ describe("shields config lock without a shipped config hash", () => {
       [
         "python3",
         (_args, command) => {
-          repairCalls.push(command);
-          entries.set(CONFIG_DIR, { mode: "700", owner: "root:root" });
-          entries.set(HASH_PATH, { mode: "600", owner: "sandbox:sandbox" });
-          return "";
+          if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) {
+            const hashCreated = !entries.has(HASH_PATH);
+            lockCalls.push(command);
+            entries.set("/sandbox", { mode: "1775", owner: "root:sandbox" });
+            entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+            entries.set(CONFIG_PATH, { mode: "444", owner: "root:root" });
+            entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
+            return hashCreated ? "hash-created" : "hash-existing";
+          }
+          if (command[4] === "660") {
+            unlockCalls.push(command);
+            entries.set("/sandbox", { mode: "755", owner: "sandbox:sandbox" });
+            entries.set(CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" });
+            for (const pathname of command.slice(9)) {
+              entries.set(pathname, { mode: "660", owner: "sandbox:sandbox" });
+              immutablePaths.delete(pathname);
+            }
+            return "";
+          }
+          return unsupportedCommand(command);
         },
       ],
       [
@@ -165,8 +203,10 @@ describe("shields config lock without a shipped config hash", () => {
       ],
       [
         "chattr",
-        (_args, command) => {
-          requireEntry(String(command.at(-1)), "chattr");
+        ([operation], command) => {
+          const pathname = String(command.at(-1));
+          requireEntry(pathname, "chattr");
+          if (operation === "+i") immutablePaths.add(pathname);
           return "";
         },
       ],
@@ -175,7 +215,8 @@ describe("shields config lock without a shipped config hash", () => {
         (_args, command) => {
           const pathname = String(command.at(-1));
           requireEntry(pathname, "lsattr");
-          return `----i---------e----- ${pathname}`;
+          const flags = immutablePaths.has(pathname) ? "----i---------" : "--------------";
+          return flags + " " + pathname;
         },
       ],
       [
@@ -200,7 +241,7 @@ describe("shields config lock without a shipped config hash", () => {
     delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
 
     const runner = requireSource("../runner.js");
-    const sandboxConfig = requireSource("../sandbox/config.js");
+    const agentConfig = requireSource("../sandbox/agent-config.js");
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
     const dockerExec = requireSource("../adapters/docker/exec.js");
     const stateDirLock = requireSource("./state-dir-lock.js");
@@ -208,7 +249,9 @@ describe("shields config lock without a shipped config hash", () => {
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     vi.spyOn(runner, "runCapture").mockReturnValue("");
-    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockImplementation(() => target());
+    resolveAgentConfigSpy = vi
+      .spyOn(agentConfig, "resolveAgentConfig")
+      .mockImplementation(() => target());
     vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
       (_sandboxName: unknown, cmd: unknown) => cmd as string[],
     );
@@ -216,9 +259,11 @@ describe("shields config lock without a shipped config hash", () => {
       runSandboxCommand(cmd as string[]),
     );
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
-    vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
-    vi.spyOn(stateDirLock, "restoreStateDirLockPosture").mockReturnValue([]);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
+    restoreStateDirLockPostureSpy = vi
+      .spyOn(stateDirLock, "restoreStateDirLockPosture")
+      .mockReturnValue([]);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
   });
@@ -231,38 +276,212 @@ describe("shields config lock without a shipped config hash", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
-  it("repairs the absent hash record before locking the protected files", () => {
+  it("fresh-seals an absent record before locking recursive state (#7977)", () => {
     const result = shields.lockAgentConfig("dcode-safety", target(), false);
 
-    expect(repairCalls).toHaveLength(1);
-    expect(repairCalls[0].slice(-2)).toEqual([CONFIG_DIR, CONFIG_PATH]);
+    expect(lockCalls).toHaveLength(1);
+    expect(lockCalls[0].slice(4)).toEqual([CONFIG_DIR, CONFIG_PATH, "--fail-closed-on-error"]);
     expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });
     expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
     expect(Object.keys(result.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
   });
 
-  it("leaves the config unlocked when the hash record cannot be repaired", () => {
-    const dockerExec = requireSource("../adapters/docker/exec.js");
-    const injectedFailures = new Map<string, () => string>([
-      [
-        "python3",
-        () => {
-          throw new Error("not a regular file: /sandbox/.deepagents/.config-hash");
-        },
-      ],
-    ]);
-    vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) => {
-      const argv = cmd as string[];
-      const execute = injectedFailures.get(argv[0]) ?? (() => runSandboxCommand(argv));
-      return execute();
+  it.each([
+    [
+      "config-root",
+      "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the config root. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=config-root",
+    ],
+    [
+      "sandbox-parent",
+      "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because the config root could not be trusted. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
+    ],
+    [
+      "incomplete",
+      "  CRITICAL: Deep Agents lock failed after containment began, and NemoClaw could not confirm fail-closed containment. Do not retry or repair from inside the sandbox. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=incomplete",
+    ],
+    [
+      "rollback-failed",
+      "  CRITICAL: Deep Agents config lock transaction could not restore its original posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. rollback failed",
+    ],
+  ] as const)("maps the anchored %s child protocol to exact bounded guidance (#7995)", (status, expectedGuidance) => {
+    commandHandlers.set("python3", (_args, command) => {
+      if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) {
+        const stderr =
+          status === "sandbox-parent"
+            ? Buffer.from(lockFailure(status), "utf8")
+            : lockFailure(status);
+        throw sandboxCommandFailure(
+          stderr,
+          `hostile argv marker ${lockFailure("incomplete")}`,
+          lockFailure("config-root"),
+        );
+      }
+      return unsupportedCommand(command);
     });
 
     expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
-      /not a regular file/,
+      DEEP_AGENTS_LOCK_GENERIC_ERROR,
+    );
+    expect(errorSpy).toHaveBeenCalledWith(expectedGuidance);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts transaction-failed without inventing a containment or rollback claim (#7995)", () => {
+    commandHandlers.set("python3", (_args, command) => {
+      if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) {
+        throw sandboxCommandFailure(lockFailure("transaction-failed"));
+      }
+      return unsupportedCommand(command);
+    });
+
+    expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
+      DEEP_AGENTS_LOCK_GENERIC_ERROR,
+    );
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));
+  });
+
+  it("ignores markers in Error.message, stdout, unanchored stderr, and oversized stderr (#7995)", () => {
+    const { DEEP_AGENTS_CONFIG_LOCK_NOFOLLOW_SCRIPT } = requireSource(
+      "./seal.js",
+    ) as typeof import("./seal.js");
+    const hostileMessage = `python3 -I -c ${DEEP_AGENTS_CONFIG_LOCK_NOFOLLOW_SCRIPT} ${lockFailure("config-root")}`;
+    const failures = [
+      sandboxCommandFailure(undefined, hostileMessage),
+      sandboxCommandFailure(undefined, "transport failed", lockFailure("config-root")),
+      sandboxCommandFailure(`untrusted preface ${lockFailure("config-root")}`, "transport failed"),
+      sandboxCommandFailure(
+        `${lockFailure("config-root")}untrusted trailing stderr`,
+        "transport failed",
+      ),
+      sandboxCommandFailure(`${"x".repeat(100_000)}${lockFailure("config-root")}`, hostileMessage),
+    ];
+
+    for (const failure of failures) {
+      errorSpy.mockClear();
+      commandHandlers.set("python3", (_args, command) => {
+        if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) throw failure;
+        return unsupportedCommand(command);
+      });
+
+      let caught: unknown;
+      try {
+        shields.lockAgentConfig("dcode-safety", target(), false);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe(DEEP_AGENTS_LOCK_GENERIC_ERROR);
+      expect((caught as Error).message.length).toBeLessThan(128);
+      expect((caught as Error).message).not.toContain("python3");
+      expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));
+    }
+  });
+
+  it("keeps the fresh seal when a nested entry blocks recursive containment (#7977)", () => {
+    applyStateDirLockModeSpy.mockReturnValueOnce(["injected recursive lock failure"]);
+
+    expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
+      /injected recursive lock failure/,
     );
 
-    expect(entries.get(CONFIG_PATH)).toEqual({ mode: "660", owner: "sandbox:sandbox" });
-    expect(entries.has(HASH_PATH)).toBe(false);
+    expect(unlockCalls).toHaveLength(0);
+    expect(restoreStateDirLockPostureSpy).not.toHaveBeenCalled();
+    expect(entries.get("/sandbox")).toEqual({ mode: "1775", owner: "root:sandbox" });
+    expect(entries.get(CONFIG_DIR)).toEqual({ mode: "755", owner: "root:root" });
+    expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));
+  });
+
+  it("restores and verifies the prior locked posture after a downstream failure (#7977)", () => {
+    entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+    entries.set(CONFIG_PATH, { mode: "444", owner: "root:root" });
+    entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
+    applyStateDirLockModeSpy.mockReturnValueOnce(["injected recursive lock failure"]);
+
+    expect(() => shields.lockAgentConfig("dcode-safety", target(), true)).toThrow(
+      /injected recursive lock failure/,
+    );
+
+    expect(lockCalls[0].slice(4)).toEqual([CONFIG_DIR, CONFIG_PATH]);
+    expect(unlockCalls).toHaveLength(0);
+    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(expect.anything(), CONFIG_DIR, true);
+    expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));
+  });
+
+  it.each([
+    [
+      "is unavailable",
+      () => {
+        throw new Error("registry unavailable");
+      },
+    ],
+    [
+      "falls back to a changed OpenClaw target",
+      () => ({
+        agentName: "openclaw",
+        configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        format: "json",
+      }),
+    ],
+  ])("pins expired inline recovery to Deep Agents when the registry %s (#7995)", (_scenario, resolveTarget) => {
+    const sandboxName = "dcode-safety";
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-inline-recovery.yaml");
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+        shieldsDownTimeout: 60,
+        shieldsDownReason: "identity coverage",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: 4242,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 30_000).toISOString(),
+        processToken: "7".repeat(32),
+        agentName: "langchain-deepagents-code",
+        configPath: CONFIG_PATH,
+        configDir: CONFIG_DIR,
+      }),
+      { mode: 0o600 },
+    );
+    vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
+      if (pid === 4242 && signal === 0) {
+        const error = new Error("timer is gone") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      return true;
+    });
+    resolveAgentConfigSpy.mockImplementation(resolveTarget);
+
+    const posture = shields.getShieldsPosture(sandboxName, true);
+    const state = JSON.parse(
+      fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf-8"),
+    );
+
+    expect(posture.mode).toBe("locked");
+    expect(lockCalls).toHaveLength(2);
+    expect(lockCalls.every((command) => command[4] === CONFIG_DIR)).toBe(true);
+    expect(lockCalls.every((command) => command[5] === CONFIG_PATH)).toBe(true);
+    expect(Object.keys(state.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
+    expect(fs.existsSync(markerPath)).toBe(false);
   });
 
   it("restores the managed sandbox parent when the config is unlocked", () => {
