@@ -44,13 +44,25 @@ function sandbox(name = "alpha"): SandboxEntry {
   };
 }
 
-function provider(destroyError?: string) {
+function destroySuccessfully(value: HostLocalInferenceReceipt) {
+  return { status: "removed" as const, receipt: value };
+}
+
+function failDestroy(message: string) {
+  return (_value: HostLocalInferenceReceipt): never => {
+    throw new Error(message);
+  };
+}
+
+function provider(
+  destroyRuntime: (value: HostLocalInferenceReceipt) => {
+    status: "removed";
+    receipt: HostLocalInferenceReceipt;
+  } = destroySuccessfully,
+) {
   const preserveForRebuild = vi.fn((value: HostLocalInferenceReceipt) => value);
   const prepareDestroy = vi.fn((value: HostLocalInferenceReceipt) => value);
-  const destroy = vi.fn((value: HostLocalInferenceReceipt) => {
-    if (destroyError) throw new Error(destroyError);
-    return { status: "removed" as const, receipt: value };
-  });
+  const destroy = vi.fn(destroyRuntime);
   const bundle = createInMemoryRuntimeProviderBundle({
     providerId: "mxc",
     workloadProfile: {
@@ -85,7 +97,7 @@ async function runDestroy(runtimeProvider: ReturnType<typeof provider>, peers: S
     getSandbox: () => entry,
     listSandboxes: () => ({ sandboxes: [entry, ...peers] }),
     runOpenshell: (args) => {
-      if (args[0] === "sandbox" && args[1] === "delete") events.push("delete");
+      events.push(args.join(" "));
       return { status: 0, stdout: "", stderr: "" };
     },
     sandbox: entry,
@@ -106,7 +118,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     const { events, result } = await runDestroy(runtimeProvider, []);
 
     expect(result).toMatchObject({ ok: true });
-    expect(events).toEqual(["delete", "cleanup"]);
+    expect(events.slice(-2)).toEqual(["sandbox delete alpha", "cleanup"]);
     expect(runtimeProvider.prepareDestroy).toHaveBeenCalledTimes(2);
     expect(runtimeProvider.destroy).toHaveBeenCalledOnce();
   });
@@ -120,7 +132,7 @@ describe("sandbox destroy host-local inference transaction", () => {
   });
 
   it("preserves local ownership when exact runtime retirement fails", async () => {
-    const runtimeProvider = provider("injected runtime removal failure");
+    const runtimeProvider = provider(failDestroy("injected runtime removal failure"));
     const { events, result } = await runDestroy(runtimeProvider, []);
 
     expect(result).toMatchObject({
@@ -128,6 +140,6 @@ describe("sandbox destroy host-local inference transaction", () => {
       deleteConfirmed: true,
       hostLocalInferenceCleanupFailure: "injected runtime removal failure",
     });
-    expect(events).toEqual(["delete", "cleanup"]);
+    expect(events.slice(-2)).toEqual(["sandbox delete alpha", "cleanup"]);
   });
 });
