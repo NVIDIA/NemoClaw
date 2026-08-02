@@ -231,7 +231,9 @@ export function reserveSandboxInferenceRoute(
       endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
-      hostLocalInferenceReceipt: route.hostLocalInferenceReceipt ?? null,
+      ...(route.hostLocalInferenceReceipt !== undefined
+        ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
+        : {}),
       gatewayName: route.gatewayName,
       gatewayPort: undefined,
     };
