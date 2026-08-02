@@ -81,20 +81,20 @@ function createHarness(options: HarnessOptions = {}) {
       },
     };
   });
-  const getCollaboratorPermissionLevel = vi.fn(async () => {
-    if (options.permissionError) throw options.permissionError;
-    return {
-      data:
-        (options.permission
-          ? { ...options.permission, user: options.permission.user ?? { login: author } }
-          : undefined) ??
-        ({
-          permission: "write",
-          role_name: "write",
-          user: { login: author },
-        } as const),
-    };
-  });
+  const permissionResponse =
+    (options.permission
+      ? { ...options.permission, user: options.permission.user ?? { login: author } }
+      : undefined) ??
+    ({
+      permission: "write",
+      role_name: "write",
+      user: { login: author },
+    } as const);
+  const getCollaboratorPermissionLevel = vi.fn(
+    options.permissionError
+      ? async () => Promise.reject(options.permissionError)
+      : async () => ({ data: permissionResponse }),
+  );
   const listWorkflowRunsForRepo = vi.fn(async () => {
     const runs = options.runsByPoll?.[workflowRunPoll] ?? [];
     workflowRunPoll += 1;
