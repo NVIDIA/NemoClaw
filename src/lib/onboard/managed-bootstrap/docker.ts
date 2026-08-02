@@ -64,6 +64,8 @@ import {
   type ManagedBootstrapReplacementOptions,
   type ManagedBootstrapSandboxIdentity,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
 import {
   createFileDockerManagedBootstrapJournalStore,
@@ -1446,13 +1448,6 @@ function sameDockerBootstrapPreparedAuthority(
   );
 }
 
-function sameDurablePreparationReceipt(
-  left: ManagedBootstrapDurablePreparationReceipt,
-  right: ManagedBootstrapDurablePreparationReceipt,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 function createDockerBootstrapJournalDurably(
   journal: DockerBootstrapTransaction,
   deps: ResolvedDeps,
@@ -1573,7 +1568,10 @@ function assertDockerBootstrapTransactionAuthority(
     (durablePreparation !== undefined &&
       durablePreparation !== null &&
       (transaction.preparationReceipt === null ||
-        !sameDurablePreparationReceipt(transaction.preparationReceipt, durablePreparation))) ||
+        !sameManagedBootstrapDurablePreparationReceipt(
+          transaction.preparationReceipt,
+          durablePreparation,
+        ))) ||
     (prepared !== undefined &&
       prepared !== null &&
       (transaction.originalRuntimeId !== prepared.originalRuntimeId ||
@@ -1764,13 +1762,31 @@ export function createDockerManagedBootstrapAdapter(
   dependencies: DockerManagedBootstrapDeps = {},
 ): DockerManagedBootstrapAdapter {
   const deps = resolveDeps(dependencies);
+  const finalizationContext = (handle: ManagedBootstrapHeldWorkloadHandle) =>
+    Object.freeze({
+      bootstrapIdentity: handle.bootstrapIdentity,
+      providerId: handle.sandbox.driverId,
+      agent: handle.plan.profile.agent,
+      sandbox: handle.sandbox,
+      planFingerprint: createManagedBootstrapPlanFingerprint(handle.plan),
+      profileFingerprint: handle.plan.profile.fingerprint,
+      imageReference: expectedImageReference(
+        handle.plan.image.repository,
+        handle.plan.image.manifestDigest,
+      ),
+    });
   const finalizationRecord = (
     handle: ManagedBootstrapHeldWorkloadHandle,
   ): DockerManagedBootstrapFinalizationRecord | null => {
-    const record = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+    const record = deps.journalStore.loadFinalization(
+      handle.bootstrapIdentity,
+      finalizationContext(handle),
+    );
     if (!record) return null;
     if (
+      record.bootstrapIdentity !== handle.bootstrapIdentity ||
       record.providerId !== handle.sandbox.driverId ||
+      record.agent !== handle.plan.profile.agent ||
       record.sandbox.sandboxName !== handle.sandbox.sandboxName ||
       record.sandbox.sandboxId !== handle.sandbox.sandboxId ||
       record.sandbox.driverId !== handle.sandbox.driverId ||
@@ -1807,9 +1823,12 @@ export function createDockerManagedBootstrapAdapter(
     } satisfies DockerManagedBootstrapFinalizationRecord);
     const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
     try {
-      deps.journalStore.recordFinalization(record);
+      deps.journalStore.recordFinalization(record, finalizationContext(handle));
     } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+      const recovered = deps.journalStore.loadFinalization(
+        handle.bootstrapIdentity,
+        finalizationContext(handle),
+      );
       if (
         !recovered ||
         serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
@@ -1817,7 +1836,10 @@ export function createDockerManagedBootstrapAdapter(
         throw error;
       }
     }
-    const persisted = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+    const persisted = deps.journalStore.loadFinalization(
+      handle.bootstrapIdentity,
+      finalizationContext(handle),
+    );
     if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
       throw new Error("Managed bootstrap finalization receipt was not durably re-readable.");
     }
@@ -1910,9 +1932,9 @@ export function createDockerManagedBootstrapAdapter(
     } satisfies DockerManagedBootstrapFinalizationRecord);
     const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
     try {
-      deps.journalStore.recordFinalization(record);
+      deps.journalStore.recordFinalization(record, journal);
     } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
+      const recovered = deps.journalStore.loadFinalization(journal.bootstrapIdentity, journal);
       if (
         !recovered ||
         serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
@@ -1920,7 +1942,7 @@ export function createDockerManagedBootstrapAdapter(
         throw error;
       }
     }
-    const persisted = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
+    const persisted = deps.journalStore.loadFinalization(journal.bootstrapIdentity, journal);
     if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
       throw new Error("Managed bootstrap recovered finalization was not durably re-readable.");
     }
@@ -1944,13 +1966,14 @@ export function createDockerManagedBootstrapAdapter(
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
   ): ManagedBootstrapRecoveryReceipt | null => {
-    const finalization = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
+    const finalization = deps.journalStore.loadFinalization(journal.bootstrapIdentity, journal);
     if (!finalization) return null;
     const phaseMatches =
       (finalization.phase === "committed" &&
         journal.phase === "shared-state-committed" &&
         finalization.commitReceipt !== null &&
-        JSON.stringify(finalization.commitReceipt) === JSON.stringify(journal.commitReceipt)) ||
+        journal.commitReceipt !== null &&
+        sameManagedBootstrapCompletionReceipt(finalization.commitReceipt, journal.commitReceipt)) ||
       (finalization.phase === "rolled-back" &&
         (journal.phase === "staged" || journal.phase === "rollback-authorized") &&
         finalization.commitReceipt === null);
@@ -2684,7 +2707,7 @@ export function createDockerManagedBootstrapAdapter(
       if (
         finalized.phase !== "committed" ||
         !finalized.commitReceipt ||
-        JSON.stringify(finalized.commitReceipt) !== JSON.stringify(completion)
+        !sameManagedBootstrapCompletionReceipt(finalized.commitReceipt, completion)
       ) {
         throw new ManagedBootstrapCommitStateIndeterminateError({
           bootstrapIdentity: handle.bootstrapIdentity,
@@ -2764,7 +2787,7 @@ export function createDockerManagedBootstrapAdapter(
     );
     if (
       journal.commitReceipt === null ||
-      JSON.stringify(journal.commitReceipt) !== JSON.stringify(completion)
+      !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, completion)
     ) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,

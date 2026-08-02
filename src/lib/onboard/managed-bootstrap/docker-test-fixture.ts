@@ -18,6 +18,7 @@ import {
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapPreparedReplacementHandle,
   type ManagedBootstrapReplacementHandle,
+  sameManagedBootstrapCompletionReceipt,
 } from "./adapter";
 import type { DockerManagedBootstrapDeps } from "./docker";
 import {
@@ -26,6 +27,7 @@ import {
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalPhase,
   type DockerManagedBootstrapJournalStore,
+  serializeDockerManagedBootstrapFinalizationRecord,
 } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
 import {
@@ -58,6 +60,7 @@ export type DockerFixtureAcknowledgement =
   | "container:stop"
   | "journal:create"
   | "journal:cutover"
+  | "journal:completion"
   | "journal:remove"
   | "journal:rollback-authorized"
   | "journal:staged"
@@ -265,12 +268,17 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
       if (
         journal.commitReceipt !== null &&
-        JSON.stringify(journal.commitReceipt) !== JSON.stringify(receipt)
+        !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, receipt)
       ) {
         throw new Error("completion changed");
       }
       journal = { ...journal, commitReceipt: structuredClone(receipt) };
       events.push("journal:completion");
+      if (losesAcknowledgement("journal:completion")) {
+        throw new DockerManagedBootstrapJournalAcknowledgementLostError(
+          "lost journal completion acknowledgement",
+        );
+      }
       return structuredClone(journal);
     },
     remove(_identity, expected) {
@@ -294,7 +302,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     recordFinalization(value) {
-      if (finalization && JSON.stringify(finalization) !== JSON.stringify(value)) {
+      if (
+        finalization &&
+        serializeDockerManagedBootstrapFinalizationRecord(finalization) !==
+          serializeDockerManagedBootstrapFinalizationRecord(value)
+      ) {
         throw new Error("finalization changed");
       }
       finalization = structuredClone(value);

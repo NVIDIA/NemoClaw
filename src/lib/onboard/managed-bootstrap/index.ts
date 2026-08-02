@@ -13,6 +13,8 @@ export {
   type ManagedBootstrapRecoveryReceipt,
   prepareManagedBootstrapSequence,
   recoverManagedBootstrapTransactions,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
 export {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,

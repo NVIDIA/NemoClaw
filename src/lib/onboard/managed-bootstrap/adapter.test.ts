@@ -19,6 +19,7 @@ import {
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapCreateReceipt,
+  type ManagedBootstrapDurablePreparationReceipt,
   type ManagedBootstrapFinalizationReceipt,
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapObservedSnapshot,
@@ -27,6 +28,8 @@ import {
   prepareManagedBootstrapSequence,
   recoverManagedBootstrapTransactions,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
 
 const IDENTITY = "1".repeat(64);
@@ -40,6 +43,10 @@ const ACTIVATED_SPEC_JSON = '{"name":"active"}\n';
 const ACTIVATED_HASH = createHash("sha256").update(ACTIVATED_SPEC_JSON, "utf8").digest("hex");
 const RUNTIME_ID = "7".repeat(64);
 const PREPARED_ID = "8".repeat(64);
+
+function reverseKeys<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).reverse()) as T;
+}
 
 function requestFor(agent: ManagedStartupAgent) {
   return createManagedStartupRootApplyRequest({
@@ -354,6 +361,45 @@ async function captureFailure<T>(promise: Promise<T>) {
 }
 
 describe("managed bootstrap adapter contract", () => {
+  it("compares provider-neutral durable receipts by canonical value", () => {
+    const handle = handleFor(requestFor("hermes"));
+    const preparation: ManagedBootstrapDurablePreparationReceipt = {
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      authorityFingerprint: "a".repeat(64),
+      recordId: "mxc-durable-authority",
+      recordedAt: "2026-07-29T12:00:30.000Z",
+    };
+    const reorderedPreparation = reverseKeys({
+      ...preparation,
+      sandbox: reverseKeys({ ...preparation.sandbox }),
+    });
+    expect(sameManagedBootstrapDurablePreparationReceipt(preparation, reorderedPreparation)).toBe(
+      true,
+    );
+    expect(
+      sameManagedBootstrapDurablePreparationReceipt(preparation, {
+        ...reorderedPreparation,
+        recordId: "changed-authority",
+      }),
+    ).toBe(false);
+
+    const completion = completionFor(requestFor("hermes"), handle);
+    const reorderedCompletion = reverseKeys({
+      ...completion,
+      image: reverseKeys({ ...completion.image }),
+      sandbox: reverseKeys({ ...completion.sandbox }),
+    });
+    expect(sameManagedBootstrapCompletionReceipt(completion, reorderedCompletion)).toBe(true);
+    expect(
+      sameManagedBootstrapCompletionReceipt(completion, {
+        ...reorderedCompletion,
+        transactionPending: false,
+      }),
+    ).toBe(false);
+  });
+
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("prepares, durably records, and only then activates %s through a provider-neutral adapter", async (agent) => {

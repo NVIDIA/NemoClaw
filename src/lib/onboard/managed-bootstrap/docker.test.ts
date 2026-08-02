@@ -17,6 +17,10 @@ import {
   SUPPORTED_AGENTS,
 } from "./docker-test-fixture";
 
+function reverseKeys<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).reverse()) as T;
+}
+
 describe("Docker managed bootstrap adapter", () => {
   it("publishes durable commit authority before deleting the rollback backup after lost acknowledgements", async () => {
     const fake = fixture({
@@ -28,6 +32,7 @@ describe("Docker managed bootstrap adapter", () => {
         "container:stop",
         "journal:create",
         "journal:cutover",
+        "journal:completion",
         "journal:remove",
         "journal:shared-state-committed",
       ],
@@ -69,14 +74,23 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events.indexOf("journal:completion")).toBeGreaterThan(
       fake.events.indexOf(`start:${NEW_ID}`),
     );
+    const reorderedDurable = reverseKeys({
+      ...durable,
+      sandbox: reverseKeys({ ...durable.sandbox }),
+    });
+    const reorderedCommitReceipt = reverseKeys({
+      ...commitReceipt,
+      image: reverseKeys({ ...commitReceipt.image }),
+      sandbox: reverseKeys({ ...commitReceipt.sandbox }),
+    });
     const finalized = await adapter.finalizeBootstrap({
       outcome: "commit",
       handle,
       snapshot,
       prepared,
-      durablePreparation: durable,
+      durablePreparation: reorderedDurable,
       replacement,
-      completion: commitReceipt,
+      completion: reorderedCommitReceipt,
     });
     expect(finalized).toMatchObject({ outcome: "committed" });
     expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
