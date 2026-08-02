@@ -72,6 +72,7 @@ const {
   withTimerBoundShieldsMutationLock,
 }: typeof import("./timer-bound-lock") = require("./timer-bound-lock");
 const {
+  buildConfigHashRepairCommand,
   parseSha256Output,
   isHashVerificationIssue,
   isSha256Hex,
@@ -753,6 +754,15 @@ type AgentConfigTarget = {
   sensitiveFiles?: string[];
 };
 
+function requiresProtectedSandboxParent(target: AgentConfigTarget): boolean {
+  return (
+    target.configDir.startsWith("/sandbox/") &&
+    (target.agentName === "openclaw" ||
+      target.agentName === "hermes" ||
+      target.agentName === "langchain-deepagents-code")
+  );
+}
+
 function configHashPath(configDir: string): string {
   return `${configDir.replace(/\/+$/, "")}/.config-hash`;
 }
@@ -1115,8 +1125,9 @@ def config_child_name(config_dir, path):
 file_mode = int(sys.argv[1], 8)
 dir_mode = int(sys.argv[2], 8)
 uid, gid = resolve_user_group(sys.argv[3])
-config_dir = os.path.normpath(sys.argv[4])
-files = sys.argv[5:]
+restore_mutable_parent = sys.argv[4] == "1"
+config_dir = os.path.normpath(sys.argv[5])
+files = sys.argv[6:]
 
 parent_dir = os.path.dirname(config_dir)
 config_name = os.path.basename(config_dir)
@@ -1181,8 +1192,12 @@ finally:
             restore_errors.append(str(exc))
         os.close(dir_fd)
     try:
-        os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
-        os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
+        if unlock_ok and restore_mutable_parent:
+            os.fchown(parent_fd, uid, gid)
+            os.fchmod(parent_fd, 0o755)
+        else:
+            os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
+            os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
     except OSError as exc:
         restore_errors.append(str(exc))
     os.close(parent_fd)
@@ -1573,9 +1588,20 @@ function unlockConfigPathsNoSymlinkFollow(
     fileMode,
     dirMode,
     "sandbox:sandbox",
+    requiresProtectedSandboxParent(target) ? "1" : "0",
     target.configDir,
     ...filesToUnlock,
   ]);
+}
+
+function writeAbsentConfigHashNoSymlinkFollow(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): void {
+  privilegedSandboxExec(
+    sandboxName,
+    buildConfigHashRepairCommand(target.configDir, target.configPath),
+  );
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -1746,7 +1772,7 @@ function unlockAgentConfigUnderMutationLock(
       issues.push(`config dir stat failed: ${msg}`);
     }
 
-    if (openClawProtocol) {
+    if (requiresProtectedSandboxParent(target) && target.agentName !== "hermes") {
       try {
         const parentPerms = privilegedSandboxExecCapture(sandboxName, [
           "stat",
@@ -2022,6 +2048,7 @@ function lockAgentConfigUnderMutationLock(
     } else if (legacyHermesProtocol) {
       transitionLegacyHermesConfig(sandboxName, target, "lock", filesToLock);
     } else if (target.agentName !== "hermes") {
+      writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
       for (const f of filesToLock) {
         try {
           privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
@@ -2099,7 +2126,8 @@ function lockAgentConfigUnderMutationLock(
       // parent metadata. Verify the recursively locked tree while rollback is
       // still available, then verify the parent after the final commit below.
       verifyParentProtection:
-        (target.agentName === "hermes" && transaction === null) || openClawProtocol,
+        requiresProtectedSandboxParent(target) &&
+        (target.agentName !== "hermes" || transaction === null),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
     });
@@ -2926,7 +2954,7 @@ function shieldsUpWithoutHostLock(
     const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
     const { issues } = verifyShieldsLockState(sandboxName, target, {
       verifyChattr: state.chattrApplied === true,
-      verifyParentProtection: target.agentName === "openclaw" || target.agentName === "hermes",
+      verifyParentProtection: requiresProtectedSandboxParent(target),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
       expectedHashes: state.fileHashes,
@@ -3239,7 +3267,7 @@ function shieldsStatusWithoutHostLock(
         const target = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
         driftIssues = verify(sandboxName, target, {
           verifyChattr: state.chattrApplied === true,
-          verifyParentProtection: target.agentName === "openclaw" || target.agentName === "hermes",
+          verifyParentProtection: requiresProtectedSandboxParent(target),
           exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
           assertLegacyLayout: assertNoLegacyStateLayout,
           expectedHashes: state.fileHashes,
