@@ -167,6 +167,33 @@ describe("Podman host-local inference runtime", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["nim", "/v1/health/ready"],
+    ["vllm", "/health"],
+  ] as const)("rejects unready managed %s preservation without mutation", (service, path) => {
+    const host = runtimeHarness();
+    const receipt = host.runtime.startManaged(managedInput(service));
+    const runtimeId =
+      receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable";
+    host.setProbeFailure("service is not ready");
+
+    expect(() => host.runtime.preserveForRebuild(receipt)).toThrow(
+      `${service} network probe failed`,
+    );
+    expect(host.containers.has(runtimeId)).toBe(true);
+    expect(host.capture.mock.calls.at(-1)?.[0]).toEqual(
+      expect.arrayContaining([
+        "--network",
+        "openshell",
+        PROBE_IMAGE_REF,
+        `http://host.containers.internal:${String(managedInput(service).hostPort)}${path}`,
+      ]),
+    );
+    expect(
+      host.capture.mock.calls.map(([args]) => args).some(([operation]) => operation === "rm"),
+    ).toBe(false);
+  });
+
   it("rejects foreign name ownership and unavailable CDI devices before mutation", () => {
     const host = runtimeHarness();
     const foreignId = "f".repeat(64);
@@ -267,6 +294,19 @@ describe("Podman host-local inference runtime", () => {
         runtime:
           receipt.runtime.kind === "container"
             ? { ...receipt.runtime, gpu: { ...receipt.runtime.gpu, devices: ["nvidia.com/gpu=0"] } }
+            : receipt.runtime,
+      }),
+    ],
+    [
+      "probe image",
+      (receipt: ReturnType<ReturnType<typeof runtimeHarness>["runtime"]["startManaged"]>) => ({
+        ...receipt,
+        runtime:
+          receipt.runtime.kind === "container"
+            ? {
+                ...receipt.runtime,
+                probeImageRef: `quay.io/curl/curl@sha256:${"e".repeat(64)}`,
+              }
             : receipt.runtime,
       }),
     ],
