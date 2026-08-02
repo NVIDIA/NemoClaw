@@ -117,6 +117,31 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
+  it("selects Hermes MCP and channel lifecycle E2E for CLI adapter routing changes (#8011)", () => {
+    const changedFiles = [
+      "agents/hermes/hermes-cli-adapter-v1.json",
+      "agents/hermes/hermes-wrapper.py",
+      "agents/hermes/validate-cli-adapter.py",
+    ];
+    const result = plan(...changedFiles);
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: changedFiles,
+        requiredJobs: ["channels-stop-start", "mcp-bridge"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([
+        "channels-stop-start",
+        "hermes-e2e",
+        "hermes-inference-switch",
+        "mcp-bridge",
+      ]),
+    );
+  });
+
   it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {
     const changedFiles = ["test/e2e/support/workflow-plan.test.ts"];
     const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);

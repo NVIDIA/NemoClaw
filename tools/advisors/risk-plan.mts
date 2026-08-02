@@ -25,6 +25,12 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
+const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
+  "agents/hermes/hermes-cli-adapter-v1.json",
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/validate-cli-adapter.py",
+]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -165,7 +171,7 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
-  const matchedFiles = stableUnique(
+  const managedStartupFiles = stableUnique(
     changedFiles.filter(
       (file) =>
         (file.startsWith("src/lib/onboard/managed-startup/") ||
@@ -174,8 +180,19 @@ export function focusedPrE2eJobsForChangedFiles(
         isRuntimeRelevant(file),
     ),
   );
-  if (matchedFiles.length === 0) return [];
-  return MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles }));
+  const hermesCliAdapterFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
+  return [
+    ...(managedStartupFiles.length > 0
+      ? MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles }))
+      : []),
+    ...(hermesCliAdapterFiles.length > 0
+      ? HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: hermesCliAdapterFiles }))
+      : []),
+  ];
 }
 
 export const RISK_RULES: readonly RiskRule[] = [

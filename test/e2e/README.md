@@ -623,6 +623,9 @@ family remains the conservative boundary for shared E2E tools, workflow and
 security files, unknown live test paths, risk policy, dependency and test
 configuration, and preparation and upload actions. These cross-cutting changes
 keep the broad three-job floor.
+Changes to the Hermes CLI wrapper, adapter manifest, or adapter validator also
+select `channels-stop-start` and `mcp-bridge`. Both jobs run their Hermes shard
+to verify passthrough through channel and managed MCP gateway lifecycles.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.
