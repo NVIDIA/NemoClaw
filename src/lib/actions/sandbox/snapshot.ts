@@ -1364,10 +1364,14 @@ async function runSnapshotRestoreUnlocked(
         );
       } catch (error) {
         console.error(
-          `  Cannot bind clone '${targetSandbox}' to snapshot inference authority: ${
+          `  Cannot re-prove clone '${targetSandbox}' against snapshot inference authority: ${
             error instanceof Error ? error.message : String(error)
           }.`,
         );
+        console.error(
+          `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
+        );
+        deleteSandboxForRestore(targetSandbox);
         snapshotExit(1);
       }
     }

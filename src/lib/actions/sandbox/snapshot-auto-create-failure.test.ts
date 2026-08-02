@@ -1,32 +1,64 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { serializedHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
+import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
-const captureOpenshellMock = vi.fn(() => ({ status: 0, output: "alpha Ready\n" }));
-const getSandboxMock = vi.fn((name?: string) =>
-  name === "alpha"
-    ? {
-        name: "alpha",
-        agent: "openclaw",
-        gatewayName: "nemoclaw",
-        imageTag: "nemoclaw-alpha:test",
-        openshellDriver: "docker",
-        provider: "nvidia-nim",
-        model: "nvidia/model-a",
-      }
-    : null,
-);
-const registerSandboxMock = vi.fn();
+const harness = vi.hoisted(() => ({
+  entries: new Map<string, Record<string, unknown>>(),
+  preserveForRebuild: vi.fn((value: unknown) => value),
+  prepareDestroy: vi.fn((value: unknown) => value),
+  destroy: vi.fn((value: unknown) => ({ status: "removed", receipt: value })),
+}));
+const captureOpenshellMock = vi.fn(() => ({ status: 0, output: "alpha Ready\nbeta Ready\n" }));
+const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
+const registerSandboxMock = vi.fn((entry: Record<string, unknown>) => {
+  harness.entries.set(String(entry.name), entry);
+});
 const restoreSandboxStateMock = vi.fn();
+const captureSnapshotRestoreAuthorityMock = vi.fn();
 const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
   status: 7,
   output: "create failed before registry write",
   sawProgress: false,
   forcedReady: false,
 }));
+const removeSandboxRegistryEntryOutcomeMock = vi.fn((name: string) => {
+  const removed = harness.entries.delete(name);
+  return { status: removed ? ("complete" as const) : ("not-found" as const), removed };
+});
+
+const runtimeProvider = {
+  identity: { contractVersion: 1, id: "mxc", displayName: "MXC" },
+  hostLocalInference: {
+    providerId: "mxc",
+    supported: true,
+    runtime: {
+      providerId: "mxc",
+      authorityId: "mxc:host-local",
+      services: ["ollama", "nim", "vllm"],
+      preserveForRebuild: harness.preserveForRebuild,
+      prepareDestroy: harness.prepareDestroy,
+      destroy: harness.destroy,
+    },
+  },
+} as unknown as RuntimeProviderBundle;
+
+function sourceEntry(receipt?: string): Record<string, unknown> {
+  return {
+    name: "alpha",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    imageTag: "nemoclaw-alpha:test",
+    openshellDriver: receipt ? "mxc" : "docker",
+    provider: "nvidia-nim",
+    model: "nvidia/model-a",
+    ...(receipt ? { hostLocalInferenceReceipt: receipt } : {}),
+  };
+}
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
@@ -110,13 +142,17 @@ vi.mock("../../state/mcp-lifecycle-lock", () => ({
 }));
 vi.mock("../../state/registry", () => ({
   getSandbox: getSandboxMock,
-  listSandboxes: vi.fn(() => ({ sandboxes: [getSandboxMock("alpha")], defaultSandbox: "alpha" })),
+  listSandboxes: vi.fn(() => ({
+    sandboxes: [...harness.entries.values()],
+    defaultSandbox: "alpha",
+  })),
   registerSandbox: registerSandboxMock,
-  removeSandbox: vi.fn(),
+  removeSandbox: vi.fn((name: string) => harness.entries.delete(name)),
   updateSandbox: vi.fn(),
 }));
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: vi.fn(),
+  captureSnapshotRestoreAuthority: captureSnapshotRestoreAuthorityMock,
   findBackup: vi.fn(() => ({ match: null })),
   getLatestBackup: vi.fn(() => ({
     timestamp: "2026-06-15T00:00:00.000Z",
@@ -127,17 +163,36 @@ vi.mock("../../state/sandbox", () => ({
 }));
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: vi.fn(),
-  removeSandboxRegistryEntry: vi.fn(),
+  removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
+  requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
+}));
+vi.mock("./restore-gateway-pairing", () => ({
+  establishRestoredSandboxGatewayPairing: vi.fn(),
+  waitForRestoredSandboxGatewaySupervisor: vi.fn(() => true),
 }));
 vi.mock("./sandbox-gateway-routing", () => ({
   probeGatewayRunning: vi.fn(() => true),
   selectSandboxGatewayIfRegistered: vi.fn(() => true),
-  usesGatewayMetadataProbe: vi.fn(
-    (driver?: string | null) => driver === "docker" || driver === "vm",
-  ),
+  usesGatewayMetadataProbe: vi.fn(() => true),
+}));
+vi.mock("./snapshot/dependencies", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot/dependencies")>()),
+  requireCurrentSnapshotRuntimeProvider: vi.fn(() => runtimeProvider),
 }));
 
 describe("snapshot restore auto-create failures", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    harness.entries.clear();
+    harness.entries.set("alpha", sourceEntry());
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 7,
+      output: "create failed before registry write",
+      sawProgress: false,
+      forcedReady: false,
+    });
+  });
+
   it("does not register a ghost sandbox when auto-create fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -156,6 +211,51 @@ describe("snapshot restore auto-create failures", () => {
       expect.objectContaining({ initialPhase: "create" }),
     );
     expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("removes a registered clone when live inference re-proof fails", async () => {
+    const receipt = serializedHostLocalInferenceReceipt("mxc");
+    harness.entries.set("alpha", sourceEntry(receipt));
+    harness.preserveForRebuild
+      .mockImplementationOnce((value) => value)
+      .mockImplementationOnce(() => {
+        throw new Error("injected live route failure");
+      });
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "beta Ready",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    const { getLatestBackup } = await import("../../state/sandbox");
+    vi.mocked(getLatestBackup).mockReturnValue({
+      timestamp: "2026-08-02T00-00-00-000Z",
+      backupPath: "/tmp/backup-alpha",
+      hostLocalInferenceReceipt: receipt,
+    } as ReturnType<typeof getLatestBackup>);
+    captureSnapshotRestoreAuthorityMock.mockReturnValue({
+      schemaVersion: 1,
+      backupPath: "/tmp/backup-alpha",
+      contentSha256: "e".repeat(64),
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(harness.preserveForRebuild).toHaveBeenCalledTimes(2);
+    expect(registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta", hostLocalInferenceReceipt: receipt }),
+    );
+    expect(harness.prepareDestroy).toHaveBeenCalledTimes(2);
+    expect(harness.destroy).not.toHaveBeenCalled();
+    expect(removeSandboxRegistryEntryOutcomeMock).toHaveBeenCalledWith("beta");
+    expect(getSandboxMock("beta")).toBeNull();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("injected live route failure");
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 });

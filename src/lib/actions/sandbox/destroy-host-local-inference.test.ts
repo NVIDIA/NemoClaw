@@ -89,7 +89,16 @@ function provider(
   return { bundle, destroy, prepareDestroy, preserveForRebuild };
 }
 
-async function runDestroy(runtimeProvider: ReturnType<typeof provider>, peers: SandboxEntry[]) {
+async function runDestroy(
+  runtimeProvider: ReturnType<typeof provider>,
+  peers: SandboxEntry[],
+  deleteResult: { status: number; stdout: string; stderr: string } = {
+    status: 0,
+    stdout: "",
+    stderr: "",
+  },
+  sandboxConfirmedAbsent = false,
+) {
   const entry = sandbox();
   const events: string[] = [];
   const result = await executeSandboxDestroy({
@@ -99,10 +108,10 @@ async function runDestroy(runtimeProvider: ReturnType<typeof provider>, peers: S
     listSandboxes: () => ({ sandboxes: [entry, ...peers] }),
     runOpenshell: (args) => {
       events.push(args.join(" "));
-      return { status: 0, stdout: "", stderr: "" };
+      return deleteResult;
     },
     sandbox: entry,
-    sandboxConfirmedAbsent: false,
+    sandboxConfirmedAbsent,
     sandboxName: "alpha",
     runtimeProviders: { mxc: runtimeProvider.bundle },
     deps: {
@@ -142,5 +151,25 @@ describe("sandbox destroy host-local inference transaction", () => {
       hostLocalInferenceCleanupFailure: "injected runtime removal failure",
     });
     expect(events.slice(-2)).toEqual(["sandbox delete alpha", "cleanup"]);
+  });
+
+  it("reconciles retained ownership when destroy is retried after confirmed deletion", async () => {
+    const destroyRuntime = vi
+      .fn(destroySuccessfully)
+      .mockImplementationOnce(failDestroy("injected runtime removal failure"));
+    const runtimeProvider = provider(destroyRuntime);
+
+    const first = await runDestroy(runtimeProvider, []);
+    const retry = await runDestroy(
+      runtimeProvider,
+      [],
+      { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+      true,
+    );
+
+    expect(first.result).toMatchObject({ ok: false, deleteConfirmed: true });
+    expect(retry.result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(retry.events.slice(-2)).toEqual(["sandbox delete alpha", "cleanup"]);
+    expect(runtimeProvider.destroy).toHaveBeenCalledTimes(2);
   });
 });

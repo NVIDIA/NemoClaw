@@ -124,11 +124,21 @@ export interface HostLocalInferenceRuntime {
   startManaged(input: HostLocalManagedInferenceInput): HostLocalInferenceReceipt;
   inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
-  /** Re-prove the same out-of-sandbox service before carrying it into a rebuild. */
+  /**
+   * Re-prove the same out-of-sandbox service before carrying it across a
+   * lifecycle boundary. Every invocation must perform a fresh provider-native
+   * identity inspection and network health probe; cached or receipt-only
+   * validation does not satisfy this contract.
+   */
   preserveForRebuild(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
   /** Prove exact ownership for teardown without requiring the service to be healthy. */
   prepareDestroy(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
-  /** Retire only the exact provider-owned runtime; host processes remain externally owned. */
+  /**
+   * Retire only the exact provider-owned runtime; host processes remain
+   * externally owned. Managed cleanup must converge safely when repeated so a
+   * retained ownership journal can resume teardown after a process crash or
+   * provider failure.
+   */
   destroy(receipt: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult;
 }
 
