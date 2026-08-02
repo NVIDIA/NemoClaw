@@ -5,21 +5,21 @@ import assert from "node:assert/strict";
 
 import { vi } from "vitest";
 
-import type { ContainerEngine } from "../../adapters/container-engine";
+import type { ContainerEngine } from "../../src/lib/adapters/container-engine";
 import type {
   HostLocalInferenceRouteAuthority,
   HostLocalInferenceRouteAuthorityStore,
   HostLocalManagedInferenceInput,
-} from "./host-local-inference";
+} from "../../src/lib/onboard/runtime-provider/host-local-inference";
 import type {
   PersistedEngineAuthority,
   PersistedEngineAuthorityStore,
-} from "./persisted-engine-authority";
+} from "../../src/lib/onboard/runtime-provider/persisted-engine-authority";
 import {
   createPodmanHostLocalInferenceRuntime,
   PODMAN_INFERENCE_MANAGED_LABEL,
-} from "./podman-host-local-inference";
-import type { PodmanHostPreflightReceipt } from "./podman-preflight";
+} from "../../src/lib/onboard/runtime-provider/podman-host-local-inference";
+import type { PodmanHostPreflightReceipt } from "../../src/lib/onboard/runtime-provider/podman-preflight";
 
 export const AUTHORITY_ID = "test:podman-inference";
 export const BINDING_SHA256 = "a".repeat(64);
