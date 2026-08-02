@@ -285,6 +285,11 @@ export async function executeSandboxDestroy({
       await finalizeMcpDestroy(sandboxName, mcpPreparation, force);
     }
     if (!forcedLocalCleanup && runtimeProvider && sandbox && hostLocalInferenceAuthority) {
+      // Keep retirement after confirmed sandbox deletion: retiring first could
+      // leave a still-live sandbox without inference when its delete fails.
+      // The registry row is the durable cleanup journal. A retirement failure
+      // returns before that row is removed, and a retry takes the already-gone
+      // path to converge the provider's idempotent exact-runtime teardown.
       try {
         const current = getSandbox(sandboxName);
         if (!current) {
