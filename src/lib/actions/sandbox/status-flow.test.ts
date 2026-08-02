@@ -133,8 +133,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
-    expect(output).toContain("Connected:");
-    expect(output).toContain("2 sessions");
+    expect(output).toContain("SSH sessions: 2");
     expect(output).toContain("Permissions: mutable default");
     expect(output).toContain("Update:");
     expect(output).toContain("Recovered NemoClaw gateway runtime via gateway reattach.");
@@ -147,6 +146,27 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports zero SSH sessions as 'none' without connection-negative language (#7805)", async () => {
+    const harness = createStatusFlowHarness();
+    harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: true, sessions: [] });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("SSH sessions: none");
+    expect(output).not.toMatch(/^\s*Connected:/m);
+  });
+
+  it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {
+    const harness = createStatusFlowHarness();
+    harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: false, sessions: [] });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toMatch(/^\s*(?:Connected|SSH sessions):/m);
   });
 
   it("reports active baseline exclusions and their support impact (#7178)", async () => {

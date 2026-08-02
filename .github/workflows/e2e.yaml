@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -3350,70 +3350,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  sandbox-rlimits-connect:
-    needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',sandbox-rlimits-connect,') || contains(format(',{0},', inputs.targets), ',sandbox-rlimits-connect,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
-      E2E_TARGET_ID: "sandbox-rlimits-connect"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_CONNECT_RLIMITS: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-rlimits-connect
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Install OpenShell
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run sandbox rlimit connect live test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-rlimits-connect.test.ts
-
-      - name: Upload sandbox rlimit connect artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
   overlayfs-autofix:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',overlayfs-autofix,') || contains(format(',{0},', inputs.targets), ',overlayfs-autofix,') }}
@@ -4613,7 +4549,7 @@ jobs:
 
   sandbox-operations:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sandbox-operations,') || contains(format(',{0},', inputs.targets), ',sandbox-operations,') }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sandbox-operations,') || contains(format(',{0},', inputs.jobs), ',sandbox-rlimits-connect,') || contains(format(',{0},', inputs.targets), ',sandbox-operations,') || contains(format(',{0},', inputs.targets), ',sandbox-rlimits-connect,') }}
     runs-on: ubuntu-latest
     # The live test receives 45 minutes for two onboards plus process/gateway
     # recovery. The remaining 15 minutes cover checkout, build, OpenShell setup,
@@ -5802,7 +5738,6 @@ jobs:
         rebuild-openclaw,
         rebuild-hermes,
         rebuild-hermes-stale-base,
-        sandbox-rlimits-connect,
         overlayfs-autofix,
         state-backup-restore,
         openshell-gateway-upgrade,
