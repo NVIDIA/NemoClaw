@@ -25,6 +25,14 @@ vi.mock("../../src/lib/actions/global", () => ({
 const rootDir = process.cwd();
 let previousExitCode: typeof process.exitCode;
 
+const expectedOnboardRuntimeDeps = () =>
+  expect.objectContaining({
+    googlechatTunnelRuntime: expect.objectContaining({
+      loadServices: expect.any(Function),
+      loadWebhookProxy: expect.any(Function),
+    }),
+  });
+
 function writeOpenShellVersionStub(localBin: string): void {
   fs.writeFileSync(
     path.join(localBin, "openshell"),
@@ -146,6 +154,7 @@ describe("CLI onboard compatibility", () => {
         "yes-i-accept-third-party-software": true,
         yes: true,
       }),
+      expectedOnboardRuntimeDeps(),
     );
   });
 
@@ -185,7 +194,10 @@ describe("CLI onboard compatibility", () => {
 
     await OnboardCliCommand.run(["--events=jsonl"], rootDir);
 
-    expect(runOnboardAction).toHaveBeenCalledWith(expect.objectContaining({ events: "jsonl" }));
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({ events: "jsonl" }),
+      expectedOnboardRuntimeDeps(),
+    );
     const lines = stdout.join("").trimEnd().split("\n");
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0])).toMatchObject({
@@ -274,6 +286,7 @@ describe("CLI onboard compatibility", () => {
         "yes-i-accept-third-party-software": true,
         yes: true,
       }),
+      expectedOnboardRuntimeDeps(),
     );
   });
 
@@ -334,6 +347,7 @@ describe("CLI onboard compatibility", () => {
         "yes-i-accept-third-party-software": true,
         yes: true,
       }),
+      expectedOnboardRuntimeDeps(),
     );
   });
 
