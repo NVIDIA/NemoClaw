@@ -36,6 +36,7 @@ function serializedReceipt(service: "ollama" | "nim" | "vllm" = "vllm"): string 
             runtimeId: `mxc-${service}`,
             name: `nemoclaw-${service}`,
             imageRef: `nvcr.io/nvidia/${service}@sha256:${"c".repeat(64)}`,
+            probeImageRef: `quay.io/curl/curl@sha256:${"b".repeat(64)}`,
             specSha256: "d".repeat(64),
             gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
           },

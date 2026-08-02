@@ -141,6 +141,7 @@ function hostLocalReceipt(port = 8000): string {
       runtimeId: "mxc-vllm-runtime",
       name: "nemoclaw-vllm",
       imageRef: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
+      probeImageRef: `quay.io/curl/curl@sha256:${"f".repeat(64)}`,
       specSha256: "e".repeat(64),
       gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
     },

@@ -44,6 +44,7 @@ function receipt(service: Service, port = 8000): HostLocalInferenceReceipt {
             runtimeId: `mxc-${service}-runtime`,
             name: `nemoclaw-${service}`,
             imageRef: `nvcr.io/nvidia/${service}@sha256:${"c".repeat(64)}`,
+            probeImageRef: `quay.io/curl/curl@sha256:${"b".repeat(64)}`,
             specSha256: "d".repeat(64),
             gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
           },
