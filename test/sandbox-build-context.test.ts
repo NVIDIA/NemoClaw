@@ -269,6 +269,24 @@ describe("sandbox build context staging", () => {
     expect(fs.existsSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts"))).toBe(true);
   }
 
+  function expectStagedManagedStartupRuntimeSources(buildCtx: string, sourceRoot: string) {
+    for (const relativePath of [
+      path.join("src", "lib", "core", "json-types.ts"),
+      path.join("src", "lib", "core", "ports.ts"),
+      path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),
+      path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"),
+      path.join("src", "lib", "security", "credential-hash.ts"),
+      path.join("src", "lib", "state", "paths.ts"),
+      path.join("src", "lib", "state", "state-root.ts"),
+    ]) {
+      const stagedPath = path.join(buildCtx, relativePath);
+      expect(fs.readFileSync(stagedPath, "utf8"), relativePath).toBe(
+        fs.readFileSync(path.join(sourceRoot, relativePath), "utf8"),
+      );
+      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
+    }
+  }
+
   function expectStagedScriptModes(buildCtx: string) {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
@@ -395,6 +413,22 @@ describe("sandbox build context staging", () => {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedNemoclawModes(buildCtx);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy staging supplies the managed-startup runtime Dockerfile sources", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-build-context-legacy-managed-startup-"),
+    );
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedManagedStartupRuntimeSources(buildCtx, sourceRoot);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
