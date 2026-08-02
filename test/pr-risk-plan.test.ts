@@ -27,7 +27,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(10);
+    expect(first.version).toBe(11);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -115,6 +115,43 @@ describe("deterministic PR risk plan", () => {
       "onboard-repair",
       "onboard-resume",
     ]);
+  });
+
+  it("selects every Hermes managed-policy live E2E job (#8008)", () => {
+    const changedFiles = [
+      "agents/hermes/config/managed-policy.ts",
+      "agents/hermes/managed_policy.py",
+      "agents/hermes/seed-dashboard-config.py",
+      "src/lib/hermes-managed-route.ts",
+    ];
+    const result = plan(...changedFiles);
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: changedFiles,
+        requiredJobs: [
+          "bedrock-runtime-compatible-anthropic",
+          "channels-stop-start",
+          "dashboard-remote-bind",
+          "hermes-e2e",
+          "hermes-inference-switch",
+          "hermes-shields-config",
+          "security-posture",
+        ],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([
+        "bedrock-runtime-compatible-anthropic",
+        "channels-stop-start",
+        "dashboard-remote-bind",
+        "hermes-e2e",
+        "hermes-inference-switch",
+        "hermes-shields-config",
+        "security-posture",
+      ]),
+    );
   });
 
   it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {
