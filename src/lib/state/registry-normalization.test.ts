@@ -119,6 +119,25 @@ describe("sandbox registry normalization", () => {
     expect(persisted.defaultSandbox).toBeNull();
     expect(persisted.defaultSelectionRevision).toBe(1);
   });
+
+  it("round-trips the lifecycle proof used to retire a replaced workload", async () => {
+    const registry = await loadRegistryWith({});
+    const lifecycleGeneration = "22222222-2222-4222-8222-222222222222";
+    const lifecycleLiveIdentityFingerprint = "d".repeat(64);
+
+    registry.registerSandbox({
+      name: "replacement",
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint,
+    });
+
+    vi.resetModules();
+    const reloadedRegistry = await import("./registry");
+    expect(reloadedRegistry.getSandbox("replacement")).toMatchObject({
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint,
+    });
+  });
 });
 
 describe("baseline exclusion normalization (#7178)", () => {

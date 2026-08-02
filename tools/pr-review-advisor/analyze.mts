@@ -62,6 +62,19 @@ import {
   type ReviewFindingLedgerSnapshot,
   reviewLedgerStageCommitGuidance,
 } from "./review-ledger.mts";
+import {
+  createTerminologyLedger,
+  createTerminologyToolController,
+  TERMINOLOGY_CHANGES,
+  TERMINOLOGY_DISPOSITIONS,
+  TERMINOLOGY_READ_TOOL,
+  TERMINOLOGY_SEMANTIC_IMPACTS,
+  TERMINOLOGY_TRACE_TOOL,
+  TERMINOLOGY_UPDATE_TOOL,
+  type TerminologyLedger,
+  type TerminologyLedgerSnapshot,
+  type TerminologyReview,
+} from "./terminology.mts";
 
 export type { GitHubReviewContext, PreviousAdvisorReview };
 export { extractIssueRefs, readPreparedGitHubContext };
@@ -96,6 +109,12 @@ const TRUSTED_WRITING_GUIDE_PATH = path.resolve(
   "..",
   "..",
   "WRITING.md",
+);
+const TRUSTED_CONTROLLED_WORDS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  ".agents/skills/_shared/controlled-words.md",
 );
 const SECURITY_CATEGORIES = [
   "Secrets and Credentials",
@@ -142,6 +161,7 @@ const SOURCE_OF_TRUTH_STATUSES = [
   "missing",
 ] as const;
 const SIMPLIFICATION_TAGS = ["delete", "stdlib", "native", "yagni", "shrink"] as const;
+const TERMINOLOGY_STATUSES = ["clear", "candidates", "limited"] as const;
 
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
@@ -160,6 +180,7 @@ type ArtifactPaths = {
   result: string;
   finalResult: string;
   findingLedger: string;
+  terminologyLedger: string;
   summary: string;
   sessionHtml: string;
 };
@@ -247,6 +268,7 @@ type ReviewAdvisorResult = {
     };
   };
   findings: Finding[];
+  terminologyReview: TerminologyReview;
   acceptanceCoverage: AcceptanceCoverage[];
   securityCategories: SecurityCategory[];
   sourceOfTruthReview: SourceOfTruthReview[];
@@ -352,14 +374,25 @@ async function main(): Promise<void> {
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   writeDeterministicContextArtifacts(artifacts, deterministic, diff);
-  const systemPrompt = buildSystemPrompt();
-  const promptTurns = buildPromptTurns({ metadata, diff, schema });
   const findingLedger = createReviewFindingLedger();
-  writeJson(artifacts.findingLedger, findingLedger.snapshot());
-  writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
+  const terminologyLedger = createTerminologyLedger(headSha);
+  const { systemPrompt, promptTurns } = preparePromptArtifacts({
+    artifacts,
+    metadata,
+    diff,
+    schema,
+    findingLedger,
+    terminologyLedger,
+  });
 
   const writeFailure = (reason: string): void =>
-    writeFailureArtifacts(artifacts, metadata, reason, findingLedger.snapshot());
+    writeFailureArtifacts(
+      artifacts,
+      metadata,
+      reason,
+      findingLedger.snapshot(),
+      terminologyLedger.snapshot(),
+    );
   const writeUnavailable = (reason: string): void =>
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
@@ -387,6 +420,10 @@ async function main(): Promise<void> {
       logPrefix: "pr-review-advisor",
       findingLedger,
       findingLedgerPath: artifacts.findingLedger,
+      terminologyLedger,
+      terminologyLedgerPath: artifacts.terminologyLedger,
+      baseRef,
+      headRef,
     });
     fs.writeFileSync(artifacts.raw, sdkResult.raw);
     logProgress(`PR review advisor conversation finished: turns=${sdkResult.turnTexts.length}`);
@@ -400,6 +437,7 @@ async function main(): Promise<void> {
   }
 
   const ledgerSnapshot = findingLedger.snapshot();
+  const terminologySnapshot = terminologyLedger.snapshot();
   const executionErrors = advisorExecutionErrors(sdkResult);
   const validationTurnFailed =
     sdkResult.turnErrors.length > 0 &&
@@ -413,13 +451,20 @@ async function main(): Promise<void> {
     try {
       const parsed = parseAdvisorResult(sdkResult.text || sdkResult.raw, artifacts.raw, metadata);
       const ledgerIssues = reviewLedgerConsistencyIssues(parsed, ledgerSnapshot);
-      if (ledgerIssues.length > 0) {
+      const terminologyIssues = terminologyReviewConsistencyIssues(parsed, terminologySnapshot);
+      if (ledgerIssues.length > 0 || terminologyIssues.length > 0) {
         postValidationLedgerMismatch = true;
         throw new Error(
-          `canonical finding ledger mismatch after same-session validation: ${ledgerIssues.join("; ")}`,
+          `canonical review receipt mismatch after same-session validation: ${[
+            ...ledgerIssues,
+            ...terminologyIssues,
+          ].join("; ")}`,
         );
       }
-      result = withCanonicalReviewLedgerFindings(parsed, ledgerSnapshot);
+      result = withCanonicalTerminologyReview(
+        withCanonicalReviewLedgerFindings(parsed, ledgerSnapshot),
+        terminologySnapshot,
+      );
       const qualityIssues = reviewQualityIssues(parsed);
       if (qualityIssues.length > 0) {
         result.reviewCompleteness.limitations = [
@@ -445,7 +490,7 @@ async function main(): Promise<void> {
     const draftText = sdkResult.turnTexts.at(-2) || "";
     try {
       const draft = parseAdvisorResult(draftText, artifacts.raw, metadata);
-      const canonicalDraft = canonicalRetryFallback(draft, ledgerSnapshot);
+      const canonicalDraft = canonicalRetryFallback(draft, ledgerSnapshot, terminologySnapshot);
       if (!canonicalDraft) {
         throw new Error("draft synthesis does not match the canonical finding ledger");
       }
@@ -473,7 +518,42 @@ async function main(): Promise<void> {
   console.log(summary);
 }
 
-function artifactPaths(outDir: string): ArtifactPaths {
+export function preparePromptArtifacts({
+  artifacts,
+  metadata,
+  diff,
+  schema,
+  findingLedger,
+  terminologyLedger,
+}: {
+  artifacts: ArtifactPaths;
+  metadata: ReviewMetadata;
+  diff: string;
+  schema: Record<string, unknown>;
+  findingLedger: ReviewFindingLedger;
+  terminologyLedger: TerminologyLedger;
+}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[] } {
+  writeJson(artifacts.findingLedger, findingLedger.snapshot());
+  writeJson(artifacts.terminologyLedger, terminologyLedger.snapshot());
+  try {
+    const systemPrompt = buildSystemPrompt();
+    const promptTurns = buildPromptTurns({ metadata, diff, schema });
+    writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
+    return { systemPrompt, promptTurns };
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    writeFailureArtifacts(
+      artifacts,
+      metadata,
+      reason,
+      findingLedger.snapshot(),
+      terminologyLedger.snapshot(),
+    );
+    throw error;
+  }
+}
+
+export function artifactPaths(outDir: string): ArtifactPaths {
   return {
     promptDir: path.join(outDir, "prompts"),
     turnDir: path.join(outDir, "turns"),
@@ -482,6 +562,7 @@ function artifactPaths(outDir: string): ArtifactPaths {
     result: path.join(outDir, "pr-review-advisor-result.json"),
     finalResult: path.join(outDir, "pr-review-advisor-final-result.json"),
     findingLedger: path.join(outDir, "pr-review-advisor-finding-ledger.json"),
+    terminologyLedger: path.join(outDir, "pr-review-advisor-terminology-ledger.json"),
     summary: path.join(outDir, "pr-review-advisor-summary.md"),
     sessionHtml: path.join(outDir, "pr-review-advisor-session.html"),
   };
@@ -537,8 +618,9 @@ function writeFailureArtifacts(
   metadata: ReviewMetadata,
   reason: string,
   snapshot: ReviewFindingLedgerSnapshot,
+  terminologySnapshot: TerminologyLedgerSnapshot,
 ): void {
-  const partial = partialLedgerFailureResult(metadata, reason, snapshot);
+  const partial = partialLedgerFailureResult(metadata, reason, snapshot, terminologySnapshot);
   if (!partial) {
     writeUnavailableArtifacts(paths, metadata, reason, true);
     return;
@@ -548,13 +630,14 @@ function writeFailureArtifacts(
     partial: true,
     reason,
     findingCount: partial.findings.length,
+    terminologyDecisionCount: partial.terminologyReview.decisions.length,
     promptPath: paths.promptDir,
     rawPath: paths.raw,
   });
   writeJson(paths.finalResult, partial);
   fs.writeFileSync(paths.summary, renderSummary(partial));
   console.error(
-    `PR review advisor analysis failed after preserving ${partial.findings.length} canonical finding(s): ${reason}`,
+    `PR review advisor analysis failed after preserving ${partial.findings.length} canonical finding(s) and ${partial.terminologyReview.decisions.length} terminology decision(s): ${reason}`,
   );
 }
 
@@ -574,6 +657,10 @@ type AdvisorConversationOptions = {
   logPrefix: string;
   findingLedger: ReviewFindingLedger;
   findingLedgerPath: string;
+  terminologyLedger: TerminologyLedger;
+  terminologyLedgerPath: string;
+  baseRef: string;
+  headRef: string;
 };
 
 async function runAdvisorConversation(
@@ -582,6 +669,11 @@ async function runAdvisorConversation(
   fs.rmSync(options.turnDir, { recursive: true, force: true });
   fs.mkdirSync(options.turnDir, { recursive: true });
   const ledgerTools = createReviewLedgerToolController(options.findingLedger);
+  const terminologyTools = createTerminologyToolController({
+    ledger: options.terminologyLedger,
+    baseRef: options.baseRef,
+    headRef: options.headRef,
+  });
   const result = await runReadOnlyAdvisor({
     cwd: root,
     promptTurns: options.promptTurns,
@@ -596,11 +688,15 @@ async function runAdvisorConversation(
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
-    customTools: ledgerTools.tools,
-    onTurnStart: (turn) => ledgerTools.setStage(turn.name),
+    customTools: [...ledgerTools.tools, ...terminologyTools.tools],
+    onTurnStart: (turn) => {
+      ledgerTools.setStage(turn.name);
+      terminologyTools.setStage(turn.name);
+    },
     onTurnComplete: (turn) => {
       writeTurnArtifact(options.turnDir, turn);
       writeJson(options.findingLedgerPath, options.findingLedger.snapshot());
+      writeJson(options.terminologyLedgerPath, options.terminologyLedger.snapshot());
     },
   });
   return result;
@@ -702,32 +798,72 @@ export function withCanonicalReviewLedgerFindings(
   };
 }
 
+export function terminologyReviewConsistencyIssues(
+  result: ReviewAdvisorResult,
+  snapshot: TerminologyLedgerSnapshot,
+): string[] {
+  return stableJson(result.terminologyReview) === stableJson(snapshot.review)
+    ? []
+    : ["final terminologyReview diverges from the canonical terminology receipt"];
+}
+
+export function withCanonicalTerminologyReview(
+  result: ReviewAdvisorResult,
+  snapshot: TerminologyLedgerSnapshot,
+): ReviewAdvisorResult {
+  return { ...result, terminologyReview: snapshot.review };
+}
+
 export function canonicalRetryFallback(
   result: ReviewAdvisorResult,
   snapshot: ReviewFindingLedgerSnapshot,
+  terminologySnapshot?: TerminologyLedgerSnapshot,
 ): ReviewAdvisorResult | null {
-  const canonical = withCanonicalReviewLedgerFindings(result, snapshot);
-  return reviewLedgerConsistencyIssues(canonical, snapshot).length === 0 ? canonical : null;
+  const issues = [
+    ...reviewLedgerConsistencyIssues(result, snapshot),
+    ...(terminologySnapshot ? terminologyReviewConsistencyIssues(result, terminologySnapshot) : []),
+  ];
+  if (issues.length > 0) return null;
+  const findingsCanonical = withCanonicalReviewLedgerFindings(result, snapshot);
+  return terminologySnapshot
+    ? withCanonicalTerminologyReview(findingsCanonical, terminologySnapshot)
+    : findingsCanonical;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isObjectRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export function partialLedgerFailureResult(
   metadata: ReviewMetadata,
   reason: string,
   snapshot: ReviewFindingLedgerSnapshot,
+  terminologySnapshot?: TerminologyLedgerSnapshot,
 ): ReviewAdvisorResult | null {
   const findingCount = canonicalReviewLedgerFindings(snapshot).length;
-  if (findingCount === 0) return null;
-  const result = withCanonicalReviewLedgerFindings(
+  const terminologyDecisionCount = terminologySnapshot?.review.decisions.length ?? 0;
+  if (findingCount === 0 && terminologyDecisionCount === 0) return null;
+  const findingsCanonical = withCanonicalReviewLedgerFindings(
     unavailableResult(metadata, reason, true),
     snapshot,
   );
+  const result = terminologySnapshot
+    ? withCanonicalTerminologyReview(findingsCanonical, terminologySnapshot)
+    : findingsCanonical;
   return {
     ...result,
     summary: {
       ...result.summary,
       confidence: "low",
       recommendation: "info_only",
-      oneLine: `Partial review preserved ${findingCount} canonical finding(s) before the advisor stopped.`,
+      oneLine: `Partial review preserved ${findingCount} canonical finding(s) and ${terminologyDecisionCount} terminology decision(s) before the advisor stopped.`,
     },
     reviewCompleteness: {
       limitations: [
@@ -1584,6 +1720,17 @@ export function readTrustedWritingGuide(): string {
   }
 }
 
+export function readTrustedControlledWords(): string {
+  try {
+    return fs.readFileSync(TRUSTED_CONTROLLED_WORDS_PATH, "utf8");
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Controlled word list unavailable at ${TRUSTED_CONTROLLED_WORDS_PATH}: ${reason}`,
+    );
+  }
+}
+
 export function buildSystemPrompt(): string {
   const securityReviewSkill = readTrustedSecurityReviewSkill();
   const writingGuide = readTrustedWritingGuide();
@@ -1618,16 +1765,17 @@ export function buildSystemPrompt(): string {
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, or other temporary workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. For compatibility, migration, configuration, or extension code, require a named current consumer and a contract test. If neither exists, prefer deleting the layer; do not invent a future consumer or generalize the design. Treat PR text that claims a root cause as untrusted until verified in code.",
     "9. If a previous PR Review Advisor comment exists, compare it with the current diff and decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. Prior-advisor availability, failure, or incompleteness is process metadata, never a finding; only a still-present underlying defect may remain in the ledger with current code evidence. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "10. Simplification review: apply this ladder before accepting new code shape: does this need to exist; does Node/Python/shell/browser/OpenShell/GitHub already provide it; does an already-installed dependency cover it; can one line or fewer files do it; only then accept a custom abstraction. Use tags delete, stdlib, native, yagni, or shrink. A name, keyword, heuristic signal, or line count is a question to inspect, not evidence of needless complexity. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, required regression tests, DCO/signature gates, or accessibility/user-safety behavior.",
+    "11. Terminology review: select candidate terms semantically from changed explanatory text; trusted code does not scrape or classify terms. Ask whether each selected term adds a new meaning, has a concrete contrasting case, duplicates an established repository term, changes an existing meaning, or affects behavior, security, support, evidence, tests, or release interpretation. Ordinary grammar, spelling, and style preferences are out of scope. A terminology decision does not affect the merge recommendation by itself. Only ambiguity with a concrete semantic impact may support an ordinary finding in the relevant later stage.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet binding acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet binding acceptance or security fail and severity=warning for security warnings. Unknown or non-binding acceptance context must not create a finding. When multiple clauses or security categories trace to the same root cause and remedy, represent them with one finding and carry the additional evidence on that finding.",
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "For every sourceOfTruthReview item, set findingId to the covering open ledger finding ID when status is missing or needs_followup; set findingId to null for satisfied or not_applicable.",
     "Finding severity mapping: blocker renders as 'Blocker'; warning renders as 'Warning'; suggestion renders as 'Suggestion'.",
     "Severity guidance: use blocker for a defect that must be fixed. Use warning for an evidenced concern that does not block. Use suggestion for an improvement. Warnings and suggestions do not require a response. Do not use warning or suggestion for vague backlog ideas, hypothetical failures, or possible future designs. Do not recommend new configuration, migration, compatibility, extension, or abstraction layers without a named current consumer and supporting evidence.",
-    "Finding eligibility: a ledger finding must identify a concrete present defect in the checked-out PR, state observed versus expected behavior, cite a current file and line, and recommend the smallest current-PR action. Ground the expected behavior in an observable outcome, current constraint, supported contract, repository policy, or existing test. PR-description or template compliance, checkbox selection, wording or naming preference, a heuristic signal, a raw line count, a hypothetical future failure, or a possible risk not present in the diff is not a finding. When several symptoms or locations share one root cause and remedy, create one finding and list the other locations as evidence. PASS or positive observations, provider/SDK/advisor state, prior-review process state, open-PR overlap or merge coordination, and live CI/E2E/check status belong only in positives or limitations. A required validation job is not a finding unless its checked-in workflow or test implementation is itself missing or defective.",
-    "This review runs as a multi-turn conversation backed by a shared finding ledger. Each intermediate stage has two turns: first call the named real context tool(s) and emit concise evidence-backed analysis without mutating the ledger; then, in the following commit turn, call pr_review_update_ledger with one flat atomic commit object and no prose. The ledger stores findings only; keep acceptance coverage, security-category verdicts, source-of-truth review, test depth, E2E coverage and target guidance, positives, limitations, and summary inputs in the visible analysis turn for later synthesis.",
+    "Finding eligibility: a ledger finding must identify a concrete present defect in the checked-out PR, state observed versus expected behavior, cite a current file and line, and recommend the smallest current-PR action. Ground the expected behavior in an observable outcome, current constraint, supported contract, repository policy, or existing test. PR-description or template compliance, checkbox selection, wording or naming preference, a heuristic signal, a raw line count, a hypothetical future failure, or a possible risk not present in the diff is not a finding. An evidence-backed terminology ambiguity may be eligible only when it changes behavior, security, data safety, a supported surface, test meaning, release meaning, or the interpretation of required evidence. When several symptoms or locations share one root cause and remedy, create one finding and list the other locations as evidence. PASS or positive observations, provider/SDK/advisor state, prior-review process state, open-PR overlap or merge coordination, and live CI/E2E/check status belong only in positives or limitations. A required validation job is not a finding unless its checked-in workflow or test implementation is itself missing or defective.",
+    "This review runs as a multi-turn conversation backed by a shared finding ledger and a separate terminology receipt. Each intermediate stage has two turns: first call the named real context tool(s) and emit concise evidence-backed analysis without mutating its canonical store; then use the following commit turn's designated atomic tool with no prose. Each finding-ledger commit uses one flat atomic commit object. The finding ledger stores findings only. The terminology receipt stores semantic term decisions only. Keep acceptance coverage, security-category verdicts, source-of-truth review, test depth, E2E coverage and target guidance, positives, limitations, and summary inputs in the visible analysis turn for later synthesis.",
     "A rejected atomic ledger attempt does not mutate the ledger and may be corrected before the single successful commit. Never submit more than one successful ledger batch for a stage.",
-    "Only the reconciliation stage may resolve contradictions or deduplicate finding-ledger records, and every conclusion-changing update, resolution, or supersession/deduplication must include an evidence-backed reason. Both synthesis turns are read-only: call pr_review_read_ledger, serialize its findings without silently adding, dropping, merging, rewording, or reclassifying them, and synthesize non-finding schema sections from the prior receipts.",
+    "Only the reconciliation stage may resolve contradictions or deduplicate finding-ledger records, and every conclusion-changing update, resolution, or supersession/deduplication must include an evidence-backed reason. Both synthesis turns are read-only: call pr_review_read_ledger and pr_review_read_terminology, serialize both canonical receipts without silently adding, dropping, merging, rewording, or reclassifying them, and synthesize other non-finding schema sections from the prior receipts.",
     "The first synthesis turn drafts the structured result. The immediately following validation turn stays in the same agent session, checks that draft against the schema and ledger already present in the conversation, and returns the final JSON only.",
   ].join("\n");
 }
@@ -1674,8 +1822,41 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
 `,
     },
     {
+      name: "terminology-review",
+      title: "review introduced and changed terminology",
+      activeToolNames: [TERMINOLOGY_TRACE_TOOL],
+      contextToolResults: [
+        createAdvisorContextToolResult(
+          "pr_review_controlled_words",
+          readTrustedControlledWords(),
+          "text",
+          "trusted controlled word list",
+        ),
+        createAdvisorContextToolResult(
+          "pr_review_terminology_pr_context",
+          jsonContext({ pullRequest: context.github?.pullRequest ?? null }),
+          "json",
+          "untrusted PR terminology context",
+        ),
+      ],
+      prompt: `${stageAnalysisProtocol(
+        ["pr_review_controlled_words", "pr_review_terminology_pr_context"],
+        "Select terminology candidates semantically and keep ordinary grammar, spelling, and style observations out of scope. The separate commit turn records terminology decisions, not findings.",
+      )}
+
+Use the shared PR diff and the trusted controlled word list. Select only terms that changed explanatory text introduces, expands, or redefines. Do not use a token scan, capitalization rule, hyphen rule, suffix list, or other deterministic heuristic to select candidates. For each candidate, ask: what does it mean here; what concrete contrasting case makes the modifier necessary; does the repository already have a term for the concept; is this meaning consistent across the repository; is it introduced, expanded, or redefined by the PR; and can ambiguity change behavior, security, a supported surface, evidence, tests, or release interpretation?
+
+After selecting a candidate, call \`${TERMINOLOGY_TRACE_TOOL}\` to trace the term in the base and head commits. The trace includes hyphen and space variants, changed source locations, and available history. A trace verifies evidence but never decides whether the term is valid. Classify each traced candidate as established, justified, define, replace, or conflict. A justified modifier requires a concrete contrast; replace should name the established term. Do not create finding-ledger entries in this stage.
+
+Do not produce final JSON. Reply with at most 8 concise terminology decisions, each including its trace ID and changed file:line, or state that no semantic terminology candidate was selected.
+`,
+    },
+    {
       name: "correctness-state",
       title: "correctness, acceptance, and state transitions",
+      activeToolNames: [TERMINOLOGY_READ_TOOL],
+      requiredToolNames: [TERMINOLOGY_READ_TOOL],
+      requireToolsBeforeText: [TERMINOLOGY_READ_TOOL],
       contextToolResults: [
         createAdvisorContextToolResult(
           "pr_review_correctness_state_context",
@@ -1685,11 +1866,11 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
         ),
       ],
       prompt: `${stageAnalysisProtocol(
-        ["pr_review_correctness_state_context"],
+        ["pr_review_correctness_state_context", TERMINOLOGY_READ_TOOL],
         "Record only correctness, acceptance, source-of-truth, or supported-simplification findings. Keep acceptance coverage, source-of-truth review entries, positives, and limitations in the prose receipt.",
       )}
 
-Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when a citation needs confirmation. First classify linked issue text as binding acceptance or non-binding context using the system rubric, then map only binding clauses to code evidence. Review caller/callee contracts, state transitions, negative and error paths, behavior drift, documentation or migration gaps, and any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior against the source-of-truth questions in the system rubric. Apply the simplification ladder only where it preserves correctness and trust boundaries. Leave detailed security and test-depth review to their dedicated turns.
+Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when a citation needs confirmation. Read the canonical terminology receipt and promote a term decision only when its ambiguity has a concrete correctness, acceptance, evidence, test, or release impact, or an impact on a supported surface, that meets ordinary finding eligibility; do not promote wording preferences. First classify linked issue text as binding acceptance or non-binding context using the system rubric, then map only binding clauses to code evidence. Review caller/callee contracts, state transitions, negative and error paths, behavior drift, documentation or migration gaps, and any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior against the source-of-truth questions in the system rubric. Apply the simplification ladder only where it preserves correctness and trust boundaries. Leave detailed security and test-depth review to their dedicated turns.
 
 When the diff adds, modifies, or removes a conditional that gates an operation, a function whose comments or tests describe an invariant, or a guard that prior code or checked-in tests treat as required — whether or not the PR summary labels it as a correctness guarantee — identify any guarantee the change makes or depends on (fail-closed check, locality invariant, ordering constraint, capacity gate, idempotency guarantee, atomicity or rollback boundary, rate or auth gate) and enumerate the specific ways it could be silently bypassed: alternate code branches (e.g. cache-hit paths that skip the check), combined input states (e.g. multiple env vars set simultaneously with documented precedence that differs from implementation), external system contract assumptions (e.g. what "unix://" actually proves about daemon locality), error path bypasses (e.g. an upstream call throws and the guard is skipped entirely), TOCTOU windows (e.g. state changes between the check and the operation it guards), and default or absent value assumptions (e.g. null vs empty vs absent behaving differently at a boundary). For each bypass path, verify against the diff whether it is closed, explicitly opted out under a maintainer decision (author_association OWNER/MEMBER/COLLABORATOR) or documented non-goal, or unaddressed; unauthorized opt-outs remain unaddressed. When the implementation makes assumptions about an external system's behavior (env var precedence, API semantics, filesystem guarantees), verify the assumption against upstream documentation using read-only tools, not just internal code consistency; if upstream documentation is unavailable or ambiguous, flag the assumption as unverified rather than treating it as confirmed.
 
@@ -1699,6 +1880,9 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
     {
       name: "security-trust",
       title: "security and trust-boundary review",
+      activeToolNames: [TERMINOLOGY_READ_TOOL],
+      requiredToolNames: [TERMINOLOGY_READ_TOOL],
+      requireToolsBeforeText: [TERMINOLOGY_READ_TOOL],
       contextToolResults: [
         createAdvisorContextToolResult(
           "pr_review_security_trust_context",
@@ -1708,11 +1892,11 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
         ),
       ],
       prompt: `${stageAnalysisProtocol(
-        ["pr_review_security_trust_context"],
+        ["pr_review_security_trust_context", TERMINOLOGY_READ_TOOL],
         "Record a finding for each WARNING or FAIL unless a more specific existing finding already covers it. Keep all 9 security-category verdicts and their evidence in the prose receipt.",
       )}
 
-Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when a trust boundary needs confirmation. Apply the trusted NemoClaw security-review rubric to the diff and nearby files. Focus on sandbox escape, SSRF and policy bypass, credential leakage, blueprint or installer trust, workflow trusted-code boundaries, unsafe shell/string execution, authentication, authorization, and data protection. Decide PASS/WARNING/FAIL for all 9 security categories with evidence, without repeating unrelated correctness notes.
+Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when a trust boundary needs confirmation. Read the canonical terminology receipt and promote only concrete security or data-safety ambiguity that meets ordinary finding eligibility. Apply the trusted NemoClaw security-review rubric to the diff and nearby files. Focus on sandbox escape, SSRF and policy bypass, credential leakage, blueprint or installer trust, workflow trusted-code boundaries, unsafe shell/string execution, authentication, authorization, and data protection. Decide PASS/WARNING/FAIL for all 9 security categories with evidence, without repeating unrelated correctness notes.
 
 Do not produce final JSON or update the finding ledger in this turn. Reply with at most 12 concise, evidence-backed stage-analysis bullets so every security category is accounted for.
 `,
@@ -1762,9 +1946,9 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
     {
       name: "reconcile-findings",
       title: "reconcile findings and contradictions",
-      activeToolNames: ["pr_review_read_ledger"],
-      requiredToolNames: ["pr_review_read_ledger"],
-      requireToolsBeforeText: ["pr_review_read_ledger"],
+      activeToolNames: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
+      requiredToolNames: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
+      requireToolsBeforeText: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
       contextToolResults: [
         createAdvisorContextToolResult(
           "pr_review_reconciliation_context",
@@ -1774,11 +1958,11 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
         ),
       ],
       prompt: `${stageAnalysisProtocol(
-        ["pr_review_reconciliation_context", "pr_review_read_ledger"],
+        ["pr_review_reconciliation_context", "pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
         "Reconcile only findings in the shared ledger with update, resolve, or supersede/deduplicate operations. Every conclusion-changing or closing operation must identify the affected finding IDs and give an evidence-backed reason. Keep reconciled non-finding conclusions in the prose receipt.",
       )}
 
-Do not start a new broad review; use read-only tools only to resolve a specific contradiction or missing citation. Treat the shared ledger, not prose notes, as the finding candidate set. Collapse records that share a root cause and remedy into one finding, resolve conflicting conclusions, keep the highest evidence-warranted severity, and resolve claims supported only by PR metadata, wording preferences, heuristic signals, line counts, hypothetical failures, or non-binding issue text. Reconcile prior advisor findings. Ensure every unmet binding acceptance clause, security FAIL/WARNING, sourceOfTruthReview missing/needs_followup item, and changed risk invariant without checked-in evidence maps to one eligible candidate finding unless a more specific finding already covers it. Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations remain non-finding receipt material. Never silently discard a finding-ledger record. Reconcile acceptance, security-category, source-of-truth, test-depth, E2E coverage/target, positive, and limitation conclusions in the receipt without pretending they are stored in the ledger.
+Do not start a new broad review; use read-only tools only to resolve a specific contradiction or missing citation. Treat the shared finding ledger, not prose notes or the terminology receipt, as the finding candidate set. Collapse records that share a root cause and remedy into one finding, resolve conflicting conclusions, keep the highest evidence-warranted severity, and resolve claims supported only by PR metadata, wording preferences, heuristic signals, line counts, hypothetical failures, or non-binding issue text. Do not discard an evidence-backed terminology ambiguity when it changes behavior, security, data safety, a supported surface, test meaning, release meaning, or required evidence. Reconcile prior advisor findings. Ensure every unmet binding acceptance clause, security FAIL/WARNING, sourceOfTruthReview missing/needs_followup item, and changed risk invariant without checked-in evidence maps to one eligible candidate finding unless a more specific finding already covers it. Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations remain non-finding receipt material. Never silently discard a finding-ledger record. Reconcile acceptance, security-category, source-of-truth, test-depth, E2E coverage/target, positive, and limitation conclusions in the receipt without pretending they are stored in the ledger.
 
 Do not produce final JSON or update the finding ledger in this turn. Reply with at most 12 concise stage-analysis bullets identifying every resolution/deduplication reason and the resulting acceptance, security, source-of-truth, test-depth, positive, and limitation conclusions.
 `,
@@ -1800,9 +1984,9 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
           "PR review advisor JSON schema",
         ),
       ],
-      prompt: `Call the real \`pr_review_metadata\` and \`pr_review_response_schema\` context tools, then call \`pr_review_read_ledger\`. These calls are required even if similarly named context appeared earlier. This turn is read-only: never call \`pr_review_update_ledger\`.
+      prompt: `Call the real \`pr_review_metadata\` and \`pr_review_response_schema\` context tools, then call \`pr_review_read_ledger\` and \`${TERMINOLOGY_READ_TOOL}\`. These calls are required even if similarly named context appeared earlier. This turn is read-only: never call an update tool.
 
-Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set e2e.targets.changedCredentialFreeTests to an empty array; trusted code derives and replaces that evidence after parsing. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
+Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. Copy \`terminologyReview\` from the canonical terminology snapshot exactly. If either canonical receipt exposes an unresolved inconsistency, preserve it as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these other non-finding sections are not stored in a canonical receipt. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set e2e.targets.changedCredentialFreeTests to an empty array; trusted code derives and replaces that evidence after parsing. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
 
 Set the metadata fields from the \`pr_review_metadata\` tool.
 
@@ -1812,12 +1996,12 @@ Return JSON matching the schema returned by the \`pr_review_response_schema\` to
     {
       name: "validate-synthesis-json",
       title: "validate and finalize the structured advisor result in the same session",
-      activeToolNames: ["pr_review_read_ledger"],
-      requiredToolNames: ["pr_review_read_ledger"],
-      requireToolsBeforeText: ["pr_review_read_ledger"],
+      activeToolNames: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
+      requiredToolNames: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
+      requireToolsBeforeText: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
       prompt: [
-        "Inspect the JSON draft in your immediately preceding response. This is a read-only validation turn in the same agent session: call `pr_review_read_ledger` again, never call `pr_review_update_ledger`, and do not start another code review.",
-        "Correct any schema, metadata, encoding, placeholder-quality, sourceOfTruthReview findingId, e2e, or canonical-ledger serialization defect you can see. The metadata and response schema returned by the prior turn's real context tools remain authoritative. Preserve the prior analysis receipts for non-finding sections. For `findings`, include only the open records from the fresh ledger snapshot in snapshot order without adding, dropping, merging, rewording, or reclassifying them; omit ledger-only fields and join each finding's evidence entries with newline separators.",
+        `Inspect the JSON draft in your immediately preceding response. This is a read-only validation turn in the same agent session: call \`pr_review_read_ledger\` and \`${TERMINOLOGY_READ_TOOL}\` again, never call an update tool, and do not start another code review.`,
+        "Correct any schema, metadata, encoding, placeholder-quality, sourceOfTruthReview findingId, e2e, or canonical-receipt serialization defect you can see. The metadata and response schema returned by the prior turn's real context tools remain authoritative. Preserve the prior analysis receipts for other non-finding sections. For `findings`, include only the open records from the fresh ledger snapshot in snapshot order without adding, dropping, merging, rewording, or reclassifying them; omit ledger-only fields and join each finding's evidence entries with newline separators. Copy `terminologyReview` from the fresh canonical terminology snapshot exactly.",
         "Return the final schema-valid NemoClaw PR Review Advisor JSON only, preferably inside <pr_review_advisor_json> tags with no Markdown outside the tags.",
       ].join("\n\n"),
     },
@@ -1830,9 +2014,13 @@ Return JSON matching the schema returned by the \`pr_review_response_schema\` to
         ...stage,
         title,
         prompt,
-        activeToolNames: ["pr_review_read_ledger"],
-        requiredToolNames: [...contextToolNames, "pr_review_read_ledger"],
-        requireToolsBeforeText: [...contextToolNames, "pr_review_read_ledger"],
+        activeToolNames: ["pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
+        requiredToolNames: [...contextToolNames, "pr_review_read_ledger", TERMINOLOGY_READ_TOOL],
+        requireToolsBeforeText: [
+          ...contextToolNames,
+          "pr_review_read_ledger",
+          TERMINOLOGY_READ_TOOL,
+        ],
       });
       continue;
     }
@@ -1842,27 +2030,38 @@ Return JSON matching the schema returned by the \`pr_review_response_schema\` to
     const analysisToolsBeforeText = [
       ...new Set([...contextToolNames, ...(stage.requireToolsBeforeText ?? [])]),
     ];
-    expandedTurns.push(
-      {
-        ...stage,
-        name: `${stage.name}-analysis`,
-        title,
-        prompt,
-        requiredToolNames: analysisRequiredToolNames,
-        requireToolsBeforeText: analysisToolsBeforeText,
-        requireAssistantText: true,
-      },
-      {
+    const analysisTurn: ReviewStage = {
+      ...stage,
+      name: `${stage.name}-analysis`,
+      title,
+      prompt,
+      requiredToolNames: analysisRequiredToolNames,
+      requireToolsBeforeText: analysisToolsBeforeText,
+      requireAssistantText: true,
+    };
+    if (stage.name === "terminology-review") {
+      expandedTurns.push(analysisTurn, {
         name: stage.name,
-        title: `commit ${title} findings`,
-        prompt: `Commit only eligible findings supported by the immediately preceding analysis. Call \`pr_review_update_ledger\` with one flat object containing \`additions\`, \`updates\`, \`resolutions\`, \`supersessions\`, and \`noChangesReason\`. Every mutation field is an array. Use empty arrays plus a nonempty \`noChangesReason\` when there is no ledger change; use \`noChangesReason: null\` when any mutation array is nonempty. Each addition is a flat finding with a \`basis\` object containing \`kind\`, \`observed\`, and \`expected\`; do not nest it under \`finding\` and do not stringify arrays. ${reviewLedgerStageCommitGuidance(stage.name)} Emit no prose before or after the tool call.`,
-        activeToolNames: ["pr_review_update_ledger"],
-        requiredToolNames: ["pr_review_update_ledger"],
-        atomicTerminalToolName: "pr_review_update_ledger",
+        title: "commit terminology review",
+        prompt: `Commit the complete terminology receipt from the immediately preceding semantic analysis. Call \`${TERMINOLOGY_UPDATE_TOOL}\` with \`decisions\` and \`noChangesReason\`. Every decision must reference a trace ID and changed source file:line returned by \`${TERMINOLOGY_TRACE_TOOL}\`. Use an empty decisions array plus a nonempty noChangesReason when no semantic terminology candidate was selected; otherwise use noChangesReason: null. Emit no prose before or after the tool call.`,
+        activeToolNames: [TERMINOLOGY_UPDATE_TOOL],
+        requiredToolNames: [TERMINOLOGY_UPDATE_TOOL],
+        atomicTerminalToolName: TERMINOLOGY_UPDATE_TOOL,
         atomicTerminalRepairPrompt:
-          "Retry only the flat atomic finding-ledger commit for the preceding analysis. Preserve its conclusion and correct any rejected arguments; use empty arrays plus noChangesReason when there is no ledger change.",
-      },
-    );
+          "Retry only the atomic terminology receipt for the preceding analysis. Preserve its semantic conclusions and correct any rejected trace, source, or field arguments.",
+      });
+      continue;
+    }
+    expandedTurns.push(analysisTurn, {
+      name: stage.name,
+      title: `commit ${title} findings`,
+      prompt: `Commit only eligible findings supported by the immediately preceding analysis. Call \`pr_review_update_ledger\` with one flat object containing \`additions\`, \`updates\`, \`resolutions\`, \`supersessions\`, and \`noChangesReason\`. Every mutation field is an array. Use empty arrays plus a nonempty \`noChangesReason\` when there is no ledger change; use \`noChangesReason: null\` when any mutation array is nonempty. Each addition is a flat finding with a \`basis\` object containing \`kind\`, \`observed\`, and \`expected\`; do not nest it under \`finding\` and do not stringify arrays. ${reviewLedgerStageCommitGuidance(stage.name)} Emit no prose before or after the tool call.`,
+      activeToolNames: ["pr_review_update_ledger"],
+      requiredToolNames: ["pr_review_update_ledger"],
+      atomicTerminalToolName: "pr_review_update_ledger",
+      atomicTerminalRepairPrompt:
+        "Retry only the flat atomic finding-ledger commit for the preceding analysis. Preserve its conclusion and correct any rejected arguments; use empty arrays plus noChangesReason when there is no ledger change.",
+    });
   }
   return expandedTurns.map(({ title, prompt, ...turn }, index) => ({
     ...turn,
@@ -2137,6 +2336,7 @@ export function normalizeReviewResult(
     changedFiles: metadata.changedFiles,
     summary: sanitizeSummary(object.summary),
     findings: sanitizeFindings(object.findings),
+    terminologyReview: sanitizeTerminologyReview(object.terminologyReview, metadata.headSha),
     acceptanceCoverage: sanitizeAcceptanceCoverage(object.acceptanceCoverage),
     securityCategories: sanitizeSecurityCategories(object.securityCategories),
     sourceOfTruthReview,
@@ -2144,6 +2344,46 @@ export function normalizeReviewResult(
     testDepth: sanitizeTestDepth(object.testDepth, metadata.deterministic.testDepth),
     positives: stringArray(object.positives).slice(0, 12),
     reviewCompleteness: sanitizeReviewCompleteness(object.reviewCompleteness),
+  };
+}
+
+function sanitizeTerminologyReview(value: unknown, headSha: string): TerminologyReview {
+  const object = isObjectRecord(value) ? value : {};
+  const decisions = recordItems(object.decisions)
+    .slice(0, 20)
+    .map((item, index) => {
+      const source = isObjectRecord(item.source) ? item.source : {};
+      const contrast = stringOrUndefined(item.contrast);
+      const existingTerm = stringOrUndefined(item.existingTerm);
+      return {
+        id: /^T-[0-9]+$/u.test(stringOrDefault(item.id, ""))
+          ? stringOrDefault(item.id, "")
+          : `T-${String(index + 1).padStart(3, "0")}`,
+        term: stringOrDefault(item.term, "unspecified term"),
+        change: enumValue(item.change, TERMINOLOGY_CHANGES, "introduced"),
+        disposition: enumValue(item.disposition, TERMINOLOGY_DISPOSITIONS, "define"),
+        meaning: stringOrDefault(item.meaning, "Meaning was not supplied."),
+        contrast: contrast ?? null,
+        existingTerm: existingTerm ?? null,
+        semanticImpact: enumValue(item.semanticImpact, TERMINOLOGY_SEMANTIC_IMPACTS, "none"),
+        recommendation: stringOrDefault(item.recommendation, "Clarify the term."),
+        traceId: stringOrDefault(item.traceId, "missing-trace"),
+        source: {
+          file: stringOrDefault(source.file, "unknown"),
+          line: Math.max(1, Number.isInteger(source.line) ? Number(source.line) : 1),
+          headSha,
+        },
+      };
+    });
+  const status = enumValue(
+    object.status,
+    TERMINOLOGY_STATUSES,
+    decisions.length > 0 ? "candidates" : "limited",
+  );
+  return {
+    status,
+    decisions,
+    noChangesReason: stringOrUndefined(object.noChangesReason) ?? null,
   };
 }
 
@@ -2472,6 +2712,7 @@ export function renderSummary(result: ReviewAdvisorResult): string {
   appendFindings(lines, "Blockers", blockers);
   appendFindings(lines, "Warnings", warnings);
   appendFindings(lines, "Suggestions", suggestions);
+  appendTerminologySummary(lines, result.terminologyReview);
   lines.push("## What looks good");
   if (result.positives.length === 0) {
     lines.push("- _No positives were identified by the advisor._");
@@ -2482,6 +2723,26 @@ export function renderSummary(result: ReviewAdvisorResult): string {
   appendE2eSummary(lines, result.e2e);
 
   return `${lines.join("\n")}\n`;
+}
+
+function appendTerminologySummary(lines: string[], review: TerminologyReview): void {
+  lines.push("## Terminology review");
+  if (review.status === "limited") {
+    lines.push(
+      `- _Limited: ${review.noChangesReason || "The terminology review did not complete."}_`,
+    );
+  } else if (review.decisions.length === 0) {
+    lines.push(
+      `- _${review.noChangesReason || "No semantic terminology candidates were selected."}_`,
+    );
+  } else {
+    for (const decision of review.decisions.slice(0, 10)) {
+      lines.push(
+        `- **${decision.disposition} — ${decision.term}** (${decision.source.file}:${decision.source.line}): ${decision.recommendation}`,
+      );
+    }
+  }
+  lines.push("");
 }
 
 function appendE2eSummary(lines: string[], e2e: CombinedE2eResult): void {
@@ -2591,6 +2852,13 @@ function unavailableResult(
         : `PR review advisor skipped: ${reason}`,
     },
     findings: [],
+    terminologyReview: {
+      status: "limited",
+      decisions: [],
+      noChangesReason: failed
+        ? `Advisor execution failed: ${reason}`
+        : `Advisor execution skipped: ${reason}`,
+    },
     acceptanceCoverage: [],
     securityCategories: SECURITY_CATEGORIES.map((category) => ({
       category,
