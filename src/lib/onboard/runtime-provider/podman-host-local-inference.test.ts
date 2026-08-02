@@ -106,7 +106,9 @@ describe("Podman host-local inference runtime", () => {
     expect(host.runtime.stopManaged(receipt).running).toBe(false);
     expect(host.runtime.startManaged(input)).toEqual(receipt);
     expect(host.runtime.preserveForRebuild(receipt)).toEqual(receipt);
-    expect(host.capture.mock.calls.filter(([args]) => args[0] === "run")).toHaveLength(1);
+    expect(
+      host.capture.mock.calls.filter(([args]) => args[0] === "run" && !args.includes("--rm")),
+    ).toHaveLength(1);
     expect(host.capture.mock.calls.map(([args]) => args)).toContainEqual([
       "start",
       receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable",
@@ -124,6 +126,45 @@ describe("Podman host-local inference runtime", () => {
     expect(
       host.capture.mock.calls.map(([args]) => args).some(([operation]) => operation === "rm"),
     ).toBe(true);
+  });
+
+  it.each([
+    ["nim", "/v1/health/ready"],
+    ["vllm", "/health"],
+  ] as const)("rejects unready managed %s and removes only its new container", (service, path) => {
+    const host = runtimeHarness();
+    host.setProbeFailure("service is not ready");
+
+    expect(() => host.runtime.startManaged(managedInput(service))).toThrow(
+      `${service} network probe failed`,
+    );
+    expect(host.containers).toHaveLength(0);
+    const calls = host.capture.mock.calls.map(([args]) => args);
+    const probe = calls.find((args) => args[0] === "run" && args.includes("--rm"));
+    expect(probe).toEqual(
+      expect.arrayContaining([
+        "--network",
+        "openshell",
+        PROBE_IMAGE_REF,
+        `http://host.containers.internal:${String(managedInput(service).hostPort)}${path}`,
+      ]),
+    );
+    expect(calls.filter(([operation]) => operation === "rm")).toHaveLength(1);
+  });
+
+  it("does not remove an exact existing container when its route becomes unready", () => {
+    const host = runtimeHarness();
+    const input = managedInput("vllm");
+    const receipt = host.runtime.startManaged(input);
+    const runtimeId =
+      receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable";
+    host.setProbeFailure("service is not ready");
+
+    expect(() => host.runtime.startManaged(input)).toThrow("vllm network probe failed");
+    expect(host.containers.has(runtimeId)).toBe(true);
+    expect(
+      host.capture.mock.calls.map(([args]) => args).some(([operation]) => operation === "rm"),
+    ).toBe(false);
   });
 
   it("rejects foreign name ownership and unavailable CDI devices before mutation", () => {

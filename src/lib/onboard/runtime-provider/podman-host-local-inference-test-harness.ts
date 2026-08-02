@@ -115,11 +115,15 @@ function engineHarness(authorityId = AUTHORITY_ID) {
   const containers = new Map<string, ContainerState>();
   let counter = 1;
   let inspectImageOverride: string | null = null;
+  let probeFailure: string | null = null;
   const capture = vi.fn((args: readonly string[]) => {
     switch (args[0]) {
       case "run": {
         switch (args.includes("--rm")) {
           case true:
+            if (probeFailure !== null) {
+              return { status: 22, stdout: "", stderr: probeFailure };
+            }
             return { status: 0, stdout: "{}", stderr: "" };
           case false: {
             const id = counter.toString(16).padStart(64, "0");
@@ -197,6 +201,9 @@ function engineHarness(authorityId = AUTHORITY_ID) {
     engine,
     setInspectImageOverride(value: string | null) {
       inspectImageOverride = value;
+    },
+    setProbeFailure(value: string | null) {
+      probeFailure = value;
     },
   };
 }
