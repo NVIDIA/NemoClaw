@@ -43,7 +43,7 @@ describe("OpenClaw shields top-config transaction", () => {
     delete require.cache[requireSource.resolve(INDEX_MODULE)];
 
     const runner = requireSource("../runner.js");
-    const config = requireSource("../sandbox/config.js");
+    const agentConfig = requireSource("../sandbox/agent-config.js");
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
     const dockerExec = requireSource("../adapters/docker/exec.js");
     const stateDirLock = requireSource("./state-dir-lock.js");
@@ -91,7 +91,7 @@ describe("OpenClaw shields top-config transaction", () => {
     spies.push(
       vi.spyOn(runner, "run").mockReturnValue({ status: 0 }),
       vi.spyOn(runner, "runCapture").mockReturnValue(""),
-      vi.spyOn(config, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
+      vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
       privilegedExecSpy,
       dockerExecSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
