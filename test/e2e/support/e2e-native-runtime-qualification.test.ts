@@ -136,6 +136,41 @@ describe("native runtime activation qualification", () => {
     ).toThrow(/evidence kinds is incomplete/u);
   });
 
+  it("rejects duplicate and unknown exact-evidence declarations", () => {
+    const duplicateEvidence = nativeRuntimeQualificationDefinition("duplicate-evidence-runtime");
+    const firstDuplicate = duplicateEvidence.cases[0]!;
+    expect(() =>
+      compileNativeRuntimeQualification({
+        ...duplicateEvidence,
+        cases: [
+          {
+            ...firstDuplicate,
+            evidenceKinds: [...firstDuplicate.evidenceKinds, firstDuplicate.evidenceKinds[0]!],
+          },
+          ...duplicateEvidence.cases.slice(1),
+        ],
+      }),
+    ).toThrow(/contains duplicate values/u);
+
+    const unknownEvidence = nativeRuntimeQualificationDefinition("unknown-evidence-runtime");
+    const firstUnknown = unknownEvidence.cases[0]!;
+    expect(() =>
+      compileNativeRuntimeQualification({
+        ...unknownEvidence,
+        cases: [
+          {
+            ...firstUnknown,
+            evidenceKinds: [
+              ...firstUnknown.evidenceKinds,
+              "worker-self-attested",
+            ] as unknown as typeof firstUnknown.evidenceKinds,
+          },
+          ...unknownEvidence.cases.slice(1),
+        ],
+      }),
+    ).toThrow(/unknown: worker-self-attested/u);
+  });
+
   it("rejects Docker availability and Docker-socket substitutions", () => {
     const dockerPresent = nativeRuntimeQualificationDefinition("docker-present-runtime");
     const first = dockerPresent.cases[0]!;
