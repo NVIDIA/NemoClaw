@@ -96,12 +96,14 @@ function fixture(
         }
       }
       case "exec":
-        if (!args.includes("--commit-shared-state-transaction")) {
-          throw new Error("Unexpected Docker commit command");
+        switch (args.includes("--commit-shared-state-transaction")) {
+          case true:
+            events.push("commit:failed");
+            state = options.stateAfterCommitFailure ?? state;
+            return { status: 1, stderr: "commit helper failed" };
+          default:
+            throw new Error("Unexpected Docker commit command");
         }
-        events.push("commit:failed");
-        state = options.stateAfterCommitFailure ?? state;
-        return { status: 1, stderr: "commit helper failed" };
       default:
         throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
     }
