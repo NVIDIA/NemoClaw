@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type AuthenticatedNativeRuntimeQualificationRun,
   verifyNativeRuntimeQualificationFromTrustedController,
@@ -442,7 +442,51 @@ describe("native runtime activation qualification", () => {
     }
   });
 
-  it("binds receipts to independent run metadata and freezes them before verification", () => {
+  it("binds one authenticated protected run to its exact matrix job set", () => {
+    const evidence = completeEvidence();
+    const materialized = qualificationFixture();
+    try {
+      const { jobId: _jobId, ...sharedRun } = structuredClone(evidence[0]!.protectedRun);
+      for (const entry of evidence) {
+        entry.protectedRun = { ...sharedRun, jobId: entry.protectedRun.jobId };
+      }
+      const jobs = evidence.map((entry) => ({
+        id: entry.protectedRun.jobId,
+        artifactRoot: materialized.artifactRoot,
+      }));
+      writeEvidenceArtifacts(materialized.artifactRoot, evidence);
+      expect(() =>
+        verifyNativeRuntimeQualificationFromTrustedController({
+          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          evidence,
+          authenticatedRuns: [{ ...sharedRun, jobs }],
+        }),
+      ).not.toThrow();
+      expect(() =>
+        verifyNativeRuntimeQualificationFromTrustedController({
+          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          evidence,
+          authenticatedRuns: [{ ...sharedRun, jobs: jobs.slice(1) }],
+        }),
+      ).toThrow(/has no trusted protected-run binding/u);
+      expect(() =>
+        verifyNativeRuntimeQualificationFromTrustedController({
+          definition: PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          evidence,
+          authenticatedRuns: [
+            {
+              ...sharedRun,
+              jobs: [...jobs, { id: 9999, artifactRoot: materialized.artifactRoot }],
+            },
+          ],
+        }),
+      ).toThrow(/unused protected-run binding/u);
+    } finally {
+      materialized.cleanup();
+    }
+  });
+
+  it("binds receipts to independent run metadata and snapshots them before verification", () => {
     const evidence = completeEvidence();
     const materialized = qualificationFixture();
     try {
@@ -533,6 +577,56 @@ describe("native runtime activation qualification", () => {
     }
   });
 
+  it("rejects an intermediate directory replaced after validation but before open", () => {
+    const evidence = completeEvidence();
+    const materialized = qualificationFixture();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-race-outside-"));
+    const receipt = evidence[0]!.installer.invocation;
+    const receiptParts = receipt.path.split(/[\\/]/u);
+    const canonicalArtifactRoot = fs.realpathSync(materialized.artifactRoot);
+    const intermediate = path.join(canonicalArtifactRoot, receiptParts[0]!);
+    const savedIntermediate = path.join(canonicalArtifactRoot, "qualification-before-race");
+    const candidate = path.join(canonicalArtifactRoot, ...receiptParts);
+    const outsideTarget = path.join(outside, ...receiptParts.slice(1));
+    let swapped = false;
+    const realOpen: typeof fs.openSync = fs.openSync.bind(fs);
+    let open: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      writeEvidenceArtifacts(materialized.artifactRoot, evidence);
+      fs.mkdirSync(path.dirname(outsideTarget), { recursive: true });
+      fs.writeFileSync(outsideTarget, ARTIFACT_CONTENT, "utf8");
+      const reporter = createNativeRuntimeQualificationReporterRecord(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        evidence,
+        materialized.bindings,
+      );
+      open = vi.spyOn(fs, "openSync").mockImplementation(((target, flags, mode) => {
+        if (!swapped && String(target) === candidate) {
+          fs.renameSync(intermediate, savedIntermediate);
+          fs.symlinkSync(outside, intermediate, "dir");
+          swapped = true;
+        }
+        return realOpen(target, flags, mode);
+      }) as typeof fs.openSync);
+
+      expect(() =>
+        verifyNativeRuntimeQualificationReporterArtifacts(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          reporter,
+        ),
+      ).toThrow(/escapes its trusted root|changed during verification/u);
+      expect(swapped).toBe(true);
+    } finally {
+      open?.mockRestore();
+      if (fs.lstatSync(intermediate, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        fs.unlinkSync(intermediate);
+      }
+      if (fs.existsSync(savedIntermediate)) fs.renameSync(savedIntermediate, intermediate);
+      materialized.cleanup();
+      fs.rmSync(outside, { force: true, recursive: true });
+    }
+  });
+
   it("rejects inexact source, image, operation, and CDI receipts", () => {
     const badSource = completeEvidence();
     badSource[0]!.protectedRun.headSha = "main";
@@ -557,6 +651,15 @@ describe("native runtime activation qualification", () => {
         wrongWorkflowSource,
       ),
     ).toThrow(/protected workflow SHA/u);
+
+    const extendedProtectedRun = completeEvidence();
+    Object.assign(extendedProtectedRun[0]!.protectedRun, { workerBinding: "untrusted" });
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        extendedProtectedRun,
+      ),
+    ).toThrow(/protected run schema is unsupported/u);
 
     const mixedSourcePair = completeEvidence();
     mixedSourcePair[0]!.protectedRun.headSha = "3".repeat(40);
@@ -604,7 +707,8 @@ describe("native runtime activation qualification", () => {
 
   it("binds application, engine, endpoint, and managed-runtime identity", () => {
     const wrongApplication = completeEvidence();
-    wrongApplication[0]!.runtime.application = "hermes";
+    const openclaw = wrongApplication.find((entry) => entry.runtime.agent === "openclaw")!;
+    openclaw.runtime.application = "hermes";
     expect(() =>
       assertNativeRuntimeQualificationEvidence(
         PODMAN_NATIVE_ACTIVATION_QUALIFICATION,

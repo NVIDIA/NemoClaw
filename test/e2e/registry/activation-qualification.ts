@@ -238,6 +238,16 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_HOST_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const PROTECTED_RUN_KEYS = [
+  "attempt",
+  "baseSha",
+  "headSha",
+  "jobId",
+  "repository",
+  "runId",
+  "workflow",
+  "workflowSha",
+] as const;
 
 const APPLICATION_BY_AGENT = {
   openclaw: "openclaw",
@@ -452,10 +462,11 @@ export function compileNativeRuntimeQualification(
 
 function assertArtifact(receipt: QualificationArtifactReceipt, label: string): void {
   const artifactPath = assertSingleLine(receipt.path, `${label} path`);
+  const components = artifactPath.split(/[\\/]/u);
   if (
     artifactPath.startsWith("/") ||
     artifactPath.startsWith("\\") ||
-    artifactPath.split(/[\\/]/u).some((part) => part === "..")
+    components.some((part) => part === "" || part === "." || part === "..")
   ) {
     throw new Error(`${label} path must be repository-relative and traversal-free`);
   }
@@ -478,13 +489,19 @@ function sameArtifactMetadata(left: fs.BigIntStats, right: fs.BigIntStats): bool
   );
 }
 
-function verifyArtifactContents(
+interface ArtifactPathSnapshot {
+  readonly candidate: string;
+  readonly components: readonly {
+    readonly path: string;
+    readonly metadata: fs.BigIntStats;
+  }[];
+}
+
+function resolvedArtifactTarget(
   artifactRoot: string,
+  candidate: string,
   receipt: QualificationArtifactReceipt,
-  claimedPaths: Map<string, string>,
-): void {
-  assertArtifact(receipt, "Qualification artifact");
-  const candidate = path.join(artifactRoot, ...receipt.path.split(/[\\/]/u));
+): string {
   let target: string;
   try {
     target = fs.realpathSync(candidate);
@@ -495,27 +512,93 @@ function verifyArtifactContents(
   if (relative === "" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`Qualification artifact '${receipt.path}' escapes its trusted root`);
   }
-  const candidateMetadata = fs.lstatSync(candidate);
-  if (!candidateMetadata.isFile() || candidateMetadata.isSymbolicLink()) {
-    throw new Error(`Qualification artifact '${receipt.path}' must be a real regular file`);
+  return target;
+}
+
+function snapshotArtifactPath(
+  artifactRoot: string,
+  receipt: QualificationArtifactReceipt,
+): ArtifactPathSnapshot {
+  const paths = [artifactRoot];
+  for (const component of receipt.path.split(/[\\/]/u)) {
+    paths.push(path.join(paths.at(-1)!, component));
   }
-  const previousDigest = claimedPaths.get(target);
-  if (previousDigest !== undefined) {
-    if (previousDigest !== receipt.sha256) {
+  let components: ArtifactPathSnapshot["components"];
+  try {
+    components = paths.map((componentPath) => ({
+      path: componentPath,
+      metadata: fs.lstatSync(componentPath, { bigint: true }),
+    }));
+  } catch {
+    throw new Error(`Qualification artifact '${receipt.path}' is missing`);
+  }
+  const candidate = paths.at(-1)!;
+  for (const [index, component] of components.entries()) {
+    const leaf = index === components.length - 1;
+    if (component.metadata.isSymbolicLink()) {
+      resolvedArtifactTarget(artifactRoot, candidate, receipt);
       throw new Error(
-        `Qualification evidence reuses artifact '${receipt.path}' with a different digest`,
+        `Qualification artifact '${receipt.path}' must use stable real path components`,
       );
     }
-    return;
+    if ((!leaf && !component.metadata.isDirectory()) || (leaf && !component.metadata.isFile())) {
+      throw new Error(
+        `Qualification artifact '${receipt.path}' must be below real directories in a regular file`,
+      );
+    }
   }
-  claimedPaths.set(target, receipt.sha256);
+  return { candidate, components };
+}
+
+function sameArtifactPathSnapshot(
+  left: ArtifactPathSnapshot,
+  right: ArtifactPathSnapshot,
+): boolean {
+  return (
+    left.candidate === right.candidate &&
+    left.components.length === right.components.length &&
+    left.components.every(
+      (component, index) =>
+        component.path === right.components[index]?.path &&
+        sameArtifactMetadata(component.metadata, right.components[index]!.metadata),
+    )
+  );
+}
+
+function assertStableArtifactPath(
+  artifactRoot: string,
+  receipt: QualificationArtifactReceipt,
+  initial: ArtifactPathSnapshot,
+  opened: fs.BigIntStats,
+): string {
+  const current = snapshotArtifactPath(artifactRoot, receipt);
+  resolvedArtifactTarget(artifactRoot, current.candidate, receipt);
+  const confirmed = snapshotArtifactPath(artifactRoot, receipt);
+  const confirmedLeaf = confirmed.components.at(-1)!.metadata;
+  if (
+    !sameArtifactPathSnapshot(initial, current) ||
+    !sameArtifactPathSnapshot(current, confirmed) ||
+    !sameArtifactMetadata(opened, confirmedLeaf)
+  ) {
+    throw new Error(`Qualification artifact '${receipt.path}' changed during verification`);
+  }
+  return `${opened.dev}:${opened.ino}`;
+}
+
+function verifyArtifactContents(
+  artifactRoot: string,
+  receipt: QualificationArtifactReceipt,
+  claimedPaths: Map<string, string>,
+): void {
+  assertArtifact(receipt, "Qualification artifact");
+  const pathSnapshot = snapshotArtifactPath(artifactRoot, receipt);
   const noFollow = fs.constants.O_NOFOLLOW;
   if (typeof noFollow !== "number") {
     throw new Error("Qualification artifact verification requires O_NOFOLLOW");
   }
   let descriptor: number;
   try {
-    descriptor = fs.openSync(target, fs.constants.O_RDONLY | noFollow);
+    descriptor = fs.openSync(pathSnapshot.candidate, fs.constants.O_RDONLY | noFollow);
   } catch {
     throw new Error(`Qualification artifact '${receipt.path}' is not a readable regular file`);
   }
@@ -529,6 +612,17 @@ function verifyArtifactContents(
     ) {
       throw new Error(`Qualification artifact '${receipt.path}' failed type, link, or size checks`);
     }
+    const artifactIdentity = assertStableArtifactPath(artifactRoot, receipt, pathSnapshot, before);
+    const previousDigest = claimedPaths.get(artifactIdentity);
+    if (previousDigest !== undefined) {
+      if (previousDigest !== receipt.sha256) {
+        throw new Error(
+          `Qualification evidence reuses artifact '${receipt.path}' with a different digest`,
+        );
+      }
+      return;
+    }
+    claimedPaths.set(artifactIdentity, receipt.sha256);
     const contents = Buffer.alloc(Number(before.size));
     let offset = 0;
     while (offset < contents.length) {
@@ -539,7 +633,12 @@ function verifyArtifactContents(
     const overflow = Buffer.alloc(1);
     const overflowCount = fs.readSync(descriptor, overflow, 0, 1, offset);
     const after = fs.fstatSync(descriptor, { bigint: true });
-    if (offset !== contents.length || overflowCount !== 0 || !sameArtifactMetadata(before, after)) {
+    if (
+      offset !== contents.length ||
+      overflowCount !== 0 ||
+      !sameArtifactMetadata(before, after) ||
+      assertStableArtifactPath(artifactRoot, receipt, pathSnapshot, after) !== artifactIdentity
+    ) {
       throw new Error(`Qualification artifact '${receipt.path}' changed during verification`);
     }
     const actual = createHash("sha256").update(contents).digest("hex");
@@ -638,7 +737,7 @@ export function createNativeRuntimeQualificationReporterRecord(
     );
     const runRecord = exactRecord(
       binding.protectedRun,
-      ["attempt", "baseSha", "headSha", "jobId", "repository", "runId", "workflow", "workflowSha"],
+      PROTECTED_RUN_KEYS,
       "Native runtime qualification protected run",
     );
     const protectedRun = exactReporterRun(
@@ -665,7 +764,12 @@ export function createNativeRuntimeQualificationReporterRecord(
   const usedBindings = new Set<string>();
   const artifactRootByCaseId = new Map<string, string>();
   for (const entry of clonedEvidence) {
-    const key = protectedRunKey(entry.protectedRun);
+    const runRecord = exactRecord(
+      entry.protectedRun,
+      PROTECTED_RUN_KEYS,
+      `Qualification evidence '${entry.caseId}' protected run`,
+    );
+    const key = protectedRunKey(runRecord as unknown as NativeRuntimeQualificationProtectedRun);
     const binding = bindingByRun.get(key);
     if (!binding) {
       throw new Error(
@@ -869,14 +973,15 @@ function assertLifecycleEvidence(
   assertArtifact(evidence.cleanup.artifact, "Cleanup artifact");
 }
 
-function assertCaseEvidence(
+function assertProtectedRunEvidence(
   definition: CompiledNativeRuntimeQualification,
-  qualificationCase: Readonly<NativeRuntimeQualificationCase>,
   evidence: NativeRuntimeQualificationEvidence,
 ): void {
-  if (evidence.schemaVersion !== 1) {
-    throw new Error(`Qualification evidence '${evidence.caseId}' has unsupported schemaVersion`);
-  }
+  exactRecord(
+    evidence.protectedRun,
+    PROTECTED_RUN_KEYS,
+    `Qualification evidence '${evidence.caseId}' protected run`,
+  );
   if (evidence.protectedRun.repository !== definition.repository) {
     throw new Error(`Qualification evidence '${evidence.caseId}' belongs to the wrong repository`);
   }
@@ -900,11 +1005,16 @@ function assertCaseEvidence(
   if (evidence.protectedRun.headSha === evidence.protectedRun.baseSha) {
     throw new Error(`Qualification evidence '${evidence.caseId}' head/base SHAs must differ`);
   }
+}
 
-  const profile = qualificationCase.profile;
+function assertInstallerReceipt(
+  definition: CompiledNativeRuntimeQualification,
+  qualificationCase: Readonly<NativeRuntimeQualificationCase>,
+  evidence: NativeRuntimeQualificationEvidence,
+): void {
   if (
     evidence.installer.provider !== definition.provider ||
-    evidence.installer.architecture !== profile.architecture ||
+    evidence.installer.architecture !== qualificationCase.profile.architecture ||
     evidence.installer.dockerAvailability !== "unavailable" ||
     evidence.installer.exitCode !== 0
   ) {
@@ -912,7 +1022,14 @@ function assertCaseEvidence(
   }
   assertArtifact(evidence.installer.invocation, "Installer invocation artifact");
   assertArtifact(evidence.installer.script, "Installer script artifact");
+}
 
+function assertRuntimeIdentity(
+  definition: CompiledNativeRuntimeQualification,
+  qualificationCase: Readonly<NativeRuntimeQualificationCase>,
+  evidence: NativeRuntimeQualificationEvidence,
+): void {
+  const profile = qualificationCase.profile;
   if (
     evidence.runtime.provider !== definition.provider ||
     evidence.runtime.profileId !== profile.id ||
@@ -929,6 +1046,19 @@ function assertCaseEvidence(
     throw new Error(`Qualification evidence '${evidence.caseId}' names the wrong runtime engine`);
   }
   assertSingleLine(evidence.runtime.engineVersion, "Runtime engine version");
+}
+
+function assertCaseEvidence(
+  definition: CompiledNativeRuntimeQualification,
+  qualificationCase: Readonly<NativeRuntimeQualificationCase>,
+  evidence: NativeRuntimeQualificationEvidence,
+): void {
+  if (evidence.schemaVersion !== 1) {
+    throw new Error(`Qualification evidence '${evidence.caseId}' has unsupported schemaVersion`);
+  }
+  assertProtectedRunEvidence(definition, evidence);
+  assertInstallerReceipt(definition, qualificationCase, evidence);
+  assertRuntimeIdentity(definition, qualificationCase, evidence);
   assertEngineAuthority(definition, evidence);
   const imageRoles: QualificationManagedImageRole[] = [];
   for (const image of evidence.runtime.managedImages) {
@@ -949,7 +1079,7 @@ function assertCaseEvidence(
   assertArtifact(evidence.runtime.inferenceResult, "Inference result artifact");
   assertLifecycleEvidence(qualificationCase, evidence, authoritySha256);
 
-  if (profile.acceleration === "nvidia-gpu") {
+  if (qualificationCase.profile.acceleration === "nvidia-gpu") {
     if (
       evidence.nvidiaCdi?.devices.length !== 1 ||
       evidence.nvidiaCdi.devices[0] !== "nvidia.com/gpu=all"
