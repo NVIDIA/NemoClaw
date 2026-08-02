@@ -19,6 +19,14 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
+function clearTerminologyReview() {
+  return {
+    status: "clear" as const,
+    decisions: [],
+    noChangesReason: "No semantic terminology candidates were selected.",
+  };
+}
+
 describe("PR review advisor comment CLI", () => {
   it("reports E2E recommendations that do not fit", () => {
     const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
@@ -61,6 +69,29 @@ describe("PR review advisor comment CLI", () => {
       `<summary>${E2E_RENDER_LIMIT + 1} optional E2E recommendations</summary>`,
     );
     expect(comment).toContain("- _1 more._");
+  });
+
+  it("does not render terminology without a source commit", () => {
+    const comment = buildComment({
+      summary: "unused",
+      result: {
+        terminologyReview: {
+          status: "candidates",
+          noChangesReason: null,
+          decisions: [
+            {
+              term: "review-bound",
+              disposition: "replace",
+              recommendation: "Use commit SHA.",
+              source: { file: "guide.md", line: 4 },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(comment).not.toContain("semantic terminology decision");
+    expect(comment).not.toContain("review-bound");
   });
 
   it("ignores malformed E2E collections and selectors outside the trusted inventory", () => {
@@ -193,6 +224,7 @@ describe("PR review advisor comment CLI", () => {
         { severity: "suggestion", title: "three" },
         { severity: "invalid", title: "ignored" },
       ],
+      terminologyReview: clearTerminologyReview(),
       e2e: {
         coverage: {
           requiredTests: [{ id: "security-posture", reason: "not fingerprinted" }],
@@ -225,6 +257,7 @@ describe("PR review advisor comment CLI", () => {
     });
     expect(completed.fingerprints?.findings).toMatch(/^[0-9a-f]{64}$/u);
     expect(completed.fingerprints?.e2e).toMatch(/^[0-9a-f]{64}$/u);
+    expect(completed.fingerprints?.terminology).toMatch(/^[0-9a-f]{64}$/u);
     const reordered = normalizeAdvisorLaneReport(
       { ...finalResult, findings: [...finalResult.findings].reverse() },
       { ...finalResult, findings: [...finalResult.findings].reverse() },
@@ -260,6 +293,70 @@ describe("PR review advisor comment CLI", () => {
       status: "unavailable",
       partial: false,
     });
+    expect(
+      normalizeAdvisorLaneReport(
+        finalResult,
+        { ...finalResult, terminologyReview: undefined },
+        headSha,
+      ),
+    ).toEqual({ status: "unavailable", partial: false });
+    const validDecision = {
+      id: "T-001",
+      term: "review-bound",
+      change: "introduced",
+      disposition: "replace",
+      meaning: "Evidence for one revision.",
+      contrast: null,
+      existingTerm: "commit SHA",
+      semanticImpact: "evidence",
+      recommendation: "Use commit SHA.",
+      traceId: "term-valid",
+      source: { file: "guide.md", line: 4, headSha },
+    };
+    const duplicateTerminology = {
+      ...finalResult,
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [validDecision, validDecision],
+      },
+    };
+    expect(normalizeAdvisorLaneReport(finalResult, duplicateTerminology, headSha)).toEqual({
+      status: "unavailable",
+      partial: false,
+    });
+    const oversizedTerminology = {
+      ...finalResult,
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: Array.from({ length: 21 }, (_, index) => ({
+          ...validDecision,
+          id: `T-${index + 1}`,
+        })),
+      },
+    };
+    expect(normalizeAdvisorLaneReport(finalResult, oversizedTerminology, headSha)).toEqual({
+      status: "unavailable",
+      partial: false,
+    });
+    const wrongHeadTerminology = {
+      ...finalResult,
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [
+          {
+            ...validDecision,
+            source: { file: "guide.md", line: 4, headSha: "b".repeat(40) },
+          },
+        ],
+      },
+    };
+    expect(normalizeAdvisorLaneReport(finalResult, wrongHeadTerminology, headSha)).toEqual({
+      status: "unavailable",
+      partial: false,
+    });
   });
 
   it("reads optional second-opinion artifacts without making them publication-critical", () => {
@@ -273,6 +370,7 @@ describe("PR review advisor comment CLI", () => {
       headSha,
       summary: { confidence: "medium" },
       findings: [],
+      terminologyReview: clearTerminologyReview(),
     };
     fs.writeFileSync(primaryAnalysis, `${JSON.stringify(primaryResult)}\n`);
     fs.writeFileSync(
@@ -286,6 +384,7 @@ describe("PR review advisor comment CLI", () => {
         headSha,
         summary: { confidence: "low", oneLine: "untrusted secondary prose" },
         findings: [{ severity: "warning", title: "secondary finding prose" }],
+        terminologyReview: clearTerminologyReview(),
       })}\n`,
     );
 
@@ -336,6 +435,25 @@ describe("PR review advisor comment CLI", () => {
         oneLine: "Primary review completed.",
       },
       findings: [{ severity: "warning", title: "Primary warning" }],
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [
+          {
+            id: "T-001",
+            term: "review-bound",
+            change: "introduced",
+            disposition: "replace",
+            meaning: "Evidence for the commit SHA.",
+            contrast: null,
+            existingTerm: "commit SHA",
+            semanticImpact: "evidence",
+            recommendation: "Use commit SHA.",
+            traceId: "term-primary",
+            source: { file: "guide.md", line: 4, headSha: "a".repeat(40) },
+          },
+        ],
+      },
       e2e: {
         coverage: {
           requiredTests: [],
@@ -361,6 +479,38 @@ describe("PR review advisor comment CLI", () => {
       headSha: result.headSha,
       summary: { confidence: "low", oneLine: "do not publish this summary" },
       findings: [{ severity: "warning", title: "do not publish this finding" }],
+      terminologyReview: {
+        status: "candidates",
+        noChangesReason: null,
+        decisions: [
+          {
+            id: "T-001",
+            term: "review-bound",
+            change: "introduced",
+            disposition: "justified",
+            meaning: "Evidence for the selected head.",
+            contrast: "Evidence for another revision.",
+            existingTerm: null,
+            semanticImpact: "evidence",
+            recommendation: "Define the contrast.",
+            traceId: "term-secondary-1",
+            source: { file: "guide.md", line: 4, headSha: result.headSha },
+          },
+          {
+            id: "T-002",
+            term: "lane-bound",
+            change: "introduced",
+            disposition: "define",
+            meaning: "A result from one model lane.",
+            contrast: null,
+            existingTerm: null,
+            semanticImpact: "none",
+            recommendation: "Define the term.",
+            traceId: "term-secondary-2",
+            source: { file: "guide.md", line: 8, headSha: result.headSha },
+          },
+        ],
+      },
       e2e: {
         coverage: {
           requiredTests: [
@@ -402,10 +552,15 @@ describe("PR review advisor comment CLI", () => {
       "**Nemotron 3 Ultra (second opinion):** Completed · low confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(comment).toContain("normalized findings differ");
+    expect(comment).toContain("normalized terminology decisions differ");
     expect(comment).toContain("normalized E2E selections differ");
     expect(comment).toContain("severity counts match");
     expect(comment).not.toContain("do not publish this summary");
     expect(comment).not.toContain("do not publish this finding");
+    expect(comment).toContain("2 terminology differences from the second opinion");
+    expect(comment).toContain("primary classified it as <code>replace</code>");
+    expect(comment).toContain("selected only by the second-opinion lane as <code>define</code>");
+    expect(comment).toContain("1 semantic terminology decision");
     expect(comment).toContain(
       "<summary>1 additional E2E selection from the second opinion</summary>",
     );
@@ -417,7 +572,7 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).not.toContain("not-allowlisted");
     expect(comment).not.toContain("do not publish an unknown selector");
     expect(comment).toContain(
-      "Second-opinion E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate.",
+      "Second-opinion terminology and E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate.",
     );
     expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
     expect(comment.match(/<code>vllm-docker-storage<\/code>/gu)).toHaveLength(1);

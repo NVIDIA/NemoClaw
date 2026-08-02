@@ -311,6 +311,7 @@ describe("Hermes managed-tool gateway broker", () => {
     );
     expect(removeState).not.toHaveBeenCalled();
 
+    const cleanupWriteState = vi.fn();
     expect(() =>
       broker.activateHermesToolGatewayCloneBinding(
         "new-destination",
@@ -324,9 +325,11 @@ describe("Hermes managed-tool gateway broker", () => {
           }),
           controlRequest: () => ({ state: "discarded" }),
           removeState: () => false,
+          writeState: cleanupWriteState,
         },
       ),
     ).toThrow("activation cleanup failed");
+    expect(cleanupWriteState).not.toHaveBeenCalled();
   });
 
   it("removes broker state only for the exact registry identity", () => {
