@@ -22,6 +22,7 @@ describe("managed-image capability union", () => {
         "npm:@openclaw/slack@2026.7.1",
         "npm:@openclaw/whatsapp@2026.7.1",
         "npm:@openclaw/msteams@2026.7.1",
+        "npm:@openclaw/googlechat@2026.7.1",
       ],
     );
     expect(collectManagedImageHermesUvPackages()).toEqual([
