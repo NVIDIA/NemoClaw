@@ -25,13 +25,13 @@ describe("shields policy transition", () => {
     delete require.cache[requireSource.resolve(TRANSITION_LOCK_MODULE)];
 
     const runner = requireSource("../runner.js");
-    const sandboxConfig = requireSource("../sandbox/config.js");
+    const agentConfig = requireSource("../sandbox/agent-config.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
       throw new Error("policy get failed with status 42");
     });
-    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+    vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
       agentName: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
       configFile: "config.json",

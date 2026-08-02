@@ -56,7 +56,7 @@ const {
 } = require("./timer-control");
 const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
-const { resolveAgentConfig } = require("../sandbox/config");
+const { resolveAgentConfig } = require("../sandbox/agent-config");
 const {
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");

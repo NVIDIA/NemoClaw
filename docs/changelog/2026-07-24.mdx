@@ -59,6 +59,6 @@ NemoClaw v0.0.94 strengthens sandbox restore and update behavior, adds machine-r
 - Hermes image assembly now groups repository payloads into five ownership-preserving BuildKit layers.
   The first hosted comparison reduced the production build step from 205 seconds to 101 seconds and the layer export from 178.8 seconds to 70.4 seconds.
   Build-time checks preserve file contents, modes, owners, scanner ordering, and cache boundaries.
-- Live E2E validation now isolates long-running lanes, trusts exact-head Hermes swap setup, stabilizes cancelled child lifecycles, parallelizes plugin EXDEV coverage, and records periodic runner-pressure telemetry.
+- Live E2E validation now isolates long-running lanes, trusts Hermes swap setup, stabilizes cancelled child lifecycles, parallelizes plugin EXDEV coverage, and records periodic runner-pressure telemetry.
   These changes distinguish hosted-runner loss from product failures while retaining the cold-onboard performance budget as a separate release signal.
   Documentation validation also keeps agent-variant checks read-only, accepts an absent Fern preview as a non-blocking condition, and uses Fern `5.80.1`.
