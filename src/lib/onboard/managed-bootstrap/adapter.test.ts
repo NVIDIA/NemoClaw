@@ -820,6 +820,28 @@ describe("managed bootstrap adapter contract", () => {
     );
   });
 
+  it("rejects an unbounded provider recovery result before normalizing records", async () => {
+    const fixture = adapterFor("hermes");
+    const candidate = {
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      providerId: "mxc",
+      sourcePhase: "provider-owned-cleanup",
+      sandbox: null,
+      bootstrapIdentity: IDENTITY,
+      code: "provider-owned-retry",
+      retryable: true,
+      detail: "opaque MXC recovery evidence",
+    } as const;
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce({
+      receipts: [],
+      failures: Array.from({ length: 4097 }, () => candidate),
+    });
+
+    await expect(recoverManagedBootstrapTransactions(fixture.adapter)).rejects.toThrow(
+      "provider recovery returned too many records",
+    );
+  });
+
   it("blocks same-name and identity-unknown failures while warning for unrelated sandboxes", () => {
     const failure = (bootstrapIdentity: string, sandboxName: string | null) =>
       Object.freeze({

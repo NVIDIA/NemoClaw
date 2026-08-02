@@ -117,7 +117,11 @@ function boundedRecoveryFailureDetail(error: unknown): string {
   const detail = raw.length > 0 ? raw : "Docker recovery failed without diagnostic detail";
   const bytes = Buffer.from(detail, "utf8");
   if (bytes.length <= MAX_RECOVERY_FAILURE_DETAIL_BYTES) return detail;
-  return bytes.subarray(0, MAX_RECOVERY_FAILURE_DETAIL_BYTES).toString("utf8");
+  let bounded = bytes.subarray(0, MAX_RECOVERY_FAILURE_DETAIL_BYTES).toString("utf8");
+  while (Buffer.byteLength(bounded, "utf8") > MAX_RECOVERY_FAILURE_DETAIL_BYTES) {
+    bounded = [...bounded].slice(0, -1).join("");
+  }
+  return bounded;
 }
 
 function dockerManagedBootstrapRecoveryFailure(
@@ -2080,6 +2084,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "terminal finalization does not match its retained durable journal",
       });
     }
+    if (finalization.phase === "rolled-back") requireExactOwnerCleanup(journal);
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization.cleanupReceipt);
   };
@@ -2997,6 +3002,11 @@ export function createDockerManagedBootstrapAdapter(
                 : finishRecoveredRollbackPhase(journal, sourcePhase)),
           );
         } catch (error) {
+          try {
+            journal = deps.journalStore.load(bootstrapIdentity) ?? journal;
+          } catch {
+            // Preserve the first per-record failure when the durable re-read also fails.
+          }
           failures.push(dockerManagedBootstrapRecoveryFailure(bootstrapIdentity, journal, error));
         }
       }

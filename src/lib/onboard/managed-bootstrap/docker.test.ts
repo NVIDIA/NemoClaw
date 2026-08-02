@@ -154,9 +154,9 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
     expectEventBefore(fake.events, "journal:rollback-authorized", `rm:${NEW_ID}`);
-    expectEventBefore(fake.events, "finalization:rolled-back", "journal:removed");
-    expect(fake.finalization).toMatchObject({ phase: "rolled-back" });
-    expect(fake.journal).toBeNull();
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
+    expect(fake.finalization).toBeNull();
+    expect(fake.journal?.phase).toBe("owner-cleanup-required");
     expect(fake.replacement).toBeNull();
     expect(fake.original.Name).toBe("/openshell-alpha");
     expect(fake.original.State?.Running).toBe(false);
@@ -198,8 +198,9 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
     expectEventBefore(fake.events, "journal:rollback-authorized", `rm:${NEW_ID}`);
-    expect(fake.finalization).toMatchObject({ phase: "rolled-back" });
-    expect(fake.journal).toBeNull();
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
+    expect(fake.finalization).toBeNull();
+    expect(fake.journal?.phase).toBe("owner-cleanup-required");
   });
 
   it("fences rollback when image-owned shared state is already committed", async () => {
@@ -328,8 +329,12 @@ describe("Docker managed bootstrap adapter", () => {
         completion: null,
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
-    expect(fake.journal).toBeNull();
+    expect(fake.journal?.phase).toBe("owner-cleanup-required");
+    expect(fake.finalization).toBeNull();
     expect(fake.replacement).toBeNull();
+    expect(fake.original.State?.Running).toBe(false);
+    expectEventBefore(fake.events, "shared:rollback", `rm:${NEW_ID}`);
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
     expect(
       vi.mocked(fake.deps.dockerRun!).mock.calls.some(([args]) => {
         const agentIndex = args.indexOf("--agent");

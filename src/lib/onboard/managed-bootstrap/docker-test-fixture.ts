@@ -544,6 +544,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
       original = null as unknown as DockerContainerInspect;
       events.push(`external-rm:${OLD_ID}`);
     },
+    setDockerInspectUnknown(runtimeId: string, indeterminate: boolean) {
+      if (indeterminate) dockerInspectUnknownIds.add(runtimeId);
+      else dockerInspectUnknownIds.delete(runtimeId);
+    },
   };
 }
 

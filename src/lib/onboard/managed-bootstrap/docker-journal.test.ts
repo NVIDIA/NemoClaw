@@ -244,6 +244,26 @@ describe("Docker managed bootstrap journal", () => {
     expect(store.load(IDENTITY)).toBeNull();
   });
 
+  it("persists owner cleanup as a restart-safe non-terminal phase", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const first = createFileDockerManagedBootstrapJournalStore(root);
+    first.create(journal);
+
+    const retained = first.transition(IDENTITY, "staged", "owner-cleanup-required");
+    expect(retained.phase).toBe("owner-cleanup-required");
+    expect(first.listUnfinishedIdentities()).toEqual([IDENTITY]);
+
+    const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(restarted.load(IDENTITY)).toEqual(retained);
+    expect(restarted.listUnfinishedIdentities()).toEqual([IDENTITY]);
+    expect(() =>
+      restarted.transition(IDENTITY, "owner-cleanup-required", "shared-state-committed"),
+    ).toThrow("unsupported");
+    restarted.remove(IDENTITY, ["owner-cleanup-required"]);
+    expect(restarted.load(IDENTITY)).toBeNull();
+  });
+
   it("recovers one durable cutover decision before journal replacement", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
@@ -460,6 +480,14 @@ describe("Docker managed bootstrap journal", () => {
     } catch (error) {
       expect(error).not.toBeInstanceOf(DockerManagedBootstrapLegacyRecordRequiresAgentError);
     }
+  });
+
+  it("rejects owner cleanup as authority invented by a legacy journal", () => {
+    expect(() =>
+      parseDockerManagedBootstrapJournal(
+        `${JSON.stringify({ ...legacyJournalV2(), phase: "owner-cleanup-required" })}\n`,
+      ),
+    ).toThrow("legacy phase is unsupported");
   });
 
   it("upgrades legacy finalization only with exact immutable transaction context", () => {

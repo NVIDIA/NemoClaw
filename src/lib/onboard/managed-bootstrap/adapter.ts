@@ -18,6 +18,7 @@ export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+const MAX_MANAGED_BOOTSTRAP_RECOVERY_RECORDS = 4096;
 const PROCESS_INJECTION_ENV_KEYS = new Set([
   "BASHOPTS",
   "BASH_ENV",
@@ -546,6 +547,12 @@ export async function recoverManagedBootstrapTransactions(
     !Array.isArray(candidates.failures)
   ) {
     protocolFail("provider recovery must return bounded receipt and failure arrays");
+  }
+  if (
+    candidates.receipts.length + candidates.failures.length >
+    MAX_MANAGED_BOOTSTRAP_RECOVERY_RECORDS
+  ) {
+    protocolFail("provider recovery returned too many records");
   }
   const receipts = candidates.receipts.map(normalizeRecoveryReceipt);
   const failures = candidates.failures.map(normalizeRecoveryFailure);
