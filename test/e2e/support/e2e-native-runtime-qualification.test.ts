@@ -600,14 +600,16 @@ describe("native runtime activation qualification", () => {
         evidence,
         materialized.bindings,
       );
-      open = vi.spyOn(fs, "openSync").mockImplementation(((target, flags, mode) => {
-        if (!swapped && String(target) === candidate) {
+      open = vi
+        .spyOn(fs, "openSync")
+        .mockImplementationOnce(((target, flags, mode) => {
+          expect(String(target)).toBe(candidate);
           fs.renameSync(intermediate, savedIntermediate);
           fs.symlinkSync(outside, intermediate, "dir");
           swapped = true;
-        }
-        return realOpen(target, flags, mode);
-      }) as typeof fs.openSync);
+          return realOpen(target, flags, mode);
+        }) as typeof fs.openSync)
+        .mockImplementation(realOpen);
 
       expect(() =>
         verifyNativeRuntimeQualificationReporterArtifacts(
@@ -618,10 +620,12 @@ describe("native runtime activation qualification", () => {
       expect(swapped).toBe(true);
     } finally {
       open?.mockRestore();
-      if (fs.lstatSync(intermediate, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      try {
         fs.unlinkSync(intermediate);
+        fs.renameSync(savedIntermediate, intermediate);
+      } catch {
+        // The one-shot swap did not complete; the original directory remains in place.
       }
-      if (fs.existsSync(savedIntermediate)) fs.renameSync(savedIntermediate, intermediate);
       materialized.cleanup();
       fs.rmSync(outside, { force: true, recursive: true });
     }
