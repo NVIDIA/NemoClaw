@@ -18,6 +18,7 @@ type RegisteredAgentSource = { agent?: string | null } | null | undefined;
 export {
   type AgentRecoveryScript,
   buildRecoveryScript,
+  getInteractiveAgentCommand,
   getTerminalCommand,
   isTerminalAgentRecoveryScript,
   TERMINAL_AGENT_RECOVERY_SCRIPT,

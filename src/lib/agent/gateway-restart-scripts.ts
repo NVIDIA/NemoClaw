@@ -36,6 +36,29 @@ export function getTerminalCommand(
   return agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? null;
 }
 
+/**
+ * Resolve the command a user types inside the sandbox to start the agent
+ * interactively. Unlike getTerminalCommand, this reads
+ * runtime.interactive_command for every agent kind: gateway agents such as
+ * OpenClaw and Hermes also have an interactive entry point, they just do not
+ * own their process lifecycle through it. Falls back to the historical
+ * hardcoded pair (openclaw -> `openclaw tui`, anything else -> its own name)
+ * for agents whose manifest declares no interactive command.
+ */
+export function getInteractiveAgentCommand(
+  agent: AgentDefinition | null,
+  agentName: string | null | undefined,
+): string {
+  // Mirror getTerminalCommand's interactive fallback: runtime-manifest.ts
+  // permits a terminal agent that declares only headless_command, and without
+  // this `launch` would execute the agent's own slug and fail with exit 127.
+  const manifestCommand =
+    agent?.runtime?.interactive_command?.trim() || agent?.runtime?.headless_command?.trim();
+  if (manifestCommand) return manifestCommand;
+  const name = agentName || "openclaw";
+  return name === "openclaw" ? "openclaw tui" : name;
+}
+
 function getRecoveryHealthProbeUrl(
   agent: AgentDefinition | null,
   fallbackPort = DASHBOARD_PORT,
