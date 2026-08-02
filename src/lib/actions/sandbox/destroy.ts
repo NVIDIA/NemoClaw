@@ -416,12 +416,22 @@ async function destroySandboxUnlocked(
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
     force: normalized.force === true,
+    getSandbox: registry.getSandbox,
+    listSandboxes: registry.listSandboxes,
     runOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
     sandboxName,
   });
   if (!destructiveResult.ok) {
+    if (destructiveResult.hostLocalInferenceCleanupFailure) {
+      console.error(
+        `  Sandbox '${sandboxName}' is gone, but its exact host-local inference cleanup failed: ${destructiveResult.hostLocalInferenceCleanupFailure}`,
+      );
+      console.error(
+        `  Local ownership state was preserved. Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile only the recorded provider runtime.`,
+      );
+    }
     if (destructiveResult.deleteOutput) {
       console.error(`  ${destructiveResult.deleteOutput}`);
     }

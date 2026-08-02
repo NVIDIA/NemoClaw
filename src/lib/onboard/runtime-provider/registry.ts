@@ -335,6 +335,8 @@ function validateHostLocalInferenceSurface(
     "inspectManaged",
     "stopManaged",
     "preserveForRebuild",
+    "prepareDestroy",
+    "destroy",
   ] as const) {
     requireFunction(runtime, operation, "hostLocalInference runtime");
   }

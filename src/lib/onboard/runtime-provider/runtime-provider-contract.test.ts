@@ -109,6 +109,8 @@ function mxcInferenceRuntime(): HostLocalInferenceRuntime {
     inspectManaged: unavailable,
     stopManaged: unavailable,
     preserveForRebuild: unavailable,
+    prepareDestroy: unavailable,
+    destroy: unavailable,
   };
 }
 

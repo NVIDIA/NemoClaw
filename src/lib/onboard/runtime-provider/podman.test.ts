@@ -143,6 +143,8 @@ function inferenceRuntime(authorityId = AUTHORITY_ID): HostLocalInferenceRuntime
     inspectManaged: unavailable,
     stopManaged: unavailable,
     preserveForRebuild: unavailable,
+    prepareDestroy: unavailable,
+    destroy: unavailable,
   };
 }
 

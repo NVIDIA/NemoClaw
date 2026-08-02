@@ -152,6 +152,13 @@ function engineHarness(authorityId = AUTHORITY_ID) {
         };
       }
       case "container": {
+        if (args[1] === "exists") {
+          return {
+            status: containers.has(String(args[2])) ? 0 : 1,
+            stdout: "",
+            stderr: "",
+          };
+        }
         assert.equal(args[1], "inspect", "unexpected container operation");
         const container = requireContainer(containers, String(args[2]));
         return {

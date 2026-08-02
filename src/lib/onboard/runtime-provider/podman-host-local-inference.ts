@@ -376,6 +376,16 @@ function inspectContainer(engine: ContainerEngine, runtimeId: string): ManagedCo
   });
 }
 
+function exactContainerExists(engine: ContainerEngine, runtimeId: string): boolean {
+  const result = engine.capture(["container", "exists", runtimeId], PROBE_TIMEOUT_MS);
+  if (result.error) {
+    throw new Error(`Podman inference container existence check failed: ${commandDetail(result)}`);
+  }
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error(`Podman inference container existence check failed: ${commandDetail(result)}`);
+}
+
 function requireManagedIdentity(
   container: ManagedContainer,
   expected: {
@@ -752,6 +762,38 @@ export function createPodmanHostLocalInferenceRuntime(
         inspectReceipt(normalized);
       }
       return normalized;
+    },
+    prepareDestroy(receipt: HostLocalInferenceReceipt) {
+      const normalized = authorizeReceipt(receipt);
+      if (
+        normalized.runtime.kind === "container" &&
+        exactContainerExists(engine, normalized.runtime.runtimeId)
+      ) {
+        inspectReceipt(normalized);
+      }
+      return normalized;
+    },
+    destroy(receipt: HostLocalInferenceReceipt) {
+      const normalized = authorizeReceipt(receipt);
+      if (normalized.runtime.kind === "host") {
+        return Object.freeze({
+          status: "retained" as const,
+          reason: "host-process" as const,
+          receipt: normalized,
+        });
+      }
+      if (!exactContainerExists(engine, normalized.runtime.runtimeId)) {
+        return Object.freeze({ status: "already-absent" as const, receipt: normalized });
+      }
+      const inspected = inspectReceipt(normalized);
+      requireSuccess(
+        "container removal",
+        engine.capture(["rm", "--force", inspected.container.runtimeId], MUTATION_TIMEOUT_MS),
+      );
+      if (exactContainerExists(engine, inspected.container.runtimeId)) {
+        throw new Error("Podman inference removal left the exact managed container present.");
+      }
+      return Object.freeze({ status: "removed" as const, receipt: inspected.receipt });
     },
   });
 }

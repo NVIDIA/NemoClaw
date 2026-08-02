@@ -12,6 +12,7 @@ import {
 } from "../../../onboard/managed-image/contract";
 import { encodeManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
+import { serializeHostLocalInferenceReceipt } from "../../../onboard/runtime-provider/host-local-inference";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import type { BackupOptions, BackupResult } from "../../../state/sandbox";
 import { backupSandboxStateWithManagedAuthority } from "./backup-authority";
@@ -121,6 +122,31 @@ function successfulBackup(options: BackupOptions): BackupResult {
   };
 }
 
+function hostLocalReceipt(port = 8000): string {
+  return serializeHostLocalInferenceReceipt({
+    schemaVersion: 1,
+    providerId: "mxc",
+    service: "vllm",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId: "mxc",
+      operation: "host-local-inference",
+      engineId: "mxc",
+      authorityId: "mxc:host-local",
+      bindingSha256: "c".repeat(64),
+    },
+    endpoint: { host: "mxc.internal", port, networkName: "mxc-network" },
+    runtime: {
+      kind: "container",
+      runtimeId: "mxc-vllm-runtime",
+      name: "nemoclaw-vllm",
+      imageRef: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
+      specSha256: "e".repeat(64),
+      gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
+    },
+  });
+}
+
 describe("managed snapshot backup authority", () => {
   it.each([
     "openclaw",
@@ -180,6 +206,80 @@ describe("managed snapshot backup authority", () => {
     expect(backup).toHaveBeenCalledWith("alpha", { name: "legacy" });
     expect(requireProvider).not.toHaveBeenCalled();
     expect(captureRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("captures and republishes exact %s host-local inference authority", (agent) => {
+    const receipt = hostLocalReceipt();
+    const entry = {
+      name: "alpha",
+      agent,
+      openshellDriver: "mxc",
+      hostLocalInferenceReceipt: receipt,
+    } satisfies SandboxEntry;
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+    const reproveHostLocalInference = vi.fn((_provider, serialized: string) => serialized);
+
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      { name: "host-local" },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        reproveHostLocalInference,
+        backup,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        name: "host-local",
+        hostLocalInferenceReceipt: receipt,
+        validateBeforePublish: expect.any(Function),
+      }),
+    );
+    expect(reproveHostLocalInference).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects host-local route drift before manifest publication", () => {
+    const receipts = [hostLocalReceipt(), hostLocalReceipt(8001)];
+    const entries = receipts.map(
+      (hostLocalInferenceReceipt) =>
+        ({
+          name: "alpha",
+          agent: "hermes",
+          openshellDriver: "mxc",
+          hostLocalInferenceReceipt,
+        }) satisfies SandboxEntry,
+    );
+    const getSandbox = vi
+      .fn<() => SandboxEntry | null>()
+      .mockReturnValueOnce(entries[0])
+      .mockReturnValueOnce(entries[1]);
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      {},
+      {
+        getSandbox,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        reproveHostLocalInference: (_provider, serialized) => serialized,
+        backup,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("host-local inference changed during backup"),
+    });
   });
 
   it("fails before filesystem capture when the provider rejects managed authority", () => {

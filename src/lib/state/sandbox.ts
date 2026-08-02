@@ -60,6 +60,7 @@ import {
   parseOpenClawImagePluginInstalls,
   planOpenClawPluginRestore,
 } from "./openclaw-plugin-restore.js";
+import { cloneSandboxHostLocalInferenceReceipt } from "./registry/host-local-inference.js";
 import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
@@ -81,6 +82,8 @@ export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
   "custom-image OpenClaw plugin provenance is missing or invalid";
 export const MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR =
   "managed snapshot restore requires exact content and runtime authority";
+export const HOST_LOCAL_INFERENCE_SNAPSHOT_RESTORE_AUTHORITY_ERROR =
+  "host-local inference snapshot restore requires exact content and runtime authority";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -131,6 +134,8 @@ export interface RebuildManifest {
    * snapshot. Older and explicit Dockerfile snapshots omit this field.
    */
   workload?: SandboxWorkloadReceipt;
+  /** Exact provider-neutral authority for out-of-sandbox inference. */
+  hostLocalInferenceReceipt?: string;
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -145,6 +150,7 @@ export interface BackupOptions {
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
+  hostLocalInferenceReceipt?: string;
   /**
    * Internal publication fence for provider-backed backups. The callback
    * runs after data capture and sanitization but before the manifest becomes
@@ -320,6 +326,9 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       : cloneSandboxRuntimeSnapshot(value.runtimeSnapshot);
   const workload =
     value.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(value.workload as never);
+  const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+    value.hostLocalInferenceReceipt as string | null | undefined,
+  );
   return (
     typeof value.version === "number" &&
     typeof value.sandboxName === "string" &&
@@ -347,6 +356,8 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
     (value.runtimeSnapshot === undefined || runtimeSnapshot !== undefined) &&
     (value.workload === undefined || workload !== undefined) &&
+    (value.hostLocalInferenceReceipt === undefined ||
+      (typeof hostLocalInferenceReceipt === "string" && hostLocalInferenceReceipt.length > 0)) &&
     (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
@@ -944,6 +955,7 @@ export { isSshTransportFailure };
 function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   readonly runtimeSnapshot?: SandboxRuntimeSnapshot;
   readonly workload?: SandboxWorkloadReceipt;
+  readonly hostLocalInferenceReceipt?: string;
   readonly error?: string;
 } {
   const runtimeSnapshot =
@@ -952,11 +964,20 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
       : cloneSandboxRuntimeSnapshot(options.runtimeSnapshot);
   const workload =
     options.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(options.workload);
+  const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+    options.hostLocalInferenceReceipt,
+  );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
     return { error: "snapshot runtime state is invalid or cannot be represented" };
   }
   if (options.workload !== undefined && workload === undefined) {
     return { error: "snapshot workload authority is invalid" };
+  }
+  if (
+    options.hostLocalInferenceReceipt !== undefined &&
+    typeof hostLocalInferenceReceipt !== "string"
+  ) {
+    return { error: "snapshot host-local inference authority is invalid" };
   }
   if (workload?.kind === "managed-image" && runtimeSnapshot === undefined) {
     return { error: "managed snapshot is missing provider runtime state" };
@@ -964,6 +985,7 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   return {
     ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
     ...(workload === undefined ? {} : { workload }),
+    ...(typeof hostLocalInferenceReceipt === "string" ? { hostLocalInferenceReceipt } : {}),
   };
 }
 
@@ -1780,11 +1802,13 @@ function restoreSandboxStateInternal(
       error,
     };
   };
-  if (
-    manifest.workload?.kind === "managed-image" &&
-    (!options.authority || !options.validateBeforeMutation)
-  ) {
-    return failRestoreContract(MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR);
+  if (!options.authority || !options.validateBeforeMutation) {
+    if (manifest.workload?.kind === "managed-image") {
+      return failRestoreContract(MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR);
+    }
+    if (typeof manifest.hostLocalInferenceReceipt === "string") {
+      return failRestoreContract(HOST_LOCAL_INFERENCE_SNAPSHOT_RESTORE_AUTHORITY_ERROR);
+    }
   }
   if (options.targetAgentType !== manifest.agentType) {
     return failRestoreContract(
@@ -2203,6 +2227,9 @@ function readManifest(backupPath: string): RebuildManifest | null {
         : cloneSandboxRuntimeSnapshot(manifest.runtimeSnapshot);
     const workload =
       manifest.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(manifest.workload);
+    const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+      manifest.hostLocalInferenceReceipt,
+    );
     return {
       ...manifest,
       dir,
@@ -2212,6 +2239,7 @@ function readManifest(backupPath: string): RebuildManifest | null {
       blueprintDigest: manifest.blueprintDigest ?? null,
       ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
       ...(workload === undefined ? {} : { workload }),
+      ...(typeof hostLocalInferenceReceipt === "string" ? { hostLocalInferenceReceipt } : {}),
     };
   } catch {
     return null;

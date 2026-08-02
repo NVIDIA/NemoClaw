@@ -58,6 +58,8 @@ function runtime(): HostLocalInferenceRuntime {
     inspectManaged: vi.fn((receipt) => ({ running: true, receipt })),
     stopManaged: vi.fn((receipt) => ({ running: false, receipt })),
     preserveForRebuild: vi.fn((receipt) => receipt),
+    prepareDestroy: vi.fn((receipt) => receipt),
+    destroy: vi.fn((receipt) => ({ status: "removed" as const, receipt })),
   };
 }
 
