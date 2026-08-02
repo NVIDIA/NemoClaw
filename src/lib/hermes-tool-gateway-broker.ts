@@ -61,6 +61,62 @@ const HERMES_TOOL_GATEWAY_CONTROL_CONTRACT_PATH = path.join(
   "host",
   "tool-gateway-control-contract.ts",
 );
+const HERMES_TOOL_GATEWAY_RUNTIME_MISMATCH_RECOVERY =
+  "Reauthorize every managed-tool Hermes sandbox, then retry.";
+const HERMES_TOOL_GATEWAY_CONTROL_CLIENT_SOURCE = [
+  'const http = require("node:http");',
+  "const [socketPath, route, timeoutValue] = process.argv.slice(1);",
+  "const timeoutMs = Number(timeoutValue);",
+  'let requestBody = "";',
+  "let failed = false;",
+  "const fail = () => { failed = true; process.exitCode = 1; };",
+  'process.stdin.setEncoding("utf8");',
+  'process.stdin.on("data", (chunk) => {',
+  "  requestBody += chunk;",
+  "  if (Buffer.byteLength(requestBody) > 1024 * 1024) {",
+  "    fail();",
+  "    process.stdin.destroy();",
+  "  }",
+  "});",
+  'process.stdin.once("error", fail);',
+  'process.stdin.once("end", () => {',
+  "  if (failed) return;",
+  "  const request = http.request(",
+  "    {",
+  "      socketPath,",
+  "      path: `/${route}`,",
+  '      method: "POST",',
+  "      headers: {",
+  '        "content-type": "application/json",',
+  '        "content-length": Buffer.byteLength(requestBody),',
+  "      },",
+  "    },",
+  "    (response) => {",
+  "      if ((response.statusCode ?? 500) < 200 || (response.statusCode ?? 500) >= 300) {",
+  "        response.resume();",
+  "        fail();",
+  "        return;",
+  "      }",
+  '      response.setEncoding("utf8");',
+  '      let responseBody = "";',
+  '      response.on("data", (chunk) => {',
+  "        responseBody += chunk;",
+  "        if (Buffer.byteLength(responseBody) > 1024 * 1024) {",
+  "          fail();",
+  "          response.destroy();",
+  "        }",
+  "      });",
+  '      response.once("error", fail);',
+  '      response.once("end", () => {',
+  "        if (!failed) process.stdout.write(responseBody);",
+  "      });",
+  "    },",
+  "  );",
+  '  request.setTimeout(timeoutMs, () => request.destroy(new Error("timeout")));',
+  '  request.once("error", fail);',
+  "  request.end(requestBody);",
+  "});",
+].join("\n");
 
 let brokerStartedThisRun = false;
 
@@ -178,32 +234,27 @@ function persistHermesToolGatewayProviderState(
 
 function brokerControlJsonRequest(route, payload, options = {}) {
   if (!fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)) return null;
+  if (!/^credentials\/(?:activate|discard|register|stage|status|unregister)$/u.test(route)) {
+    return null;
+  }
   const timeoutMs = options.timeoutMs ?? HERMES_CLONE_CONTROL_CLIENT_TIMEOUT_MS;
   const result = spawnSync(
-    "curl",
+    process.execPath,
     [
-      "--silent",
-      "--show-error",
-      "--fail",
-      "--unix-socket",
+      "--input-type=commonjs",
+      "--eval",
+      HERMES_TOOL_GATEWAY_CONTROL_CLIENT_SOURCE,
       HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH,
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      (timeoutMs / 1000).toFixed(3),
-      "--request",
-      "POST",
-      "--header",
-      "Content-Type: application/json",
-      "--data-binary",
-      "@-",
-      `http://localhost/${route}`,
+      route,
+      String(timeoutMs),
     ],
     {
       encoding: "utf8",
       input: JSON.stringify(payload),
+      maxBuffer: 1024 * 1024,
       stdio: ["pipe", "pipe", "ignore"],
       timeout: timeoutMs + 1_000,
+      windowsHide: true,
     },
   );
   if (result.status !== 0) return null;
@@ -516,7 +567,7 @@ function preflightHermesToolGatewayCloneBinding(sandboxName) {
   if (readBrokerHash() !== brokerRuntimeHash()) {
     throw new Error(
       "Hermes managed-tool broker runtime changed while an existing broker is active; " +
-        "reauthorize every managed-tool Hermes sandbox before retrying",
+        HERMES_TOOL_GATEWAY_RUNTIME_MISMATCH_RECOVERY,
     );
   }
   if (!fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)) {
@@ -719,7 +770,7 @@ function ensureHermesToolGatewayBroker(options = {}) {
     console.error(
       "Hermes managed-tool broker runtime changed while an existing broker is active; " +
         "refusing to restart it and discard other in-memory sandbox credentials. " +
-        "Reauthorize every managed-tool Hermes sandbox using the documented broker recovery flow.",
+        HERMES_TOOL_GATEWAY_RUNTIME_MISMATCH_RECOVERY,
     );
     return false;
   }
