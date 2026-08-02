@@ -28,6 +28,7 @@ Direct E2E implementations now live in Vitest. The former
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
 | Product-facing setup/onboarding state | `test/e2e/manifests/*.yaml` |
 | Migration status and retirement decisions | GitHub issues and pull requests |
+| Native runtime activation qualification | `registry/activation-qualification.ts`, `docs/NATIVE_RUNTIME_QUALIFICATION.md` |
 
 ## Target Model
 
@@ -106,6 +107,13 @@ When extending the foundation, keep product intent in the scenario, runtime
 mechanics in obligation bindings, and support facts in capabilities. A binding
 must cover every obligation explicitly; a missing adapter or capability is a
 compile error rather than a skip.
+
+The dormant native-runtime activation contract builds on this foundation. It
+requires the complete all-agent, multiarch, CPU/GPU, host-local inference,
+installer, lifecycle, recovery, cleanup, and exact-evidence matrix before a
+provider can be activated. See
+[`NATIVE_RUNTIME_QUALIFICATION.md`](./NATIVE_RUNTIME_QUALIFICATION.md). The
+contract is not production runtime registration or a support claim.
 
 ## How To Run
 
