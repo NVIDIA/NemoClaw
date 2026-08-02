@@ -14,6 +14,7 @@ import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "sandbox-operations";
+const RETIRED_JOB_NAME = "sandbox-rlimits-connect";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_ENV_REFERENCE = /\$\{?GITHUB_ENV\}?/u;
 const DOCKER_CREDENTIALS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
@@ -75,6 +76,9 @@ export function validateSandboxOperationsWorkflow(workflow: {
   const jobEnv = job.env ?? {};
   const steps = job.steps ?? [];
 
+  if (workflow.jobs[RETIRED_JOB_NAME] !== undefined) {
+    errors.push(`${RETIRED_JOB_NAME} must remain consolidated into ${JOB_NAME}`);
+  }
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push(`${JOB_NAME} must run on ubuntu-latest`);
   }
