@@ -454,9 +454,10 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes CLI adapter integrity mismatch" >&2; exit 1; }
-# Validate the versioned adapter against Hermes' machine-readable top-level and
-# chat parser metadata before the real binary moves behind the wrapper. Help
-# probes remain runtime evidence for those two public surfaces.
+# Validate the versioned adapter against Hermes' parser metadata and session-name
+# coalescer source before the real binary moves behind the wrapper. The wrapper
+# reads the installed coalescer source at runtime. Help probes remain runtime
+# evidence for the top-level and chat surfaces.
 RUN /opt/hermes/.venv/bin/python -I \
         /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
         --contract /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json \

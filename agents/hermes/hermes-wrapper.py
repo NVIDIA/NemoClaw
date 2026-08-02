@@ -419,6 +419,8 @@ def _option_index(adapter: dict) -> tuple[dict[str, dict], dict[str, dict]]:
 
 def _has_option(argv: list[str], option: dict) -> bool:
     for arg in argv:
+        if arg == "--":
+            break
         if arg in option["names"]:
             return True
         if arg.startswith("--") and "=" in arg and arg.split("=", 1)[0] in option["names"]:

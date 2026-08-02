@@ -302,6 +302,24 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.realArgv).toEqual(argv);
   });
 
+  it("passes provider/model-looking arguments after -- through unchanged (#8011)", () => {
+    const argv = [
+      "--resume",
+      "my",
+      "project",
+      "--",
+      "--provider",
+      "nvidia-prod",
+      "--model",
+      "nvidia/nemotron-3-super-120b-a12b",
+    ];
+
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
   it("rejects an unknown adapter version before invoking Hermes (#8011)", () => {
     const adapter = JSON.parse(fs.readFileSync(ADAPTER, "utf-8"));
     adapter.adapter_version = 2;
