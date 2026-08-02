@@ -28,12 +28,12 @@ Compilation requires 24 exact cases:
 Every case must declare installation, Docker-unavailable proof, onboarding, an
 agent turn, stop/start, snapshot/restore, rebuild, restart/reconciliation, and
 exact cleanup. Removing one case or obligation is a compile error, not a skip.
-The agent identity also binds its application-facing name: OpenClaw, Hermes,
-or `langchain-deepagents-code` for DCode.
 
 ## Exact evidence
 
-Activation evidence is complete only when every compiled case has:
+Every compiled case declares the evidence categories that the protected
+collector must eventually produce. Those categories preserve the complete
+activation target:
 
 - the exact protected workflow revision, run, job, attempt, head SHA, and base
   SHA;
@@ -55,32 +55,15 @@ Activation evidence is complete only when every compiled case has:
 - exact cleanup proving external Ollama was retained or provider-owned NIM and
   vLLM were removed, with no provider-owned runtime IDs remaining.
 
-Evidence paths must be relative and traversal-free. SHA and SHA-256 fields are
-strict lowercase hexadecimal values. Missing, duplicate, unknown, or inexact
-case evidence fails the aggregate qualification check. All cases must use the
-configured protected workflow and one exact head/base/workflow source.
-
-Raw worker receipts are never sufficient. The trusted protected-E2E controller
-must supply one or more independent bindings constructed from authenticated
-GitHub state. Each binding names the repository, workflow revision, run,
-attempt, exact head/base pair, numeric job, and that job's downloaded artifact
-root; bindings must not be derived from candidate receipt fields.
-The compiler defensively clones and freezes the receipts, requires every
-receipt and binding to match exactly, and returns a runtime-branded canonical
-reporter record. The later protected collector must own the authenticated
-GitHub lookup and invoke this canonical reporter boundary directly; this
-contract slice does not add an unconsumed controller wrapper.
-
-The aggregate validator then resolves every receipt below its bound artifact
-root, rejects missing, escaping, linked, conflicting, changing, or oversized
-files, and hashes the actual bytes before comparing the claimed SHA-256 digest.
-Only a separately branded verified-evidence object can reach final acceptance.
-A syntactically complete receipt with invented provenance or artifact digests
-therefore cannot qualify a runtime.
-
-These are evidence requirements, not generated evidence. A later protected
-collector must publish the receipts from real runners and supply authenticated
-GitHub run/job state before activation can consume them.
+These are compile-time requirements, not a receipt schema or generated
+evidence. This slice intentionally does not export a reporter, artifact
+verifier, or process-local evidence brand before a protected workflow consumes
+that API. The protected-collector slice must add those pieces together: obtain
+authenticated GitHub run/job state independently of worker receipts, verify
+every artifact below its downloaded job root, and fail closed on incomplete,
+inexact, linked, escaping, conflicting, changing, or oversized evidence. All
+cases must bind to one exact protected workflow/head/base source before the
+runtime can activate.
 
 ## Activation boundary
 
