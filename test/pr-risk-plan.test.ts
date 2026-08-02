@@ -27,7 +27,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(10);
+    expect(first.version).toBe(11);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -193,6 +193,22 @@ describe("deterministic PR risk plan", () => {
       "platform-install",
       "e2e-control-plane",
     ]);
+  });
+
+  it("keeps the protected managed-image lane dormant until its trusted activation marker (#7744)", () => {
+    const activation = "ci/protected-managed-image-multiarch-activation-v1.json";
+    const result = plan(activation);
+    const preActivationRuntime = plan("scripts/checks/run-managed-image-direct-e2e.ts");
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "managed-image-multiarch",
+        matchedFiles: [activation],
+        requiredJobs: ["managed-image-multiarch-startup"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-multiarch-startup"]);
+    expect(preActivationRuntime.families).toEqual([]);
   });
 
   it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {

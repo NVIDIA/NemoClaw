@@ -10,6 +10,9 @@ export const PROTECTED_MANAGED_IMAGE_AGENTS = [
 ] as const satisfies readonly ManagedStartupAgent[];
 
 export const PROTECTED_MANAGED_IMAGE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+export const PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID = "managed-image-multiarch-startup" as const;
+export const PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH =
+  "ci/protected-managed-image-multiarch-activation-v1.json" as const;
 
 export type ProtectedManagedImagePlatform = (typeof PROTECTED_MANAGED_IMAGE_PLATFORMS)[number];
 
@@ -22,7 +25,45 @@ export type ProtectedManagedImageContract = {
   readonly reference: string;
 };
 
+export type ProtectedManagedImageActivation = {
+  readonly agents: readonly ManagedStartupAgent[];
+  readonly contractVersion: 1;
+  readonly jobId: typeof PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
+  readonly platforms: readonly ProtectedManagedImagePlatform[];
+};
+
+export type ProtectedManagedImageDirectRun = Pick<
+  ProtectedManagedImageContract,
+  "agent" | "digest" | "platform" | "reference"
+>;
+
+export type ProtectedManagedImageEvidence = {
+  readonly baseSha: string;
+  readonly cohort: string;
+  readonly contracts: readonly ProtectedManagedImageContract[];
+  readonly contractSha256: string;
+  readonly directRuns: readonly ProtectedManagedImageDirectRun[];
+  readonly headSha: string;
+  readonly kind: "nemoclaw-protected-managed-image-multiarch-v1";
+  readonly platform: ProtectedManagedImagePlatform;
+  readonly run: {
+    readonly attempt: number;
+    readonly id: number;
+  };
+  readonly workflowSha: string;
+};
+
+export type ProtectedManagedImageEvidenceIdentity = Pick<
+  ProtectedManagedImageEvidence,
+  "baseSha" | "cohort" | "headSha" | "platform" | "workflowSha"
+> & {
+  readonly runAttempt: number;
+  readonly runId: number;
+};
+
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const SHA_PATTERN = /^[a-f0-9]{40}$/u;
+const COHORT_PATTERN = /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
 const BASE_REPOSITORIES: Readonly<Record<ManagedStartupAgent, string>> = Object.freeze({
   openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
   hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
@@ -48,6 +89,21 @@ function exactKeys(value: Record<string, unknown>): void {
   ].sort();
   if (actual.some((key, index) => key !== expected[index]) || actual.length !== expected.length) {
     throw new Error("protected managed-image contract entry has unexpected fields");
+  }
+}
+
+function requireExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+): void {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  if (
+    actual.length !== sortedExpected.length ||
+    actual.some((key, index) => key !== sortedExpected[index])
+  ) {
+    throw new Error(`${label} has unexpected fields`);
   }
 }
 
@@ -116,4 +172,136 @@ export function parseProtectedManagedImageContracts(
     throw new Error("protected managed-image contract must contain unique immutable images");
   }
   return contracts;
+}
+
+export function parseProtectedManagedImageActivation(
+  value: unknown,
+): ProtectedManagedImageActivation {
+  const activation = record(value);
+  requireExactKeys(
+    activation,
+    ["agents", "contractVersion", "jobId", "platforms"],
+    "protected managed-image activation",
+  );
+  if (
+    activation.contractVersion !== 1 ||
+    activation.jobId !== PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID ||
+    JSON.stringify(activation.agents) !== JSON.stringify(PROTECTED_MANAGED_IMAGE_AGENTS) ||
+    JSON.stringify(activation.platforms) !== JSON.stringify(PROTECTED_MANAGED_IMAGE_PLATFORMS)
+  ) {
+    throw new Error("protected managed-image activation contract is invalid");
+  }
+  return {
+    agents: PROTECTED_MANAGED_IMAGE_AGENTS,
+    contractVersion: 1,
+    jobId: PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+    platforms: PROTECTED_MANAGED_IMAGE_PLATFORMS,
+  };
+}
+
+export function parseProtectedManagedImageEvidence(
+  value: unknown,
+  expected: ProtectedManagedImageEvidenceIdentity,
+): ProtectedManagedImageEvidence {
+  const evidence = record(value);
+  requireExactKeys(
+    evidence,
+    [
+      "baseSha",
+      "cohort",
+      "contracts",
+      "contractSha256",
+      "directRuns",
+      "headSha",
+      "kind",
+      "platform",
+      "run",
+      "workflowSha",
+    ],
+    "protected managed-image evidence",
+  );
+  if (
+    evidence.kind !== "nemoclaw-protected-managed-image-multiarch-v1" ||
+    evidence.headSha !== expected.headSha ||
+    evidence.baseSha !== expected.baseSha ||
+    evidence.workflowSha !== expected.workflowSha ||
+    evidence.platform !== expected.platform ||
+    evidence.cohort !== expected.cohort ||
+    typeof evidence.headSha !== "string" ||
+    typeof evidence.baseSha !== "string" ||
+    typeof evidence.workflowSha !== "string" ||
+    !SHA_PATTERN.test(evidence.headSha) ||
+    !SHA_PATTERN.test(evidence.baseSha) ||
+    !SHA_PATTERN.test(evidence.workflowSha) ||
+    typeof evidence.cohort !== "string" ||
+    !COHORT_PATTERN.test(evidence.cohort) ||
+    typeof evidence.contractSha256 !== "string" ||
+    !DIGEST_PATTERN.test(evidence.contractSha256)
+  ) {
+    throw new Error("protected managed-image evidence identity is invalid");
+  }
+
+  const run = record(evidence.run);
+  requireExactKeys(run, ["attempt", "id"], "protected managed-image evidence run");
+  if (
+    run.id !== expected.runId ||
+    run.attempt !== expected.runAttempt ||
+    !Number.isSafeInteger(run.id) ||
+    !Number.isSafeInteger(run.attempt) ||
+    Number(run.id) < 1 ||
+    Number(run.attempt) < 1
+  ) {
+    throw new Error("protected managed-image evidence run identity is invalid");
+  }
+
+  const contracts = parseProtectedManagedImageContracts(evidence.contracts, expected.platform);
+  if (!Array.isArray(evidence.directRuns) || evidence.directRuns.length !== contracts.length) {
+    throw new Error("protected managed-image evidence must directly run every contract");
+  }
+  const contractByAgent = new Map(contracts.map((contract) => [contract.agent, contract]));
+  const seenAgents = new Set<ManagedStartupAgent>();
+  const directRuns = evidence.directRuns.map((value): ProtectedManagedImageDirectRun => {
+    const directRun = record(value);
+    requireExactKeys(
+      directRun,
+      ["agent", "digest", "platform", "reference"],
+      "protected managed-image direct run",
+    );
+    const contract =
+      typeof directRun.agent === "string"
+        ? contractByAgent.get(directRun.agent as ManagedStartupAgent)
+        : undefined;
+    if (
+      !contract ||
+      seenAgents.has(contract.agent) ||
+      directRun.digest !== contract.digest ||
+      directRun.platform !== contract.platform ||
+      directRun.reference !== contract.reference
+    ) {
+      throw new Error("protected managed-image direct run does not match its exact contract");
+    }
+    seenAgents.add(contract.agent);
+    return {
+      agent: contract.agent,
+      digest: contract.digest,
+      platform: contract.platform,
+      reference: contract.reference,
+    };
+  });
+  if (seenAgents.size !== PROTECTED_MANAGED_IMAGE_AGENTS.length) {
+    throw new Error("protected managed-image evidence must directly run every shipped agent");
+  }
+
+  return {
+    baseSha: evidence.baseSha,
+    cohort: evidence.cohort,
+    contracts,
+    contractSha256: evidence.contractSha256,
+    directRuns,
+    headSha: evidence.headSha,
+    kind: "nemoclaw-protected-managed-image-multiarch-v1",
+    platform: expected.platform,
+    run: { attempt: expected.runAttempt, id: expected.runId },
+    workflowSha: evidence.workflowSha,
+  };
 }
