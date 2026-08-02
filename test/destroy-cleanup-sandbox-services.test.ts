@@ -20,7 +20,13 @@ function buildDeps(sandbox: SandboxLike): {
   deps: Required<
     Pick<
       CleanupSandboxServicesDeps,
-      "getSandbox" | "stopAll" | "unloadOllamaModels" | "runOpenshell" | "rmSync"
+      | "getSandbox"
+      | "stopAll"
+      | "unloadOllamaModels"
+      | "runOpenshell"
+      | "rmSync"
+      | "stopGooglechatWebhookTunnel"
+      | "googlechatWebhookTunnelPidDir"
     >
   >;
   stopAllCalls: Array<{ sandboxName: string }>;
@@ -43,6 +49,8 @@ function buildDeps(sandbox: SandboxLike): {
       }),
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
+      stopGooglechatWebhookTunnel: vi.fn(() => "/tmp/nemoclaw-services-regression-2717-googlechat"),
+      googlechatWebhookTunnelPidDir: vi.fn((pidDir) => `${pidDir}-googlechat`),
     },
   };
 }
@@ -89,6 +97,11 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       path.join("/tmp", "nemoclaw-services-regression-2717"),
       { recursive: true, force: true },
     );
+    expect(harness.deps.stopGooglechatWebhookTunnel).toHaveBeenCalledWith("regression-2717");
+    expect(harness.deps.rmSync).toHaveBeenCalledWith(
+      path.join("/tmp", "nemoclaw-services-regression-2717-googlechat"),
+      { recursive: true, force: true },
+    );
 
     const providerDeleteCalls = vi
       .mocked(harness.deps.runOpenshell)
@@ -97,6 +110,23 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(providerDeleteCalls.map((argv) => argv[2])).toEqual(
       SANDBOX_PROVIDER_SUFFIXES.map((suffix) => `regression-2717-${suffix}`),
     );
+  });
+
+  it("fails closed before other cleanup when the Google Chat tunnel cannot stop", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+    vi.mocked(harness.deps.stopGooglechatWebhookTunnel).mockImplementation(() => {
+      throw new Error("cloudflared refused to stop");
+    });
+
+    expect(() =>
+      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
+    ).toThrow(/Refusing to finish sandbox cleanup/);
+
+    expect(harness.deps.getSandbox).not.toHaveBeenCalled();
+    expect(harness.deps.stopAll).not.toHaveBeenCalled();
+    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
+    expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("rejects traversal-shaped sandbox names before any cleanup side effect", () => {
@@ -111,5 +141,6 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
     expect(harness.deps.rmSync).not.toHaveBeenCalled();
     expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
+    expect(harness.deps.stopGooglechatWebhookTunnel).not.toHaveBeenCalled();
   });
 });

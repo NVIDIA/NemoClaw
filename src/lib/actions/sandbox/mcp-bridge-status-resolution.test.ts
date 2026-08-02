@@ -34,7 +34,7 @@ afterEach(() => {
 const harnessPreludeTemplate = String.raw`
 const registry = require("./src/lib/state/registry.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -46,7 +46,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 let providerAttachmentState = "attached";
 let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     if (providerInspectionState === "absent") {
       return { status: 1, stdout: "", stderr: "provider not found" };

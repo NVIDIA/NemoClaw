@@ -87,6 +87,18 @@ describe("E2E workflow plan", () => {
     }
   });
 
+  it.each([
+    "jobs",
+    "targets",
+  ] as const)("maps the retired sandbox rlimit %s selector to sandbox operations", (kind) => {
+    const legacyPlan = buildE2eWorkflowPlan({ [kind]: "sandbox-rlimits-connect" });
+    const canonicalPlan = buildE2eWorkflowPlan({ [kind]: "sandbox-operations" });
+
+    expect(legacyPlan).toEqual(canonicalPlan);
+    expect(legacyPlan.hermesSelected).toBe(false);
+    expect(readFreeStandingJobsInventory().allowedJobs).not.toContain("sandbox-rlimits-connect");
+  });
+
   it("routes a registry target into the live matrix", () => {
     const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
     const plan = buildE2eWorkflowPlan({ targets: registryId });
