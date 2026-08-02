@@ -27,7 +27,11 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { resourceLimitOutputFilterScript } from "../fixtures/resource-limit-diagnostics.ts";
+import {
+  RESOURCE_LIMIT_CONNECT_BEGIN_MARKER,
+  RESOURCE_LIMIT_CONNECT_END_MARKER,
+  resourceLimitOutputFilterScript,
+} from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
@@ -40,10 +44,13 @@ const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
 
 function numericProbe(text: string, key: string): number {
   const prefix = `${key}=`;
-  const line = text.split(/\r?\n/u).find((candidate) => candidate.startsWith(prefix));
-  const value = line?.slice(prefix.length);
-  expect(value, `Missing ${key} in sanitized connect summary`).toMatch(/^\d+$/u);
-  return Number(value ?? "NaN");
+  const values = text
+    .split(/\r?\n/u)
+    .filter((candidate) => candidate.startsWith(prefix))
+    .map((candidate) => candidate.slice(prefix.length));
+  expect(values, `Expected exactly one ${key} in sanitized connect summary`).toHaveLength(1);
+  expect(values[0], `Expected a numeric ${key} in sanitized connect summary`).toMatch(/^\d+$/u);
+  return Number(values[0] ?? "NaN");
 }
 
 function connectRlimitProbeScript(cliPath: string): string {
@@ -66,10 +73,10 @@ function connectRlimitProbeScript(cliPath: string): string {
     "set -euo pipefail",
     `cat <<'NEMOCLAW_CONNECT_RLIMITS' | ${cli} connect 2>&1 | ${outputFilter}`,
     "set -euo pipefail",
-    'printf "__NEMOCLAW_RLIMIT_CONNECT_BEGIN__\\n"',
+    'printf "__NEMOCLAW_RLIMIT_CONNECT_%s__\\n" BEGIN',
     `bash -lc '${shellProbe}' | sed 's/^/login_/'`,
     `bash -ic '${shellProbe}' 2>&1 | sed 's/^/interactive_/'`,
-    'printf "__NEMOCLAW_RLIMIT_CONNECT_END__\\n"',
+    'printf "__NEMOCLAW_RLIMIT_CONNECT_%s__\\n" END',
     "exit",
     "NEMOCLAW_CONNECT_RLIMITS",
   ].join("\n");
@@ -89,11 +96,15 @@ async function assertConnectResourceLimits(host: HostCliClient): Promise<string>
     connect.exitCode,
     `nemoclaw connect resource-limit probe failed: ${exit}, timedOut=${String(connect.timedOut)}`,
   ).toBe(0);
-  expect(summary).toContain("__NEMOCLAW_RLIMIT_CONNECT_BEGIN__");
-  expect(summary).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
+  expect(summary).toContain(RESOURCE_LIMIT_CONNECT_BEGIN_MARKER);
+  expect(summary).toContain(RESOURCE_LIMIT_CONNECT_END_MARKER);
   expect(
     numericProbe(summary, "resource_limit_diagnostic"),
     "connect shell startup must not print resource-limit security diagnostics",
+  ).toBe(0);
+  expect(
+    numericProbe(summary, "resource_limit_protocol_error"),
+    "connect resource-limit summary must contain exactly one complete probe frame",
   ).toBe(0);
   for (const shell of ["login", "interactive"]) {
     expect(numericProbe(summary, `${shell}_nproc_soft`)).toBeLessThanOrEqual(4096);
