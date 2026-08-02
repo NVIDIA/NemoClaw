@@ -53,7 +53,7 @@ describe("maintainer merge-gate fork evidence", () => {
   it.each([
     "pull_request",
     "pull_request_target",
-  ])("accepts an association-less %s check tied to the exact head metadata", (event) => {
+  ])("accepts an association-less %s check with matching commit metadata", (event) => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
