@@ -932,9 +932,11 @@ Follow these steps to reconnect.
    ```
 
    If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
-   If Homebrew refuses to load the formula and cannot confirm its identity, onboarding warns with Homebrew's reason and continues on the standalone fallback.
-   If the `homebrew.mxcl.openshell` launchd service is still loaded when that happens, onboarding stops instead and asks you to stop the service first, because NemoClaw cannot manage or safely replace a service launchd owns.
-   Onboarding also stops when `launchctl` cannot run or fails for a reason other than a missing service, because a probe that does not report the service missing has not shown it is stopped.
+   If `brew info --json=v2 openshell` returns the exact pinned-formula untrusted-tap refusal, onboarding prints the recognized diagnostic once without repeating raw Homebrew output.
+   It selects the standalone fallback only when `launchctl print` also returns the exact missing-service result for `homebrew.mxcl.openshell`.
+   Every other Homebrew or `launchctl` error stops onboarding.
+   A loaded `homebrew.mxcl.openshell` service remains under launchd lifecycle authority.
+   NemoClaw does not stop, replace, or adopt that process, and the error provides the `launchctl bootout` remediation command.
 
    On Linux package installs, inspect and restart the upstream service.
 

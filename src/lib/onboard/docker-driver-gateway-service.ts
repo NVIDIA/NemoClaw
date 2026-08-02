@@ -180,21 +180,34 @@ function runCommand(
   command: string,
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-): { ok: boolean; reason?: string; stdout?: string } {
+): {
+  ok: boolean;
+  rawStderr: string;
+  rawStdout: string;
+  reason?: string;
+  spawnError?: Error;
+  status: number | null;
+  stdout?: string;
+} {
   const result = opts.spawnSyncImpl(command, args, {
     encoding: "utf-8",
     env: opts.env,
     stdio: ["ignore", "pipe", "pipe"],
   } satisfies SpawnSyncOptions);
-  if (result.error) return { ok: false, reason: result.error.message };
+  const rawStderr = text(result.stderr);
+  const rawStdout = text(result.stdout);
+  const rawResult = { rawStderr, rawStdout, status: result.status };
+  if (result.error) {
+    return { ...rawResult, ok: false, reason: result.error.message, spawnError: result.error };
+  }
   if (result.status !== 0) {
     return {
+      ...rawResult,
       ok: false,
-      reason:
-        text(result.stderr).trim() || text(result.stdout).trim() || `exit ${String(result.status)}`,
+      reason: rawStderr.trim() || rawStdout.trim() || `exit ${String(result.status)}`,
     };
   }
-  return { ok: true, stdout: text(result.stdout) };
+  return { ...rawResult, ok: true, stdout: rawStdout };
 }
 
 function runSystemctlUser(
@@ -265,44 +278,33 @@ function hasUpstreamOpenShellGatewayUserService(
 
 const warnedHomebrewIdentityCheckReasons = new Set<string>();
 
-// Homebrew 6.x refuses to load formulae from taps it has not marked trusted.
-// For the pinned official formula that refusal names the right tap, so it is
-// not evidence of a wrong formula, and managing the service through brew would
-// fail the same way. Continue on the standalone gateway fallback instead of
-// aborting; any other brew failure keeps the fail-closed abort (#7707).
-// The match is against Homebrew's literal refusal text: if Homebrew rewords
-// it, this case reverts to the fail-closed abort, not to a bypass. Remove this
-// branch when supported Homebrew versions can verify the pinned formula
-// identity again.
-// Compare the named formula and tap exactly rather than matching a prefix, so
-// a refusal naming a neighboring tap such as nvidia/openshell-fork or
-// nvidia/openshell.fork stays fatal. The tap ends the sentence, so one
-// trailing period is part of the message rather than the name.
-const HOMEBREW_LOAD_REFUSAL_PATTERN = /Refusing to load formula (\S+) from untrusted tap (\S+)/;
+const HOMEBREW_PINNED_TAP_LOAD_REFUSAL =
+  `Error: Refusing to load formula ${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} ` +
+  `from untrusted tap ${OPENSHELL_GATEWAY_HOMEBREW_TAP}.`;
 
-function isPinnedTapLoadRefusal(reason: string): boolean {
-  const match = HOMEBREW_LOAD_REFUSAL_PATTERN.exec(reason.replace(/\s+/g, " "));
+// Only the complete Homebrew 6.x refusal for the pinned formula can relax the
+// identity check. Changed or additional diagnostic text fails closed (#7707).
+function isPinnedTapLoadRefusal(result: ReturnType<typeof runBrew>): boolean {
   return (
-    match !== null &&
-    match[1] === `${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}` &&
-    match[2].replace(/\.$/, "") === OPENSHELL_GATEWAY_HOMEBREW_TAP
+    !result.ok &&
+    !result.spawnError &&
+    typeof result.status === "number" &&
+    result.status !== 0 &&
+    result.rawStdout === "" &&
+    result.rawStderr === HOMEBREW_PINNED_TAP_LOAD_REFUSAL
   );
 }
 
-// A loaded launchd unit means launchd still owns the service lifecycle even
-// when Homebrew refuses to load the formula: the standalone cutover path could
-// adopt that process or kill one launchd would restart. launchctl answers
-// without loading the formula, so probe it before degrading. Only a launchctl
-// run that completed and reported the unit missing proves it is safe to fall
-// back; a probe that could not run, or that failed for any other reason,
-// proves nothing and must not degrade.
+// `launchctl` must prove that the exact managed unit is absent before
+// standalone ownership is selected. Every other outcome leaves authority
+// unknown and fails closed.
 function readHomebrewGatewayLaunchdUnitState(
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
     Pick<OpenShellGatewayUserServiceOptions, "getuid">,
 ): "loaded" | "not-loaded" | "unknown" {
   const getuid = opts.getuid ?? process.getuid;
   const uid = getuid?.();
-  if (!Number.isSafeInteger(uid) || Number(uid) < 0) return "unknown";
+  if (typeof uid !== "number" || !Number.isSafeInteger(uid) || uid < 0) return "unknown";
   const unit = `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
   const result = opts.spawnSyncImpl("launchctl", ["print", `gui/${String(uid)}/${unit}`], {
     encoding: "utf-8",
@@ -316,17 +318,19 @@ function readHomebrewGatewayLaunchdUnitState(
     `Could not find service "${unit}" in domain for user gui: ${String(uid)}`,
   ].join("\n");
   return result.status === 113 &&
-    text(result.stdout).trim() === "" &&
-    text(result.stderr).trim() === missingUnitError
+    text(result.stdout) === "" &&
+    text(result.stderr) === missingUnitError
     ? "not-loaded"
     : "unknown";
 }
 
-function warnHomebrewIdentityCheckUnavailable(reason: string): void {
-  if (warnedHomebrewIdentityCheckReasons.has(reason)) return;
-  warnedHomebrewIdentityCheckReasons.add(reason);
+function warnHomebrewIdentityCheckUnavailable(): void {
+  const warningKey = HOMEBREW_PINNED_TAP_LOAD_REFUSAL;
+  if (warnedHomebrewIdentityCheckReasons.has(warningKey)) return;
+  warnedHomebrewIdentityCheckReasons.add(warningKey);
   console.warn(
-    `  Homebrew could not confirm the OpenShell formula identity; falling back to the standalone gateway.\n  ${reason}`,
+    "  Homebrew could not confirm the OpenShell formula identity; " +
+      `using the standalone gateway fallback.\n  ${HOMEBREW_PINNED_TAP_LOAD_REFUSAL}`,
   );
 }
 
@@ -351,9 +355,11 @@ function hasOfficialHomebrewFormula(
     spawnSyncImpl,
   });
   if (!info.ok) {
-    const reason = info.reason ?? "brew info failed";
-    if (!isPinnedTapLoadRefusal(reason)) {
-      throw new Error(`OpenShell Homebrew formula identity check failed: ${reason}`);
+    if (!isPinnedTapLoadRefusal(info)) {
+      throw new Error(
+        "OpenShell Homebrew formula identity check failed; " +
+          "the unrecognized Homebrew diagnostic was omitted.",
+      );
     }
     const launchdState = readHomebrewGatewayLaunchdUnitState({
       env,
@@ -368,12 +374,12 @@ function hasOfficialHomebrewFormula(
           : `NemoClaw could not determine whether its launchd service ${unit} is loaded`;
       throw new Error(
         `Homebrew refused to load the pinned OpenShell formula and ${situation}. ` +
-          `NemoClaw cannot manage or safely replace a service launchd owns. ` +
-          `Stop it (launchctl bootout gui/<uid>/${unit}) and rerun onboarding. ` +
-          `Homebrew reported: ${reason}`,
+          `NemoClaw will not manage or replace a service that launchd owns. ` +
+          `Stop it with launchctl bootout gui/$(id -u)/${unit}, and rerun onboarding. ` +
+          `Homebrew reported: ${HOMEBREW_PINNED_TAP_LOAD_REFUSAL}`,
       );
     }
-    warnHomebrewIdentityCheckUnavailable(reason);
+    warnHomebrewIdentityCheckUnavailable();
     return false;
   }
   try {

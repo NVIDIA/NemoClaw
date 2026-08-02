@@ -92,11 +92,14 @@ The standalone Linux process is used only when the systemd user manager is unava
 On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritative.
 The installer stages the formula and onboarding starts its `openshell` service.
 When Homebrew is present, a missing formula, a formula from another tap, a service-start failure, or a health failure stops onboarding.
-Homebrew 6.x refuses to load formulae from taps it has not marked trusted, so it can fail to confirm the official formula's identity.
-When that happens, onboarding falls back to the standalone macOS gateway only after `launchctl` reports the `homebrew.mxcl.openshell` service is not loaded.
-A loaded launchd service keeps its lifecycle authority, so onboarding stops until the service is stopped.
-An unanswered `launchctl` probe also stops onboarding, because it does not establish that the service is stopped.
+Homebrew 6.x can return a pinned-formula untrusted-tap refusal from `brew info --json=v2 openshell` after `brew list --formula openshell` reports the formula installed.
+Only the complete refusal for `nvidia/openshell/openshell` from `nvidia/openshell` can select the standalone macOS gateway fallback.
+Before the fallback, `launchctl print` must return the exact missing-service result for `homebrew.mxcl.openshell`.
+Onboarding prints the recognized diagnostic one time without repeating raw Homebrew output when both conditions match.
+Every other Homebrew or `launchctl` error stops onboarding.
+A loaded `homebrew.mxcl.openshell` service remains under launchd lifecycle authority, so onboarding does not stop, replace, or adopt its process.
 A host without Homebrew also uses the standalone macOS gateway fallback.
+
 NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
 An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.
 In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
