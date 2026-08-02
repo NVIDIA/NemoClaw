@@ -8,7 +8,10 @@ import type {
 } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
 import { parseHostLocalInferenceReceipt } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
 import { createSetupInference } from "../src/lib/onboard/setup-inference.js";
-import { createDirectSetupInferenceHarnessFactory } from "./support/setup-inference-test-harness.js";
+import {
+  createDirectCommandRouter,
+  createDirectSetupInferenceHarnessFactory,
+} from "./support/setup-inference-test-harness.js";
 
 const createHarness = createDirectSetupInferenceHarnessFactory((overrides) =>
   createSetupInference({
@@ -58,6 +61,48 @@ function runtime(): HostLocalInferenceRuntime {
     inspectManaged: vi.fn((receipt) => ({ running: true, receipt })),
     stopManaged: vi.fn((receipt) => ({ running: false, receipt })),
     preserveForRebuild: vi.fn((receipt) => receipt),
+  };
+}
+
+function managedVllmReceipt(): HostLocalInferenceReceipt {
+  return {
+    schemaVersion: 1,
+    providerId: "mxc",
+    service: "vllm",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId: "mxc",
+      operation: "host-local-inference",
+      engineId: "mxc",
+      authorityId: AUTHORITY_ID,
+      bindingSha256: "c".repeat(64),
+    },
+    endpoint: { host: "mxc.internal", port: 8000, networkName: "mxc-network" },
+    runtime: {
+      kind: "container",
+      runtimeId: "mxc-runtime:vllm",
+      name: "nemoclaw-vllm",
+      imageRef: MANAGED_IMAGE,
+      probeImageRef: PROBE_IMAGE,
+      specSha256: "d".repeat(64),
+      gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
+    },
+  };
+}
+
+function managedVllmRequest() {
+  return {
+    service: "vllm" as const,
+    managed: {
+      service: "vllm" as const,
+      containerName: "nemoclaw-vllm",
+      containerPort: 8000,
+      imageRef: MANAGED_IMAGE,
+      gpuDevices: ["nvidia.com/gpu=all"],
+      networkName: "mxc-network",
+      hostPort: 8000,
+      probeImageRef: PROBE_IMAGE,
+    },
   };
 }
 
@@ -150,50 +195,14 @@ describe("setupInference host-local runtime integration", () => {
 
   it("starts a provider-owned managed vLLM input before registering the canonical route", async () => {
     const providerRuntime = runtime();
-    providerRuntime.startManaged = vi.fn(
-      (): HostLocalInferenceReceipt => ({
-        schemaVersion: 1,
-        providerId: "mxc",
-        service: "vllm",
-        engineAuthority: {
-          schemaVersion: 1,
-          providerId: "mxc",
-          operation: "host-local-inference",
-          engineId: "mxc",
-          authorityId: AUTHORITY_ID,
-          bindingSha256: "c".repeat(64),
-        },
-        endpoint: { host: "mxc.internal", port: 8000, networkName: "mxc-network" },
-        runtime: {
-          kind: "container",
-          runtimeId: "mxc-runtime:vllm",
-          name: "nemoclaw-vllm",
-          imageRef: MANAGED_IMAGE,
-          probeImageRef: PROBE_IMAGE,
-          specSha256: "d".repeat(64),
-          gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
-        },
-      }),
-    );
+    providerRuntime.startManaged = vi.fn(() => managedVllmReceipt());
     const harness = createHarness({
       overrides: { resolveHostLocalInferenceRuntime: () => providerRuntime },
     });
 
     await expect(
       harness.setupInference("sandbox-a", "model-a", "vllm-local", null, null, null, [], {
-        hostLocalInference: {
-          service: "vllm",
-          managed: {
-            service: "vllm",
-            containerName: "nemoclaw-vllm",
-            containerPort: 8000,
-            imageRef: MANAGED_IMAGE,
-            gpuDevices: ["nvidia.com/gpu=all"],
-            networkName: "mxc-network",
-            hostPort: 8000,
-            probeImageRef: PROBE_IMAGE,
-          },
-        },
+        hostLocalInference: managedVllmRequest(),
       }),
     ).resolves.toEqual({ ok: true });
 
@@ -203,6 +212,41 @@ describe("setupInference host-local runtime integration", () => {
       .find((command) => command.startsWith("provider update -g nemoclaw vllm-local"));
     expect(providerMutation).toContain(
       "--credential NEMOCLAW_VLLM_LOCAL_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1",
+    );
+  });
+
+  it("retries exact managed startup after provider registration failure without duplicate reservation", async () => {
+    const receipt = managedVllmReceipt();
+    const providerRuntime = runtime();
+    providerRuntime.startManaged = vi.fn(() => receipt);
+    const router = createDirectCommandRouter([
+      {
+        name: "provider-upsert",
+        matches: (command) => command.startsWith("provider update -g nemoclaw vllm-local"),
+        results: [{ status: 1, stderr: "injected provider registration failure" }, { status: 0 }],
+      },
+    ]);
+    const harness = createHarness({
+      runOpenshell: router.runOpenshell,
+      overrides: { resolveHostLocalInferenceRuntime: () => providerRuntime },
+    });
+    const setup = () =>
+      harness.setupInference("sandbox-a", "model-a", "vllm-local", null, null, null, [], {
+        hostLocalInference: managedVllmRequest(),
+      });
+
+    await expect(setup()).rejects.toThrow("EXIT_CALLED:1");
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+
+    await expect(setup()).resolves.toEqual({ ok: true });
+    expect(providerRuntime.startManaged).toHaveBeenCalledTimes(2);
+    expect(providerRuntime.startManaged).toHaveNthReturnedWith(1, receipt);
+    expect(providerRuntime.startManaged).toHaveNthReturnedWith(2, receipt);
+    expect(router.callCount("provider-upsert")).toBe(2);
+    expect(harness.updateSandbox).toHaveBeenCalledOnce();
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      "sandbox-a",
+      expect.objectContaining({ model: "model-a", provider: "vllm-local" }),
     );
   });
 });
