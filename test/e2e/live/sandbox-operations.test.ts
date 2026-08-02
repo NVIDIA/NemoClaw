@@ -18,6 +18,7 @@ import {
   assertExitZero as expectExitZero,
   outputContainsSandbox,
   resultText,
+  shellQuote,
 } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -26,7 +27,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { containsSecurityResourceLimitDiagnostic } from "../fixtures/resource-limit-diagnostics.ts";
+import { resourceLimitOutputFilterScript } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
@@ -38,13 +39,16 @@ const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
 
 function numericProbe(text: string, key: string): number {
-  const match = text.match(new RegExp(`${key}=(\\d+)`));
-  expect(match, `Missing ${key} in connect output:\n${text}`).not.toBeNull();
-  return Number(match?.[1] ?? "NaN");
+  const prefix = `${key}=`;
+  const line = text.split(/\r?\n/u).find((candidate) => candidate.startsWith(prefix));
+  const value = line?.slice(prefix.length);
+  expect(value, `Missing ${key} in sanitized connect summary`).toMatch(/^\d+$/u);
+  return Number(value ?? "NaN");
 }
 
 function connectRlimitProbeScript(cliPath: string): string {
   const cli = JSON.stringify(cliPath);
+  const outputFilter = `${shellQuote(process.execPath)} -e ${shellQuote(resourceLimitOutputFilterScript())}`;
   const shellProbe = [
     "set +e",
     'nproc_soft="$(builtin ulimit -Su)"',
@@ -60,7 +64,7 @@ function connectRlimitProbeScript(cliPath: string): string {
   ].join("; ");
   return [
     "set -euo pipefail",
-    `cat <<'NEMOCLAW_CONNECT_RLIMITS' | ${cli} connect`,
+    `cat <<'NEMOCLAW_CONNECT_RLIMITS' | ${cli} connect 2>&1 | ${outputFilter}`,
     "set -euo pipefail",
     'printf "__NEMOCLAW_RLIMIT_CONNECT_BEGIN__\\n"',
     `bash -lc '${shellProbe}' | sed 's/^/login_/'`,
@@ -77,23 +81,30 @@ async function assertConnectResourceLimits(host: HostCliClient): Promise<string>
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 3 * 60_000,
   });
-  const output = resultText(connect);
-  expectExitZero(connect, "nemoclaw connect resource-limit probe");
-  expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_BEGIN__");
-  expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
-  expect(
-    containsSecurityResourceLimitDiagnostic(output),
-    "connect shell startup must not print resource-limit security diagnostics",
-  ).toBe(false);
-  for (const shell of ["login", "interactive"]) {
-    expect(numericProbe(output, `${shell}_nproc_soft`)).toBeLessThanOrEqual(4096);
-    expect(numericProbe(output, `${shell}_nproc_hard`)).toBeLessThanOrEqual(4096);
-    expect(numericProbe(output, `${shell}_nofile_soft`)).toBeLessThanOrEqual(65536);
-    expect(numericProbe(output, `${shell}_nofile_hard`)).toBeLessThanOrEqual(65536);
-    expect(numericProbe(output, `${shell}_raise_nproc`)).not.toBe(0);
-    expect(numericProbe(output, `${shell}_raise_nofile`)).not.toBe(0);
+  const summary = resultText(connect);
+  if (connect.exitCode !== 0) {
+    const exit = connect.signal
+      ? `signal=${connect.signal}`
+      : `exit=${connect.exitCode ?? "unknown"}`;
+    throw new Error(
+      `nemoclaw connect resource-limit probe failed: ${exit}, timedOut=${String(connect.timedOut)}`,
+    );
   }
-  return output;
+  expect(summary).toContain("__NEMOCLAW_RLIMIT_CONNECT_BEGIN__");
+  expect(summary).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
+  expect(
+    numericProbe(summary, "resource_limit_diagnostic"),
+    "connect shell startup must not print resource-limit security diagnostics",
+  ).toBe(0);
+  for (const shell of ["login", "interactive"]) {
+    expect(numericProbe(summary, `${shell}_nproc_soft`)).toBeLessThanOrEqual(4096);
+    expect(numericProbe(summary, `${shell}_nproc_hard`)).toBeLessThanOrEqual(4096);
+    expect(numericProbe(summary, `${shell}_nofile_soft`)).toBeLessThanOrEqual(65536);
+    expect(numericProbe(summary, `${shell}_nofile_hard`)).toBeLessThanOrEqual(65536);
+    expect(numericProbe(summary, `${shell}_raise_nproc`)).not.toBe(0);
+    expect(numericProbe(summary, `${shell}_raise_nofile`)).not.toBe(0);
+  }
+  return summary;
 }
 
 async function onboardSandbox(
@@ -736,8 +747,8 @@ test(
     await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
 
     progress.phase("validate connected shell resource limits");
-    const connectRlimitOutput = await assertConnectResourceLimits(host);
-    await artifacts.writeText("connect-rlimits-output.txt", connectRlimitOutput);
+    const connectRlimitSummary = await assertConnectResourceLimits(host);
+    await artifacts.writeText("connect-rlimits-summary.txt", connectRlimitSummary);
 
     progress.phase("exercise primary CLI inference and logs");
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
