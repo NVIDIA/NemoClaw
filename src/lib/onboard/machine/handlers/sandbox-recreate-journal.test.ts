@@ -7,8 +7,10 @@ import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import { createSession, type Session } from "../../../state/onboard-session";
 import {
+  advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
+  recordSandboxRecreateTargetCreated,
 } from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
@@ -42,6 +44,23 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     hermesAuthMethod: null,
     gatewayName: "nemoclaw-31818",
     gatewayPort: 31818,
+    imageTag: "openshell/sandbox-from:old",
+    workload: {
+      schemaVersion: 1 as const,
+      kind: "legacy-dockerfile" as const,
+      reference: "openshell/sandbox-from:old",
+      shared: false as const,
+    },
+  };
+  let replacementEntry = {
+    ...sourceEntry,
+    imageTag: "openshell/sandbox-from:new",
+    workload: {
+      ...sourceEntry.workload,
+      reference: "openshell/sandbox-from:new",
+    },
+    lifecycleGeneration: "replacement-generation",
+    lifecycleLiveIdentityFingerprint: "replacement-identity",
   };
   const phases: Array<string | null> = [];
   const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
@@ -56,14 +75,41 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
         liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
       }) as const,
   );
-  const createSandbox = vi.fn(async () => "saved");
+  let currentEntry = sourceEntry;
+  const createSandbox = vi.fn(async () => {
+    const transaction =
+      session.checkpoint?.sandboxRecreate ??
+      (() => {
+        throw new Error("missing recreate transaction");
+      })();
+    advanceSandboxRecreateTransaction(session, transaction.id, "deleting");
+    advanceSandboxRecreateTransaction(session, transaction.id, "deleted");
+    advanceSandboxRecreateTransaction(session, transaction.id, "creating");
+    replacementEntry = {
+      ...replacementEntry,
+      lifecycleGeneration: transaction.targetGeneration,
+    };
+    currentEntry = replacementEntry;
+    recordSandboxRecreateTargetCreated(session, transaction.id, {
+      state: "ready",
+      liveIdentityFingerprint: replacementEntry.lifecycleLiveIdentityFingerprint,
+    });
+    return "saved";
+  });
+  const retireReplacedSandboxWorkload = vi.fn(() => ({
+    status: "failed" as const,
+    engineDisplayName: "Docker",
+    reference: sourceEntry.imageTag,
+  }));
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation,
-      getSandboxRegistryEntry: () => sourceEntry,
+      getSandboxRegistryEntry: () => currentEntry,
       updateSession,
       createSandbox,
+      retireReplacedSandboxWorkload,
+      cliName: () => "nemohermes",
     },
     session,
   );
@@ -87,8 +133,170 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     },
   });
   expect(getSandboxRecreateObservation).toHaveBeenCalledWith("saved");
+  expect(retireReplacedSandboxWorkload).toHaveBeenCalledExactlyOnceWith(
+    "saved",
+    replacementEntry.lifecycleGeneration,
+    replacementEntry.lifecycleLiveIdentityFingerprint,
+    expect.objectContaining({
+      name: "saved",
+      imageTag: sourceEntry.imageTag,
+      workload: sourceEntry.workload,
+    }),
+    replacementEntry,
+  );
+  expect(createSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+    retireReplacedSandboxWorkload.mock.invocationCallOrder[0],
+  );
+  expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("run 'nemohermes gc'"));
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
-  expect(orderedPhases).toEqual([null, "planned", "registry_committing", "completed", null]);
+  expect(orderedPhases).toEqual([
+    null,
+    "planned",
+    "created",
+    "registry_committing",
+    "completed",
+    null,
+  ]);
+  expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});
+
+it("removes the journaled source image after resuming a registered replacement", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw-31818",
+      gatewayPort: 31818,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const sourceEntry = {
+    name: "saved",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions" as const,
+    webSearchEnabled: false,
+    toolDisclosure: "progressive" as const,
+    fromDockerfile: null,
+    hermesAuthMethod: null,
+    gatewayName: "nemoclaw-31818",
+    gatewayPort: 31818,
+    openshellDriver: "docker",
+    imageTag: "openshell/sandbox-from:old",
+    workload: {
+      schemaVersion: 1 as const,
+      kind: "legacy-dockerfile" as const,
+      reference: "openshell/sandbox-from:old",
+      shared: false as const,
+    },
+  };
+  const sourceIdentity = fingerprintSandboxRecreateValue("source-id");
+  const targetIdentity = fingerprintSandboxRecreateValue("target-id");
+  let replacementRegistered = false;
+  let replacementEntry = {
+    ...sourceEntry,
+    imageTag: "openshell/sandbox-from:new",
+    workload: { ...sourceEntry.workload, reference: "openshell/sandbox-from:new" },
+    lifecycleGeneration: "missing",
+    lifecycleLiveIdentityFingerprint: targetIdentity,
+  };
+  const createSandbox = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      const transaction =
+        session.checkpoint?.sandboxRecreate ??
+        (() => {
+          throw new Error("missing recreate transaction");
+        })();
+      advanceSandboxRecreateTransaction(session, transaction.id, "deleting");
+      advanceSandboxRecreateTransaction(session, transaction.id, "deleted");
+      advanceSandboxRecreateTransaction(session, transaction.id, "creating");
+      replacementEntry = {
+        ...replacementEntry,
+        lifecycleGeneration: transaction.targetGeneration,
+      };
+      replacementRegistered = true;
+      recordSandboxRecreateTargetCreated(session, transaction.id, {
+        state: "ready",
+        liveIdentityFingerprint: targetIdentity,
+      });
+      return "saved";
+    })
+    .mockResolvedValue("saved");
+  const retireReplacedSandboxWorkload = vi
+    .fn()
+    .mockImplementationOnce(() => {
+      throw new Error("interrupted after replacement registration");
+    })
+    .mockReturnValue({
+      status: "removed" as const,
+      engineDisplayName: "Docker",
+      reference: sourceEntry.imageTag,
+    });
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: () =>
+        replacementRegistered
+          ? { state: "ready" as const, liveIdentityFingerprint: targetIdentity }
+          : { state: "not_ready" as const, liveIdentityFingerprint: sourceIdentity },
+      getSandboxRegistryEntry: () => (replacementRegistered ? replacementEntry : sourceEntry),
+      createSandbox,
+      retireReplacedSandboxWorkload,
+    },
+    session,
+  );
+  const options = {
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+    gatewayName: "nemoclaw-31818",
+  };
+
+  await expect(handleSandboxState(options)).rejects.toThrow(
+    /interrupted after replacement registration/u,
+  );
+  expect(calls.repairEvent).toHaveBeenLastCalledWith("state.repair.failed", {
+    state: "sandbox",
+    error: "interrupted after replacement registration",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  const journal = session.checkpoint?.sandboxRecreate;
+  expect(journal?.sourceWorkload?.imageTag).toBe(sourceEntry.imageTag);
+  expect(journal?.id).toBeTruthy();
+  expect(journal?.targetGeneration).toBeTruthy();
+
+  await handleSandboxState(options);
+
+  expect(createSandbox).toHaveBeenCalledTimes(2);
+  expect(createSandbox.mock.calls[1]?.at(-1)).toMatchObject({
+    recreateTransaction: {
+      id: journal?.id,
+      targetGeneration: journal?.targetGeneration,
+    },
+  });
+  expect(retireReplacedSandboxWorkload).toHaveBeenNthCalledWith(
+    2,
+    "saved",
+    journal?.targetGeneration,
+    journal?.targetLiveIdentityFingerprint,
+    expect.objectContaining({
+      name: "saved",
+      openshellDriver: "docker",
+      imageTag: sourceEntry.imageTag,
+      workload: sourceEntry.workload,
+    }),
+    replacementEntry,
+  );
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 

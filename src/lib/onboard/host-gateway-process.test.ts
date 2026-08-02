@@ -8,8 +8,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  clearHostGatewayRuntimeFiles,
   HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
+  isHostPortFree,
   type RunResult,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
@@ -65,6 +67,67 @@ function psResponses(
     ],
   ];
 }
+
+describe("host gateway cleanup boundaries", () => {
+  it.each([
+    ["free", 0, true],
+    ["occupied", 1, false],
+    ["inconclusive", null, false],
+  ] as const)("reports a host port as %s from the bind probe", (_case, status, expected) => {
+    const spawnSyncImpl = vi.fn(() => ({
+      status,
+    })) as unknown as typeof import("node:child_process").spawnSync;
+
+    expect(isHostPortFree(8080, spawnSyncImpl)).toBe(expected);
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      process.execPath,
+      ["-e", expect.stringContaining("server.listen(8080, '127.0.0.1'")],
+      { stdio: "ignore", timeout: 2_000 },
+    );
+  });
+
+  it("clears the exact gateway PID file and runtime marker", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-clear-"));
+    try {
+      const pidFile = path.join(stateDir, "openshell-gateway.pid");
+      const markerFile = path.join(stateDir, "runtime.json");
+      const unrelatedFile = path.join(stateDir, "unrelated.txt");
+      fs.writeFileSync(pidFile, "4242\n");
+      fs.writeFileSync(markerFile, "{}\n");
+      fs.writeFileSync(unrelatedFile, "keep\n");
+
+      clearHostGatewayRuntimeFiles(stateDir, pidFile);
+
+      expect(fs.existsSync(pidFile)).toBe(false);
+      expect(fs.existsSync(markerFile)).toBe(false);
+      expect(fs.existsSync(unrelatedFile)).toBe(true);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the gateway PID file when runtime marker removal fails", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-clear-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    const markerFile = path.join(stateDir, "runtime.json");
+    fs.writeFileSync(pidFile, "4242\n");
+    fs.writeFileSync(markerFile, "{}\n");
+    const rmSync = vi.spyOn(fs, "rmSync").mockImplementation((candidate) => {
+      expect(candidate).toBe(markerFile);
+      throw new Error("marker cleanup failed");
+    });
+
+    try {
+      expect(() => clearHostGatewayRuntimeFiles(stateDir, pidFile)).toThrow(
+        "marker cleanup failed",
+      );
+      expect(fs.existsSync(pidFile)).toBe(true);
+    } finally {
+      rmSync.mockRestore();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("stopHostGatewayProcesses", () => {
   it("uses pgrep fallback when the Docker-driver gateway PID file is missing", () => {

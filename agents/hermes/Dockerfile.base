@@ -523,6 +523,8 @@ RUN set -eu; \
 # differential. Keep this hash-verified downstream override at the first stable
 # release that fixes those issues plus GHSA-v9pg-7xvm-68hf. Re-review the
 # version and both hashes on every Hermes version bump.
+# uv creates a phony .git cache marker even with --no-cache. Remove the cache
+# after the final uv command because the root cache is not used at runtime.
 # hadolint ignore=DL3059
 RUN printf '%s\n' \
         "python-multipart==0.0.32 \\" \
@@ -533,7 +535,8 @@ RUN printf '%s\n' \
         --no-deps --no-cache --require-hashes -r /tmp/multipart-req.txt \
     && rm -f /tmp/multipart-req.txt \
     && /opt/hermes/.venv/bin/python -c \
-        "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__"
+        "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
+    && rm -rf /root/.cache/uv
 
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
@@ -561,7 +564,7 @@ RUN chmod -R a+rX /opt/hermes/.venv \
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 RUN set -eu; \
-    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp; do \
+    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
         if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
             echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \

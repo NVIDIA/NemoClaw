@@ -59,11 +59,13 @@ type Harness = {
 };
 
 type RecoveryHarnessOptions = {
+  attempts?: number;
   gatewayLogKind?: "regular" | "symlink" | "directory" | "missing";
   missingCiaoSource?: boolean;
 };
 
 function runRecoveryHarness({
+  attempts = 1,
   gatewayLogKind = "regular",
   missingCiaoSource = false,
 }: RecoveryHarnessOptions = {}): Harness {
@@ -152,14 +154,20 @@ function runRecoveryHarness({
     extractGatewayLogAppendFunction(source, gatewayLog),
     extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
     extractShellFunction(source, "prepare_openclaw_gateway_restart"),
-    "rc=0; prepare_openclaw_gateway_restart || rc=$?",
-    'if [ "$rc" -eq 0 ] && [ "${RUN_TWICE:-0}" = "1" ]; then prepare_openclaw_gateway_restart || rc=$?; fi',
+    "rc=0; attempt=0",
+    'while [ "$rc" -eq 0 ] && [ "$attempt" -lt "$RECOVERY_ATTEMPTS" ]; do',
+    "  attempt=$((attempt + 1))",
+    "  prepare_openclaw_gateway_restart || rc=$?",
+    "done",
     'printf "rc:%s\\nfailure-code:%s\\nnode-options:%s\\n" "$rc" "$OPENCLAW_RESTART_FAILURE_CODE" "$NODE_OPTIONS"',
   ].join("\n");
 
   const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
     encoding: "utf8",
-    env: { ...process.env, RUN_TWICE: missingCiaoSource ? "0" : "1" },
+    env: {
+      ...process.env,
+      RECOVERY_ATTEMPTS: String(missingCiaoSource ? 1 : attempts),
+    },
     timeout: 10_000,
   });
   return {
@@ -174,15 +182,20 @@ function runRecoveryHarness({
 }
 
 describe("OpenClaw PID 1 guard-chain recovery", () => {
-  it("re-stages packaged guards before rebuilding and validating the runtime environment", () => {
-    const harness = runRecoveryHarness();
+  it("re-stages packaged guards identically across five recovery preparations (#7919)", () => {
+    const attempts = 5;
+    const harness = runRecoveryHarness({ attempts });
     try {
       expect(harness.result.status, harness.result.stderr).toBe(0);
       expect(harness.result.stdout).toContain("rc:0\n");
       expect(harness.result.stderr.match(/restoring library guards/g)).toHaveLength(1);
+      expect(harness.result.stderr).not.toContain("gateway launching without library guards");
       expect(
         fs.readFileSync(harness.gatewayLog, "utf8").match(/restoring library guards/g),
       ).toHaveLength(1);
+      expect(fs.readFileSync(harness.gatewayLog, "utf8")).not.toContain(
+        "gateway launching without library guards",
+      );
 
       const onePass = [
         "guard:preflight-restart",
@@ -197,10 +210,9 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         "emit:nemoclaw-proxy-env.sh",
         "validate",
       ];
-      expect(fs.readFileSync(harness.eventLog, "utf8").trim().split("\n")).toEqual([
-        ...onePass,
-        ...onePass,
-      ]);
+      expect(fs.readFileSync(harness.eventLog, "utf8").trim().split("\n")).toEqual(
+        Array.from({ length: attempts }, () => onePass).flat(),
+      );
 
       for (const name of ["safety", "proxy", "nemotron", "ciao"]) {
         const target = harness.targets[name];
@@ -210,7 +222,16 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         expect(fs.statSync(target).mode & 0o777).toBe(0o444);
         expect(harness.result.stdout.split(target)).toHaveLength(2);
       }
-      expect(fs.statSync(harness.targets.runtimeEnv).mode & 0o777).toBe(0o444);
+      const runtimeEnvFd = fs.openSync(
+        harness.targets.runtimeEnv,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+      );
+      try {
+        expect(fs.fstatSync(runtimeEnvFd).mode & 0o777).toBe(0o444);
+        expect(fs.readFileSync(runtimeEnvFd, "utf8")).toBe("# recovered runtime environment\n");
+      } finally {
+        fs.closeSync(runtimeEnvFd);
+      }
     } finally {
       fs.rmSync(harness.tmpDir, { recursive: true, force: true });
     }
@@ -383,10 +404,9 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
   // ── Recovery warning must reach the gateway log, not just stderr (#6065) ──
   //
   // #5874 moved recovery to a docker-IPC path where the warning was written to
-  // PID 1 stderr only; the live `issue-2478-crash-loop-recovery` E2E polls
-  // /tmp/gateway.log and went red. That target does not run on PR CI, so this
-  // mocked unit pins the file write through an extracted helper in the PR gate
-  // to keep a refactor from silently regressing to stderr-only.
+  // PID 1 stderr only. This deterministic test verifies the gateway-log mirror
+  // through an extracted production helper. It detects a refactor that moves
+  // the warning back to stderr-only diagnostics.
   it("mirrors the guard-chain restore warning into the gateway log file", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-warn-"));

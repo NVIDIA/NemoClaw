@@ -97,7 +97,12 @@ export function buildStateFileRestoreCommand(
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
     'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
     'cat > "$tmp"',
-    'chmod 640 "$tmp"',
+    // The managed OpenClaw restart preflight accepts only the exact mutable
+    // sandbox:sandbox 0660 configuration posture. Apply that mode to the
+    // staged inode before the atomic swap so the gateway and its trusted
+    // controller never observe the restored config with the generic 0640
+    // state-file mode.
+    refreshOpenClawConfigHash ? 'chmod 660 "$tmp"' : 'chmod 640 "$tmp"',
   ];
 
   if (refreshOpenClawConfigHash) {

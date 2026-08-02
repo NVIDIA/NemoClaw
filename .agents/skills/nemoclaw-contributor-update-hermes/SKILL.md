@@ -168,10 +168,12 @@ Build the final Hermes image against the locally built base.
 Require the Dockerfile source-shape guards, wrapper help probes, patch smoke tests, generated-config checks, dependency audit, and installed-version checks to pass.
 
 Use BuildKit for the final image build.
-`agents/hermes/Dockerfile` uses executable heredocs for source and cross-identity runtime probes.
-Do not set `DOCKER_BUILDKIT=0` or accept a legacy-builder result as validation evidence:
-a legacy builder can pass an empty heredoc to the interpreter, silently skip the probe body, and
-either produce false-positive evidence or fail only at a later layer.
+`agents/hermes/Dockerfile` invokes the checked-in `image-build-probes.py` runner for source and
+cross-identity runtime probes so the supported OpenShell gateway builder executes the same
+assertions without Dockerfile heredoc support.
+Keep BuildKit as the canonical final-image validation path.
+A separate legacy-builder build can prove gateway compatibility only when its log shows every
+expected probe-runner command executing successfully; it does not replace the BuildKit result.
 Prefer the same buildx path used by repository workflows:
 
 ```bash
@@ -181,7 +183,7 @@ docker buildx build --load \
   -t <temporary-final-image> .
 ```
 
-Confirm the output reports each expected heredoc-backed probe as an executed BuildKit step.
+Confirm the output reports each expected probe-runner command as an executed BuildKit step.
 If `docker buildx` is not registered as a Docker CLI plugin, invoke the reviewed buildx executable
 directly rather than falling back to the legacy builder.
 
@@ -210,7 +212,7 @@ Build and inspect the final image from the pinned digest before using it as runt
 
 Use
 [`nemoclaw-contributor-create-pr`](../nemoclaw-contributor-create-pr/SKILL.md)
-for the commit, PR template, labels, CI, review, and exact-head follow-up.
+for the commit, PR template, labels, CI, review, and follow-up.
 State the target tag and semver, adjacent release ranges, material migrations, retained workarounds, dependency disposition, base-image digest, local evidence, and remaining live gates.
 
 Keep Friday or another planned landing date separate from merge authorization.
@@ -226,5 +228,5 @@ The upgrade is approval-ready only when:
 - retained workarounds pass against target source and runtime;
 - the branch base-image workflow succeeds for the source SHA;
 - the final Dockerfile pins that branch image by immutable multi-platform digest;
-- exact-head CI, automated review, and required E2E pass; and
+- CI, automated review, and required E2E pass on the head commit; and
 - the PR has no unresolved blocking review thread or material external gate.

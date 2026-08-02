@@ -177,13 +177,13 @@ Bind runtime evidence to the PR SHA and the final pinned image digest.
 
 ## Build-system contract
 
-The final Hermes Dockerfile contains executable heredoc probes.
-Build it with BuildKit/buildx and never with `DOCKER_BUILDKIT=0`.
-A legacy builder can give the interpreter an empty heredoc while returning success for that layer,
-so a later-path failure or even a completed legacy build is not proof that the embedded assertions
-ran.
-Inspect the BuildKit step list and require the Hermes source, wrapper, state, and cross-identity
-probe layers to execute.
+The final Hermes Dockerfile invokes the checked-in `image-build-probes.py` runner for source,
+wrapper, state, and cross-identity assertions.
+Build it with BuildKit/buildx for canonical validation, and require every probe-runner command to
+execute.
+When a change affects gateway-builder compatibility, run a separate legacy-builder build and
+require its log to show the same commands executing successfully.
+Do not treat that compatibility result as a replacement for the BuildKit image proof.
 
 ## Historical selectors
 
@@ -211,6 +211,6 @@ Use this order:
 7. Pin the published digest in the final Dockerfile.
 8. Rebuild and inspect the final image.
 9. Push the digest commit.
-10. Run exact-head CI, review, and E2E.
+10. Run CI, review, and E2E on the head commit.
 
 Repeat steps 3 through 9 when a base-image input changes.

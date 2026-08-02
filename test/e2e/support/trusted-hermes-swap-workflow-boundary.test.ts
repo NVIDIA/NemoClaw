@@ -33,7 +33,6 @@ type SwapWorkflow = {
 
 const PROTECTED_JOBS = [
   "agent-turn-latency",
-  "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "common-egress-agent",
   "hermes-discord",
@@ -525,9 +524,6 @@ describe("trusted Hermes swap workflow boundary", () => {
     securityProvision.if = securityProvision.if!.replace(" && matrix.agent == 'hermes'", "");
     securityProvision.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
-    const bedrockProvision = trustedSwapStep(workflow, "bedrock-runtime-compatible-anthropic");
-    bedrockProvision.run = "sudo bash tools/e2e/live-vitest-invocation.mts";
-
     const channelsProvision = trustedSwapStep(workflow, "channels-stop-start");
     channelsProvision.if = channelsProvision.if!.replace(" && matrix.agent == 'hermes'", "");
 
@@ -557,7 +553,6 @@ describe("trusted Hermes swap workflow boundary", () => {
         "common-egress-agent trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must bind only trusted workflow, checkout, and runner identity",
-        "bedrock-runtime-compatible-anthropic trusted Hermes swap step must preserve the fixed privileged program",
         "mcp-bridge-dev job must not provision trusted Hermes swap",
       ]),
     );
