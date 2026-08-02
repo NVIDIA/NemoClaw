@@ -163,4 +163,27 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
       ),
     );
   });
+
+  it("removes the exact failed container without rollback when both receipts are absent", () => {
+    const fake = fixture("none");
+
+    expect(
+      finalizeDockerManagedStartupSharedState(
+        { transaction: TRANSACTION, supervisorReady: false },
+        fake.deps,
+      ),
+    ).toEqual({ supervisorReady: false, failure: null });
+
+    expect(fake.events).toEqual([
+      "stop",
+      `copy:${path.basename(MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY)}:absent`,
+      `copy:${path.basename(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY)}:absent`,
+    ]);
+    expect(fake.commands.some((args) => args.includes("--rollback-shared-state-transaction"))).toBe(
+      false,
+    );
+    expect(fake.deps.dockerRm).toHaveBeenCalledTimes(1);
+    expect(fake.deps.dockerRm).toHaveBeenCalledWith(CONTAINER_ID, expect.any(Object));
+    expect(fake.state()).toBe("none");
+  });
 });
