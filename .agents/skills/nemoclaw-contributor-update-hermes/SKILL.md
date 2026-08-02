@@ -212,7 +212,7 @@ Build and inspect the final image from the pinned digest before using it as runt
 
 Use
 [`nemoclaw-contributor-create-pr`](../nemoclaw-contributor-create-pr/SKILL.md)
-for the commit, PR template, labels, CI, review, and exact-head follow-up.
+for the commit, PR template, labels, CI, review, and follow-up.
 State the target tag and semver, adjacent release ranges, material migrations, retained workarounds, dependency disposition, base-image digest, local evidence, and remaining live gates.
 
 Keep Friday or another planned landing date separate from merge authorization.
@@ -228,5 +228,5 @@ The upgrade is approval-ready only when:
 - retained workarounds pass against target source and runtime;
 - the branch base-image workflow succeeds for the source SHA;
 - the final Dockerfile pins that branch image by immutable multi-platform digest;
-- exact-head CI, automated review, and required E2E pass; and
+- CI, automated review, and required E2E pass on the head commit; and
 - the PR has no unresolved blocking review thread or material external gate.

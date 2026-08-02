@@ -544,6 +544,28 @@ export function stopAll(opts: ServiceOptions = {}): void {
 }
 
 /**
+ * Resolve the PID directory for host-side services without starting or stopping
+ * anything. Callers can derive an adjacent purpose-specific state directory
+ * while preserving the same validated sandbox-name and environment precedence
+ * used by `start`, `stop`, and `status`.
+ */
+export function resolveServicePidDir(opts: ServiceOptions = {}): string {
+  return resolvePidDir(opts);
+}
+
+/**
+ * Stop only the host-side cloudflared tunnel, leaving the in-sandbox gateway and
+ * Ollama untouched. `stopAll` is intentionally broader (it also stops the gateway
+ * and unloads Ollama); enrollment that auto-started a tunnel needs a tunnel-only
+ * stop to clean up without tearing down other services.
+ */
+export function stopCloudflared(opts: ServiceOptions = {}): void {
+  const pidDir = resolvePidDir(opts);
+  ensurePidDir(pidDir);
+  stopService(pidDir, "cloudflared");
+}
+
+/**
  * Sandbox name for tunnel-origin registration: same option/env precedence as
  * the other service commands, gated on the safe-name rules, but without the
  * registry default-sandbox fallback (registration is skipped rather than
