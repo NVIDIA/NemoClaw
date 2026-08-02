@@ -943,10 +943,10 @@ describe("shields command flow", () => {
     vi.spyOn(fs, "writeFileSync").mockImplementation(((
       target: fs.PathOrFileDescriptor,
       ...args: unknown[]
-    ) => {
-      if (String(target) === statePath) throw new Error("state write failed");
-      return Reflect.apply(originalWriteFileSync, fs, [target, ...args]);
-    }) as typeof fs.writeFileSync);
+    ) =>
+      String(target) === statePath
+        ? throwHarnessError(new Error("state write failed"))
+        : Reflect.apply(originalWriteFileSync, fs, [target, ...args])) as typeof fs.writeFileSync);
 
     expect(() => harness.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
       "state write failed",
