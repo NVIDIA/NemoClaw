@@ -244,6 +244,11 @@ function validPrimaryResult(): Record<string, unknown> {
     changedFiles: [],
     summary: validSummary(),
     findings: [],
+    terminologyReview: {
+      status: "clear",
+      decisions: [],
+      noChangesReason: "No semantic terminology candidates were selected.",
+    },
     acceptanceCoverage: [],
     securityCategories: [],
     sourceOfTruthReview: [],
