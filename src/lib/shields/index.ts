@@ -2678,12 +2678,11 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   fs.writeFileSync(snapshotPath, policyYaml, { mode: 0o600 });
   console.log(`  Saved: ${snapshotPath}`);
 
-  // 2. Resolve the relaxed policy source. An unknown policy has to fail here,
-  //    before any mutation, but a permissive policy is only materialized at
-  //    apply time below: the merge writes the permissive runtime temp
-  //    directory, and the apply's try/finally is the only thing that can
-  //    remove it. Building it here would leak that directory down every early
-  //    exit in between.
+  // 2. Resolve the relaxed policy source. Reject an unknown policy before
+  //    committing recovery state or changing sandbox policy and configuration.
+  //    Materialize a permissive policy only inside the `try` that applies it.
+  //    Its `finally` block owns cleanup of the runtime temp directory.
+  //    Materializing it here would leave the directory after an earlier failure.
   let resolvePolicyFile: () => { path: string; isTemp: boolean };
   if (policyName === "permissive") {
     const basePath = resolvePermissivePolicyPath(sandboxName);

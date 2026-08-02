@@ -18,9 +18,8 @@ const childReadyPath = process.argv[3];
 spawn(process.execPath, [childScriptPath, childReadyPath], { stdio: "ignore" });
 setInterval(() => {}, 60000);
 `;
-// A real `openshell policy get --base` always advertises filesystem paths, so
-// shields-down merges them into the permissive baseline and applies the result
-// from the permissive runtime temp directory instead of the static YAML.
+// Model the filesystem paths returned by `openshell policy get --base`.
+// The Shields down transition must apply the merged policy from a runtime temp directory.
 const LIVE_POLICY_WITH_FILESYSTEM_PATHS = [
   "version: 1",
   "filesystem_policy:",
@@ -891,7 +890,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
   });
 
-  it("applies the merged permissive policy and removes the permissive runtime temp directory once applied (#7964)", () => {
+  it("applies the merged permissive policy before removing its runtime temp directory (#7964)", () => {
     const harness = createHarness({ livePolicyYaml: LIVE_POLICY_WITH_FILESYSTEM_PATHS });
     const policy = requireDist("../policy/index.js");
     const systemTemp = fs.mkdtempSync(path.join(tmpDir, "system-temp-"));
@@ -933,6 +932,28 @@ describe("shields command flow", () => {
     );
 
     expect(fs.readdirSync(systemTemp)).toEqual([]);
+  });
+
+  it("leaves no permissive runtime temp directory when the Shields down state write fails (#7964)", () => {
+    const harness = createHarness({ livePolicyYaml: LIVE_POLICY_WITH_FILESYSTEM_PATHS });
+    const systemTemp = fs.mkdtempSync(path.join(tmpDir, "system-temp-"));
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const originalWriteFileSync = fs.writeFileSync;
+    vi.stubEnv("TMPDIR", systemTemp);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      target: fs.PathOrFileDescriptor,
+      ...args: unknown[]
+    ) => {
+      if (String(target) === statePath) throw new Error("state write failed");
+      return Reflect.apply(originalWriteFileSync, fs, [target, ...args]);
+    }) as typeof fs.writeFileSync);
+
+    expect(() => harness.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
+      "state write failed",
+    );
+
+    expect(fs.readdirSync(systemTemp)).toEqual([]);
+    expect(harness.runSpy).not.toHaveBeenCalled();
   });
 
   it("shieldsUp refuses to mark lockdown active when the saved restrictive policy snapshot is missing", () => {
