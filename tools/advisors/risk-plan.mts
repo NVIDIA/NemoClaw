@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 12 as const;
+export const RISK_PLAN_VERSION = 13 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -49,6 +49,8 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ]);
+const MANAGED_IMAGE_MULTIARCH_ACTIVATION =
+  "ci/protected-managed-image-multiarch-activation-v1.json";
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -61,6 +63,7 @@ export type RiskFamilyId =
   | "openclaw-image"
   | "credentials-security"
   | "e2e-control-plane"
+  | "managed-image-multiarch"
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -381,6 +384,25 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("test/e2e/") ||
       file.startsWith(".github/actions/prepare-e2e/") ||
       file.startsWith(".github/actions/upload-e2e-artifacts/"),
+  },
+  {
+    id: "managed-image-multiarch",
+    summary:
+      "Protected managed-image qualification must build and directly start every shipped agent on each supported architecture from exact base and candidate digests.",
+    tier: 3,
+    requiredJobs: ["managed-image-multiarch-startup"],
+    invariants: [
+      "OpenClaw, Hermes, and Deep Agents Code use platform-specific digest-pinned bases from one exact PR head and cohort",
+      "each built image is addressed by its isolated-registry digest and exercises the managed root-stdin and sandbox-hold startup boundary",
+      "amd64 and arm64 shards emit exact head, base, platform, cohort, base, image, and direct-start evidence before cleanup",
+      "the isolated registry is removed before a shard can publish passing risk evidence",
+    ],
+    // Bootstrap contract: this first trusted-controller slice recognizes only
+    // the activation marker. The follow-on candidate adds that marker and
+    // broadens the runtime paths after this job exists on trusted main, which
+    // lets the follow-on prove its own exact head without loading PR-authored
+    // workflow structure into the controller.
+    matches: (file) => file === MANAGED_IMAGE_MULTIARCH_ACTIVATION,
   },
   {
     id: "sandbox-boundary",
