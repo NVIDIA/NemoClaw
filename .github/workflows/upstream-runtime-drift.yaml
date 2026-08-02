@@ -61,48 +61,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Send Pin Diesel through the situation-room webhook
+      - name: Send Pin Diesel to the situation room
         if: >-
           always() &&
           steps.drift.outputs.ready == 'true' &&
           github.ref == 'refs/heads/main'
         env:
-          EXPECTED_SLACK_CHANNEL_ID: C0ALN454EH4
-          EXPECTED_SLACK_CHANNEL_NAME: nemoclaw-situation-room
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN_PIN_DIESEL }}
+          SLACK_CHANNEL_ID: C0ALN454EH4
+          SLACK_CHANNEL_NAME: nemoclaw-situation-room
           SLACK_PAYLOAD_PATH: ${{ runner.temp }}/upstream-runtime-drift/slack.json
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
         shell: bash
         run: |
           node --input-type=module <<'NODE'
           import fs from "node:fs";
-          const webhook = process.env.SLACK_WEBHOOK_URL;
-          if (!webhook) {
+          const token = process.env.SLACK_BOT_TOKEN;
+          if (!token) {
             process.stdout.write(
-              `::notice::SLACK_WEBHOOK_URL_SITUATION_ROOM is not configured; ` +
-                `Pin Diesel cannot use the intended #${process.env.EXPECTED_SLACK_CHANNEL_NAME} ` +
-                `(${process.env.EXPECTED_SLACK_CHANNEL_ID}) binding. The webhook configuration ` +
-                `controls the actual destination. The GitHub report remains available.\n`,
+              `::notice::SLACK_BOT_TOKEN_PIN_DIESEL is not configured; ` +
+                `Pin Diesel cannot post to #${process.env.SLACK_CHANNEL_NAME} ` +
+                `(${process.env.SLACK_CHANNEL_ID}). The GitHub report remains available.\n`,
             );
             process.exit(0);
           }
 
-          let webhookUrl;
-          try {
-            webhookUrl = new URL(webhook);
-          } catch {
-            throw new Error("The Slack webhook URL is invalid.");
-          }
-          const approvedHost =
-            webhookUrl.hostname.endsWith(".slack.com") ||
-            webhookUrl.hostname.endsWith(".slack-gov.com");
-          if (
-            webhookUrl.protocol !== "https:" ||
-            !approvedHost ||
-            webhookUrl.username ||
-            webhookUrl.password ||
-            webhookUrl.port
-          ) {
-            throw new Error("The Slack webhook URL is invalid.");
+          const channel = process.env.SLACK_CHANNEL_ID;
+          if (!channel) {
+            throw new Error("The Slack channel ID is not configured.");
           }
 
           let payload;
@@ -111,7 +96,13 @@ jobs:
           } catch {
             throw new Error("The Slack report payload is not valid JSON.");
           }
-          const encoded = JSON.stringify(payload);
+          const apiPayload = {
+            ...payload,
+            channel,
+            unfurl_links: false,
+            unfurl_media: false,
+          };
+          const encoded = JSON.stringify(apiPayload);
           const blocks = payload?.attachments?.[0]?.blocks;
           if (
             typeof payload?.text !== "string" ||
@@ -129,17 +120,36 @@ jobs:
 
           let response;
           try {
-            response = await fetch(webhookUrl, {
+            response = await fetch("https://slack.com/api/chat.postMessage", {
               method: "POST",
-              headers: { "content-type": "application/json" },
+              headers: {
+                authorization: `Bearer ${token}`,
+                "content-type": "application/json",
+              },
               body: encoded,
               redirect: "error",
               signal: AbortSignal.timeout(10000),
             });
           } catch {
-            throw new Error("The Slack webhook request failed.");
+            throw new Error("The Slack chat.postMessage request failed.");
           }
           if (!response.ok) {
-            throw new Error(`The Slack webhook returned HTTP ${response.status}.`);
+            throw new Error(`Slack chat.postMessage returned HTTP ${response.status}.`);
+          }
+
+          let result;
+          try {
+            result = await response.json();
+          } catch {
+            throw new Error("Slack chat.postMessage returned invalid JSON.");
+          }
+          if (
+            result?.ok !== true ||
+            result.channel !== channel ||
+            typeof result.ts !== "string"
+          ) {
+            throw new Error(
+              "Slack chat.postMessage did not confirm a posted message in the target channel.",
+            );
           }
           NODE
