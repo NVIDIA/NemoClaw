@@ -96,10 +96,10 @@ export const INJECTED_START_RETRY_HELPER = [
   "const NEMOCLAW_MCP_RETRY_CONNECT_TIMEOUT_MS = 1e4;",
   "const NEMOCLAW_MCP_ERROR_CHAIN_LIMIT = 8;",
   'const NEMOCLAW_MCP_TRANSIENT_DIAGNOSTIC_SUFFIX = " (temporary MCP transport failure; NemoClaw retried this startup once with a fresh transport. Credentials and configuration were not rejected. The server is retried on the next agent run.)";',
-  // A refused, unreachable, or unresolvable destination is deterministic, and
-  // an OpenShell L4 policy denial reaches the client as exactly that. Retrying
-  // it would repeat a denial the reporter never asked NemoClaw to retry, so
-  // only in-flight transport faults after a reachable connect are transient.
+  // A refused, unreachable, or unresolvable destination is excluded because an
+  // OpenShell L4 policy denial reaches the client as a refused connection.
+  // Retrying refusals could therefore repeat a policy denial, so only in-flight
+  // transport faults after a reachable connect are transient.
   "const NEMOCLAW_MCP_TRANSIENT_CODES = new Set([",
   '\t"ECONNABORTED",',
   '\t"ECONNRESET",',
@@ -126,6 +126,7 @@ export const INJECTED_START_RETRY_HELPER = [
   "\t\tchain.push(current);",
   '\t\tcurrent = typeof current === "object" ? current.cause : void 0;',
   "\t}",
+  "\tif (current !== void 0 && current !== null) return [];",
   "\treturn chain;",
   "}",
   "function nemoClawMcpErrorText(entry) {",
@@ -190,7 +191,7 @@ export const INJECTED_START_RETRY_HELPER = [
   "\t\t} catch {",
   "\t\t\tretryResolved = null;",
   "\t\t}",
-  "\t\tif (!retryResolved) return nemoClawFinalizeMcpStartResult(first, true);",
+  "\t\tif (!retryResolved) return nemoClawFinalizeMcpStartResult(first, false);",
   '\t\tlogWarn(`bundle-mcp: retrying transient startup failure for server "${params.serverName}" once with a fresh transport.`);',
   "\t\tawait nemoClawMcpRetryDelay();",
   "\t\tconst second = await params.attempt({",
@@ -202,8 +203,8 @@ export const INJECTED_START_RETRY_HELPER = [
   "}",
   // A catalog carrying any server diagnostic is degraded, so it must not become
   // the session's stable catalog. Upstream fills `catalog.diagnostics` only from
-  // a per-server start or refresh failure and omits the key entirely when every
-  // server started, so a non-empty array is exactly "a server did not start".
+  // a per-server start or refresh failure and omits the key entirely when no
+  // server produced a diagnostic.
   "function nemoClawCatalogHasStartDiagnostics(catalog) {",
   "\tif (!catalog || !Array.isArray(catalog.diagnostics)) return false;",
   "\treturn catalog.diagnostics.length > 0;",
@@ -275,8 +276,11 @@ function listJsFiles(dir: string): string[] {
 export function patchBundleMcpRuntimeText(source: string, filePath: string): PatchTextResult {
   if (source.includes(MARKER)) {
     for (const pattern of PATCHED_REQUIRED_PATTERNS) {
-      if (!source.includes(pattern)) {
-        throw new Error(`${filePath}: MCP startup recovery marker is present but patch is partial`);
+      const count = countOccurrences(source, pattern);
+      if (count !== 1) {
+        throw new Error(
+          `${filePath}: MCP startup recovery patch is partial or ambiguous; expected exactly one patched target, found ${count}`,
+        );
       }
     }
     for (const pattern of UNPATCHED_TARGET_PATTERNS) {
@@ -315,8 +319,11 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
   text = text.replace(ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT);
 
   for (const pattern of PATCHED_REQUIRED_PATTERNS) {
-    if (!text.includes(pattern)) {
-      throw new Error(`${filePath}: MCP startup recovery patch verification failed`);
+    const count = countOccurrences(text, pattern);
+    if (count !== 1) {
+      throw new Error(
+        `${filePath}: MCP startup recovery patch verification failed; expected exactly one patched target, found ${count}`,
+      );
     }
   }
   return { patched: true, status: "patched", text };

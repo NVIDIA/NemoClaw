@@ -10,9 +10,9 @@ import vm from "node:vm";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  auditOpenClawMcpReliability,
   INJECTED_START_RETRY_HELPER,
   MARKER,
-  auditOpenClawMcpReliability,
   patchBundleMcpRuntimeText,
   patchOpenClawMcpReliability,
 } from "../scripts/patch-openclaw-mcp-reliability.mts";
@@ -185,6 +185,17 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     expect(patchOpenClawMcpReliability(dist).status).toBe("already-patched");
     expect(fs.readFileSync(runtime, "utf-8")).toBe(patched);
     expect(auditOpenClawMcpReliability(dist)).toMatchObject({ file: runtime });
+  });
+
+  it("fails closed when an audited runtime carries a duplicate patch marker", () => {
+    const { dist, runtime, tmp } = writeFixtureDist();
+    created.push(tmp);
+    patchOpenClawMcpReliability(dist);
+    fs.appendFileSync(runtime, `\n${MARKER}\n`);
+
+    expect(() => auditOpenClawMcpReliability(dist)).toThrow(
+      /expected exactly one patched target, found 2/,
+    );
   });
 
   it("fails closed when the reviewed catalog shape is unrecognized", () => {
@@ -396,8 +407,50 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     expect(Object.getOwnPropertySymbols(result)).toEqual([]);
   });
 
+  it("preserves the first diagnostic when a fresh transport cannot be constructed", async () => {
+    const warnings: string[] = [];
+    const helper = loadInjectedHelper(warnings);
+    const error = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+    });
+    let attempts = 0;
+
+    const task = helper.nemoClawWithMcpStartRetry({
+      serverName: "remotedocs",
+      initialResolved: { transportType: "streamable-http", connectionTimeoutMs: 5_000 },
+      resolveTransport: () => {
+        throw new Error("fresh transport construction failed");
+      },
+      attempt: async () => {
+        attempts += 1;
+        return startFailureResult(helper, error);
+      },
+    });
+
+    const result = (await task()) as { diagnostics: Array<{ message: string }> };
+    expect(attempts).toBe(1);
+    expect(warnings).toEqual([]);
+    expect(result.diagnostics[0].message).toBe(String(error));
+    expect(result.diagnostics[0].message).not.toContain("temporary MCP transport failure");
+    expect(result.diagnostics[0].message).not.toContain("retried");
+  });
+
   it("never retries auth, non-streamable transports, or already-connected refresh failures", async () => {
     const helper = loadInjectedHelper([]);
+    const deepBlockedCause = Object.assign(new Error("connection reset"), {
+      code: "ECONNRESET",
+    }) as Error & { cause?: unknown };
+    let deepCursor: { cause?: unknown } = deepBlockedCause;
+    for (let depth = 0; depth < 8; depth += 1) {
+      const next: { cause?: unknown } = {};
+      deepCursor.cause = next;
+      deepCursor = next;
+    }
+    deepCursor.cause = new Error("Error POSTing to endpoint (HTTP 401): Unauthorized");
+    const cyclicCause = Object.assign(new Error("connection reset"), {
+      code: "ECONNRESET",
+    }) as Error & { cause?: unknown };
+    cyclicCause.cause = cyclicCause;
     const cases = [
       {
         label: "auth failure",
@@ -422,6 +475,18 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
         initialResolved: { transportType: "streamable-http", connectionTimeoutMs: 5_000 },
         error: new TypeError("fetch failed"),
         reusedSession: true,
+      },
+      {
+        label: "blocked cause beyond the bounded classifier depth",
+        initialResolved: { transportType: "streamable-http", connectionTimeoutMs: 5_000 },
+        error: deepBlockedCause,
+        reusedSession: false,
+      },
+      {
+        label: "cyclic cause chain",
+        initialResolved: { transportType: "streamable-http", connectionTimeoutMs: 5_000 },
+        error: cyclicCause,
+        reusedSession: false,
       },
     ];
 
@@ -462,8 +527,8 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
       true,
     ) as { diagnostics: Array<{ message: string }> };
 
-    // A catalog in which every server started omits the key entirely, so a
-    // healthy catalog is still reused.
+    // A catalog without server diagnostics omits the key entirely, so a healthy
+    // catalog is still reused.
     expect(helper.nemoClawCatalogHasStartDiagnostics(null)).toBe(false);
     expect(helper.nemoClawCatalogHasStartDiagnostics({ servers: {}, tools: [] })).toBe(false);
     expect(helper.nemoClawCatalogHasStartDiagnostics({ tools: [], diagnostics: [] })).toBe(false);

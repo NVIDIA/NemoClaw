@@ -130,7 +130,9 @@ export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
       throw new Error(`exhausted retry diagnostic on ${label} omits the temporary-transport cause`);
     }
     if (!diagnostics[0].includes("Credentials and configuration were not rejected")) {
-      throw new Error(`exhausted retry diagnostic on ${label} does not clear credentials`);
+      throw new Error(
+        `exhausted retry diagnostic on ${label} does not state that credentials and configuration were not rejected`,
+      );
     }
   }
 

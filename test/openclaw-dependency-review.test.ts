@@ -22,6 +22,12 @@ const ACTIVE_DEPENDENCY_REVIEW = path.join(
   "security",
   "openclaw-2026.7.1-dependency-review.md",
 );
+const MCP_TROUBLESHOOTING = path.join(
+  REPO_ROOT,
+  "docs",
+  "reference",
+  "troubleshoot-mcp-servers.mdx",
+);
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
 const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
@@ -158,6 +164,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
 
   it("records the version-scoped transient remote MCP startup recovery patch (#7958)", () => {
     const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+    const troubleshooting = readFileSync(MCP_TROUBLESHOOTING, "utf-8");
 
     expect(review).toContain("## Transient Remote MCP Startup Recovery");
     expect(review).toContain("scripts/patch-openclaw-mcp-reliability.mts");
@@ -171,7 +178,14 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/helpers/openclaw-real-mcp-start-retry-proof.ts");
     expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
     expect(review).toContain(
-      "Removal criteria: drop this patch when the reviewed OpenClaw release",
+      "Removal criterion: drop this patch when the reviewed OpenClaw release",
+    );
+    expect(review).toContain("only when the *surviving* failure is itself transient");
+    expect(review).toContain("credentials and configuration were not rejected");
+    expect(review).not.toContain("explicitly clears credentials and configuration");
+    expect(review).not.toContain("a refused destination is deterministic");
+    expect(troubleshooting).toMatch(
+      /<AgentOnly variant="openclaw">\n\n## Remote MCP Tools Are Missing for One Agent Turn[\s\S]*?<\/AgentOnly>/,
     );
   });
 

@@ -931,7 +931,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-n
 # and drops a diagnostics-carrying catalog at the next agent run. Authentication,
 # authorization, TLS, policy, and configuration failures are never retried.
 #
-# Removal criteria: drop when upstream OpenClaw provides bounded startup retry,
+# Removal criterion: drop when upstream OpenClaw provides bounded startup retry,
 # negative-catalog invalidation, and temporary-transport failure attribution.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
