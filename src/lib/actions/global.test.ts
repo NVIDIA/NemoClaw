@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
   runDeployAction: vi.fn().mockResolvedValue(undefined),
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
-  runOpenshell: vi.fn(() => ({ status: 0 })),
   version: vi.fn(),
 }));
 
@@ -25,7 +24,6 @@ vi.mock("./maintenance", () => ({
 vi.mock("./onboard", () => ({
   runOnboardAction: mocks.runOnboardAction,
 }));
-vi.mock("../adapters/openshell/runtime", () => ({ runOpenshell: mocks.runOpenshell }));
 vi.mock("./root-help", () => ({ help: mocks.help, version: mocks.version }));
 
 import {
@@ -34,7 +32,6 @@ import {
   runDeployAction,
   runGarbageCollectImagesAction,
   runOnboardAction,
-  runOpenshellProviderCommand,
   runUpgradeSandboxesAction,
   setGlobalCliActionRuntimeHooksForTest,
   showRootHelp,
@@ -64,36 +61,24 @@ describe("global cli action facade", () => {
     expect(mocks.version).toHaveBeenCalledWith();
   });
 
-  it("uses injected runtime hooks for gateway recovery, OpenShell, and upgrades", async () => {
+  it("uses injected runtime hooks for gateway recovery and upgrades", async () => {
     const recoverHook = vi.fn().mockResolvedValue({ recovered: false });
-    const runOpenshellHook = vi.fn(() => ({ status: 0 }));
     const upgradeHook = vi.fn().mockResolvedValue(undefined);
     setGlobalCliActionRuntimeHooksForTest({
       recoverNamedGatewayRuntime: recoverHook,
-      runOpenshell: runOpenshellHook as never,
       upgradeSandboxes: upgradeHook,
     });
 
     await expect(recoverNamedGatewayRuntime()).resolves.toEqual({ recovered: false });
-    runOpenshellProviderCommand(["provider", "list"], { timeout: 100 });
     await runUpgradeSandboxesAction({ check: true });
 
     expect(recoverHook).toHaveBeenCalledWith();
-    expect(runOpenshellHook).toHaveBeenCalledWith(
-      ["provider", "list"],
-      expect.objectContaining({ timeout: 100, replaceEnv: true, env: expect.any(Object) }),
-    );
     expect(upgradeHook).toHaveBeenCalledWith({ check: true });
   });
 
-  it("falls back to default runtime hooks", async () => {
+  it("uses default gateway recovery without an injected hook", async () => {
     await expect(recoverNamedGatewayRuntime()).resolves.toEqual({ recovered: true });
-    runOpenshellProviderCommand(["provider", "list"]);
 
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
-    expect(mocks.runOpenshell).toHaveBeenCalledWith(
-      ["provider", "list"],
-      expect.objectContaining({ replaceEnv: true, env: expect.any(Object) }),
-    );
   });
 });
