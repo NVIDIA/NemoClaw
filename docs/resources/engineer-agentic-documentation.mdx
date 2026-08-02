@@ -400,7 +400,7 @@ agent-variants: ["openclaw", "hermes"]
 The generator compares this declaration with the source's actual navigation membership and fails when the declaration is missing or differs.
 An all-variant source omits the declaration, so removing one of its navigation targets also fails until the author restores the route or explicitly declares the narrower scope.
 
-If this source-only guide is added to Fern navigation, it would use the following mapping:
+This guide uses the following Fern navigation mapping:
 
 | Guide variant | Generated target in `docs/index.yml` | Published route suffix |
 |---|---|---|
@@ -416,10 +416,10 @@ The route suffix above comes from the variant, section, and page slug hierarchy 
 The version entry in `fern/docs.yml` points Fern to `docs/index.yml`.
 That index defines the navigation and published route tree for every supported agent variant.
 
-An OpenClaw navigation entry for this guide would use the following shape:
+The OpenClaw navigation entry for this guide uses the following shape:
 
 ```yaml
-- page: "Engineer Agentic Docs"
+- page: "Engineer Documentation for AI Agents"
   path: _build/agent-variants/resources/engineer-agentic-documentation.openclaw.generated.mdx
   slug: engineer-agentic-documentation
 ```

@@ -111,6 +111,7 @@ export interface InferenceSelectionValidationHelpers {
     model: string,
     credentialEnv: string,
     helpUrl?: string | null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ): Promise<EndpointValidationResult>;
   validateCustomAnthropicSelection(
     label: string,
@@ -305,6 +306,8 @@ export function createInferenceSelectionValidationHelpers(
         authMode: probeOptions.authMode,
         requireChatCompletionsToolCalling: probeOptions.requireChatCompletionsToolCalling,
         extraHeaders: probeOptions.extraHeaders,
+        pinnedAddresses: probeOptions.pinnedAddresses,
+        trustedPrivateCapability: probeOptions.trustedPrivateCapability,
       });
     }
     return { ok: true, api };
@@ -347,6 +350,7 @@ export function createInferenceSelectionValidationHelpers(
     model: string,
     credentialEnv: string,
     helpUrl: string | null = null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
       label,
@@ -376,9 +380,18 @@ export function createInferenceSelectionValidationHelpers(
           `  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`,
         );
       }
+      const api = probe.api ?? "openai-completions";
+      if (api === "openai-completions" && probe.validated !== false) {
+        capabilityCache?.rememberCompletedOpenAiChat({
+          endpointUrl,
+          model,
+          pinnedAddresses,
+          trustedPrivateCapability,
+        });
+      }
       return {
         ok: true,
-        api: probe.api ?? "openai-completions",
+        api,
         pinnedAddresses,
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };

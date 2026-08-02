@@ -14,6 +14,10 @@ import { extractShellFunction } from "./support/hermes-shell-harness";
 const repoRoot = path.join(import.meta.dirname, "..");
 const patcher = path.join(repoRoot, "agents", "hermes", "patch-discord-recovery-permissions.py");
 const dockerfile = fs.readFileSync(path.join(repoRoot, "agents", "hermes", "Dockerfile"), "utf8");
+const imageBuildProbes = fs.readFileSync(
+  path.join(repoRoot, "agents", "hermes", "image-build-probes.py"),
+  "utf8",
+);
 const baseDockerfile = fs.readFileSync(
   path.join(repoRoot, "agents", "hermes", "Dockerfile.base"),
   "utf8",
@@ -143,7 +147,7 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(dockerfile).toMatch(
       /patch-hermes-discord-recovery-permissions[.]py \\\n\s+\/opt\/hermes\/plugins\/platforms\/discord\/recovery[.]py/,
     );
-    expect(dockerfile).toContain('source.count("os.chmod(path, 0o660)") == 1');
+    expect(imageBuildProbes).toContain('source.count("os.chmod(path, 0o660)") == 1');
   });
 
   it("prepares both setgid cross-UID parents in both image layouts", () => {
@@ -164,23 +168,34 @@ describe("Hermes cross-UID ledger permissions", () => {
       `stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770"`,
     );
     expect(dockerfile).toContain("test ! -e /sandbox/.hermes/cron/executions.db");
-    expect(dockerfile).toContain("from cron.executions import create_execution");
-    expect(dockerfile).toContain("nemoclaw-cross-uid-create-probe");
-    expect(dockerfile).toContain("nemoclaw-cross-uid-reopen-probe");
+    expect(imageBuildProbes).toContain("from cron.executions import create_execution");
+    expect(imageBuildProbes).toContain("nemoclaw-cross-uid-create-probe");
+    expect(imageBuildProbes).toContain("nemoclaw-cross-uid-reopen-probe");
     expect(dockerfile).toContain(`runtime/cron-executions.db)" = "gateway:sandbox 640"`);
     expect(dockerfile).toContain(`runtime/cron-executions.db)" = "sandbox:sandbox 660"`);
-    expect(dockerfile).toContain('for suffix in ("-wal", "-shm"):');
+    expect(imageBuildProbes).toContain('for suffix in ("-wal", "-shm"):');
   });
 
   it("build-probes Discord gateway creation, sandbox backup and replacement, then reopen", () => {
     expect(dockerfile).toContain(
       `stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770"`,
     );
-    expect(dockerfile).toContain("gosu gateway /opt/hermes/.venv/bin/python -I - <<'PY'");
-    expect(dockerfile).toContain("gosu sandbox /opt/hermes/.venv/bin/python -I - <<'PY'");
-    expect(dockerfile).toContain("source.backup(target)");
-    expect(dockerfile).toContain("os.replace(staged, path)");
-    expect(dockerfile).toContain("gateway-reopened");
+    expect(dockerfile).toContain(
+      "gosu gateway /opt/hermes/.venv/bin/python -I \\\n" +
+        "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-create",
+    );
+    expect(dockerfile).toContain(
+      "gosu sandbox /opt/hermes/.venv/bin/python -I \\\n" +
+        "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup",
+    );
+    const discordBackup = imageBuildProbes.slice(
+      imageBuildProbes.indexOf("def verify_discord_backup("),
+      imageBuildProbes.indexOf("def verify_discord_reopen("),
+    );
+    expect(discordBackup).toContain(".nemoclaw-discord-recovery-staged");
+    expect(discordBackup).toContain("source.backup(target)");
+    expect(discordBackup).toContain("os.replace(staged, path)");
+    expect(imageBuildProbes).toContain("gateway-reopened");
     expect(dockerfile).toContain(`discord_message_recovery.db)" = "sandbox:sandbox 660"`);
   });
 

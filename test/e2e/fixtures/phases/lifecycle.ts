@@ -284,6 +284,14 @@ export class LifecyclePhaseFixture {
     instance: NemoClawInstance | string,
     options: SandboxReadyAfterRebuildOptions = {},
   ): Promise<ShellProbeResult> {
+    return await this.waitForSandboxReady(instance, options, "after rebuild");
+  }
+
+  private async waitForSandboxReady(
+    instance: NemoClawInstance | string,
+    options: SandboxReadyAfterRebuildOptions,
+    transition: "after rebuild" | "after the boot restart",
+  ): Promise<ShellProbeResult> {
     const sandboxName = instanceName(instance);
     const attempts = options.attempts ?? SANDBOX_READY_ATTEMPTS;
     const delayMs = options.delayMs ?? SANDBOX_READY_DELAY_MS;
@@ -303,7 +311,7 @@ export class LifecyclePhaseFixture {
     }
     const detail = last ? `${last.stdout}\n${last.stderr}`.trim() : "no probe result";
     throw new Error(
-      `sandbox ${sandboxName} did not become Ready after rebuild within ${attempts} attempts: ${detail}`,
+      `sandbox ${sandboxName} did not become Ready ${transition} within ${attempts} attempts: ${detail}`,
     );
   }
 
@@ -346,17 +354,18 @@ export class LifecyclePhaseFixture {
    *      `openshell-gateway` service or the marked
    *      `nemoclaw-openshell-gateway` service.
    *
-   *   2. Invoke `nemoclaw <name> status` — the user-visible action
+   *   2. Model the Docker daemon's boot-owned container restart. Wait until
+   *      the OpenShell gateway reports the preserved sandbox Ready.
+   *
+   *   3. Invoke `nemoclaw <name> status` — the user-visible action
    *      that documented the regression in #4423. On unfixed `main`
    *      the destructive `missing` branch in `status.ts` wipes the
-   *      registry entry. The Docker-driver recovery helper restarts the
-   *      labeled container before stale-removal can fire. The preceding gateway restart must
-   *      make `openshell status` report the named gateway connected
-   *      without running `nemoclaw onboard --resume`.
+   *      registry entry. Status must also restore the OpenClaw gateway
+   *      and host forward before it exits successfully.
    *
-   *   Status must exit zero to prove that the restored sandbox delivery
-   *   path is ready. The state-validation phase that follows additionally
-   *   verifies preservation via the
+   *   The final status must exit zero to verify the restored sandbox
+   *   delivery path. The state-validation phase that follows additionally
+   *   verifies preservation through the
    *   `local-registry-entry-present` and `docker-sandbox-container-present`
    *   probes.
    *
@@ -389,6 +398,7 @@ export class LifecyclePhaseFixture {
       );
     }
     const originalName = containerNames[0];
+    let bootContainerName = originalName;
 
     const stop = await this.host.command("docker", ["stop", originalName], {
       artifactName: `lifecycle-post-reboot-docker-stop-${originalName}`,
@@ -417,6 +427,7 @@ export class LifecyclePhaseFixture {
         id: `docker-rename:${originalName}->${backupName}`,
         results: [rename],
       });
+      bootContainerName = backupName;
       this.cleanup.add(`lifecycle.docker-rename-back:${backupName}`, async () => {
         await this.host.command("docker", ["rename", backupName, originalName], {
           artifactName: `lifecycle-cleanup-docker-rename-back-${backupName}`,
@@ -438,12 +449,34 @@ export class LifecyclePhaseFixture {
     await this.waitForGatewayConnected();
     steps.push({ id: "gateway-connected:nemoclaw", results: [] });
 
-    // Final step: drive the user-visible action that exposed #4423.
-    // We invoke status through the host CLI client so artifacts are
-    // captured and the command goes through the same
-    // shellProbe/redaction layer the rest of the fixture code uses.
-    // Status must exit zero to prove the restored delivery path is ready;
-    // state-validation still verifies registry and container preservation.
+    // `docker stop` suppresses Docker restart-policy handling until the
+    // daemon restarts. Start the same container here to model that boot-owned
+    // transition without restarting the GitHub-hosted runner's Docker daemon.
+    const bootStart = await this.host.command("docker", ["start", bootContainerName], {
+      artifactName: `lifecycle-post-reboot-docker-start-${bootContainerName}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: DOCKER_PROBE_TIMEOUT_MS,
+    });
+    assertExitZero(bootStart, `docker start ${bootContainerName}`);
+    steps.push({
+      id: `docker-boot-start:${bootContainerName}`,
+      results: [bootStart],
+    });
+
+    const ready = await this.waitForSandboxReady(
+      instance,
+      {
+        artifactNamePrefix: `lifecycle-post-reboot-ready-${instance.sandboxName}`,
+      },
+      "after the boot restart",
+    );
+    steps.push({
+      id: `sandbox-ready-after-boot:${instance.sandboxName}`,
+      results: [ready],
+    });
+
+    // `nemoclaw <name> status` owns the post-reboot delivery-chain recovery.
+    // It must restore OpenClaw and the host forward without invoking `nemoclaw <name> start`.
     const statusResult = await this.host.expectStatus(instance.sandboxName, {
       artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
       env: buildAvailabilityProbeEnv(),

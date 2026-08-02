@@ -52,13 +52,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
-import {
-  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} from "./connect-autopair-budget";
+import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
@@ -84,10 +78,13 @@ import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
+  type ManagedGatewayControlCompletion,
   resolveSandboxDashboardPort,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
+
+export { runConnectAutoPairApprovalPass };
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -300,7 +297,15 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
-    console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    const managedControlCompletion =
+      "managedControlCompletion" in processCheck
+        ? (processCheck.managedControlCompletion as ManagedGatewayControlCompletion)
+        : null;
+    if (managedControlCompletion?.disposition === "already-running") {
+      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    } else {
+      console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    }
     return;
   }
   await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
@@ -867,24 +872,6 @@ async function ensureSandboxInferenceRouteOrExit(
     process.exit(1);
   }
   return result.sandbox;
-}
-
-// Connect/probe/finalization budget for the shared auto-pair approval pass
-// (#4504). The bounded single-request budget, timeout rationale, and invariant
-// live in the dependency-free ./connect-autopair-budget leaf so tests assert the
-// real values without importing this heavy module. The doctor recovery surface
-// (#4616) keeps the wider default budget in ./auto-pair-approval.
-const CONNECT_AUTO_PAIR_BUDGET = {
-  maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} as const;
-
-// Thin wrapper so the connect/probe/finalization surfaces share one budget
-// without each caller restating it. Best-effort; never throws (#4263/#4504).
-export function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
 }
 
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {

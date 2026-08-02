@@ -23,6 +23,26 @@ export function writeManagedAutoApproval(root: string, content: string, mode = 0
   return capabilityPath;
 }
 
+export function managedReasoningEffortPath(root: string): string {
+  return path.join(root, "managed-reasoning-effort");
+}
+
+export function writeManagedReasoningEffort(root: string, content: string, mode = 0o444): string {
+  const capabilityPath = managedReasoningEffortPath(root);
+  fs.writeFileSync(capabilityPath, content, { mode });
+  fs.chmodSync(capabilityPath, mode);
+  return capabilityPath;
+}
+
+export function linkManagedReasoningEffort(root: string, content: string, mode = 0o444): string {
+  const targetPath = path.join(root, "managed-reasoning-effort-target");
+  fs.writeFileSync(targetPath, content, { mode });
+  fs.chmodSync(targetPath, mode);
+  const capabilityPath = managedReasoningEffortPath(root);
+  fs.symlinkSync(targetPath, capabilityPath);
+  return capabilityPath;
+}
+
 export function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -809,6 +829,10 @@ export function patchFixture(tempDir: string): void {
     .replace(
       '"/usr/local/share/nemoclaw/dcode-auto-approval"',
       JSON.stringify(managedAutoApprovalPath(tempDir)),
+    )
+    .replace(
+      '"/usr/local/share/nemoclaw/dcode-reasoning-effort"',
+      JSON.stringify(managedReasoningEffortPath(tempDir)),
     )
     .replace("_MANAGED_FILE_OWNER_UID = 0", `_MANAGED_FILE_OWNER_UID = ${process.getuid?.() ?? 0}`);
   fs.writeFileSync(helperPath, helper, "utf8");
