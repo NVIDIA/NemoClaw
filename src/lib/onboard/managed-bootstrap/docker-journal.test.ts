@@ -542,7 +542,7 @@ describe("Docker managed bootstrap journal", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const store = createFileDockerManagedBootstrapJournalStore(root);
-    expect(store.listUnfinished()).toEqual([]);
+    expect(loadUnfinished(store)).toEqual([]);
     const target = path.join(
       root,
       DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY,
