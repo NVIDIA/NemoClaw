@@ -276,7 +276,6 @@ describe("Hermes managed-tool gateway broker", () => {
     const previousHome = process.env.HOME;
     const previousPath = process.env.PATH;
     const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-node-control-"));
-    let server: ChildProcess | undefined;
     try {
       process.env.HOME = home;
       delete require.cache[require.resolve(BROKER_WRAPPER)];
@@ -313,7 +312,7 @@ describe("Hermes managed-tool gateway broker", () => {
         "});",
         'process.once("SIGTERM", () => server.close(() => process.exit(0)));',
       ].join("\n");
-      server = resources.ownChild(
+      const server = resources.ownChild(
         spawn(
           process.execPath,
           [
@@ -361,11 +360,6 @@ describe("Hermes managed-tool gateway broker", () => {
         false,
       );
     } finally {
-      if (server && server.exitCode === null && server.signalCode === null) {
-        const exited = once(server, "exit");
-        server.kill("SIGTERM");
-        await exited;
-      }
       previousHome === undefined
         ? Reflect.deleteProperty(process.env, "HOME")
         : Reflect.set(process.env, "HOME", previousHome);
