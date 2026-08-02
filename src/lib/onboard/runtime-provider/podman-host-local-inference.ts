@@ -518,6 +518,35 @@ function probeOllama(
   requireSuccess("Ollama network probe", result);
 }
 
+function probeManagedInference(engine: ContainerEngine, spec: ManagedSpec): void {
+  const healthPath = spec.service === "nim" ? "/v1/health/ready" : "/health";
+  const result = engine.capture(
+    [
+      "run",
+      "--rm",
+      "--pull=never",
+      "--network",
+      spec.endpoint.networkName,
+      spec.probeImageRef,
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--retry",
+      "10",
+      "--retry-delay",
+      "1",
+      "--retry-connrefused",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "12",
+      `http://${spec.endpoint.host}:${String(spec.endpoint.port)}${healthPath}`,
+    ],
+    PROBE_TIMEOUT_MS,
+  );
+  requireSuccess(`${spec.service} network probe`, result);
+}
+
 export function createPodmanHostLocalInferenceRuntime(
   options: PodmanHostLocalInferenceRuntimeOptions,
 ): HostLocalInferenceRuntime {
@@ -654,6 +683,7 @@ export function createPodmanHostLocalInferenceRuntime(
             throw new Error("Podman inference start did not leave the exact container running.");
           }
         }
+        probeManagedInference(engine, spec);
         return receiptFor(authority, spec, container.runtimeId);
       }
 
@@ -675,6 +705,7 @@ export function createPodmanHostLocalInferenceRuntime(
         if (!container.running) {
           throw new Error("Podman inference start did not leave the exact container running.");
         }
+        probeManagedInference(engine, spec);
         return receiptFor(authority, spec, runtimeId);
       } catch (error) {
         const cleanup = engine.capture(["rm", "--force", runtimeId], MUTATION_TIMEOUT_MS);
