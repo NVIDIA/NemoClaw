@@ -42,7 +42,7 @@ describe("agent config resolution", () => {
     expect(() => resolveAgentConfig("alpha", deps)).toThrow("Hermes manifest is invalid");
   });
 
-  it("preserves Hermes config and sensitive file ownership", () => {
+  it("resolves Hermes config paths and sensitive files", () => {
     const deps = dependencies({
       getSandbox: vi.fn(() => ({ agent: "hermes" })),
       loadAgent: vi.fn(() => ({

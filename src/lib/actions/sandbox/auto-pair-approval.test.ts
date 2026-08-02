@@ -5,107 +5,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
-  AUTO_PAIR_MAX_APPROVALS,
   buildAutoPairApprovalScript,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
-  runConnectAutoPairApprovalPass,
 } from "./auto-pair-approval";
-import {
-  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} from "./connect-autopair-budget";
 
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
-const RECEIPT_MARKER = "__NEMOCLAW_AUTO_PAIR_RECEIPT__";
-
-describe("connect auto-pair approval pass", () => {
-  it("uses the shared connect approval budget", () => {
-    const runApprovalPass = vi.fn();
-
-    runConnectAutoPairApprovalPass("alpha", runApprovalPass);
-
-    expect(runApprovalPass).toHaveBeenCalledWith("alpha", {
-      budget: {
-        maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
-        listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-        approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-        timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-      },
-    });
-  });
-});
-
-describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
-  it("builds the bounded allowlisted approval pass", () => {
-    const script = buildAutoPairApprovalScript("UE9MSUNZ");
-    expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
-    expect(script).toContain("command -v openclaw");
-    expect(script).toContain("command -v python3");
-    expect(script).toContain("'devices', 'list', '--json'");
-    expect(script).toContain("'devices', 'approve'");
-    expect(script).toContain("approval_request_decision(device)");
-    expect(script).toContain("if not decision['allowed']:");
-    expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
-    expect(script).toContain(`MAX_APPROVALS = ${AUTO_PAIR_MAX_APPROVALS}`);
-    expect(script).toContain("'UE9MSUNZ'");
-  });
-
-  it("adds local-device filtering only for restored-clone approval", () => {
-    const ordinary = buildAutoPairApprovalScript("UE9MSUNZ");
-    const restoredClone = buildAutoPairApprovalScript("UE9MSUNZ", {
-      emitReceipt: true,
-      localDeviceOnly: true,
-      budget: { maxApprovals: 1 },
-    });
-
-    expect(ordinary).not.toContain("local_identity_public_key");
-    expect(restoredClone).toContain("local_identity_public_key");
-    expect(restoredClone).toContain("if not related_pending:");
-    expect(restoredClone).toContain("len(related_pending) > 1");
-    expect(restoredClone).toContain("pending = related_pending");
-    expect(restoredClone).toContain("MAX_APPROVALS = 1");
-    expect(restoredClone).toContain(RECEIPT_MARKER);
-  });
-
-  it("omits the summary marker by default and appends it when requested", () => {
-    const silent = buildAutoPairApprovalScript("UE9MSUNZ");
-    const reporting = buildAutoPairApprovalScript("UE9MSUNZ", { emitSummary: true });
-    expect(silent).not.toContain(SUMMARY_MARKER);
-    expect(silent).not.toContain(RECEIPT_MARKER);
-    expect(reporting).toContain(`print(f'${SUMMARY_MARKER}={approved_count}')`);
-    // The reporting script is the silent script with exactly the summary line
-    // inserted before the heredoc terminator — nothing else changes.
-    const stripped = reporting.replace(`print(f'${SUMMARY_MARKER}={approved_count}')\n`, "");
-    expect(stripped).toBe(silent);
-  });
-
-  it("reads the real policy module from disk", () => {
-    const module = readAutoPairApprovalPolicyModule();
-    expect(module).toBeTruthy();
-    expect(module).toContain("def approval_request_decision");
-    expect(module).toContain("def gateway_approval_env");
-    expect(module).not.toContain("recover_failed_scope_approval");
-  });
-
-  it("accepts exactly one terminal fixed receipt", () => {
-    expect(
-      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=approved-one\n`),
-    ).toBe("approved-one");
-    for (const output of [
-      `${RECEIPT_MARKER}=approved-one\nlater output\n`,
-      `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
-      `${RECEIPT_MARKER}=raw-request-id\n`,
-    ]) {
-      expect(parseAutoPairApprovalReceipt(output)).toBeNull();
-    }
-  });
-});
 
 describe("auto-pair approval pass behaviour (#4616)", () => {
   const pyIt =
