@@ -91,7 +91,6 @@ const lifecycleMock = vi.hoisted(() => {
     ),
   };
 });
-
 const backupSandboxStateMock = vi.fn();
 const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
@@ -239,12 +238,13 @@ vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: vi.fn(),
   waitForRestoredSandboxGatewaySupervisor: vi.fn(() => true),
 }));
-
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
   removeSandboxRegistryEntry: vi.fn(),
   removeSandboxRegistryEntryOutcome: vi.fn(() => ({ status: "complete", removed: true })),
-  requireSandboxDestructiveCleanupAuthority: vi.fn(),
+  requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({
+    provider: { identity: { id: "docker" } },
+  })),
 }));
 describe("runSandboxSnapshot", () => {
   beforeEach(() => {
