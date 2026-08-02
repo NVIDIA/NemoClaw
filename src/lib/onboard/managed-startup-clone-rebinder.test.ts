@@ -24,13 +24,31 @@ function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): Sa
     channels: [
       {
         channelId: "telegram",
+        displayName: "Telegram",
+        authMode: "token-paste",
         configured: true,
         active: true,
+        selected: true,
         disabled: false,
         inputs: [
-          { inputId: "botToken", credentialAvailable: true },
-          { inputId: "allowedIds", value: ["123456"] },
+          {
+            channelId: "telegram",
+            inputId: "botToken",
+            kind: "secret",
+            required: true,
+            sourceEnv: "TELEGRAM_BOT_TOKEN",
+            credentialAvailable: true,
+          },
+          {
+            channelId: "telegram",
+            inputId: "allowedIds",
+            kind: "config",
+            required: false,
+            statePath: "allowedIds.telegram",
+            value: ["123456"],
+          },
         ],
+        hooks: [],
       },
     ],
     disabledChannels: [],
