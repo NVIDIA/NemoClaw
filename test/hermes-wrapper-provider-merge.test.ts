@@ -136,26 +136,19 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     ]);
   });
 
-  it("treats a subcommand-looking first continue value as a session name (#7361)", () => {
-    const run = runWrapper(
-      [
-        "-c",
-        "sessions",
-        "--provider",
-        "nvidia-prod",
-        "--model",
-        "nvidia/nemotron-3-super-120b-a12b",
-      ],
-      {},
-    );
-
-    expect(run.status).toBe(0);
-    expect(run.realArgv).toEqual([
+  it("passes an upstream session boundary through without merging provider/model (#8011)", () => {
+    const argv = [
       "-c",
       "sessions",
+      "--provider",
+      "nvidia-prod",
       "--model",
-      "nvidia-prod/nvidia/nemotron-3-super-120b-a12b",
-    ]);
+      "nvidia/nemotron-3-super-120b-a12b",
+    ];
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
   });
 
   it("rejects an ambiguous unquoted multi-word resume form (#8011)", () => {

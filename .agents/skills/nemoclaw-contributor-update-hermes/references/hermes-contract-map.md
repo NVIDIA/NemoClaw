@@ -89,6 +89,8 @@ Review the top-level and `chat` parser metadata in the target source.
 Update `hermes-cli-adapter-v1.json` only for a managed translation form.
 Do not add an upstream subcommand to the adapter.
 `validate-cli-adapter.py` compares the contract with Hermes' machine-readable parser metadata.
+The wrapper reads session-name command boundaries from the installed upstream coalescer source.
+Do not copy that boundary set into the adapter or wrapper.
 The top-level and `chat` help probes are runtime evidence and are not the compatibility authority.
 
 Hermes 0.19 defines `-c/--continue` with an optional session value.

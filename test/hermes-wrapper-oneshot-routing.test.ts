@@ -132,6 +132,36 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     ]);
   });
 
+  it("passes an upstream session boundary through without translating across it (#8011)", () => {
+    const argv = ["--continue", "daily", "gateway", "run", "-z", "Repeat the latest turn"];
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
+  it("passes a new upstream session boundary through without an adapter update (#8011)", () => {
+    const argv = ["--continue", "daily", "future-command", "-z", "Repeat the latest turn"];
+    const run = runWrapper(argv, {}, { sessionBoundaries: ["chat", "future-command"] });
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
+  it("rejects an invalid upstream session boundary source before invoking Hermes (#8011)", () => {
+    const run = runWrapper(
+      ["--continue", "daily", "-z", "Repeat the latest turn"],
+      {},
+      {
+        sessionBoundaries: [],
+      },
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("session-name coalescer boundary set is invalid");
+  });
+
   it.each([
     "--continue",
     "--resume",

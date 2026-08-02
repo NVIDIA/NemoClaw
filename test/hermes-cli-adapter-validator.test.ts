@@ -25,8 +25,8 @@ def _add_shared(parser, include_provider=True):
     parser.add_argument("-s", "--skills", action="append")
     parser.add_argument("-r", "--resume")
     parser.add_argument("-c", "--continue", nargs="?")
+    parser.add_argument("-w", "--worktree", action="store_true")
     for name in (
-        "--worktree",
         "--accept-hooks",
         "--yolo",
         "--pass-session-id",
@@ -47,13 +47,24 @@ def build_top_level_parser():
     return top, None, chat
 `;
 
-function runValidator(contract: object, parserFixture = PARSER_FIXTURE) {
+const MAIN_FIXTURE = `
+def _coalesce_session_name_args(argv):
+    _SUBCOMMANDS = {"chat", "gateway", "sessions"}
+    return argv
+`;
+
+function runValidator(
+  contract: object,
+  parserFixture = PARSER_FIXTURE,
+  mainFixture = MAIN_FIXTURE,
+) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-adapter-"));
   try {
     const packageDir = path.join(fixture, "hermes_cli");
     fs.mkdirSync(packageDir);
     fs.writeFileSync(path.join(packageDir, "__init__.py"), '__version__ = "0.19.0"\n');
     fs.writeFileSync(path.join(packageDir, "_parser.py"), parserFixture);
+    fs.writeFileSync(path.join(packageDir, "main.py"), mainFixture);
     const contractPath = path.join(fixture, "adapter.json");
     fs.writeFileSync(contractPath, `${JSON.stringify(contract)}\n`);
     const hermes = path.join(fixture, "hermes");
@@ -69,6 +80,24 @@ function runValidator(contract: object, parserFixture = PARSER_FIXTURE) {
 }
 
 describe("Hermes CLI adapter validator", () => {
+  it("accepts the upstream session-name coalescer as its boundary authority (#8011)", () => {
+    const contract = JSON.parse(fs.readFileSync(CONTRACT, "utf8"));
+
+    const result = runValidator(contract);
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects an upstream session-name coalescer without its literal boundary set (#8011)", () => {
+    const contract = JSON.parse(fs.readFileSync(CONTRACT, "utf8"));
+    const mainFixture = MAIN_FIXTURE.replace("_SUBCOMMANDS", "_OTHER_BOUNDARIES");
+
+    const result = runValidator(contract, PARSER_FIXTURE, mainFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("session-name coalescer boundary set is incompatible");
+  });
+
   it("rejects a preparse option whose contract arity does not require a value (#8011)", () => {
     const contract = JSON.parse(fs.readFileSync(CONTRACT, "utf8"));
     const profile = contract.options.find((option: { id: string }) => option.id === "profile");

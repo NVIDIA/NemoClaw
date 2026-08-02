@@ -102,6 +102,11 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(cliAdapter.adapter_version).toBe(1);
     expect(cliAdapter.upstream_cli_version).toBe("0.19.0");
     expect(cliAdapter.managed_commands).toEqual(["chat"]);
+    expect(cliAdapter.session_name_coalescer).toEqual({
+      module: "hermes_cli.main",
+      function: "_coalesce_session_name_args",
+      boundary_set: "_SUBCOMMANDS",
+    });
     expect(
       (
         Object.values(cliAdapter.translations) as Array<{

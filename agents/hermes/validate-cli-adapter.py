@@ -5,6 +5,7 @@
 """Validate the NemoClaw Hermes CLI adapter against upstream parser metadata."""
 
 import argparse
+import ast
 import json
 import subprocess
 import sys
@@ -12,6 +13,11 @@ from pathlib import Path
 
 _ADAPTER_VERSION = 1
 _ALLOWED_ARITIES = {"boolean", "optional_session", "required", "session"}
+_SESSION_NAME_COALESCER = {
+    "module": "hermes_cli.main",
+    "function": "_coalesce_session_name_args",
+    "boundary_set": "_SUBCOMMANDS",
+}
 
 
 def _fail(message: str) -> None:
@@ -42,6 +48,44 @@ def _validate_action(option: dict, action: object, surface: str) -> None:
         )
 
 
+def _validate_session_name_coalescer(contract: dict, package_path: Path) -> None:
+    coalescer = contract.get("session_name_coalescer")
+    if coalescer != _SESSION_NAME_COALESCER:
+        _fail("Hermes CLI adapter has an unsupported session-name coalescer")
+    source_path = package_path.with_name("main.py")
+    try:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        _fail(f"could not read the Hermes session-name coalescer ({exc.__class__.__name__})")
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == coalescer["function"]
+    ]
+    if len(functions) != 1:
+        _fail("Hermes session-name coalescer function is incompatible")
+    assignments = [
+        node
+        for node in functions[0].body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == coalescer["boundary_set"]
+    ]
+    if len(assignments) != 1:
+        _fail("Hermes session-name coalescer boundary set is incompatible")
+    try:
+        boundaries = ast.literal_eval(assignments[0].value)
+    except (ValueError, TypeError, SyntaxError):
+        _fail("Hermes session-name coalescer boundary set is not literal")
+    if (
+        not isinstance(boundaries, set)
+        or not boundaries
+        or not all(isinstance(boundary, str) and boundary for boundary in boundaries)
+    ):
+        _fail("Hermes session-name coalescer boundary set is invalid")
+
+
 def validate(contract_path: Path, hermes_binary: str) -> None:
     try:
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -53,6 +97,7 @@ def validate(contract_path: Path, hermes_binary: str) -> None:
     if contract.get("managed_commands") != ["chat"]:
         _fail("Hermes CLI adapter has unsupported managed commands")
 
+    from hermes_cli import __file__ as upstream_package_path
     from hermes_cli import __version__ as upstream_version
     from hermes_cli._parser import PRE_ARGPARSE_INHERITED_FLAGS, build_top_level_parser
 
@@ -61,6 +106,10 @@ def validate(contract_path: Path, hermes_binary: str) -> None:
             "Hermes CLI adapter targets "
             f"{contract.get('upstream_cli_version')!r}, installed Hermes is {upstream_version!r}"
         )
+
+    if not upstream_package_path:
+        _fail("could not locate the installed Hermes CLI package")
+    _validate_session_name_coalescer(contract, Path(upstream_package_path))
 
     parser, _subparsers, chat_parser = build_top_level_parser()
     surfaces = {

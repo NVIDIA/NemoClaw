@@ -69,6 +69,7 @@ export function runWrapper(
     stub?: StubBehaviour;
     stubMode?: number;
     adapter?: object;
+    sessionBoundaries?: string[];
     upstreamVersion?: string;
     validatorScript?: string;
   } = {},
@@ -80,6 +81,16 @@ export function runWrapper(
       ? `${JSON.stringify(opts.adapter, null, 2)}\n`
       : fs.readFileSync(ADAPTER, "utf-8");
     fs.writeFileSync(path.join(dir, "hermes-cli-adapter-v1.json"), adapterContent);
+    const sessionBoundaries = opts.sessionBoundaries ?? ["chat", "gateway", "sessions"];
+    fs.writeFileSync(
+      path.join(dir, "hermes-main.py"),
+      [
+        "def _coalesce_session_name_args(argv):",
+        `    _SUBCOMMANDS = {${sessionBoundaries.map((value) => JSON.stringify(value)).join(", ")}}`,
+        "    return argv",
+        "",
+      ].join("\n"),
+    );
     const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
     // Source-layout filename lets the wrapper's dev fallback pick it up.
     fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {

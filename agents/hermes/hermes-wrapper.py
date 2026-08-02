@@ -53,8 +53,9 @@
 # `hermes-cli-adapter-v1.json` owns the exact translated command forms, their
 # upstream version, rationale, and removal conditions. The image build validates
 # that contract against Hermes' machine-readable top-level and chat parser
-# metadata. The wrapper parses a managed invocation once from that contract and
-# passes all unrelated commands to Hermes without a subcommand inventory.
+# metadata. The wrapper reads session-name command boundaries from Hermes'
+# installed coalescer source, parses a managed invocation once from the contract,
+# and passes all unrelated commands through without a copied subcommand inventory.
 #
 # Scope of the masker: structured key-labelled secret fields (api_key,
 # api_secret, access_token, auth_token, client_secret, secret_key, secret,
@@ -78,6 +79,7 @@
 # Only a small set of top-level commands are intercepted; all other hermes
 # subcommands (dashboard, --version, ...) pass straight through unchanged.
 
+import ast
 import json
 import os
 import re
@@ -88,12 +90,14 @@ import tempfile
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 _INSTALLED_CLI_ADAPTER = "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json"
+_INSTALLED_HERMES_MAIN = "/opt/hermes/hermes_cli/main.py"
 # The Dockerfile installs the validator under the hermes-prefixed name even
 # though the repository source stays at `validate-env-secret-boundary.py`.
 # Mirror the same dev-fallback `start.sh` uses so an ad-hoc bash invocation
 # over a checkout still finds the guard.
 _GUARD_DEV_FILENAME = "validate-env-secret-boundary.py"
 _CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
+_HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
@@ -128,6 +132,12 @@ def _resolve_cli_adapter() -> str:
     if os.path.isfile(_INSTALLED_CLI_ADAPTER):
         return _INSTALLED_CLI_ADAPTER
     return os.path.join(_self_dir(), _CLI_ADAPTER_DEV_FILENAME)
+
+
+def _resolve_hermes_main() -> str:
+    if os.path.isfile(_INSTALLED_HERMES_MAIN):
+        return _INSTALLED_HERMES_MAIN
+    return os.path.join(_self_dir(), _HERMES_MAIN_DEV_FILENAME)
 
 
 def _resolve_trusted_python3() -> str | None:
@@ -279,6 +289,11 @@ _CLI_VERSION_PATTERN = re.compile(
     re.MULTILINE,
 )
 _CLI_ADAPTER_ARITIES = {"boolean", "optional_session", "required", "session"}
+_SESSION_NAME_COALESCER = {
+    "module": "hermes_cli.main",
+    "function": "_coalesce_session_name_args",
+    "boundary_set": "_SUBCOMMANDS",
+}
 
 
 class _CliAdapterError(Exception):
@@ -308,6 +323,8 @@ def _load_cli_adapter(path: str) -> dict:
         raise _CliAdapterError("Hermes CLI adapter has no upstream version")
     if adapter.get("managed_commands") != ["chat"]:
         raise _CliAdapterError("Hermes CLI adapter has unsupported managed commands")
+    if adapter.get("session_name_coalescer") != _SESSION_NAME_COALESCER:
+        raise _CliAdapterError("Hermes CLI adapter has an unsupported session-name coalescer")
 
     options = adapter.get("options")
     if not isinstance(options, list) or not options:
@@ -349,6 +366,47 @@ def _load_cli_adapter(path: str) -> dict:
     return adapter
 
 
+def _session_name_boundaries(adapter: dict) -> frozenset[str]:
+    coalescer = adapter["session_name_coalescer"]
+    source_path = _resolve_hermes_main()
+    try:
+        with open(source_path, encoding="utf-8") as source_file:
+            tree = ast.parse(source_file.read(), filename=source_path)
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        raise _CliAdapterError(
+            f"could not read the Hermes session-name coalescer ({exc.__class__.__name__})"
+        ) from None
+
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == coalescer["function"]
+    ]
+    if len(functions) != 1:
+        raise _CliAdapterError("Hermes session-name coalescer function is incompatible")
+    assignments = [
+        node
+        for node in functions[0].body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == coalescer["boundary_set"]
+    ]
+    if len(assignments) != 1:
+        raise _CliAdapterError("Hermes session-name coalescer boundary set is incompatible")
+    try:
+        boundaries = ast.literal_eval(assignments[0].value)
+    except (ValueError, TypeError, SyntaxError):
+        raise _CliAdapterError("Hermes session-name coalescer boundary set is not literal") from None
+    if (
+        not isinstance(boundaries, set)
+        or not boundaries
+        or not all(isinstance(boundary, str) and boundary for boundary in boundaries)
+    ):
+        raise _CliAdapterError("Hermes session-name coalescer boundary set is invalid")
+    return frozenset(boundaries)
+
+
 def _option_index(adapter: dict) -> tuple[dict[str, dict], dict[str, dict]]:
     by_name: dict[str, dict] = {}
     by_id: dict[str, dict] = {}
@@ -375,6 +433,7 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
     occurrences: list[dict] = []
     occurrence_ids: dict[str, int] = {}
     command: str | None = None
+    session_boundaries: frozenset[str] | None = None
     unknown_option = False
     terminated = False
     i = 0
@@ -412,13 +471,15 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
                 if cursor < len(argv) and not argv[cursor]:
                     return None
                 if cursor < len(argv) and not argv[cursor].startswith("-"):
-                    parts.append(argv[cursor])
-                    cursor += 1
-                    if coalesce_session and command is None:
+                    session_boundaries = session_boundaries or _session_name_boundaries(adapter)
+                    if argv[cursor] not in session_boundaries:
+                        parts.append(argv[cursor])
+                        cursor += 1
+                    if parts and coalesce_session and command is None:
                         while (
                             cursor < len(argv)
                             and not argv[cursor].startswith("-")
-                            and argv[cursor] not in adapter["managed_commands"]
+                            and argv[cursor] not in session_boundaries
                         ):
                             parts.append(argv[cursor])
                             cursor += 1
@@ -461,6 +522,8 @@ def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
             command = arg
             i += 1
             continue
+        if session_boundaries is not None and arg in session_boundaries:
+            return None
         if (
             occurrence_ids.get("continue", 0) + occurrence_ids.get("resume", 0) == 1
             and _has_option(argv, by_id["provider"])
