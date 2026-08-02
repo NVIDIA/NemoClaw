@@ -237,6 +237,108 @@ describe("parseSandboxMessagingPlan", () => {
         makePlan({ channels: [makePlan().channels[0], makePlan().channels[0]] }),
       ),
     ).toBeNull();
+    expect(
+      parseSandboxMessagingPlan(
+        makePlan({
+          channels: [
+            makePlan().channels[0],
+            { ...makePlan().channels[0], channelId: " TELEGRAM " },
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a lone noncanonical channel id even when related ids are canonical", () => {
+    const source = makePlan();
+    expect(
+      parseSandboxMessagingPlan(
+        makePlan({
+          channels: [{ ...source.channels[0], channelId: " Telegram " }],
+          disabledChannels: ["telegram"],
+          credentialBindings: [
+            {
+              channelId: "telegram",
+              credentialId: "telegramBotToken",
+              sourceInput: "botToken",
+              providerName: "sb-telegram-bridge",
+              providerEnvKey: "TELEGRAM_BOT_TOKEN",
+              placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["disabledChannels", { disabledChannels: [" Telegram "] }],
+    ["credentialBindings", { credentialBindings: [{ channelId: "Telegram" }] }],
+    [
+      "networkPolicy.entries",
+      { networkPolicy: { presets: [], entries: [{ channelId: "Telegram" }] } },
+    ],
+    ["agentRender", { agentRender: [{ channelId: "Telegram" }] }],
+    ["buildSteps", { buildSteps: [{ channelId: "Telegram" }] }],
+    ["stateUpdates", { stateUpdates: [{ channelId: "Telegram" }] }],
+    ["healthChecks", { healthChecks: [{ channelId: "Telegram" }] }],
+    [
+      "runtimeSetup.nodePreloads",
+      {
+        runtimeSetup: {
+          nodePreloads: [{ channelId: "Telegram" }],
+          envAliases: [],
+          secretScans: [],
+        },
+      },
+    ],
+    [
+      "runtimeSetup.envAliases",
+      {
+        runtimeSetup: {
+          nodePreloads: [],
+          envAliases: [{ channelId: "Telegram" }],
+          secretScans: [],
+        },
+      },
+    ],
+    [
+      "runtimeSetup.secretScans",
+      {
+        runtimeSetup: {
+          nodePreloads: [],
+          envAliases: [],
+          secretScans: [{ channelId: "Telegram" }],
+        },
+      },
+    ],
+  ])("rejects noncanonical channel references in %s", (_field, overrides) => {
+    expect(parseSandboxMessagingPlan({ ...makePlan(), ...overrides })).toBeNull();
+  });
+
+  it.each([
+    ["input", { inputs: [{ inputId: "token", channelId: "Telegram" }] }],
+    ["hook", { hooks: [{ channelId: "Telegram" }] }],
+    [
+      "host forward",
+      {
+        hostForward: {
+          channelId: "Telegram",
+          port: 3978,
+          label: "Telegram webhook",
+        },
+      },
+    ],
+  ])("rejects a noncanonical nested %s channel reference", (_field, channelOverrides) => {
+    const channel = makePlan().channels[0];
+    expect(
+      parseSandboxMessagingPlan(
+        makePlan({
+          channels: [{ ...channel, ...channelOverrides }] as SandboxMessagingPlan["channels"],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("rejects any persisted channel when supportedChannelIds: [] is passed (deny-all)", () => {

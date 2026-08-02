@@ -330,7 +330,7 @@ Use these details when your first-run path needs more control.
     The selector can include destinations such as GitHub, Jira, Slack, Telegram, or local inference.
     Press `r` to switch a selected preset between read-only and read-write when it supports both modes.
 
-    Use the final onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
+    Use the onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
     When web search is enabled, it also checks the selected provider configuration and sends a real search request through sandbox egress.
     Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
     Restore the configured endpoint or proxy, run `nemoclaw onboard --resume` to complete the retained onboarding session, then rerun `nemoclaw <sandbox-name> status` to verify the route.
@@ -380,7 +380,7 @@ Use these details when your first-run path needs more control.
 
     The wizard starts a background dashboard port forward and prints its URL in the ready summary.
     The default host port is `18789`.
-    When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and prints it in the final URL.
+    When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and includes the port in the URL.
     If the selected port becomes occupied after the sandbox build begins, onboarding rolls back the new sandbox and asks you to retry rather than print an unreachable URL.
     The installation transcript does not print the gateway token.
     Use `nemoclaw my-gpt-claw dashboard-url --quiet` to print the complete authenticated URL explicitly.

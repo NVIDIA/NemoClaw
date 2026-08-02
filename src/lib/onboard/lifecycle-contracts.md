@@ -140,6 +140,41 @@ The handler clears the journal after it records both create and registration rec
 This slice covers resumed onboard replacement, including not-ready repair and non-default gateways.
 Rebuild and non-resumed re-onboard remain under #6492.
 
+## Managed snapshot and rebuild restore authority
+
+Managed-image backups use one provider-neutral authority path for explicit snapshot creation, `backup-all`, stopped-sandbox backup retries, and rebuild backups.
+The contract applies to OpenClaw, Hermes, and Deep Agents Code.
+The path records the exact managed workload receipt and a versioned runtime receipt from the sandbox's registered provider.
+The state layer copies and sanitizes the backup before it invokes the provider fence.
+The fence re-reads the registry row and re-observes the provider runtime.
+The state layer publishes the manifest atomically only when the workload, provider, lifecycle generation, runtime identity, and acceleration receipt still match.
+It removes the unpublished backup directory when the fence rejects publication.
+
+A managed restore binds the selected manifest and every backup payload to one content digest.
+The state layer recomputes that digest after local restore staging and before its first remote filesystem mutation.
+At the same mutation edge, central orchestration asks the registered provider to revalidate the target runtime and managed startup profile.
+After state restoration, the provider must prove the managed profile and runtime state again.
+Explicit snapshot restore and rebuild restore use this same boundary.
+
+The snapshot provider facet has its own contract version.
+Provider inputs are detached and deeply frozen at the extension boundary, and central orchestration retains only normalized receipts.
+Docker lifecycle inspection and GPU inspection remain inside the Docker provider adapter.
+The provider-neutral receipt can represent another provider, including an MXC-style implementation, without adding provider switches to snapshot or rebuild orchestration.
+
+Legacy and custom-image snapshots retain their state-only backup and restore path. The managed
+authority path may become the default for managed images only after the
+[incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744) completes create
+finalization, clone/rebind, recovery, and activation for every supported agent with authority proven
+before mutation. Any later consolidation must preserve legacy and custom-image restore parity.
+This contract does not activate another runtime provider or managed-image onboarding path.
+Ordinary onboard recreation and create finalization remain deferred under
+[#7744](https://github.com/NVIDIA/NemoClaw/issues/7744) because the replacement target is not
+registered when that restore currently runs; the raw state layer rejects a managed manifest unless
+both exact content authority and a runtime-validation fence are present. Cross-provider clone and
+rebind, durable interrupted-restore recovery, ordinary recreate integration, and user-visible
+runtime activation are separately reviewable units tracked by that epic.
+If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the exact snapshot after the runtime stabilizes.
+
 ## Agent-specific differences
 
 | Agent | Lifecycle difference |
@@ -208,5 +243,6 @@ PR #5955 moved the rebuild messaging conflict check before destruction.
 | Session sanitation, sandbox prompt checkpoints, and no-secret persistence | `src/lib/state/onboard-session-sandbox-prompts.test.ts`, `src/lib/state/onboard-checkpoint.test.ts`, `machine/handlers/sandbox-create-intent-boundary.test.ts` | Tri-state decisions remain scoped to checkpointed sandbox choices. |
 | Versioned checkpoint schema, tri-state decisions, migration, and unknown-future fail-safe | `src/lib/state/onboard-checkpoint.test.ts`, `src/lib/state/onboard-checkpoint-migrate.test.ts` | Live decision reads still use legacy fields |
 | Resumable create replay, durable identity, and stale-binding fail-closed | `src/lib/onboard/checkpoint-replay.test.ts`, `src/lib/onboard/checkpoint-resume-guard.test.ts`, `machine/handlers/sandbox-checkpoint-crash-recovery.test.ts` | None at the sandbox-handler boundary. |
+| Managed snapshot workload, content, and provider authority across explicit and rebuild flows | `src/lib/actions/sandbox/snapshot/backup-authority.test.ts`, `restore-authority.test.ts`, `managed-profile.test.ts`, `provider-lifecycle.test.ts`, and `snapshot-managed-provider-restore-order.test.ts` | Cross-provider clone and rebind, durable interrupted-restore recovery, and user-visible runtime activation remain separate review units. |
 
 When lifecycle behavior changes one of these contracts, update the map and the narrow owning test in that same PR. Do not add source-text scans or production scaffolding solely to preserve current orchestration order.

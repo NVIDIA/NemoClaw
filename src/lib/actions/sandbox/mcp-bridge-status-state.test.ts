@@ -128,10 +128,10 @@ process.stdout.write(JSON.stringify(markers.map((_, index) => registry.getSandbo
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const payloads = [];
 let mismatch = false;
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] !== "sandbox" || args[1] !== "exec") {
     throw new Error("Unexpected OpenShell call: " + args.join(" "));
   }

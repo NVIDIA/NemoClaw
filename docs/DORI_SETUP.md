@@ -5,10 +5,15 @@
 
 # NVIDIA DORI Setup
 
-Use this guide only after the root `AGENTS.md` reads an `authorized` value from `.dori_user_status`.
-The stored value does not prove private access or approve installation or host configuration.
+Use this guide only when the user explicitly asks to install or configure NVIDIA DORI.
+Before inspecting or installing private components, ask the user to confirm that they can access `gitlab-master.nvidia.com`.
+If the user does not confirm access, stop this setup and use the checked-in [Writing Style Guide](AGENTS.md#writing-style-guide).
+Access confirmation does not approve installation or host configuration.
 
-If the status is not `authorized`, stop this setup and use the checked-in [Writing Style Guide](AGENTS.md#writing-style-guide).
+Use these internal sources for the current installation and registration instructions:
+
+- [NVIDIA Skill Library](https://gitlab-master.nvidia.com/tech-docs/skill-library) contains documentation-focused Agent Skills and guidance for installing them with DORI and other supported hosts.
+- [NVIDIA Template Library](https://gitlab-master.nvidia.com/tech-docs/template-library) contains reusable documentation templates and guidance for installing its template skills with DORI.
 
 ## Inspect the Environment
 
@@ -50,7 +55,7 @@ Before an installation or host configuration change, ask:
 > Do you want me to install or configure these components in your user environment?
 
 Continue only after explicit approval.
-An `authorized` status does not approve these changes.
+The user's private-source access confirmation does not approve these changes.
 If the user declines, use the [Writing Style Guide](AGENTS.md#writing-style-guide).
 
 ## Install Missing Components
@@ -103,8 +108,8 @@ Until the current agent exposes DORI tools, continue the original task with the 
 - Never search for, request, print, copy, export, or embed a token, password, cookie, SSH key, or credential-bearing URL.
 - Let `uv`, Git, and DORI use credentials that the user already configured.
   If access is denied or authentication is missing, stop and refer to the internal DORI installation guide.
-- Never stage or commit `.dori_user_status`.
-  Do not treat its value as proof of employment, authorization, or current private access.
+- Do not create repository-scoped identity or authorization files.
+  Confirm private-source access only for an explicit setup request.
 - Do not bypass approval controls for writes outside the repository.
 - Do not create or commit project-scoped DORI state or MCP configuration without separate repository-owner authorization.
 - Do not retry a failed installation in the same task.
