@@ -7,6 +7,17 @@ import {
   backupSandboxBeforeRecreate,
   type PreRecreateBackupResult,
 } from "./sandbox-backup-on-recreate";
+import type {
+  SandboxRecreateObservation,
+  SandboxRecreateSourceProof,
+} from "./sandbox-recreate-transaction";
+
+export interface PreUpgradeBackupBinding {
+  sourceProof: SandboxRecreateSourceProof | null;
+  gatewayName: string;
+  gatewayPort: number;
+  observation: SandboxRecreateObservation;
+}
 
 export interface SandboxRecreateProtectionOptions {
   sandboxName: string;
@@ -35,10 +46,13 @@ export function createSandboxRecreateProtection(
   const { sandboxName, sandboxEntry, customOpenClawImage, note } = options;
 
   return {
-    selectPreUpgradeBackup(liveExists: boolean): string | null {
+    selectPreUpgradeBackup(binding: PreUpgradeBackupBinding): string | null {
       return deps.selectPreUpgradeBackupForCreate({
-        liveExists,
-        hasExistingRegistryEntry: sandboxEntry !== null,
+        sourceProof: binding.sourceProof,
+        gatewayName: binding.gatewayName,
+        gatewayPort: binding.gatewayPort,
+        registryEntry: sandboxEntry,
+        observation: binding.observation,
         existingSandboxEntry: sandboxEntry,
         requireOpenClawImagePluginProvenance: customOpenClawImage,
         sandboxName,

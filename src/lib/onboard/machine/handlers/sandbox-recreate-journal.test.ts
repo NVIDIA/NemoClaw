@@ -391,3 +391,47 @@ it("rejects an active recreate journal on a different gateway authority (#6492)"
   expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
 });
+
+it("refuses an unjournaled same-name replacement once a gateway authority is bound (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw-31818",
+      gatewayPort: 31818,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const getSandboxRecreateObservation = vi.fn(() => ({
+    state: "not_ready" as const,
+    liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
+  }));
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation,
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      gatewayName: "nemoclaw",
+    }),
+  ).rejects.toThrow(/no recreate transaction proves ownership/i);
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(calls.createSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});

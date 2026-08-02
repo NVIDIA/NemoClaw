@@ -138,7 +138,21 @@ The lower create path stamps the target generation and hashed OpenShell ID into 
 The handler clears the journal after it records both create and registration receipts.
 
 This slice covers resumed onboard replacement, including not-ready repair and non-default gateways.
-Rebuild and non-resumed re-onboard remain under #6492.
+Rebuild and non-resumed re-onboard now open the same journal.
+
+## Journal-bound pre-upgrade backup selection
+
+Pre-upgrade backup selection consumes the journal rather than registry and gateway booleans.
+`selectPreUpgradeBackupForCreate` requires a source proof carrying the transaction identifier, sandbox name, gateway name and port, source registry fingerprint, source OpenShell ID fingerprint, and target generation.
+It rejects an absent transaction, a transaction for another sandbox or gateway, an absent or changed source registry row, and a live sandbox that is not the recorded source.
+Each rejection happens before backup lookup, deletion, creation, or registry mutation, and never degrades to selecting no backup.
+
+The installer upgrade path, where the registry row survives but OpenShell reports no sandbox, opens the journal before selection and abandons it if the custom-image plugin-provenance check blocks recreation.
+A journal is abandoned only while its revision is still zero, so no recorded lifecycle effect can be discarded.
+
+Once a run binds a gateway authority, a same-name replacement that cannot open a journal stops instead of deleting the sandbox or removing its registry row.
+Custom-image plugin provenance, explicit installer restore intent, the absent-backup warning, managed-MCP routing to `rebuild`, and fail-closed handling of unknown OpenShell state stay separate contracts.
+`scripts/checks/sandbox-replacement-journal.mts` pins every `openshell sandbox delete` call site so a new caller cannot bypass the transaction unnoticed.
 
 ## Agent-specific differences
 

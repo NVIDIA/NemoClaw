@@ -17,7 +17,9 @@ import type { SandboxEntry } from "../state/registry";
 import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
+  abandonSandboxRecreateTransaction,
   advanceSandboxRecreateTransaction,
+  assertSandboxRecreateSourceProof,
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
   createSandboxRecreateRuntime,
@@ -28,6 +30,8 @@ import {
   planSandboxRecreateRecovery,
   retireReplacedSandboxWorkload,
   type SandboxRecreateObservation,
+  SandboxRecreateSourceMismatchError,
+  sandboxRecreateSourceProof,
   sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
@@ -724,5 +728,85 @@ describe("OpenShell live identity", () => {
 
   it("returns null when OpenShell omits the Id", () => {
     expect(fingerprintSandboxLiveIdentity("Name: alpha\nState: Ready\n")).toBeNull();
+  });
+});
+
+describe("abandoning an unused recreate journal (#7736)", () => {
+  it("clears a journal that recorded no lifecycle effect", () => {
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "missing", liveIdentityFingerprint: null }),
+    );
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleted", revision: 0 });
+
+    abandonSandboxRecreateTransaction(session, TX_ID);
+
+    expect(session.checkpoint?.sandboxRecreate).toBeNull();
+  });
+
+  it("refuses to abandon a journal that already advanced a phase", () => {
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    advanceSandboxRecreateTransaction(session, TX_ID, "deleting");
+
+    expect(() => abandonSandboxRecreateTransaction(session, TX_ID)).toThrow(
+      /already recorded a lifecycle effect/,
+    );
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
+  });
+
+  it("refuses to abandon a journal owned by another transaction", () => {
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "missing", liveIdentityFingerprint: null }),
+    );
+
+    expect(() =>
+      abandonSandboxRecreateTransaction(session, "33333333-3333-4333-8333-333333333333"),
+    ).toThrow(/ownership changed/);
+  });
+});
+
+describe("journal-bound source proof (#7736)", () => {
+  function proofFor(observation: SandboxRecreateObservation) {
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    return sandboxRecreateSourceProof(
+      beginSandboxRecreateTransaction(session, beginInput(observation)),
+    );
+  }
+
+  it("accepts an observation that matches the recorded source", () => {
+    const observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    expect(
+      assertSandboxRecreateSourceProof(proofFor(observation), {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-31818",
+        gatewayPort: 31818,
+        registryEntry: SOURCE_ENTRY,
+        observation,
+      }),
+    ).toMatchObject({ sandboxName: "alpha", targetGeneration: TARGET_GENERATION });
+  });
+
+  it("rejects a foreign live identity before any backup or delete", () => {
+    const proof = proofFor({ state: "ready", liveIdentityFingerprint: SOURCE_ID });
+
+    expect(() =>
+      assertSandboxRecreateSourceProof(proof, {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-31818",
+        gatewayPort: 31818,
+        registryEntry: SOURCE_ENTRY,
+        observation: { state: "ready", liveIdentityFingerprint: FOREIGN_ID },
+      }),
+    ).toThrow(SandboxRecreateSourceMismatchError);
   });
 });

@@ -106,6 +106,7 @@ import {
   decideSandboxResume,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   mcpRegistryRemovalBlockReason,
+  replacesSameNameSandbox,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -1301,6 +1302,12 @@ class SandboxStateFlow<
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
         : null;
     if (!transaction) {
+      const authority = state.session?.checkpoint?.gatewayAuthority;
+      if (authority && isDecisionSelected(authority) && replacesSameNameSandbox(decision)) {
+        throw new Error(
+          `Cannot replace same-name sandbox '${requestedSandboxName}': no recreate transaction proves ownership of the source sandbox and its registry row.`,
+        );
+      }
       return {
         transaction,
         sourceEntry: null,

@@ -37,10 +37,31 @@ describe("createSandboxRecreateProtection", () => {
       },
     );
 
-    expect(protection.selectPreUpgradeBackup(true)).toBe("/tmp/backup");
+    const sourceProof = {
+      transactionId: "0f2f0d3a-recreate",
+      sandboxName: "my-assistant",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sourceRegistryFingerprint: "fingerprint",
+      sourceLiveIdentityFingerprint: null,
+      targetGeneration: "3c9a1b7e-target",
+    };
+    const observation = { state: "missing" as const, liveIdentityFingerprint: null };
+
+    expect(
+      protection.selectPreUpgradeBackup({
+        sourceProof,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        observation,
+      }),
+    ).toBe("/tmp/backup");
     expect(selectPreUpgradeBackupForCreate).toHaveBeenCalledWith({
-      liveExists: true,
-      hasExistingRegistryEntry: true,
+      sourceProof,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      registryEntry: sandboxEntry,
+      observation,
       existingSandboxEntry: sandboxEntry,
       requireOpenClawImagePluginProvenance: true,
       sandboxName: "my-assistant",

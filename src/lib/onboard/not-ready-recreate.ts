@@ -3,6 +3,11 @@
 
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
+import {
+  assertSandboxRecreateSourceProof,
+  type SandboxRecreateObservation,
+  type SandboxRecreateSourceProof,
+} from "./sandbox-recreate-transaction";
 
 export interface NotReadyRecreateInput {
   sandboxName: string;
@@ -99,8 +104,11 @@ export function installerRestoreOnRecreateFromEnv(env: NodeJS.ProcessEnv): boole
 }
 
 export interface PreUpgradeBackupSelectInput {
-  liveExists: boolean;
-  hasExistingRegistryEntry: boolean;
+  sourceProof: SandboxRecreateSourceProof | null;
+  gatewayName: string;
+  gatewayPort: number;
+  registryEntry: SandboxEntry | null;
+  observation: SandboxRecreateObservation;
   existingSandboxEntry?: SandboxEntry | null;
   requireOpenClawImagePluginProvenance?: boolean;
   sandboxName: string;
@@ -108,31 +116,13 @@ export interface PreUpgradeBackupSelectInput {
 }
 
 export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInput): string | null {
-  // Source-of-truth review for the two drift returns below:
-  //   invalid state         = registry/gateway inconsistency (a registry entry
-  //                           exists while the gateway still reports the sandbox
-  //                           live, or the registry has no entry at all).
-  //   source boundary       = this selector can run before the resumed recreate
-  //                           journal starts or from a non-journaled caller.
-  //   source-fix constraint = the resumed recreate journal owns later deletion,
-  //                           but this selector has no bound journal observation.
-  //   regression test       = selectPreUpgradeBackupForCreate returns null when
-  //                           liveExists=true and when hasExistingRegistryEntry=false
-  //                           (see not-ready-recreate.test.ts).
-  //   removal condition     = drop these guards when every caller supplies a
-  //                           journal-bound registry and OpenShell observation.
-  if (input.liveExists) {
-    console.debug(
-      `  Registry entry exists for '${input.sandboxName}' but gateway reports sandbox live — skipping pre-upgrade backup select.`,
-    );
-    return null;
-  }
-  if (!input.hasExistingRegistryEntry) {
-    console.debug(
-      `  No registry entry for '${input.sandboxName}' — skipping pre-upgrade backup select.`,
-    );
-    return null;
-  }
+  assertSandboxRecreateSourceProof(input.sourceProof, {
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    gatewayPort: input.gatewayPort,
+    registryEntry: input.registryEntry,
+    observation: input.observation,
+  });
   // Installer contract: the installer MUST set
   // NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1 after a successful pre-upgrade
   // backup. A missing flag alongside an existing registry entry means the

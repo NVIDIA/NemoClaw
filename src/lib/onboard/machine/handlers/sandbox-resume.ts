@@ -91,6 +91,11 @@ export type SandboxResumeDecision =
     }
   | { readonly kind: "repair-and-recreate" };
 
+export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolean {
+  if (decision.kind === "repair-and-recreate") return true;
+  return decision.kind === "recreate" && decision.removeRegistryEntry;
+}
+
 export function mcpRegistryRemovalBlockReason(
   decision: SandboxResumeDecision,
   sandboxName: string | null,
