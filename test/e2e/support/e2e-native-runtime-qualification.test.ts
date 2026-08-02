@@ -1,12 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
-  assertNativeRuntimeQualificationEvidence,
+  assertNativeRuntimeQualificationEvidence as assertVerifiedNativeRuntimeQualificationEvidence,
   compileNativeRuntimeQualification,
+  createNativeRuntimeQualificationReporterRecord,
   type NativeRuntimeQualificationEvidence,
+  type NativeRuntimeQualificationProtectedRunBinding,
+  type QualificationArtifactReceipt,
+  type VerifiedNativeRuntimeQualificationEvidence,
+  verifyNativeRuntimeQualificationReporterArtifacts,
 } from "../registry/activation-qualification.ts";
 import { hasRegisteredRuntimeProfile } from "../registry/registry.ts";
 import {
@@ -16,7 +26,8 @@ import {
 
 const HEAD_SHA = "1".repeat(40);
 const BASE_SHA = "2".repeat(40);
-const ARTIFACT_SHA = "a".repeat(64);
+const ARTIFACT_CONTENT = "verified native runtime qualification artifact\n";
+const ARTIFACT_SHA = createHash("sha256").update(ARTIFACT_CONTENT, "utf8").digest("hex");
 const AUTHORITY_SHA = "b".repeat(64);
 const BINDING_SHA = "c".repeat(64);
 const SPEC_SHA = "d".repeat(64);
@@ -132,6 +143,66 @@ function completeEvidence(): NativeRuntimeQualificationEvidence[] {
   });
 }
 
+function evidenceArtifacts(
+  evidence: readonly NativeRuntimeQualificationEvidence[],
+): QualificationArtifactReceipt[] {
+  return evidence.flatMap((entry) => [
+    entry.installer.invocation,
+    entry.installer.script,
+    entry.runtime.inferenceResult,
+    ...entry.operations.map((operation) => operation.artifact),
+    entry.recovery.artifact,
+    entry.cleanup.artifact,
+    ...(entry.nvidiaCdi ? [entry.nvidiaCdi.artifact] : []),
+  ]);
+}
+
+function qualificationFixture(): {
+  artifactRoot: string;
+  bindings: NativeRuntimeQualificationProtectedRunBinding[];
+  cleanup: () => void;
+} {
+  const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-qualification-"));
+  return {
+    artifactRoot,
+    bindings: completeEvidence().map((entry) => ({
+      protectedRun: structuredClone(entry.protectedRun),
+      artifactRoot,
+    })),
+    cleanup: () => fs.rmSync(artifactRoot, { force: true, recursive: true }),
+  };
+}
+
+function writeEvidenceArtifacts(
+  artifactRoot: string,
+  evidence: readonly NativeRuntimeQualificationEvidence[],
+): void {
+  for (const receipt of evidenceArtifacts(evidence)) {
+    const target = path.join(artifactRoot, ...receipt.path.split(/[\\/]/u));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, ARTIFACT_CONTENT, "utf8");
+  }
+}
+
+function assertNativeRuntimeQualificationEvidence(
+  definition: typeof PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+  evidence: readonly NativeRuntimeQualificationEvidence[],
+): void {
+  const fixture = qualificationFixture();
+  try {
+    const reporter = createNativeRuntimeQualificationReporterRecord(
+      definition,
+      evidence,
+      fixture.bindings,
+    );
+    writeEvidenceArtifacts(fixture.artifactRoot, evidence);
+    const verified = verifyNativeRuntimeQualificationReporterArtifacts(definition, reporter);
+    assertVerifiedNativeRuntimeQualificationEvidence(definition, verified);
+  } finally {
+    fixture.cleanup();
+  }
+}
+
 describe("native runtime activation qualification", () => {
   it("compiles every required all-agent, multiarch, CPU/GPU, and local-inference case", () => {
     const qualification = PODMAN_NATIVE_ACTIVATION_QUALIFICATION;
@@ -162,18 +233,17 @@ describe("native runtime activation qualification", () => {
       });
       expect(entry.profile.capabilities).toContain("transport.socket-free");
       expect(entry.profile.capabilities).not.toContain("transport.docker-socket");
-      expect(entry.obligations).toEqual(
-        expect.arrayContaining([
-          "installer.install",
-          "runtime.docker-unavailable",
-          "agent.turn",
-          "sandbox.stop-start",
-          "sandbox.snapshot-restore",
-          "sandbox.rebuild",
-          "runtime.restart-reconcile",
-          "cleanup.exact",
-        ]),
-      );
+      expect(entry.obligations).toEqual([
+        "installer.install",
+        "runtime.docker-unavailable",
+        "agent.onboard",
+        "agent.turn",
+        "sandbox.stop-start",
+        "sandbox.snapshot-restore",
+        "sandbox.rebuild",
+        "runtime.restart-reconcile",
+        "cleanup.exact",
+      ]);
       expect(hasRegisteredRuntimeProfile(entry.profile.id)).toBe(false);
     }
   });
@@ -189,6 +259,18 @@ describe("native runtime activation qualification", () => {
     );
     expect(mxc.engineName).toBe("test-mxc-native");
     expect(mxc.cases.every((entry) => entry.id.startsWith("test-mxc-native-"))).toBe(true);
+
+    const providerWithAccelerationText = compileNativeRuntimeQualification(
+      nativeRuntimeQualificationDefinition("nvidia-gpu-runtime"),
+    );
+    expect(
+      providerWithAccelerationText.cases.every((entry) =>
+        entry.id.startsWith("nvidia-gpu-runtime-"),
+      ),
+    ).toBe(true);
+    expect(
+      providerWithAccelerationText.cases.some((entry) => entry.id.includes("-amd64-gpu-ollama")),
+    ).toBe(true);
   });
 
   it("fails closed when one required case is missing", () => {
@@ -284,6 +366,115 @@ describe("native runtime activation qualification", () => {
         completeEvidence().slice(1),
       ),
     ).toThrow(/evidence is incomplete/u);
+  });
+
+  it("requires the canonical reporter and re-hashes every referenced artifact", () => {
+    expect(() =>
+      assertVerifiedNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        completeEvidence() as unknown as VerifiedNativeRuntimeQualificationEvidence,
+      ),
+    ).toThrow(/verified canonical reporter evidence/u);
+
+    const inventedDigest = completeEvidence();
+    inventedDigest[0]!.installer.invocation.sha256 = "e".repeat(64);
+    expect(() =>
+      assertNativeRuntimeQualificationEvidence(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        inventedDigest,
+      ),
+    ).toThrow(/digest does not match its receipt/u);
+  });
+
+  it("binds receipts to independent run metadata and freezes them before verification", () => {
+    const evidence = completeEvidence();
+    const materialized = qualificationFixture();
+    try {
+      const inventedRun = structuredClone(evidence);
+      inventedRun[0]!.protectedRun.runId = 999_999;
+      expect(() =>
+        createNativeRuntimeQualificationReporterRecord(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          inventedRun,
+          materialized.bindings,
+        ),
+      ).toThrow(/no trusted protected-run binding/u);
+
+      const reporter = createNativeRuntimeQualificationReporterRecord(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        evidence,
+        materialized.bindings,
+      );
+      evidence[0]!.installer.invocation.sha256 = "e".repeat(64);
+      writeEvidenceArtifacts(materialized.artifactRoot, completeEvidence());
+      const verified = verifyNativeRuntimeQualificationReporterArtifacts(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        reporter,
+      );
+      expect(() =>
+        assertVerifiedNativeRuntimeQualificationEvidence(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          verified,
+        ),
+      ).not.toThrow();
+
+      const mxc = compileNativeRuntimeQualification(nativeRuntimeQualificationDefinition("mxc"));
+      expect(() => assertVerifiedNativeRuntimeQualificationEvidence(mxc, verified)).toThrow(
+        /verified canonical reporter evidence/u,
+      );
+    } finally {
+      materialized.cleanup();
+    }
+  });
+
+  it("rejects missing artifacts and symlink escapes from a bound job root", () => {
+    const missingEvidence = completeEvidence();
+    const missing = qualificationFixture();
+    try {
+      writeEvidenceArtifacts(missing.artifactRoot, missingEvidence);
+      const reporter = createNativeRuntimeQualificationReporterRecord(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        missingEvidence,
+        missing.bindings,
+      );
+      const receipt = missingEvidence[0]!.installer.invocation;
+      fs.unlinkSync(path.join(missing.artifactRoot, ...receipt.path.split(/[\\/]/u)));
+      expect(() =>
+        verifyNativeRuntimeQualificationReporterArtifacts(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          reporter,
+        ),
+      ).toThrow(/is missing/u);
+    } finally {
+      missing.cleanup();
+    }
+
+    const linkedEvidence = completeEvidence();
+    const linked = qualificationFixture();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-outside-"));
+    try {
+      writeEvidenceArtifacts(linked.artifactRoot, linkedEvidence);
+      const reporter = createNativeRuntimeQualificationReporterRecord(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        linkedEvidence,
+        linked.bindings,
+      );
+      const receipt = linkedEvidence[0]!.installer.invocation;
+      const target = path.join(linked.artifactRoot, ...receipt.path.split(/[\\/]/u));
+      const outsideFile = path.join(outside, "artifact.json");
+      fs.writeFileSync(outsideFile, ARTIFACT_CONTENT, "utf8");
+      fs.unlinkSync(target);
+      fs.symlinkSync(outsideFile, target);
+      expect(() =>
+        verifyNativeRuntimeQualificationReporterArtifacts(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          reporter,
+        ),
+      ).toThrow(/escapes its trusted root/u);
+    } finally {
+      linked.cleanup();
+      fs.rmSync(outside, { force: true, recursive: true });
+    }
   });
 
   it("rejects inexact source, image, operation, and CDI receipts", () => {

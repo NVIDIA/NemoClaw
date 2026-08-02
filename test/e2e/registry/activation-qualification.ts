@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
 import {
   defineExecutionProfile,
   type ExecutionAcceleration,
@@ -114,20 +118,22 @@ export interface QualificationArtifactReceipt {
   sha256: string;
 }
 
+export interface NativeRuntimeQualificationProtectedRun {
+  repository: string;
+  workflow: string;
+  /** Exact trusted revision from which GitHub loaded the protected workflow. */
+  workflowSha: string;
+  runId: number;
+  attempt: number;
+  jobId: number;
+  headSha: string;
+  baseSha: string;
+}
+
 export interface NativeRuntimeQualificationEvidence {
   schemaVersion: 1;
   caseId: string;
-  protectedRun: {
-    repository: string;
-    workflow: string;
-    /** Exact trusted revision from which GitHub loaded the protected workflow. */
-    workflowSha: string;
-    runId: number;
-    attempt: number;
-    jobId: number;
-    headSha: string;
-    baseSha: string;
-  };
+  protectedRun: NativeRuntimeQualificationProtectedRun;
   installer: {
     provider: ExecutionProviderId;
     architecture: ExecutionArchitecture;
@@ -201,7 +207,29 @@ export interface NativeRuntimeQualificationEvidence {
   };
 }
 
+export interface NativeRuntimeQualificationProtectedRunBinding {
+  readonly protectedRun: NativeRuntimeQualificationProtectedRun;
+  readonly artifactRoot: string;
+}
+
+export interface NativeRuntimeQualificationReporterRecord {
+  readonly qualificationId: string;
+  readonly caseIds: readonly string[];
+}
+
+export interface VerifiedNativeRuntimeQualificationEvidence {
+  readonly qualificationId: string;
+  readonly caseIds: readonly string[];
+}
+
 const compiledQualifications = new WeakSet<object>();
+interface CompiledReporterState {
+  readonly definition: CompiledNativeRuntimeQualification;
+  readonly evidence: readonly NativeRuntimeQualificationEvidence[];
+  readonly artifactRootByCaseId: ReadonlyMap<string, string>;
+}
+const compiledReporters = new WeakMap<object, CompiledReporterState>();
+const verifiedEvidence = new WeakMap<object, CompiledReporterState>();
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const IMAGE_REFERENCE_PATTERN =
@@ -209,6 +237,7 @@ const IMAGE_REFERENCE_PATTERN =
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_HOST_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
+const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
 
 const APPLICATION_BY_AGENT = {
   openclaw: "openclaw",
@@ -222,6 +251,28 @@ function assertSingleLine(value: string, label: string): string {
     throw new Error(`${label} must be a non-empty single-line string`);
   }
   return normalized;
+}
+
+function exactRecord(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== [...keys].sort().join(",")) {
+    throw new Error(`${label} schema is unsupported`);
+  }
+  return record;
+}
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (typeof value !== "object" || value === null || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze(child, seen);
+  return Object.freeze(value);
 }
 
 function assertExactSet<T extends string>(
@@ -257,16 +308,15 @@ export function qualificationCaseId(input: {
   acceleration: ExecutionAcceleration;
   inference: LocalInferenceProvider;
 }): string {
+  const acceleration = input.acceleration === "nvidia-gpu" ? "gpu" : input.acceleration;
   return [
     input.provider,
     input.agent,
     "linux",
     input.architecture,
-    input.acceleration,
+    acceleration,
     input.inference,
-  ]
-    .join("-")
-    .replace("nvidia-gpu", "gpu");
+  ].join("-");
 }
 
 function coverageKey(input: {
@@ -412,6 +462,252 @@ function assertArtifact(receipt: QualificationArtifactReceipt, label: string): v
   if (!SHA256_PATTERN.test(receipt.sha256)) {
     throw new Error(`${label} sha256 must be an exact lowercase SHA-256 digest`);
   }
+}
+
+function sameArtifactMetadata(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function verifyArtifactContents(
+  artifactRoot: string,
+  receipt: QualificationArtifactReceipt,
+  claimedPaths: Map<string, string>,
+): void {
+  assertArtifact(receipt, "Qualification artifact");
+  const candidate = path.join(artifactRoot, ...receipt.path.split(/[\\/]/u));
+  let target: string;
+  try {
+    target = fs.realpathSync(candidate);
+  } catch {
+    throw new Error(`Qualification artifact '${receipt.path}' is missing`);
+  }
+  const relative = path.relative(artifactRoot, target);
+  if (relative === "" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Qualification artifact '${receipt.path}' escapes its trusted root`);
+  }
+  const candidateMetadata = fs.lstatSync(candidate);
+  if (!candidateMetadata.isFile() || candidateMetadata.isSymbolicLink()) {
+    throw new Error(`Qualification artifact '${receipt.path}' must be a real regular file`);
+  }
+  const previousDigest = claimedPaths.get(target);
+  if (previousDigest !== undefined) {
+    if (previousDigest !== receipt.sha256) {
+      throw new Error(
+        `Qualification evidence reuses artifact '${receipt.path}' with a different digest`,
+      );
+    }
+    return;
+  }
+  claimedPaths.set(target, receipt.sha256);
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("Qualification artifact verification requires O_NOFOLLOW");
+  }
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(target, fs.constants.O_RDONLY | noFollow);
+  } catch {
+    throw new Error(`Qualification artifact '${receipt.path}' is not a readable regular file`);
+  }
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      before.size < 1n ||
+      before.size > BigInt(MAX_QUALIFICATION_ARTIFACT_BYTES)
+    ) {
+      throw new Error(`Qualification artifact '${receipt.path}' failed type, link, or size checks`);
+    }
+    const contents = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < contents.length) {
+      const count = fs.readSync(descriptor, contents, offset, contents.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    const overflow = Buffer.alloc(1);
+    const overflowCount = fs.readSync(descriptor, overflow, 0, 1, offset);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (offset !== contents.length || overflowCount !== 0 || !sameArtifactMetadata(before, after)) {
+      throw new Error(`Qualification artifact '${receipt.path}' changed during verification`);
+    }
+    const actual = createHash("sha256").update(contents).digest("hex");
+    if (actual !== receipt.sha256) {
+      throw new Error(`Qualification artifact '${receipt.path}' digest does not match its receipt`);
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function qualificationArtifacts(
+  evidence: NativeRuntimeQualificationEvidence,
+): readonly QualificationArtifactReceipt[] {
+  return [
+    evidence.installer.invocation,
+    evidence.installer.script,
+    evidence.runtime.inferenceResult,
+    ...evidence.operations.map((operation) => operation.artifact),
+    evidence.recovery.artifact,
+    evidence.cleanup.artifact,
+    ...(evidence.nvidiaCdi ? [evidence.nvidiaCdi.artifact] : []),
+  ];
+}
+
+function exactReporterRun(
+  definition: CompiledNativeRuntimeQualification,
+  input: NativeRuntimeQualificationProtectedRun,
+): Readonly<NativeRuntimeQualificationProtectedRun> {
+  if (
+    input.repository !== definition.repository ||
+    input.workflow !== definition.protectedWorkflow
+  ) {
+    throw new Error("Native runtime qualification reporter names the wrong protected workflow");
+  }
+  if (
+    !SHA_PATTERN.test(input.workflowSha) ||
+    !SHA_PATTERN.test(input.headSha) ||
+    !SHA_PATTERN.test(input.baseSha) ||
+    input.headSha === input.baseSha
+  ) {
+    throw new Error(
+      "Native runtime qualification reporter must name exact workflow/head/base SHAs",
+    );
+  }
+  assertPositiveInteger(input.runId, "Qualification reporter run id");
+  assertPositiveInteger(input.attempt, "Qualification reporter run attempt");
+  assertPositiveInteger(input.jobId, "Qualification reporter job id");
+  return Object.freeze({ ...input });
+}
+
+function protectedRunKey(input: NativeRuntimeQualificationProtectedRun): string {
+  return JSON.stringify(input);
+}
+
+/**
+ * Bind worker-authored evidence to run/job identities and artifact roots
+ * supplied independently by the trusted protected-E2E controller. The caller
+ * must construct bindings from authenticated control-plane state, never from
+ * candidate receipt fields.
+ */
+export function createNativeRuntimeQualificationReporterRecord(
+  definition: CompiledNativeRuntimeQualification,
+  evidence: readonly NativeRuntimeQualificationEvidence[],
+  bindings: readonly NativeRuntimeQualificationProtectedRunBinding[],
+): NativeRuntimeQualificationReporterRecord {
+  if (!compiledQualifications.has(definition)) {
+    throw new Error("Native runtime qualification reporter requires a compiled definition");
+  }
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    throw new Error("Native runtime qualification reporter requires trusted run bindings");
+  }
+  const clonedEvidence = deepFreeze(
+    structuredClone(evidence) as NativeRuntimeQualificationEvidence[],
+  );
+  validateNativeRuntimeQualificationEvidence(definition, clonedEvidence);
+
+  const bindingByRun = new Map<
+    string,
+    { readonly artifactRoot: string; readonly protectedRun: NativeRuntimeQualificationProtectedRun }
+  >();
+  for (const candidate of bindings) {
+    const binding = exactRecord(
+      candidate,
+      ["artifactRoot", "protectedRun"],
+      "Native runtime qualification protected-run binding",
+    );
+    const runRecord = exactRecord(
+      binding.protectedRun,
+      ["attempt", "baseSha", "headSha", "jobId", "repository", "runId", "workflow", "workflowSha"],
+      "Native runtime qualification protected run",
+    );
+    const protectedRun = exactReporterRun(
+      definition,
+      runRecord as unknown as NativeRuntimeQualificationProtectedRun,
+    );
+    if (typeof binding.artifactRoot !== "string" || binding.artifactRoot === "") {
+      throw new Error("Native runtime qualification binding artifact root is invalid");
+    }
+    const metadata = fs.lstatSync(binding.artifactRoot);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Native runtime qualification artifact root must be a real directory");
+    }
+    const key = protectedRunKey(protectedRun);
+    if (bindingByRun.has(key)) {
+      throw new Error("Native runtime qualification reporter repeats a protected-run binding");
+    }
+    bindingByRun.set(key, {
+      artifactRoot: fs.realpathSync(binding.artifactRoot),
+      protectedRun,
+    });
+  }
+
+  const usedBindings = new Set<string>();
+  const artifactRootByCaseId = new Map<string, string>();
+  for (const entry of clonedEvidence) {
+    const key = protectedRunKey(entry.protectedRun);
+    const binding = bindingByRun.get(key);
+    if (!binding) {
+      throw new Error(
+        `Qualification evidence '${entry.caseId}' has no trusted protected-run binding`,
+      );
+    }
+    usedBindings.add(key);
+    artifactRootByCaseId.set(entry.caseId, binding.artifactRoot);
+  }
+  if (usedBindings.size !== bindingByRun.size) {
+    throw new Error("Native runtime qualification reporter has an unused protected-run binding");
+  }
+  const reporter = Object.freeze({
+    qualificationId: definition.id,
+    caseIds: Object.freeze(clonedEvidence.map((entry) => entry.caseId)),
+  });
+  compiledReporters.set(reporter, {
+    definition,
+    evidence: clonedEvidence,
+    artifactRootByCaseId,
+  });
+  return reporter;
+}
+
+/** Re-hash every worker artifact before promoting a reporter to verified evidence. */
+export function verifyNativeRuntimeQualificationReporterArtifacts(
+  definition: CompiledNativeRuntimeQualification,
+  reporter: NativeRuntimeQualificationReporterRecord,
+): VerifiedNativeRuntimeQualificationEvidence {
+  const state = compiledReporters.get(reporter);
+  if (state?.definition !== definition) {
+    throw new Error(
+      "Native runtime qualification artifacts require their canonical protected-workflow reporter",
+    );
+  }
+  const claimedArtifactPaths = new Map<string, string>();
+  for (const entry of state.evidence) {
+    const artifactRoot = state.artifactRootByCaseId.get(entry.caseId);
+    if (!artifactRoot) {
+      throw new Error(`Qualification evidence '${entry.caseId}' lost its artifact binding`);
+    }
+    for (const artifact of qualificationArtifacts(entry)) {
+      verifyArtifactContents(artifactRoot, artifact, claimedArtifactPaths);
+    }
+  }
+  const verified = Object.freeze({
+    qualificationId: definition.id,
+    caseIds: Object.freeze(state.evidence.map((entry) => entry.caseId)),
+  });
+  verifiedEvidence.set(verified, state);
+  return verified;
 }
 
 function assertPositiveInteger(value: number, label: string): void {
@@ -657,7 +953,7 @@ function assertCaseEvidence(
   }
 }
 
-export function assertNativeRuntimeQualificationEvidence(
+function validateNativeRuntimeQualificationEvidence(
   definition: CompiledNativeRuntimeQualification,
   evidence: readonly NativeRuntimeQualificationEvidence[],
 ): void {
@@ -692,4 +988,18 @@ export function assertNativeRuntimeQualificationEvidence(
       "Native runtime qualification evidence must use one exact head/base/workflow source",
     );
   }
+}
+
+/** Accept only evidence that crossed both trusted reporter and byte-verification boundaries. */
+export function assertNativeRuntimeQualificationEvidence(
+  definition: CompiledNativeRuntimeQualification,
+  evidence: VerifiedNativeRuntimeQualificationEvidence,
+): void {
+  const state = verifiedEvidence.get(evidence);
+  if (state?.definition !== definition) {
+    throw new Error(
+      "Native runtime qualification evidence requires verified canonical reporter evidence",
+    );
+  }
+  validateNativeRuntimeQualificationEvidence(definition, state.evidence);
 }

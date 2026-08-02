@@ -60,9 +60,25 @@ strict lowercase hexadecimal values. Missing, duplicate, unknown, or inexact
 case evidence fails the aggregate qualification check. All cases must use the
 configured protected workflow and one exact head/base/workflow source.
 
+Raw worker receipts are never sufficient. The trusted protected-E2E controller
+must supply one or more independent bindings constructed from authenticated
+GitHub state. Each binding names the repository, workflow revision, run,
+attempt, exact head/base pair, numeric job, and that job's downloaded artifact
+root; bindings must not be derived from candidate receipt fields. The compiler
+defensively clones and freezes the receipts, requires every receipt and binding
+to match exactly, and returns a runtime-branded canonical reporter record.
+
+The aggregate validator then resolves every receipt below its bound artifact
+root, rejects missing, escaping, linked, conflicting, changing, or oversized
+files, and hashes the actual bytes before comparing the claimed SHA-256 digest.
+Only a separately branded verified-evidence object can reach final acceptance.
+A syntactically complete receipt with invented provenance or artifact digests
+therefore cannot qualify a runtime.
+
 These are evidence requirements, not generated evidence. A later protected
-collector must publish the receipts from real runners before activation can
-consume them.
+collector must publish the receipts from real runners, while its trusted
+controller constructs the reporter from authenticated GitHub run/job state,
+before activation can consume them.
 
 ## Activation boundary
 
