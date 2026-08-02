@@ -54,6 +54,13 @@ commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
 after a restart. The provider may retire that receipt only after it proves the
 external rollback backup is gone, leaving the next bootstrap attempt unblocked.
+The parser accepts the exact canonical schema-v1 manifest written before
+`bootstrapIdentity` was added only for the legacy null-identity path. It rejects
+additional fields, missing historical fields, and legacy state presented as
+identity-bound authority. Before rollback, the Docker adapter stops the
+replacement and copies its writable-layer commit receipt to a protected host
+path for verification. The immutable helper cannot obtain that receipt through
+`--volumes-from`, which exposes volumes but not the replacement writable layer.
 At managed create-lifecycle startup, the driver-neutral coordinator asks the
 selected provider to reconcile every unfinished record before a new sandbox
 create begins. The Docker provider then resumes the durable phase monotonically:

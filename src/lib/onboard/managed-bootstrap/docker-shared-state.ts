@@ -465,10 +465,21 @@ function copyManagedStartupReceipt(
 
 function rollbackManagedStartupSharedState(
   transaction: DockerManagedBootstrapSharedStateTransaction,
-  receiptPath: string,
   deps: DockerGpuPatchDeps,
-): void {
+  preservedReceiptPath?: string,
+): boolean {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
+  const status = probeDockerManagedStartupSharedState(
+    { transaction, profileFingerprint: transaction.profileFingerprint },
+    deps,
+  );
+  if (status === "committed") {
+    throw new Error("Managed-startup shared state is durably committed and cannot be rolled back.");
+  }
+  const receiptPath =
+    preservedReceiptPath ??
+    (status === "pending" ? copyManagedStartupReceipt(transaction, deps) : null);
+  if (!receiptPath) return false;
   let restored = false;
   try {
     const helper = dockerRun(
@@ -517,6 +528,7 @@ function rollbackManagedStartupSharedState(
       cleanupReceiptBestEffort(receiptPath);
     }
   }
+  return true;
 }
 
 function removeFailedUnbackedContainer(
@@ -605,7 +617,7 @@ export function finalizeDockerManagedStartupSharedState(
       `OpenShell supervisor reconnected, but managed shared-state logical commit validation failed: ${commitFailure.message}`,
     );
     quiesceManagedStartupContainer(transaction, deps);
-    rollbackManagedStartupSharedState(transaction, receiptPath, deps);
+    rollbackManagedStartupSharedState(transaction, deps, receiptPath);
     if (!input.patchResult && !input.retainContainerAfterRollback) {
       removeFailedUnbackedContainer(transaction, deps);
     }
@@ -613,14 +625,7 @@ export function finalizeDockerManagedStartupSharedState(
   }
 
   quiesceManagedStartupContainer(transaction, deps);
-  const receiptPath = copyManagedStartupReceipt(transaction, deps, true);
-  if (!receiptPath) {
-    if (!input.patchResult && !input.retainContainerAfterRollback) {
-      removeFailedUnbackedContainer(transaction, deps);
-    }
-    return { supervisorReady: false, failure: null };
-  }
-  rollbackManagedStartupSharedState(transaction, receiptPath, deps);
+  rollbackManagedStartupSharedState(transaction, deps);
   if (!input.patchResult && !input.retainContainerAfterRollback) {
     removeFailedUnbackedContainer(transaction, deps);
   }
