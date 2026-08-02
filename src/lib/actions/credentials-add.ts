@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import {
@@ -13,7 +13,7 @@ import {
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { ROOT } from "../state/paths";
-import { recordExtraProvider, runOpenshellProviderCommand } from "./global";
+import { recordExtraProvider } from "./global";
 
 export type CredentialsAddInput = {
   provider: string;

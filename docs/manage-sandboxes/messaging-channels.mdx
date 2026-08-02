@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Choose Messaging Channels"
 sidebar-title: "Choose Messaging Channels"
-description: "Compare the supported Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams messaging paths."
+description: "Compare the supported messaging paths, including experimental Google Chat for OpenClaw."
 description-agent: "Compares supported and experimental messaging channels, their credential or pairing requirements, and their NemoClaw runtime boundaries. Use when choosing a channel for OpenClaw or Hermes."
-keywords: ["nemoclaw messaging channels", "telegram", "discord", "slack", "wechat", "whatsapp", "microsoft teams"]
+keywords: ["nemoclaw messaging channels", "telegram", "discord", "slack", "google chat", "wechat", "whatsapp", "microsoft teams"]
 content:
   type: "concept"
 skill:
@@ -13,6 +13,7 @@ skill:
 agent-variants: ["openclaw", "hermes"]
 ---
 NemoClaw supports Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams for OpenClaw and Hermes sandboxes.
+Google Chat is available for OpenClaw sandboxes only.
 OpenShell-managed processes and gateway resources carry channel traffic.
 
 For token-based channels, NemoClaw registers credentials with OpenShell providers.
@@ -24,10 +25,10 @@ Microsoft Teams uses Bot Framework credentials plus a public HTTPS webhook that 
 NemoClaw writes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 <Warning title="Experimental Channels">
-WeChat, WhatsApp, and Microsoft Teams are experimental.
+Google Chat, WeChat, WhatsApp, and Microsoft Teams are experimental.
 WeChat and WhatsApp rely on QR-based pairing flows that are more fragile than token-based bots.
 
-Microsoft Teams requires an externally reachable webhook path that depends on your host networking setup.
+Google Chat and Microsoft Teams require externally reachable webhook paths that depend on your host networking setup.
 Interfaces, defaults, and supported features can change, and NVIDIA does not recommend these channels for production use.
 </Warning>
 
@@ -41,6 +42,11 @@ Interfaces, defaults, and supported features can change, and NVIDIA does not rec
 | WeChat | Host-side QR scan | DM allowlist | [Set Up WeChat](set-up-wechat) |
 | WhatsApp | In-sandbox QR pairing | Hermes sender allowlist and non-interactive channel selection | [Set Up WhatsApp](set-up-whatsapp) |
 | Microsoft Teams | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | User allowlist, webhook port, mention mode | [Set Up Microsoft Teams](set-up-microsoft-teams) |
+
+<AgentOnly variant="openclaw">
+Google Chat requires a service-account JSON key and a public HTTPS endpoint for the OpenClaw webhook.
+Refer to [Set Up Google Chat](set-up-google-chat) for the interactive tunnel, audience, and account-principal flow.
+</AgentOnly>
 
 ## Prepare the Host and Policy
 

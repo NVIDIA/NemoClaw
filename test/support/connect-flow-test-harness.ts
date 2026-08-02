@@ -242,8 +242,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
   const runAutoPairSpy = vi
-    .spyOn(autoPairApproval, "runSandboxAutoPairApprovalPass")
-    .mockReturnValue({ reported: 0, approved: 0 });
+    .spyOn(autoPairApproval, "runConnectAutoPairApprovalPass")
+    .mockImplementation(() => undefined);
 
   logSpy.mockClear();
   errorSpy.mockClear();

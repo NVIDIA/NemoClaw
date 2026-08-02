@@ -34,7 +34,7 @@ vi.mock("../policy", () => ({
   ]),
 }));
 
-vi.mock("../sandbox/config", () => ({
+vi.mock("../sandbox/agent-config", () => ({
   DEFAULT_AGENT_CONFIG: Symbol("DEFAULT_AGENT_CONFIG"),
   resolveAgentConfig: vi.fn(() => ({
     configPath: "/sandbox/.openclaw/openclaw.json",
@@ -562,8 +562,8 @@ describe("shields timer authorization", () => {
       chattrApplied: true,
       fileHashes: sealedHashes,
     }));
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+    const agentConfigModule = await import("../sandbox/agent-config");
+    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
       agentName: "openclaw",
       configPath,
       configDir,
@@ -625,8 +625,8 @@ describe("shields timer authorization", () => {
       }),
     );
 
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+    const agentConfigModule = await import("../sandbox/agent-config");
+    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
       agentName: "openclaw",
       configPath,
       configDir,
@@ -723,8 +723,8 @@ describe("shields timer authorization", () => {
     };
     const lockMock = vi.fn(() => ({ chattrApplied: true, fileHashes: sealedHashes }));
 
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+    const agentConfigModule = await import("../sandbox/agent-config");
+    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
       agentName: "openclaw",
       configPath,
       configDir,
@@ -796,8 +796,8 @@ describe("shields timer authorization", () => {
         );
       });
 
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+    const agentConfigModule = await import("../sandbox/agent-config");
+    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
       agentName: "openclaw",
       configPath,
       configDir,

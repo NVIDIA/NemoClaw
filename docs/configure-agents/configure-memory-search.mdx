@@ -16,8 +16,8 @@ This setup lets another local server, such as managed vLLM, continue to serve th
 
 ## Prepare the Embedding Server
 
-Start the host Ollama container with the embedding model.
-This example uses `qwen3-embedding:4b` on port `11434`.
+Before you continue, ensure that a host Ollama container is running on port `11434` and has the `qwen3-embedding:4b` model available.
+This procedure does not start the container or pull the model.
 
 The sandbox reaches the container through `http://host.openshell.internal:11434`.
 Keep the container bound to the local host or a reviewed host interface.
@@ -33,6 +33,8 @@ Apply the preset, then verify the Ollama API from the sandbox.
 nemoclaw my-assistant policy add local-inference --yes
 nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11434/api/tags
 ```
+
+Continue only when the returned JSON `models` array contains an entry whose `name` is `qwen3-embedding:4b`.
 
 ## Configure the Embedding Provider
 
