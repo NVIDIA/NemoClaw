@@ -15,6 +15,7 @@ import {
   type DockerManagedBootstrapFinalizationContext,
   type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
+  type DockerManagedBootstrapJournalStore,
   DockerManagedBootstrapLegacyRecordRequiresAgentError,
   parseDockerManagedBootstrapFinalizationRecord,
   parseDockerManagedBootstrapJournal,
@@ -28,6 +29,16 @@ const OTHER_IDENTITY = "0".repeat(64);
 
 function reverseKeys<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).reverse()) as T;
+}
+
+function loadUnfinished(
+  store: DockerManagedBootstrapJournalStore,
+): readonly DockerManagedBootstrapJournal[] {
+  return store.listUnfinishedIdentities().map((identity) => {
+    const record = store.load(identity);
+    if (!record) throw new Error(`enumerated journal ${identity} disappeared`);
+    return record;
+  });
 }
 
 const journal = Object.freeze({
@@ -318,12 +329,12 @@ describe("Docker managed bootstrap journal", () => {
     roots.push(root);
     const first = createFileDockerManagedBootstrapJournalStore(root);
     first.create(journal);
-    expect(first.listUnfinished()).toEqual([journal]);
+    expect(loadUnfinished(first)).toEqual([journal]);
 
     first.recordFinalization(finalization);
-    expect(first.listUnfinished()).toEqual([journal]);
+    expect(loadUnfinished(first)).toEqual([journal]);
     first.remove(IDENTITY, ["staged"]);
-    expect(first.listUnfinished()).toEqual([]);
+    expect(loadUnfinished(first)).toEqual([]);
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
     expect(restarted.loadFinalization(IDENTITY)).toEqual(finalization);
     expect(
@@ -349,7 +360,7 @@ describe("Docker managed bootstrap journal", () => {
     expect(completed.commitReceipt).toEqual(finalization.commitReceipt);
 
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
-    expect(restarted.listUnfinished()).toEqual([completed]);
+    expect(loadUnfinished(restarted)).toEqual([completed]);
     const reorderedReceipt = reverseKeys({
       ...finalization.commitReceipt,
       image: reverseKeys({ ...finalization.commitReceipt.image }),
@@ -378,7 +389,7 @@ describe("Docker managed bootstrap journal", () => {
     for (const name of leftovers)
       fs.writeFileSync(path.join(directory, name), "orphan\n", { mode: 0o600 });
 
-    expect(store.listUnfinished()).toEqual([journal]);
+    expect(loadUnfinished(store)).toEqual([journal]);
     for (const name of leftovers) expect(fs.existsSync(path.join(directory, name))).toBe(true);
   });
 
@@ -392,11 +403,11 @@ describe("Docker managed bootstrap journal", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const store = createFileDockerManagedBootstrapJournalStore(root);
-    expect(store.listUnfinished()).toEqual([]);
+    expect(loadUnfinished(store)).toEqual([]);
     const target = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY, name);
     fs.writeFileSync(target, "near miss\n", { mode: 0o600 });
 
-    expect(() => store.listUnfinished()).toThrow("unsupported entry");
+    expect(() => store.listUnfinishedIdentities()).toThrow("unsupported entry");
     expect(fs.existsSync(target)).toBe(true);
   });
 
@@ -421,10 +432,11 @@ describe("Docker managed bootstrap journal", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const store = createFileDockerManagedBootstrapJournalStore(root);
-    expect(store.listUnfinished()).toEqual([]);
+    expect(loadUnfinished(store)).toEqual([]);
     const target = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY, `${IDENTITY}.json`);
     fs.writeFileSync(target, serialized, { mode: 0o600 });
-    expect(() => store.listUnfinished()).toThrowError(
+    expect(store.listUnfinishedIdentities()).toEqual([IDENTITY]);
+    expect(() => store.load(IDENTITY)).toThrowError(
       DockerManagedBootstrapLegacyRecordRequiresAgentError,
     );
     expect(readPinnedPrivateFile(target).text).toBe(serialized);
@@ -460,7 +472,7 @@ describe("Docker managed bootstrap journal", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const store = createFileDockerManagedBootstrapJournalStore(root);
-    expect(store.listUnfinished()).toEqual([]);
+    expect(loadUnfinished(store)).toEqual([]);
     const target = path.join(
       root,
       DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY,
@@ -496,7 +508,7 @@ describe("Docker managed bootstrap journal", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const store = createFileDockerManagedBootstrapJournalStore(root);
-    expect(store.listUnfinished()).toEqual([]);
+    expect(loadUnfinished(store)).toEqual([]);
     const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
     const misplacedJournal = path.join(directory, `${OTHER_IDENTITY}.json`);
     const misplacedFinalization = `${misplacedJournal}.finalized`;
@@ -529,6 +541,6 @@ describe("Docker managed bootstrap journal", () => {
       "{}\n",
       { mode: 0o600 },
     );
-    expect(() => store.listUnfinished()).toThrow("unsupported entry");
+    expect(() => store.listUnfinishedIdentities()).toThrow("unsupported entry");
   });
 });

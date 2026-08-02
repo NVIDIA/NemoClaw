@@ -29,6 +29,7 @@ export type DockerManagedBootstrapJournalPhase =
   | "staged"
   | "cutover"
   | "rollback-authorized"
+  | "owner-cleanup-required"
   | "shared-state-committed";
 
 export interface DockerManagedBootstrapJournal {
@@ -83,7 +84,7 @@ export type DockerManagedBootstrapFinalizationContext = Pick<
 export interface DockerManagedBootstrapJournalStore {
   create(journal: DockerManagedBootstrapJournal): void;
   load(bootstrapIdentity: string): DockerManagedBootstrapJournal | null;
-  listUnfinished(): readonly DockerManagedBootstrapJournal[];
+  listUnfinishedIdentities(): readonly string[];
   transition(
     bootstrapIdentity: string,
     expected: DockerManagedBootstrapJournalPhase,
@@ -148,8 +149,10 @@ class DockerManagedBootstrapJournalExistsError extends Error {
 
 const ALLOWED_TRANSITIONS = new Set([
   "staged->cutover",
+  "staged->owner-cleanup-required",
   "cutover->rollback-authorized",
   "cutover->shared-state-committed",
+  "rollback-authorized->owner-cleanup-required",
 ]);
 
 function fail(message: string): never {
@@ -182,11 +185,28 @@ function exactSha256(value: unknown, label: string): string {
 
 function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
   if (
-    !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
+    ![
+      "staged",
+      "cutover",
+      "rollback-authorized",
+      "owner-cleanup-required",
+      "shared-state-committed",
+    ].includes(String(value))
   ) {
     fail("phase is unsupported");
   }
   return value as DockerManagedBootstrapJournalPhase;
+}
+
+function exactLegacyPhase(
+  value: unknown,
+): Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required"> {
+  if (
+    !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
+  ) {
+    fail("legacy phase is unsupported");
+  }
+  return value as Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required">;
 }
 
 function exactAgent(value: unknown): ManagedStartupAgent {
@@ -246,7 +266,7 @@ function normalizeLegacyDockerManagedBootstrapJournal(
     if (!hasExactKeys(journal, expectedKeys)) fail("legacy journal schema is invalid");
     const normalized = Object.freeze({
       schemaVersion: 1 as const,
-      phase: exactPhase(journal.phase),
+      phase: exactLegacyPhase(journal.phase),
       bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
       sandbox: exactSandbox(journal.sandbox),
       profileFingerprint: exactSha256(journal.profileFingerprint, "profile fingerprint"),
@@ -304,7 +324,7 @@ function normalizeLegacyDockerManagedBootstrapJournal(
   if (!hasExactKeys(journal, expectedKeys)) fail("legacy journal schema is invalid");
   const normalized = Object.freeze({
     schemaVersion: 2 as const,
-    phase: exactPhase(journal.phase),
+    phase: exactLegacyPhase(journal.phase),
     bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
     providerId: exactString(journal.providerId, "provider ID"),
     sandbox: exactSandbox(journal.sandbox),
@@ -1169,7 +1189,7 @@ export function createFileDockerManagedBootstrapJournalStore(
       atomicWrite(directory, target, serializeDockerManagedBootstrapJournal(normalized), true);
     },
     load,
-    listUnfinished() {
+    listUnfinishedIdentities() {
       assertDirectory(directory);
       const identities: string[] = [];
       for (const name of fs.readdirSync(directory)) {
@@ -1186,13 +1206,7 @@ export function createFileDockerManagedBootstrapJournalStore(
         }
         fail(`journal directory contains an unsupported entry: ${name}`);
       }
-      return Object.freeze(
-        identities.sort().map((identity) => {
-          const journal = load(identity);
-          if (!journal) fail(`enumerated journal ${identity} disappeared`);
-          return journal;
-        }),
-      );
+      return Object.freeze(identities.sort());
     },
     transition(
       bootstrapIdentity: string,

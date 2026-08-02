@@ -62,6 +62,10 @@ import {
   setupGpuFlowMocks,
   VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import {
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  type ManagedBootstrapRecoveryReport,
+} from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapRuntimeCreateLifecycleInput,
   ManagedBootstrapRuntimePatch,
@@ -201,7 +205,30 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     input.sandboxEnv = launch.sandboxEnv;
     input.sandboxStartupCommand = launch.sandboxStartupCommand;
     const patch = createPatch() as unknown as ManagedBootstrapRuntimePatch;
-    const recoverUnfinished = vi.fn(async () => []);
+    const recoveryReport = (sandboxName: string | null): ManagedBootstrapRecoveryReport =>
+      Object.freeze({
+        receipts: Object.freeze([]),
+        failures: Object.freeze([
+          Object.freeze({
+            schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+            providerId: "mxc",
+            sourcePhase: "provider-owned-cleanup",
+            sandbox:
+              sandboxName === null
+                ? null
+                : Object.freeze({
+                    sandboxName,
+                    sandboxId: `mxc-${sandboxName}`,
+                    driverId: "mxc",
+                  }),
+            bootstrapIdentity: "e".repeat(64),
+            code: "mxc-recovery-retry",
+            retryable: true,
+            detail: "opaque MXC recovery detail",
+          }),
+        ]),
+      });
+    const recoverUnfinished = vi.fn(async () => recoveryReport("bravo"));
     const prepareNetwork = vi.fn(async () => undefined);
     const createLifecycle = vi.fn(
       (lifecycleInput: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
@@ -319,6 +346,19 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+
+    expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
+      "unrelated sandbox 'bravo'",
+    );
+    recoverUnfinished.mockResolvedValueOnce(recoveryReport("alpha"));
+    prepareNetwork.mockClear();
+    mocks.streamSandboxCreate.mockClear();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "recovery blocks sandbox 'alpha'",
+    );
+    expect(prepareNetwork).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 });
 

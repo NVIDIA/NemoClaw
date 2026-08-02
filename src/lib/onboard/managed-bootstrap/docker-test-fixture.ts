@@ -61,6 +61,7 @@ export type DockerFixtureAcknowledgement =
   | "journal:create"
   | "journal:cutover"
   | "journal:completion"
+  | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
   | "journal:staged"
@@ -69,6 +70,7 @@ export type DockerFixtureAcknowledgement =
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
   readonly dockerRemoveFailures?: readonly Error[];
+  readonly dockerInspectUnknownIds?: readonly string[];
   readonly dockerStartResults?: Readonly<Record<string, FixtureCommandResult>>;
   readonly journalCreateFailures?: readonly Error[];
   readonly journalRemoveFailures?: readonly Error[];
@@ -76,8 +78,10 @@ export type DockerFixtureOptions = {
     Readonly<Record<DockerManagedBootstrapJournalPhase, Error>>
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
-  readonly ownerId?: string;
+  readonly ownerId?: string | null;
+  readonly ownerLookupError?: Error;
   readonly sharedState?: "committed" | "none" | "pending";
+  readonly sharedReceiptClearFailures?: readonly Error[];
 };
 
 function agentInputs(agent: ManagedStartupAgent = "hermes") {
@@ -222,6 +226,8 @@ export function fixture(options: DockerFixtureOptions = {}) {
   const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
   const journalCreateFailures = [...(options.journalCreateFailures ?? [])];
   const journalRemoveFailures = [...(options.journalRemoveFailures ?? [])];
+  const sharedReceiptClearFailures = [...(options.sharedReceiptClearFailures ?? [])];
+  const dockerInspectUnknownIds = new Set(options.dockerInspectUnknownIds ?? []);
   const lostAcknowledgements = new Set(options.lostAcknowledgements ?? []);
   const losesAcknowledgement = (operation: DockerFixtureAcknowledgement) =>
     lostAcknowledgements.has(operation);
@@ -245,7 +251,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
-    listUnfinished: () => (journal ? [structuredClone(journal)] : []),
+    listUnfinishedIdentities: () => (journal ? [journal.bootstrapIdentity] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
@@ -364,6 +370,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
           return ok(original ? OLD_ID : "");
         case "inspect": {
           const id = String(args[3] ?? "");
+          if (dockerInspectUnknownIds.has(id)) {
+            return { status: 1, stderr: `injected unknown inspect state for ${id}` };
+          }
           try {
             inspect(id);
             return ok(`[{"Id":"${id}"}]`);
@@ -426,6 +435,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
               events.push("shared:commit");
               return ok();
             case args.includes("--clear-shared-state-commit-receipt"):
+              {
+                const injectedFailure = sharedReceiptClearFailures.shift();
+                if (injectedFailure) throw injectedFailure;
+              }
               sharedState = "none";
               events.push("shared:clear");
               return ok();
@@ -500,7 +513,12 @@ export function fixture(options: DockerFixtureOptions = {}) {
         ? { status: 1, stderr: "lost rm acknowledgement" }
         : ok();
     }),
-    runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
+    runCaptureOpenshell: vi.fn(() => {
+      if (options.ownerLookupError) throw options.ownerLookupError;
+      return options.ownerId === null
+        ? "Name: alpha\n"
+        : `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`;
+    }),
     runOpenshell: vi.fn(() => ok()),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };
@@ -521,6 +539,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
     },
     get sharedState() {
       return sharedState;
+    },
+    removeOriginalExternally() {
+      original = null as unknown as DockerContainerInspect;
+      events.push(`external-rm:${OLD_ID}`);
     },
   };
 }
