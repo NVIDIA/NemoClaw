@@ -71,6 +71,27 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
   normalizeReadModesForDockerCopy(path.join(buildCtx, "tools"));
 }
 
+function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
+  for (const relativePath of [
+    path.join("core", "json-types.ts"),
+    path.join("core", "ports.ts"),
+    path.join("onboard", "managed-bootstrap", "envelope.ts"),
+    path.join("security", "credential-hash.ts"),
+    path.join("state", "paths.ts"),
+    path.join("state", "state-root.ts"),
+  ]) {
+    const source = path.join(rootDir, "src", "lib", relativePath);
+    const target = path.join(buildCtx, "src", "lib", relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
+    path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
+    { recursive: true },
+  );
+}
+
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -103,6 +124,7 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
+  stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
     recursive: true,
@@ -275,24 +297,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
-  for (const relativePath of [
-    path.join("core", "json-types.ts"),
-    path.join("core", "ports.ts"),
-    path.join("onboard", "managed-bootstrap", "envelope.ts"),
-    path.join("security", "credential-hash.ts"),
-    path.join("state", "paths.ts"),
-    path.join("state", "state-root.ts"),
-  ]) {
-    const source = path.join(rootDir, "src", "lib", relativePath);
-    const target = path.join(buildCtx, "src", "lib", relativePath);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(source, target);
-  }
-  fs.cpSync(
-    path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
-    path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
-    { recursive: true },
-  );
+  stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),
