@@ -84,5 +84,6 @@ root-owned hold, trampoline, runtime bundle, and complete inert capability
 union. Pull-request and publication workflows build the exact images and run
 the direct root-stdin and hold contract without advertising buildless support.
 No production provider invokes the trampoline yet. Until the later provider
-activation and protected E2E slices pass, every production runtime provider
-keeps bootstrap unsupported.
+activation and protected E2E slices tracked by
+[epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744) pass, every
+production runtime provider keeps bootstrap unsupported.
