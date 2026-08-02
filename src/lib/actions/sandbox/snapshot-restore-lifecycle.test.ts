@@ -61,6 +61,51 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(isMcpLifecycleLockHeld("alpha")).toBe(false);
   });
 
+  it("holds the per-sandbox mutation lock across snapshot creation", async () => {
+    let releaseLock: (() => void) | undefined;
+    let signalLocked: (() => void) | undefined;
+    const locked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const externalMutation = withSandboxMutationLock("alpha", async () => {
+      signalLocked?.();
+      await release;
+    });
+    await locked;
+    f.backupSandboxStateMock.mockReturnValue({
+      success: true,
+      manifest: {
+        timestamp: "2026-07-31T00:00:00.000Z",
+        backupPath: "/tmp/backup-alpha",
+      },
+      backedUpDirs: [],
+      restoredDirs: [],
+      backedUpFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    f.findBackupMock.mockReturnValue({
+      match: {
+        snapshotVersion: 4,
+        timestamp: "2026-07-31T00:00:00.000Z",
+        backupPath: "/tmp/backup-alpha",
+      },
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    const create = runSandboxSnapshot("alpha", { kind: "create" });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
+
+    releaseLock?.();
+    await externalMutation;
+    await create;
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", { name: null });
+  });
+
   it("restores the latest snapshot into the source sandbox", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({
