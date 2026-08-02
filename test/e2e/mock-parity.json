@@ -110,6 +110,12 @@
       "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
     },
     {
+      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "fast": [
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/sandbox-operations.test.ts",
       "liveOnlyReason": "The resource-limit and final-destroy contracts require real Docker and OpenShell sandboxes, the repository CLI, and host port binding; fast mocks cannot verify these runtime boundaries."
     },
