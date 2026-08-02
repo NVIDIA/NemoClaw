@@ -44,7 +44,11 @@ all three names, both launch-spec hashes, image identity, profile fingerprint,
 and sandbox ID and then enter the destructive cutover. Rollback publishes
 `rollback-authorized` before exact replacement deletion; commit publishes
 `shared-state-committed` before exact backup deletion. Cleanup is bound to full
-runtime IDs. Its private state root now retains enumerable, versioned unfinished
+runtime IDs. Commit or rollback is claimed synchronously before asynchronous
+finalization begins. Repeated calls for the claimed outcome share its one pending
+result, while the opposite outcome remains invalid even if acknowledgement of the
+first finalization is lost. Its private state root now retains enumerable,
+versioned unfinished
 records containing the provider and sandbox identities, plan and profile
 fingerprints, exact original and replacement IDs, rollback target, and phase.
 Exact commit and cleanup receipts are durable terminal records, so adapter
