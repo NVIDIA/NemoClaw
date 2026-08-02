@@ -183,6 +183,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chown -R root:root /sandbox/.nemoclaw/blueprints");
     expect(dockerfile).toContain("chmod -R 755 /sandbox/.nemoclaw/blueprints");
+    expect(dockerfile).toContain("cp -r /opt/nemoclaw-blueprint/*");
+    expect(dockerfile).toContain("COPY --from=mcp-tool-discovery-runtime");
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
     );
