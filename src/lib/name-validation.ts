@@ -5,6 +5,7 @@ import {
   NAME_ALLOWED_FORMAT as CANONICAL_NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH as CANONICAL_NAME_MAX_LENGTH,
   NAME_VALID_PATTERN as CANONICAL_NAME_VALID_PATTERN,
+  diagnosticPreview as canonicalDiagnosticPreview,
 } from "../../nemoclaw/dist/shared/sandbox-name.cjs";
 
 // sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
@@ -15,6 +16,7 @@ import {
 export const NAME_MAX_LENGTH = CANONICAL_NAME_MAX_LENGTH;
 export const NAME_ALLOWED_FORMAT = CANONICAL_NAME_ALLOWED_FORMAT;
 export const NAME_VALID_PATTERN = CANONICAL_NAME_VALID_PATTERN;
+export const diagnosticPreview = canonicalDiagnosticPreview;
 
 function validationSubject(label: string): string {
   const normalized = label.trim().toLowerCase();

@@ -663,6 +663,9 @@ Sandbox names must be lowercase, start with a letter, contain only letters, numb
 The CLI rejects names that do not match these rules.
 It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
+The error repeats the rejected value as a quoted preview rather than the raw input.
+Characters outside printable ASCII appear as `\uXXXX` escapes and the preview stops after 80 characters, so a name that carries control or escape sequences cannot change your terminal or a CI log.
+
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
 Using a reserved name would cause the CLI to route to the global command instead of the sandbox.

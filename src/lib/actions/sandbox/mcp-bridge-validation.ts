@@ -5,6 +5,7 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { diagnosticPreview } from "../../name-validation";
 import type { McpBridgeEntry } from "../../state/registry";
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
@@ -162,7 +163,7 @@ const MCP_PROVIDER_HASH_BYTES = 8;
 export function validateSandboxName(name: string): void {
   if (!name || name.length > 63 || !VALID_SANDBOX_RE.test(name)) {
     throw new McpBridgeError(
-      `Invalid sandbox name '${name}'. Names must be 1-63 lowercase alphanumeric characters with optional internal hyphens.`,
+      `Invalid sandbox name ${diagnosticPreview(name)}. Names must be 1-63 lowercase alphanumeric characters with optional internal hyphens.`,
       2,
     );
   }
@@ -171,7 +172,7 @@ export function validateSandboxName(name: string): void {
 export function validateMcpServerName(name: string): void {
   if (!VALID_SERVER_RE.test(name)) {
     throw new McpBridgeError(
-      `Invalid MCP server name '${name}'. Names must start with a letter and contain only letters, digits, hyphens, and underscores.`,
+      `Invalid MCP server name ${diagnosticPreview(name)}. Names must start with a letter and contain only letters, digits, hyphens, and underscores.`,
       2,
     );
   }
@@ -218,7 +219,7 @@ export function validateMcpCredentialEnvName(name: string): void {
 export function validatePersistedMcpCredentialEnvName(name: string): void {
   if (!VALID_ENV_RE.test(name)) {
     throw new McpBridgeError(
-      `Invalid environment variable name '${name}'. Names must match [A-Za-z_][A-Za-z0-9_]*.`,
+      `Invalid environment variable name ${diagnosticPreview(name)}. Names must match [A-Za-z_][A-Za-z0-9_]*.`,
       2,
     );
   }
