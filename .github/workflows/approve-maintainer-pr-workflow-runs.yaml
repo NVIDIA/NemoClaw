@@ -7,8 +7,9 @@ name: Automation / Approve Maintainer PR Workflow Runs
 # pinned action reads repository metadata and approves exact workflow-run IDs.
 # Do not add a checkout or execute pull-request code in this workflow.
 on:
+  # Keep every target branch eligible so maintainer-owned stacked PRs receive
+  # the same exact-head approval policy as PRs that target main.
   pull_request_target:
-    branches: [main]
     types: [opened, synchronize, reopened, edited, ready_for_review]
 
 permissions:

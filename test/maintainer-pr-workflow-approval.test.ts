@@ -13,7 +13,6 @@ type ApprovalWorkflow = {
   concurrency?: { group?: string; "cancel-in-progress"?: boolean };
   on?: {
     pull_request_target?: {
-      branches?: string[];
       types?: string[];
     };
   };
@@ -159,7 +158,6 @@ describe("maintainer PR workflow-run approval", () => {
   // source-shape-contract: security -- The write-capable pull_request_target workflow must keep its exact trigger, permission, action, and no-checkout execution boundary
   it("keeps workflow approval inside the trusted metadata boundary", () => {
     expect(workflow.on?.pull_request_target).toEqual({
-      branches: ["main"],
       types: ["opened", "synchronize", "reopened", "edited", "ready_for_review"],
     });
     expect(workflow.permissions).toEqual({
