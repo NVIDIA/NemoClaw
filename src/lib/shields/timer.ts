@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { resolveAgentConfig } from "../sandbox/config";
+import { resolveAgentConfig } from "../sandbox/agent-config";
 import { withMcpLifecycleDeadlineFence } from "../state/mcp-lifecycle-lock";
 import {
   readShieldsTimerMarkerFile,

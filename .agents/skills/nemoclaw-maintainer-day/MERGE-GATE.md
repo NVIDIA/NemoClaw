@@ -152,7 +152,7 @@ Use the maintainer workflow when coordination reports either of these states:
 - `Maintainer approval required to run fork E2E`
 
 1. Follow the `E2E / PR Gate Controller run <id>` link in the coordination summary.
-2. Verify the exact head repository, PR SHA, base SHA, selected jobs and targets, and risk-plan artifact.
+2. Verify the head repository, head commit, base commit, selected jobs and targets, and risk-plan artifact.
 3. Select **Run workflow** on `main`.
 4. Select `approve-e2e`.
 5. Enter the exact `pr_number`, 40-character `expected_head_sha`, 40-character `expected_base_sha`, and a specific `review_reason` of 10 to 500 characters.

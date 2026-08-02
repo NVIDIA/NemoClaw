@@ -48,7 +48,7 @@ const testState = vi.hoisted(() => {
   };
 });
 
-vi.mock("../src/lib/actions/global", () => ({
+vi.mock("../src/lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: testState.runOpenshellProviderCommand,
 }));
 

@@ -1135,12 +1135,45 @@ function extractPersistedRoutes(prior: JsonObject | null): Record<string, JsonOb
   return sanitized;
 }
 
-function persistRouteState(routeId: string, meta: RoutePersistedMeta): void {
+/**
+ * Reads back the route-source policy the live adapter was actually started
+ * with. The control-plane challenge proof binds that policy's digest, so a
+ * caller that has to authenticate the adapter later needs the recorded value,
+ * not one re-derived from the current host: re-discovery returns whatever the
+ * bridge looks like *now*, which silently stops matching the moment the
+ * network is recreated or renumbered (#7878).
+ *
+ * Returns null when the record is absent or malformed so callers fail closed
+ * rather than falling back to a default that cannot authenticate a
+ * sandbox-facing adapter.
+ */
+function extractPersistedAllowedSourceCidrs(state: unknown): readonly string[] | null {
+  const raw = (state as { allowedSourceCidrs?: unknown } | null)?.allowedSourceCidrs;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  if (!raw.every((entry) => typeof entry === "string" && entry.trim())) return null;
+  try {
+    const canonical = buildAllowedRouteSourceMatcher(raw as string[]).cidrs;
+    return canonical.length > 0 ? canonical : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistRouteState(
+  routeId: string,
+  meta: RoutePersistedMeta,
+  allowedSourceCidrs?: readonly string[],
+): void {
   const prior = readLocalAdapterJsonFile(STATE_PATH);
   const priorRoutes = extractPersistedRoutes(prior);
   writeLocalAdapterJsonFile(STATE_PATH, {
     pid: (prior?.pid as number | null | undefined) ?? loadPersistedPid(),
     updatedAt: new Date().toISOString(),
+    // Record the policy this registration proved the live adapter is running
+    // under, so a later revocation can authenticate it without re-discovery.
+    allowedSourceCidrs: allowedSourceCidrs
+      ? [...allowedSourceCidrs]
+      : extractPersistedAllowedSourceCidrs(prior),
     // Re-registering a route (fresh `meta`, no `orphanedAt`) always
     // supersedes any prior orphaned entry for the same id -- this is how a
     // route heals after its owner re-runs `inference set` post-recovery.
@@ -1155,6 +1188,9 @@ function removeRouteState(routeId: string): void {
   writeLocalAdapterJsonFile(STATE_PATH, {
     pid: (prior?.pid as number | null | undefined) ?? loadPersistedPid(),
     updatedAt: new Date().toISOString(),
+    // The adapter keeps running with the same policy after one of its routes
+    // is dropped, so carry the record forward instead of erasing it.
+    allowedSourceCidrs: extractPersistedAllowedSourceCidrs(prior),
     routes,
   });
 }
@@ -1298,11 +1334,18 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
       credentialValue: options.credentialValue,
       generation,
     });
-    persistRouteState(routeId, {
-      providerType: options.providerType,
-      generation,
-      registeredAt: new Date().toISOString(),
-    });
+    // `ensureAdapterProcessLocked` authenticated the live adapter against this
+    // policy just above -- on the reuse path that is the only proof of what it
+    // is running under, so record it here too and not just at spawn (#7878).
+    persistRouteState(
+      routeId,
+      {
+        providerType: options.providerType,
+        generation,
+        registeredAt: new Date().toISOString(),
+      },
+      allowedSourceCidrs,
+    );
 
     // Only this route-scoped value leaves the host lifecycle boundary. The
     // control token stays in its 0600 host state file and the adapter process
@@ -1338,13 +1381,19 @@ async function revokeRouteLocked(
   deps: {
     loadPid: () => number | null;
     readControlToken: () => string | null;
-    probeHealth: (options: { controlToken: string }) => Promise<boolean>;
+    readAllowedSourceCidrs: () => readonly string[] | null;
+    probeHealth: (options: {
+      controlToken: string;
+      expectedSourceCidrs?: readonly string[];
+    }) => Promise<boolean>;
     deleteRoute: (controlToken: string, candidateRouteId: string) => Promise<void>;
     isAdapterProcess: (pid: number | null) => boolean;
     removeRouteState: (candidateRouteId: string) => void;
   } = {
     loadPid: loadPersistedPid,
     readControlToken: () => readLocalAdapterTextFile(TOKEN_PATH),
+    readAllowedSourceCidrs: () =>
+      extractPersistedAllowedSourceCidrs(readLocalAdapterJsonFile(STATE_PATH)),
     probeHealth: (options) => probeAdapterControlHealth(options),
     deleteRoute,
     isAdapterProcess,
@@ -1353,13 +1402,38 @@ async function revokeRouteLocked(
 ): Promise<boolean> {
   const pid = deps.loadPid();
   const controlToken = deps.readControlToken();
+  // The control-plane challenge proof binds the adapter's route-source policy,
+  // so probing without it silently authenticates against the `127.0.0.1/32`
+  // default while every sandbox-facing adapter runs on the OpenShell bridge
+  // range. That mismatch is why a superseded route could not be revoked and
+  // its upstream credentials stayed resident (#7878). Use the policy recorded
+  // when the adapter was started -- never one re-derived here, which stops
+  // matching as soon as the bridge is recreated or renumbered.
+  const allowedSourceCidrs = deps.readAllowedSourceCidrs();
   const authenticatedLiveAdapter = Boolean(
-    controlToken && (await deps.probeHealth({ controlToken: controlToken as string })),
+    controlToken &&
+      allowedSourceCidrs &&
+      (await deps.probeHealth({
+        controlToken: controlToken as string,
+        expectedSourceCidrs: allowedSourceCidrs,
+      })),
   );
   if (authenticatedLiveAdapter && controlToken) {
     await deps.deleteRoute(controlToken, routeId);
-  } else if (deps.isAdapterProcess(pid)) {
-    throw new Error("Cannot authenticate the live HTTPS Pin Runtime adapter for revocation.");
+  } else if (controlToken || deps.isAdapterProcess(pid)) {
+    // Fail closed. An adapter started before this record existed cannot be
+    // authenticated for revocation, and falling back to a re-derived or
+    // default policy would authenticate it against a value this process just
+    // made up. A missing PID record does not prove that the adapter stopped;
+    // preserve the route state while either identity artifact remains. Its
+    // next route registration records the policy and heals it.
+    throw new Error(
+      allowedSourceCidrs
+        ? "Cannot authenticate the live HTTPS Pin Runtime adapter for revocation."
+        : "Cannot authenticate the live HTTPS Pin Runtime adapter for revocation: " +
+            "its route-source policy was not recorded. Re-run the inference set that " +
+            "registered this route to record it, then retry.",
+    );
   }
   deps.removeRouteState(routeId);
   return true;
@@ -1530,6 +1604,10 @@ async function ensureAdapterProcessLocked(options: {
     writeLocalAdapterJsonFile(STATE_PATH, {
       pid: child.pid ?? null,
       updatedAt: new Date().toISOString(),
+      // Provenance for the control-plane challenge proof: this is the policy
+      // the child was actually spawned with, which revocation must reuse
+      // rather than re-derive (#7878).
+      allowedSourceCidrs: [...options.allowedSourceCidrs],
       routes: persistedRoutes,
     });
   } catch (err) {
@@ -1556,6 +1634,7 @@ export const __test = {
   computeRespawnState,
   buildAllowedRouteSourceMatcher,
   discoverOpenShellBridgeSourceCidrs,
+  extractPersistedAllowedSourceCidrs,
   findReusableAdapterControlToken,
   revokeRouteLocked,
   LOCK_PATH,
