@@ -592,7 +592,16 @@ function exactReporterRun(
 }
 
 function protectedRunKey(input: NativeRuntimeQualificationProtectedRun): string {
-  return JSON.stringify(input);
+  return JSON.stringify([
+    input.repository,
+    input.workflow,
+    input.workflowSha,
+    input.runId,
+    input.attempt,
+    input.jobId,
+    input.headSha,
+    input.baseSha,
+  ]);
 }
 
 /**
