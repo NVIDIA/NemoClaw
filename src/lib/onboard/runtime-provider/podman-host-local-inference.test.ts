@@ -12,7 +12,7 @@ import {
   memoryStore,
   PROBE_IMAGE_REF,
   runtimeHarness,
-} from "./podman-host-local-inference-test-harness";
+} from "../../../../test/helpers/podman-host-local-inference-test-harness";
 
 describe("Podman host-local inference runtime", () => {
   it("qualifies and re-proves host Ollama through the exact runtime network", () => {
