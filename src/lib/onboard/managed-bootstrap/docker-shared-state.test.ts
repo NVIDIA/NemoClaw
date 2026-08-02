@@ -33,6 +33,11 @@ interface SharedStateFixture {
   readonly state: () => "committed" | "none" | "pending";
 }
 
+interface SharedStateFixtureOptions {
+  readonly stateAfterCommitFailure?: "committed" | "none" | "pending";
+  readonly stateAfterStop?: "committed" | "none" | "pending";
+}
+
 const copiedReceiptPaths: string[] = [];
 
 afterEach(() => {
@@ -42,7 +47,10 @@ afterEach(() => {
   }
 });
 
-function fixture(initialState: "committed" | "none" | "pending"): SharedStateFixture {
+function fixture(
+  initialState: "committed" | "none" | "pending",
+  options: SharedStateFixtureOptions = {},
+): SharedStateFixture {
   let state = initialState;
   const commands: string[][] = [];
   const events: string[] = [];
@@ -87,6 +95,13 @@ function fixture(initialState: "committed" | "none" | "pending"): SharedStateFix
             throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
         }
       }
+      case "exec":
+        if (!args.includes("--commit-shared-state-transaction")) {
+          throw new Error("Unexpected Docker commit command");
+        }
+        events.push("commit:failed");
+        state = options.stateAfterCommitFailure ?? state;
+        return { status: 1, stderr: "commit helper failed" };
       default:
         throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
     }
@@ -98,6 +113,7 @@ function fixture(initialState: "committed" | "none" | "pending"): SharedStateFix
       dockerRun,
       dockerStop: vi.fn(() => {
         events.push("stop");
+        state = options.stateAfterStop ?? state;
         return { status: 0 };
       }),
     },
@@ -185,5 +201,77 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     expect(fake.deps.dockerRm).toHaveBeenCalledTimes(1);
     expect(fake.deps.dockerRm).toHaveBeenCalledWith(CONTAINER_ID, expect.any(Object));
     expect(fake.state()).toBe("none");
+  });
+
+  it("reuses one preserved pending receipt when commit validation fails", () => {
+    const fake = fixture("pending", { stateAfterCommitFailure: "none" });
+
+    const outcome = finalizeDockerManagedStartupSharedState(
+      {
+        retainContainerAfterRollback: true,
+        transaction: TRANSACTION,
+        supervisorReady: true,
+      },
+      fake.deps,
+    );
+
+    expect(outcome.supervisorReady).toBe(false);
+    expect(outcome.failure).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("commit helper failed"),
+      }),
+    );
+    const pendingSource = CONTAINER_ID + ":" + MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY;
+    const pendingCopies = fake.commands.filter(
+      (args) => args[0] === "cp" && args[2] === pendingSource,
+    );
+    expect(
+      fake.events.filter(
+        (event) =>
+          event ===
+          "copy:" + path.basename(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY) + ":present",
+      ),
+    ).toHaveLength(1);
+    const preservedReceiptPath = String(pendingCopies[0]?.[3] ?? "");
+    const rollbackCommand = fake.commands.find((args) =>
+      args.includes("--rollback-shared-state-transaction"),
+    );
+    expect(rollbackCommand).toContain(
+      "type=bind,src=" +
+        preservedReceiptPath +
+        ",dst=" +
+        MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY +
+        ",readonly",
+    );
+    expect(fake.deps.dockerRm).not.toHaveBeenCalled();
+  });
+
+  it("rejects rollback when a failed commit becomes durable during quiescence", () => {
+    const fake = fixture("pending", {
+      stateAfterCommitFailure: "none",
+      stateAfterStop: "committed",
+    });
+
+    expect(() =>
+      finalizeDockerManagedStartupSharedState(
+        { transaction: TRANSACTION, supervisorReady: true },
+        fake.deps,
+      ),
+    ).toThrow(/durably committed and cannot be rolled back/u);
+
+    expect(
+      fake.events.filter(
+        (event) =>
+          event ===
+          "copy:" + path.basename(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY) + ":present",
+      ),
+    ).toHaveLength(1);
+    expect(fake.events).toContain("commit:failed");
+    expect(fake.events).toContain("status:committed");
+    expect(fake.events).not.toContain("rollback");
+    expect(fake.commands.some((args) => args.includes("--rollback-shared-state-transaction"))).toBe(
+      false,
+    );
+    expect(fake.deps.dockerRm).not.toHaveBeenCalled();
   });
 });
