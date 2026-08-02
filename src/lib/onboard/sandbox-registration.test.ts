@@ -448,6 +448,12 @@ describe("selection", () => {
 describe("registerCreatedSandbox", () => {
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
+    const hostLocalInferenceReceipt = `${JSON.stringify({ schemaVersion: 1, providerId: "docker" })}\n`;
+    const registry = requireDist("../state/registry.js");
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "demo",
+      hostLocalInferenceReceipt,
+    });
 
     const input = {
       sandboxName: "demo",
@@ -487,6 +493,7 @@ describe("registerCreatedSandbox", () => {
     expect(entry.name).toBe("demo");
     expect(entry.openclawImagePluginInstalls).toEqual([]);
     expect(entry.workload).toEqual(input.workload);
+    expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
     expect(() =>
       registerCreatedSandbox({
         ...input,
@@ -494,6 +501,7 @@ describe("registerCreatedSandbox", () => {
       }),
     ).toThrow(/workload ownership receipt failed closed validation/u);
     expect(registerSandbox).toHaveBeenCalledTimes(1);
+    getSandbox.mockRestore();
   });
 
   it("fails before registry mutation for an unknown durable provider identity", () => {

@@ -2838,8 +2838,6 @@ async function createSandboxWithBaseImageResolution(
           agent,
           agentVersionKnown: !fromDockerfile,
           imageTag: resolvedImageTag,
-          hostLocalInferenceReceipt:
-            registry.getSandbox(sandboxName)?.hostLocalInferenceReceipt ?? null,
           openclawImagePluginInstalls,
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,

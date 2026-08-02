@@ -237,7 +237,16 @@ export function buildCreatedSandboxRegistryEntry(
 }
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
-  const entry = buildCreatedSandboxRegistryEntry(input);
+  const pendingHostLocalInferenceReceipt =
+    input.hostLocalInferenceReceipt !== undefined
+      ? input.hostLocalInferenceReceipt
+      : registry.getSandbox(input.sandboxName)?.hostLocalInferenceReceipt;
+  const entry = buildCreatedSandboxRegistryEntry({
+    ...input,
+    ...(pendingHostLocalInferenceReceipt === undefined
+      ? {}
+      : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
+  });
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
     input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
