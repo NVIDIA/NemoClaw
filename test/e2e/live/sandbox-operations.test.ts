@@ -82,14 +82,13 @@ async function assertConnectResourceLimits(host: HostCliClient): Promise<string>
     timeoutMs: 3 * 60_000,
   });
   const summary = resultText(connect);
-  if (connect.exitCode !== 0) {
-    const exit = connect.signal
-      ? `signal=${connect.signal}`
-      : `exit=${connect.exitCode ?? "unknown"}`;
-    throw new Error(
-      `nemoclaw connect resource-limit probe failed: ${exit}, timedOut=${String(connect.timedOut)}`,
-    );
-  }
+  const exit = connect.signal
+    ? `signal=${connect.signal}`
+    : `exit=${connect.exitCode ?? "unknown"}`;
+  expect(
+    connect.exitCode,
+    `nemoclaw connect resource-limit probe failed: ${exit}, timedOut=${String(connect.timedOut)}`,
+  ).toBe(0);
   expect(summary).toContain("__NEMOCLAW_RLIMIT_CONNECT_BEGIN__");
   expect(summary).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
   expect(
