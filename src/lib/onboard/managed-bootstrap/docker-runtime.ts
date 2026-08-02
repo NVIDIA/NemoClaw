@@ -31,6 +31,7 @@ import type {
   ManagedBootstrapRuntimeCreateLifecycleInput,
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "./runtime-create";
+import { createManagedBootstrapTerminalFinalizer } from "./runtime-create";
 
 type SupportedBootstrapSurface = Extract<
   RuntimeProviderBootstrapSurface,
@@ -191,7 +192,12 @@ function createDockerLifecycle(
         });
         throw new Error("Managed bootstrap did not return its OpenShell create receipt.");
       }
-      let finalized = false;
+      const finalizer = createManagedBootstrapTerminalFinalizer((outcome) =>
+        finalizeManagedBootstrapSequence(adapter, {
+          outcome,
+          transaction: activated,
+        }).then(() => undefined),
+      );
       patch.attachManagedBootstrapCutover({
         selectedMode: mode,
         failureContext: {
@@ -201,22 +207,8 @@ function createDockerLifecycle(
           backupContainerName: null,
           selectedMode: mode,
         },
-        async rollback() {
-          if (finalized) return;
-          await finalizeManagedBootstrapSequence(adapter, {
-            outcome: "rollback",
-            transaction: activated,
-          });
-          finalized = true;
-        },
-        async commit() {
-          if (finalized) return;
-          await finalizeManagedBootstrapSequence(adapter, {
-            outcome: "commit",
-            transaction: activated,
-          });
-          finalized = true;
-        },
+        rollback: finalizer.rollback,
+        commit: finalizer.commit,
       });
       return launched.value;
     },

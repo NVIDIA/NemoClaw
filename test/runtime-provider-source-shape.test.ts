@@ -169,8 +169,21 @@ describe("runtime provider central source boundary", () => {
       /(?:driverId|providerId)\s*(?:===|!==)\s*["'](?:docker|podman)["']/iu,
     );
     expect(bootstrapProtocol.join("\n")).not.toMatch(/\b(?:docker|podman|openshell|mxc)\b/iu);
-    expect(activationSources.join("\n")).not.toMatch(
-      /(?:from\s+["'][^"']*managed-bootstrap\/(?:docker|docker-journal|docker-runtime)|require\([^)]*managed-bootstrap)/u,
+    const activationWithoutAllowedProtocolImports = activationSources
+      .map((source) =>
+        source
+          .replace(
+            /import\s+(?:type\s+)?\{[^}]*\}\s+from\s+["'][^"']*managed-bootstrap\/(?:adapter|envelope)["'];?/gu,
+            "",
+          )
+          .replace(
+            /import\s+type\s+\{[^}]*\}\s+from\s+["'][^"']*managed-bootstrap\/runtime-create["'];?/gu,
+            "",
+          ),
+      )
+      .join("\n");
+    expect(activationWithoutAllowedProtocolImports).not.toMatch(
+      /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap|import\([^)]*managed-bootstrap)/u,
     );
     expect(dockerProvider).not.toMatch(
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,

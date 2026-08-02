@@ -62,7 +62,11 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
-  /** Dormant until a complete runtime bundle and durable authority store are selected. */
+  /**
+   * Intentional partial migration: dormant until epic #7744 supplies a complete
+   * runtime bundle, durable authority store, and protected all-agent E2E proof.
+   * https://github.com/NVIDIA/NemoClaw/issues/7744
+   */
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 

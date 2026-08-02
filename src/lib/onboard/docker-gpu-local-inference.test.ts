@@ -425,6 +425,27 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
   });
+
+  it("treats a failed commit as terminal without attempting rollback", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(async () => {
+        throw new Error("durable commit acknowledgement failed");
+      }),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    await expect(
+      verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        {
+          ...options(),
+          deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
+        },
+        runtimePatch,
+      ),
+    ).rejects.toThrow("durable commit acknowledgement failed");
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+  });
 });
 
 describe("printDockerGpuSandboxInferenceVerificationFailure", () => {
