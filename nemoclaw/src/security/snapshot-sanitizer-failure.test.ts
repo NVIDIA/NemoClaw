@@ -183,6 +183,64 @@ describe("migration snapshot sanitizer fallbacks", () => {
     ).toBe(true);
   });
 
+  it("decodes a maximum-size canonical helper payload without overflowing", () => {
+    const raw = "a".repeat(16 * 1024 * 1024);
+    const encoded = Buffer.from(raw, "utf-8").toString("base64");
+
+    expect(decodeDescriptorSnapshotContent(encoded)).toBe(raw);
+  });
+
+  it("rejects large malformed and oversized helper payloads without overflowing", () => {
+    const largeCanonical = Buffer.alloc(4 * 1024 * 1024, 0x61).toString("base64");
+    const malformed = `${largeCanonical.slice(0, -4)}AA=A`;
+    const oversized = Buffer.alloc(16 * 1024 * 1024 + 1, 0x61).toString("base64");
+
+    expect(decodeDescriptorSnapshotContent(malformed)).toBeNull();
+    expect(decodeDescriptorSnapshotContent(oversized)).toBeNull();
+  });
+
+  it("preserves canonical base64 and UTF-8 boundary rules", () => {
+    expect(decodeDescriptorSnapshotContent("")).toBe("");
+    expect(decodeDescriptorSnapshotContent("Zg==")).toBe("f");
+    expect(decodeDescriptorSnapshotContent("Zm8=")).toBe("fo");
+    expect(decodeDescriptorSnapshotContent("Zm9v")).toBe("foo");
+    expect(decodeDescriptorSnapshotContent("aGVsbG8=")).toBe("hello");
+    for (const rejected of [
+      "A",
+      "AAAAA",
+      "AA=A",
+      "A===",
+      "====",
+      "YWJj=",
+      "AB==",
+      "AAB=",
+      "/w==",
+      "YWJj\n",
+    ]) {
+      expect(decodeDescriptorSnapshotContent(rejected)).toBeNull();
+    }
+  });
+
+  it("rejects non-canonical base64 at the descriptor apply boundary", () => {
+    const rootPath = makeRoot();
+    const configPath = path.join(rootPath, "config.json");
+    writeFileSync(configPath, "original");
+    const root = inspectDescriptorSnapshotRoot(rootPath)!;
+    const scan = scanDescriptorSnapshot(root, new Set())!;
+    const config = scan.files.find((file) => file.path === "config.json")!;
+
+    expect(scan).not.toBeNull();
+    expect(config).toBeDefined();
+    for (const content of ["AB==", "AAB="]) {
+      expect(
+        applyDescriptorSnapshotActions(root, scan, [
+          { kind: "replace", path: config.path, metadata: config.metadata, content },
+        ]),
+      ).toBe(false);
+      expect(readFileSync(configPath, "utf-8")).toBe("original");
+    }
+  });
+
   it("fails closed when sanitized output cannot be installed", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
