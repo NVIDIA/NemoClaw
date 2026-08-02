@@ -37,7 +37,7 @@ const FIXED_ROOT_ENV = [
 export interface ManagedImageDirectE2eInputs {
   readonly agent: ManagedStartupAgent;
   readonly image: string;
-  readonly platform: "linux/amd64";
+  readonly platform: "linux/amd64" | "linux/arm64";
 }
 
 interface CommandResult {
@@ -72,7 +72,9 @@ export function parseManagedImageDirectE2eInputs(
   const platform = requiredArgument(argv, "--platform");
   const knownFlags = new Set(["--agent", "--image", "--platform"]);
   if (argv.length !== 6 || argv.some((value, index) => index % 2 === 0 && !knownFlags.has(value))) {
-    throw new Error("usage: --agent <agent> --image <immutable> --platform linux/amd64");
+    throw new Error(
+      "usage: --agent <agent> --image <immutable> --platform <linux/amd64|linux/arm64>",
+    );
   }
   if (!(MANAGED_STARTUP_AGENTS as readonly string[]).includes(agent)) {
     throw new Error("--agent must identify a shipped managed-image agent");
@@ -80,8 +82,8 @@ export function parseManagedImageDirectE2eInputs(
   if (!IMMUTABLE_REFERENCE_RE.test(image)) {
     throw new Error("--image must be an immutable image ID or digest reference");
   }
-  if (platform !== "linux/amd64") {
-    throw new Error("--platform must be linux/amd64");
+  if (platform !== "linux/amd64" && platform !== "linux/arm64") {
+    throw new Error("--platform must be linux/amd64 or linux/arm64");
   }
   return { agent: agent as ManagedStartupAgent, image, platform };
 }
