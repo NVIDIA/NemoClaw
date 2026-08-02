@@ -15,7 +15,9 @@ const PRE_ROLLBACK: DockerGpuPatchFailureClassification = {
   kind: "patched_container_failed",
   headline: "Patched GPU container exited with code 127 (--gpus all).",
   summaryLines: ["patched_container_exit_code=127"],
-  hints: ["Exit code 127 means the sandbox image does not provide the managed startup command."],
+  hints: [
+    "Container logs show that the sandbox image does not provide the NemoClaw-managed `nemoclaw-start` command.",
+  ],
 };
 
 /**
@@ -46,9 +48,9 @@ function printAndCapture(deps: Parameters<typeof printDockerGpuPatchFailureAndEx
 }
 
 describe("Docker GPU patch failure reporting (#7996)", () => {
-  it("prefers the pre-rollback verdict once rollback has erased the container", () => {
-    // Rollback already removed the replacement container, so a fresh inspect
-    // returns nothing and the sandbox only shows a generic Error phase.
+  it("prefers the pre-rollback verdict when fresh inspection cannot find the replacement", () => {
+    // Fresh inspection returns nothing after rollback, and the sandbox only
+    // shows a generic Error phase.
     const stderr = printAndCapture({
       runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
       dockerCapture: vi.fn(() => ""),
@@ -56,22 +58,27 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
         sandboxName: "alpha",
         newContainerId: "new-container-id",
         selectedMode: buildDockerGpuMode("gpus"),
+        rolledBack: true,
       },
       preRollbackClassification: PRE_ROLLBACK,
     });
 
     expect(stderr).toContain("Patched GPU container exited with code 127");
     expect(stderr).toContain("patched_container_exit_code=127");
-    expect(stderr).toContain("does not provide the managed startup command");
+    expect(stderr).toContain("does not provide the NemoClaw-managed `nemoclaw-start` command");
     expect(stderr).not.toContain("entered Error phase");
+    expect(stderr).toContain("The pre-patch sandbox container was restored and started");
+    expect(stderr).not.toContain("replacement was removed");
+    expect(stderr).not.toContain("left in place for inspection");
+    expect(stderr).not.toContain("openshell sandbox delete");
   });
 
-  it("keeps the freshly observed verdict when the container is still inspectable", () => {
+  it("keeps the fresh verdict when an inspectable replacement container is running", () => {
     // The live snapshot has first-hand evidence, so a stale pre-rollback
     // verdict must not overwrite it.
     const stderr = printAndCapture({
       runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
-      dockerCapture: vi.fn(() => JSON.stringify({ Status: "exited", ExitCode: 125 })),
+      dockerCapture: vi.fn(() => JSON.stringify({ Status: "running", Running: true, ExitCode: 0 })),
       context: {
         sandboxName: "alpha",
         newContainerId: "new-container-id",
@@ -80,7 +87,7 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
       preRollbackClassification: PRE_ROLLBACK,
     });
 
-    expect(stderr).toContain("Patched GPU container exited with code 125");
+    expect(stderr).toContain("OpenShell sandbox entered Error phase");
     expect(stderr).not.toContain("code 127");
   });
 

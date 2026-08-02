@@ -99,15 +99,22 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     );
 
     try {
-      const diagnostics = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
+      const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
         dockerCapture,
         dockerLogs,
         homedir: () => tmpDir,
         now: () => new Date("2026-07-01T23:00:00Z"),
         runCaptureOpenshell,
       });
+      const diagnostics = captured?.diagnostics;
 
       expect(diagnostics?.dir).toBeTruthy();
+      const summary = fs.readFileSync(path.join(diagnostics?.dir ?? "", "summary.txt"), "utf-8");
+      expect(diagnostics?.cleanupCommands).toEqual([]);
+      expect(summary).toContain("rolled_back=pending");
+      expect(summary).toContain("cleanup_disposition=pending_rollback");
+      expect(summary).toContain("cleanup_required=unknown");
+      expect(summary).not.toContain("openshell sandbox delete");
       expect(
         fs.readFileSync(path.join(diagnostics?.dir ?? "", "docker-top.txt"), "utf-8"),
       ).toContain("nemoclaw-start");
@@ -133,6 +140,10 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
       expect(diagnosticContents).not.toContain(secretCanary);
       expect(diagnosticContents).not.toContain(discoveredSecretCanary);
       expect(diagnosticContents).not.toContain("untrusted.secret");
+      const returnedClassification = JSON.stringify(captured?.classification);
+      expect(returnedClassification).not.toContain(secretCanary);
+      expect(returnedClassification).not.toContain(discoveredSecretCanary);
+      expect(returnedClassification).toContain("<REDACTED>");
       const fullInspectCalls = dockerCapture.mock.calls
         .map(([args], index) => ({ args, order: dockerCapture.mock.invocationCallOrder[index] }))
         .filter(({ args }) => args[0] === "inspect" && args[1] !== "--format");
@@ -166,6 +177,60 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("retains exit code 127 without assigning a cause when the bundle cannot be created (#7996)", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) =>
+      args.join(" ") === "inspect --format {{json .State}} new-container-id"
+        ? JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 })
+        : "",
+    );
+    const runCaptureOpenshell = vi.fn((args: string[]) => {
+      if (args[0] !== "sandbox") return "";
+      if (args[1] === "get") return "Phase: Error\n";
+      return args[1] === "list" ? "alpha  Error\n" : "";
+    });
+
+    const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
+      dockerCapture,
+      dockerLogs: vi.fn(() => "nemoclaw-start: child process returned status 127\n"),
+      homedir: () => "relative-home",
+      runCaptureOpenshell,
+    });
+
+    expect(captured?.diagnostics).toBeNull();
+    expect(captured?.classification).toMatchObject({
+      kind: "patched_container_failed",
+      headline: expect.stringContaining("exited with code 127"),
+      summaryLines: expect.arrayContaining(["patched_container_exit_code=127"]),
+    });
+    expect(captured?.classification.hints ?? []).toEqual([]);
+  });
+
+  it("adds missing-startup guidance only for the exact captured env error (#7996)", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) =>
+      args.join(" ") === "inspect --format {{json .State}} new-container-id"
+        ? JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 })
+        : "",
+    );
+    const runCaptureOpenshell = vi.fn((args: string[]) => {
+      if (args[0] !== "sandbox") return "";
+      if (args[1] === "get") return "Phase: Error\n";
+      return args[1] === "list" ? "alpha  Error\n" : "";
+    });
+
+    const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
+      dockerCapture,
+      dockerLogs: vi.fn(
+        () => "/usr/bin/env: \u2018nemoclaw-start\u2019: No such file or directory\n",
+      ),
+      homedir: () => "relative-home",
+      runCaptureOpenshell,
+    });
+
+    expect(captured?.classification.hints).toEqual(
+      expect.arrayContaining([expect.stringContaining("NemoClaw-managed `nemoclaw-start`")]),
+    );
   });
 
   it("redacts snapshot values when the shared capture budget expires before collector inspect", () => {
@@ -203,7 +268,7 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     ]);
 
     try {
-      const diagnostics = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
+      const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
         dockerCapture: vi.fn(
           (args: readonly string[]) => dockerResponses.get(args.join(" ")) ?? "",
         ),
@@ -214,6 +279,7 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
           (args: string[]) => openshellResponses.get(`${args[0] ?? ""} ${args[1] ?? ""}`) ?? "",
         ),
       });
+      const diagnostics = captured?.diagnostics;
 
       const summary = fs.readFileSync(path.join(diagnostics?.dir ?? "", "summary.txt"), "utf8");
       const state = fs.readFileSync(

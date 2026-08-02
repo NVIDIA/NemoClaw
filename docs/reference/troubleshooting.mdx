@@ -595,10 +595,17 @@ For the version-pinned plugin workflow, refer to [Install OpenClaw Plugins](../m
 
 If the sandbox is unreachable or the managed runtime paths are present, NemoClaw retains the existing generic gateway-log and host OpenShell-log guidance because the base-only failure is not proven.
 
-A custom image without the managed runtime can also fail earlier, while NemoClaw is still bringing the sandbox container up.
-The container exits immediately on every restart because its startup command does not exist in the image, the OpenShell supervisor never reconnects, and onboarding stops before deployment verification runs.
-In that case the failure block reports that the container exited with code 127 and names the same remedy; the `Pre-rollback diagnostics saved:` directory holds the container log that shows the missing startup command.
-Onboarding restores the pre-patch sandbox before it exits, so the failed container is no longer available for `docker logs` afterwards.
+A custom image without the managed runtime can fail while NemoClaw starts the sandbox container.
+NemoClaw reports exit code 127 without assigning a cause unless captured logs contain the exact `env` error for missing `nemoclaw-start`.
+When that error is present, the failure output identifies the missing managed startup command and gives the same rebuild guidance.
+If NemoClaw saves pre-rollback diagnostics, the reported directory contains the captured container logs.
+If rollback succeeds, NemoClaw restores and starts the pre-patch sandbox container.
+It does not print a sandbox deletion command for the restored sandbox.
+If the failed replacement container remains, NemoClaw prints an exact-container Docker cleanup command.
+If NemoClaw cannot confirm whether the replacement remains, it reports cleanup as unknown and prints no deletion command.
+If rollback fails, sandbox and container state can be uncertain.
+If NemoClaw reports a diagnostics directory, inspect it.
+Verify the container state before you use any printed cleanup command.
 
 </AgentOnly>
 

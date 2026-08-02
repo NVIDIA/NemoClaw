@@ -82,6 +82,9 @@ export type DockerGpuPatchFailureContext = {
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
   rolledBack?: boolean;
+  replacementStopConfirmed?: boolean;
+  replacementRemovalConfirmed?: boolean;
+  replacementPresence?: "absent" | "present" | "unknown";
 };
 
 export type DockerGpuPatchResult = {
@@ -125,6 +128,7 @@ export type DockerGpuCloneRunOptions = {
 export type DockerGpuPatchDiagnostics = {
   dir: string;
   cleanupCommands: string[];
+  cleanupDisposition: "manual" | "not_required" | "pending_rollback" | "unknown";
   summaryLines: string[];
 };
 
@@ -174,8 +178,8 @@ export type DockerGpuPatchFailureClassification = {
   headline: string;
   summaryLines: string[];
   /**
-   * Prose guidance for failure signatures whose cause is unambiguous from the
-   * container state alone. Kept separate from `summaryLines` so the on-disk
+   * Prose guidance for failure signatures whose cause is supported by an
+   * exact runtime signal. Kept separate from `summaryLines` so the on-disk
    * summary stays machine-readable `key=value` (#7996).
    */
   hints?: string[];

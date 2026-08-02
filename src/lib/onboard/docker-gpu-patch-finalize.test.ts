@@ -46,7 +46,13 @@ describe("finalizeDockerGpuPatchBackup", () => {
       { result: deferredCreateResult(), supervisorReady: false },
       { dockerStop, dockerRm, dockerRename, dockerStart },
     );
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: true });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: true,
+      replacementPresence: "absent",
+    });
     expect(dockerStop).toHaveBeenCalledWith(
       "new-container-id",
       expect.objectContaining({ ignoreError: true }),
@@ -77,7 +83,13 @@ describe("finalizeDockerGpuPatchBackup", () => {
       { result: deferredCreateResult(), supervisorReady: false },
       { dockerStop, dockerRm, dockerRename, dockerStart },
     );
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: true,
+      replacementPresence: "absent",
+    });
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
@@ -92,7 +104,13 @@ describe("finalizeDockerGpuPatchBackup", () => {
       },
     );
 
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: true,
+      replacementPresence: "absent",
+    });
   });
 
   it("is a no-op when the backup was already removed by the patch helper", () => {
@@ -128,6 +146,56 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
   });
 
+  it("records a remaining exact-ID replacement when removal fails (#7996)", () => {
+    const newContainerId = "a".repeat(64);
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId },
+        supervisorReady: false,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 1 })),
+        dockerRun: vi.fn(() => ({ status: 0, stdout: `${newContainerId}\n` })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: false,
+      replacementPresence: "present",
+    });
+  });
+
+  it("records confirmed absence when exact-ID removal reports failure but listing is empty (#7996)", () => {
+    const newContainerId = "b".repeat(64);
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId },
+        supervisorReady: false,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 1 })),
+        dockerRun: vi.fn(() => ({ status: 0, stdout: "" })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: false,
+      replacementPresence: "absent",
+    });
+  });
+
   it("stops rollback before start when rename has no exit status", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
@@ -139,7 +207,13 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart,
       },
     );
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: true,
+      replacementPresence: "absent",
+    });
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
@@ -153,6 +227,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart: vi.fn(() => ({ status: null })),
       },
     );
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStopConfirmed: true,
+      replacementRemovalConfirmed: true,
+      replacementPresence: "absent",
+    });
   });
 });

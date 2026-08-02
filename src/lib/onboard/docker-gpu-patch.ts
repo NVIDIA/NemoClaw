@@ -101,8 +101,31 @@ export {
   waitForOpenShellSupervisorReconnect,
 };
 
-function printDockerGpuPatchCleanup(sandboxName: string): void {
-  console.error("  The failed sandbox/container has been left in place for inspection.");
+function printDockerGpuPatchCleanup(
+  sandboxName: string,
+  context: DockerGpuPatchFailureContext | null,
+  diagnostics: ReturnType<typeof collectDockerGpuPatchDiagnostics>,
+): void {
+  if (context?.rolledBack === true) {
+    console.error("  The pre-patch sandbox container was restored and started.");
+    if (diagnostics?.cleanupDisposition === "manual") {
+      console.error("  The failed replacement container is still present.");
+      console.error("  Manual cleanup:");
+      for (const command of diagnostics.cleanupCommands) console.error(`    ${command}`);
+    } else if (
+      !diagnostics ||
+      diagnostics.cleanupDisposition === "unknown" ||
+      diagnostics.cleanupDisposition === "pending_rollback"
+    ) {
+      console.error(
+        "  Replacement container cleanup could not be confirmed. Inspect the diagnostics before removing any container.",
+      );
+    }
+    return;
+  }
+  console.error(
+    "  The failed sandbox and container state is uncertain. Inspect it before cleanup.",
+  );
   console.error("  Manual cleanup:");
   for (const command of dockerGpuPatchCleanupCommands(sandboxName)) {
     console.error(`    ${command}`);
@@ -180,11 +203,11 @@ export function printDockerGpuPatchFailureAndExit(
     additionalSummaryLines?: readonly string[];
     /**
      * Classification captured while the replacement container still existed.
-     * Rollback removes that container before this printer runs, so a fresh
-     * snapshot can no longer read its exit state (#7996).
+     * The failure path cannot rely on that replacement remaining inspectable
+     * after rollback, so a fresh snapshot can lose its exit state (#7996).
      */
     preRollbackClassification?: DockerGpuPatchFailureClassification | null;
-  },
+  } & Pick<DockerGpuPatchDeps, "dockerLogs" | "homedir" | "now">,
 ): never {
   const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
   const selectedMode = deps.selectedMode || context?.selectedMode || null;
@@ -194,15 +217,12 @@ export function printDockerGpuPatchFailureAndExit(
     { patchedContainerId: patchedContainerIdFromContext(context) },
     inspectDeps,
   );
-  // Rollback deletes the replacement container before we get here, so this
-  // snapshot degrades to the weaker `sandbox_error_phase` story ("entered Error
-  // phase") even when the pre-rollback capture already proved *why* the
-  // container died. Prefer the earlier, strictly better-evidenced verdict; it
-  // is the only one that can carry the exit code and its hints (#7996).
+  // Prefer the earlier verdict only when the fresh snapshot cannot inspect the
+  // replacement container after rollback (#7996).
   const observedClassification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const classification =
     deps.preRollbackClassification?.kind === "patched_container_failed" &&
-    observedClassification.kind !== "patched_container_failed"
+    snapshot.patchedContainerState === null
       ? deps.preRollbackClassification
       : observedClassification;
   const diagnostics = collectDockerGpuPatchDiagnostics(
@@ -215,7 +235,7 @@ export function printDockerGpuPatchFailureAndExit(
       classification,
       additionalSummaryLines: deps.additionalSummaryLines,
     },
-    inspectDeps,
+    deps,
   );
   const errorMessage =
     error instanceof Error && error.message
@@ -238,7 +258,7 @@ export function printDockerGpuPatchFailureAndExit(
   console.error(
     "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
   );
-  printDockerGpuPatchCleanup(sandboxName);
+  printDockerGpuPatchCleanup(sandboxName, context, diagnostics);
   process.exit(1);
 }
 
@@ -273,7 +293,7 @@ export function printDockerGpuReadinessFailure(
   if (diagnostics) {
     console.error(`  Docker GPU diagnostics saved: ${diagnostics.dir}`);
   }
-  printDockerGpuPatchCleanup(sandboxName);
+  printDockerGpuPatchCleanup(sandboxName, context, diagnostics);
 }
 
 export function printDockerGpuProofFailure(
@@ -311,7 +331,7 @@ export function printDockerGpuProofFailure(
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
-  printDockerGpuPatchCleanup(sandboxName);
+  printDockerGpuPatchCleanup(sandboxName, context, diagnostics);
 }
 
 const SANDBOX_FAILURE_PHASE_TOKENS = new Set(["Error", "Failed", "CrashLoopBackOff"]);
@@ -436,17 +456,13 @@ export function captureDockerGpuPatchSandboxSnapshot(
   return { sandboxPhase, sandboxListLine, patchedContainerState };
 }
 
-// The sandbox entrypoint launches the managed startup command through `env`,
-// which exits 127 when that command does not exist in the image. For a sandbox
-// container the signature is therefore unambiguous: the image does not carry
-// the NemoClaw-managed runtime, so every restart dies before the supervisor can
-// reconnect. Nothing about the Docker GPU/startup-command patch itself is
-// broken, so the generic patch escape hatches do not apply here (#7996).
+// Exit code 127 alone is ambiguous because `env` propagates a child process's
+// status. Missing-startup guidance therefore requires a separate exact signal
+// from the replacement container's captured logs (#7996).
 const SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE = 127;
 const SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS: readonly string[] = [
-  "Exit code 127 means the sandbox image does not provide the NemoClaw-managed startup command, so the container exits on every restart.",
-  "`nemoclaw onboard --from` uses the supplied Dockerfile as the complete sandbox image; it does not layer it over the managed runtime.",
-  "Rebuild the custom image from the full NemoClaw Dockerfile and source context for the same release. `ghcr.io/nvidia/nemoclaw/sandbox-base` is an intermediate dependency image and is not a usable final image on its own.",
+  "Container logs show that the sandbox image does not provide the NemoClaw-managed `nemoclaw-start` command.",
+  "Rebuild the sandbox image from the complete Dockerfile and source context for the selected agent and NemoClaw release.",
 ];
 
 function describePatchedContainerState(state: DockerContainerState | null): string[] {
@@ -491,7 +507,7 @@ function patchedContainerLooksFailed(state: DockerContainerState | null): boolea
 export function classifyDockerGpuPatchFailure(
   snapshot: DockerGpuPatchSandboxSnapshot,
   selectedMode: DockerGpuPatchMode | null,
-  options: { proofError?: unknown } = {},
+  options: { proofError?: unknown; managedStartupCommandMissing?: boolean } = {},
 ): DockerGpuPatchFailureClassification {
   const lines: string[] = [];
   if (snapshot.sandboxPhase) lines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
@@ -515,7 +531,10 @@ export function classifyDockerGpuPatchFailure(
       typeof exit === "number" && exit !== 0
         ? `Patched GPU container exited with code ${exit}${opt}.`
         : `Patched GPU container is not running${opt}.`;
-    if (exit === SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE) {
+    if (
+      exit === SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE &&
+      options.managedStartupCommandMissing === true
+    ) {
       hints.push(...SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS);
     }
   } else if (sandboxInErrorPhase) {

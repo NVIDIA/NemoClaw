@@ -43,7 +43,18 @@ export {
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
-  "runOpenshell" | "runCaptureOpenshell" | "sleep" | "dockerCapture"
+  | "runOpenshell"
+  | "runCaptureOpenshell"
+  | "sleep"
+  | "dockerCapture"
+  | "dockerRun"
+  | "dockerStop"
+  | "dockerRm"
+  | "dockerRename"
+  | "dockerStart"
+  | "dockerLogs"
+  | "homedir"
+  | "now"
 >;
 
 type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
@@ -136,6 +147,13 @@ export function createDockerGpuSandboxCreatePatch(
     options.overrides?.capturePreRollbackDiagnostics ?? captureDockerGpuPreRollbackDiagnostics;
   const onPatchFailureExit =
     options.overrides?.onPatchFailureExit ?? printDockerGpuPatchFailureAndExit;
+  const failureDiagnosticDeps = {
+    runCaptureOpenshell: options.deps.runCaptureOpenshell,
+    dockerCapture: options.deps.dockerCapture,
+    dockerLogs: options.deps.dockerLogs,
+    homedir: options.deps.homedir,
+    now: options.deps.now,
+  };
 
   const applyOptions = {
     sandboxName: options.sandboxName,
@@ -187,8 +205,7 @@ export function createDockerGpuSandboxCreatePatch(
     exitOnPatchError() {
       if (!patchError) return;
       onPatchFailureExit(options.sandboxName, patchError, {
-        runCaptureOpenshell: options.deps.runCaptureOpenshell,
-        dockerCapture: options.deps.dockerCapture,
+        ...failureDiagnosticDeps,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
       });
     },
@@ -202,8 +219,7 @@ export function createDockerGpuSandboxCreatePatch(
         console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
       } catch (error) {
         onPatchFailureExit(options.sandboxName, error, {
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
-          dockerCapture: options.deps.dockerCapture,
+          ...failureDiagnosticDeps,
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
         });
       }
@@ -232,9 +248,8 @@ export function createDockerGpuSandboxCreatePatch(
       );
       // Keep the pre-rollback verdict: it is computed while the replacement
       // container is still inspectable, so it is the only classification that
-      // can name the exit code. Rollback removes that container a few lines
-      // below, after which the failure printer can only observe the restored
-      // pre-patch sandbox (#7996).
+      // can name the exit code. The failure printer cannot rely on that
+      // replacement remaining inspectable after rollback (#7996).
       let preRollbackClassification: DockerGpuPatchFailureClassification | null = null;
       if (!supervisorReady && result) {
         try {
@@ -257,8 +272,7 @@ export function createDockerGpuSandboxCreatePatch(
               "OpenShell supervisor reconnected, but the recreated backup container could not be removed.",
             ),
             {
-              runCaptureOpenshell: options.deps.runCaptureOpenshell,
-              dockerCapture: options.deps.dockerCapture,
+              ...failureDiagnosticDeps,
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
               context: {
                 sandboxName: options.sandboxName,
@@ -284,6 +298,9 @@ export function createDockerGpuSandboxCreatePatch(
       onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
+        dockerLogs: options.deps.dockerLogs,
+        homedir: options.deps.homedir,
+        now: options.deps.now,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
         preRollbackClassification,
         context: {
@@ -293,6 +310,9 @@ export function createDockerGpuSandboxCreatePatch(
           backupContainerName: result?.backupContainerName,
           selectedMode: result?.mode ?? null,
           rolledBack: finalizeOutcome?.rolledBack ?? false,
+          replacementStopConfirmed: finalizeOutcome?.replacementStopConfirmed,
+          replacementRemovalConfirmed: finalizeOutcome?.replacementRemovalConfirmed,
+          replacementPresence: finalizeOutcome?.replacementPresence,
         },
       });
     },
