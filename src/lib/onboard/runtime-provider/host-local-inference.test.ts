@@ -41,6 +41,7 @@ function receipt(service: "ollama" | "nim" | "vllm" = "vllm"): HostLocalInferenc
             runtimeId: "mxc-runtime:alpha",
             name: `nemoclaw-${service}-alpha`,
             imageRef: `nvcr.io/nvidia/${service}@sha256:${"c".repeat(64)}`,
+            probeImageRef: `quay.io/curl/curl@sha256:${"e".repeat(64)}`,
             specSha256: "d".repeat(64),
             gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
           },

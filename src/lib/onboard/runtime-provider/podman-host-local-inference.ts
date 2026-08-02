@@ -16,6 +16,7 @@ import {
   type HostLocalInferenceRouteAuthority,
   type HostLocalInferenceRouteAuthorityStore,
   type HostLocalInferenceRuntime,
+  type HostLocalInferenceService,
   type HostLocalManagedInferenceInput,
   type HostLocalManagedInferenceInspection,
   normalizeHostLocalInferenceImageRef,
@@ -209,6 +210,7 @@ function managedAuthorityDigest(input: {
   readonly endpoint: HostLocalInferenceEndpointAuthority;
   readonly name: string;
   readonly imageRef: string;
+  readonly probeImageRef: string;
   readonly specSha256: string;
   readonly gpuDevices: readonly string[];
 }): string {
@@ -218,6 +220,7 @@ function managedAuthorityDigest(input: {
     endpoint: input.endpoint,
     name: input.name,
     imageRef: input.imageRef,
+    probeImageRef: input.probeImageRef,
     specSha256: input.specSha256,
     gpu: { vendor: "nvidia", devices: input.gpuDevices },
   });
@@ -230,6 +233,7 @@ function managedSpecAuthorityDigest(spec: ManagedSpec): string {
     endpoint: spec.endpoint,
     name: spec.containerName,
     imageRef: spec.imageRef,
+    probeImageRef: spec.probeImageRef,
     specSha256: spec.specSha256,
     gpuDevices: spec.gpuDevices,
   });
@@ -245,9 +249,17 @@ function managedReceiptAuthorityDigest(receipt: HostLocalInferenceReceipt): stri
     endpoint: receipt.endpoint,
     name: receipt.runtime.name,
     imageRef: receipt.runtime.imageRef,
+    probeImageRef: receipt.runtime.probeImageRef,
     specSha256: receipt.runtime.specSha256,
     gpuDevices: receipt.runtime.gpu.devices,
   });
+}
+
+function requireManagedService(service: HostLocalInferenceService): "nim" | "vllm" {
+  if (service === "ollama") {
+    throw new Error("Podman managed inference requires a container service.");
+  }
+  return service;
 }
 
 function ollamaRouteAuthority(
@@ -449,6 +461,7 @@ function receiptFor(
       runtimeId,
       name: spec.containerName,
       imageRef: spec.imageRef,
+      probeImageRef: spec.probeImageRef,
       specSha256: spec.specSha256,
       gpu: { vendor: "nvidia", devices: spec.gpuDevices },
     },
@@ -518,7 +531,10 @@ function probeOllama(
   requireSuccess("Ollama network probe", result);
 }
 
-function probeManagedInference(engine: ContainerEngine, spec: ManagedSpec): void {
+function probeManagedInference(
+  engine: ContainerEngine,
+  spec: Pick<ManagedSpec, "endpoint" | "probeImageRef" | "service">,
+): void {
   const healthPath = spec.service === "nim" ? "/v1/health/ready" : "/health";
   const result = engine.capture(
     [
@@ -749,7 +765,12 @@ export function createPodmanHostLocalInferenceRuntime(
       if (normalized.runtime.kind === "host") {
         probeOllama(engine, normalized.endpoint, normalized.runtime.probeImageRef);
       } else {
-        inspectReceipt(normalized);
+        const inspected = inspectReceipt(normalized);
+        probeManagedInference(engine, {
+          endpoint: inspected.receipt.endpoint,
+          probeImageRef: inspected.receipt.runtime.probeImageRef,
+          service: requireManagedService(inspected.receipt.service),
+        });
       }
       return normalized;
     },

@@ -53,6 +53,8 @@ export type HostLocalInferenceRuntimeAuthority =
       readonly runtimeId: string;
       readonly name: string;
       readonly imageRef: string;
+      /** Immutable utility image used to re-prove service readiness from the runtime network. */
+      readonly probeImageRef: string;
       /** Secret-free digest of the complete provider-owned container specification. */
       readonly specSha256: string;
       readonly gpu: {
@@ -193,7 +195,7 @@ function normalizeRuntime(
   if (runtime.kind !== "container") fail("runtime kind is unsupported");
   exactKeys(
     runtime,
-    ["gpu", "imageRef", "kind", "name", "runtimeId", "specSha256"],
+    ["gpu", "imageRef", "kind", "name", "probeImageRef", "runtimeId", "specSha256"],
     "container authority",
   );
   if (service === "ollama") fail("Ollama must use host-process authority");
@@ -209,6 +211,7 @@ function normalizeRuntime(
     runtimeId: exactText(runtime.runtimeId, RUNTIME_ID, "runtime identity"),
     name: exactText(runtime.name, SAFE_NAME, "runtime name"),
     imageRef: normalizeHostLocalInferenceImageRef(runtime.imageRef),
+    probeImageRef: normalizeHostLocalInferenceImageRef(runtime.probeImageRef),
     specSha256: exactText(runtime.specSha256, SHA256, "runtime specification digest"),
     gpu: Object.freeze({ vendor: "nvidia" as const, devices: Object.freeze(devices) }),
   });
