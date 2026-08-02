@@ -63,8 +63,10 @@ export interface SandboxCreateLaunchInput {
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
   /**
-   * Intentional partial migration: dormant until epic #7744 supplies a complete
-   * runtime bundle, durable authority store, and protected all-agent E2E proof.
+   * Intentional partial migration: remains unset until production selects a
+   * complete runtime bundle with supported bootstrap after epic #7744's durable
+   * lifecycle, recovery, and rollback gates plus exact-head/base protected
+   * all-agent amd64/arm64, GPU/local-inference, and regression matrix pass.
    * https://github.com/NVIDIA/NemoClaw/issues/7744
    */
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
