@@ -34,8 +34,8 @@ function loadUnfinished(
 ): readonly DockerManagedBootstrapJournal[] {
   return store.listUnfinishedIdentities().map((identity) => {
     const record = store.load(identity);
-    if (!record) throw new Error(`enumerated journal ${identity} disappeared`);
-    return record;
+    expect(record, `enumerated journal ${identity} must remain loadable`).not.toBeNull();
+    return record as DockerManagedBootstrapJournal;
   });
 }
 const journal = Object.freeze({

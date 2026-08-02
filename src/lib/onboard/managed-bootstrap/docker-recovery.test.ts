@@ -374,14 +374,16 @@ describe("Docker managed bootstrap restart recovery", () => {
 
     const badIdentity = "0".repeat(64);
     const delegate = fake.deps.journalStore as DockerManagedBootstrapJournalStore;
+    const failUnreadableRecord = (): never => {
+      throw new Error(`${"💥".repeat(3000)}\0tail`);
+    };
     const mixedStore: DockerManagedBootstrapJournalStore = {
       ...delegate,
       listUnfinishedIdentities: () => [badIdentity, IDENTITY],
       load(bootstrapIdentity) {
-        if (bootstrapIdentity === badIdentity) {
-          throw new Error(`${"💥".repeat(3000)}\0tail`);
-        }
-        return delegate.load(bootstrapIdentity);
+        return bootstrapIdentity === badIdentity
+          ? failUnreadableRecord()
+          : delegate.load(bootstrapIdentity);
       },
     };
     const adapter = createDockerManagedBootstrapAdapter({ ...fake.deps, journalStore: mixedStore });
