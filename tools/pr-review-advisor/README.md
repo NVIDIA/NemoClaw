@@ -124,6 +124,17 @@ Each match selects these focused E2E jobs:
 - `issue-4462-scope-upgrade-approval`.
 - `openclaw-inference-switch`.
 
+The same risk plan maps these Hermes CLI adapter paths to `focused-e2e`:
+
+- `agents/hermes/hermes-cli-adapter-v1.json`.
+- `agents/hermes/hermes-wrapper.py`.
+- `agents/hermes/validate-cli-adapter.py`.
+
+Each Hermes CLI adapter match selects these focused E2E jobs:
+
+- `channels-stop-start`.
+- `mcp-bridge`.
+
 ## Required secret
 
 Configure this repository secret for review analysis:
