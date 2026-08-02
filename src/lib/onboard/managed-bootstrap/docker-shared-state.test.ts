@@ -46,36 +46,50 @@ function fixture(initialState: "committed" | "none" | "pending"): SharedStateFix
   let state = initialState;
   const commands: string[][] = [];
   const events: string[] = [];
+  const copyPresentReceipt = (destination: string) => {
+    fs.mkdirSync(destination, { recursive: true });
+    copiedReceiptPaths.push(destination);
+    return { status: 0 };
+  };
+  const copyMissingReceipt = (sourcePath: string) => ({
+    status: 1,
+    stderr: `Error response from daemon: Could not find the file ${sourcePath} in container ${CONTAINER_ID}`,
+  });
   const dockerRun = vi.fn((args: readonly string[]) => {
     commands.push([...args]);
-    if (args[0] === "cp") {
-      const source = String(args[2] ?? "");
-      const destination = String(args[3] ?? "");
-      const sourcePath = source.slice(`${CONTAINER_ID}:`.length);
-      const present =
-        (sourcePath === MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY && state === "committed") ||
-        (sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY && state === "pending");
-      events.push(`copy:${path.basename(sourcePath)}:${present ? "present" : "absent"}`);
-      if (!present) {
-        return {
-          status: 1,
-          stderr: `Error response from daemon: Could not find the file ${sourcePath} in container ${CONTAINER_ID}`,
-        };
+    switch (args[0]) {
+      case "cp": {
+        const source = String(args[2] ?? "");
+        const destination = String(args[3] ?? "");
+        const sourcePath = source.slice(`${CONTAINER_ID}:`.length);
+        const present =
+          (sourcePath === MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY &&
+            state === "committed") ||
+          (sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY && state === "pending");
+        events.push(`copy:${path.basename(sourcePath)}:${present ? "present" : "absent"}`);
+        return present ? copyPresentReceipt(destination) : copyMissingReceipt(sourcePath);
       }
-      fs.mkdirSync(destination, { recursive: true });
-      copiedReceiptPaths.push(destination);
-      return { status: 0 };
+      case "run": {
+        const action = args.includes("--shared-state-transaction-status")
+          ? "status"
+          : args.includes("--rollback-shared-state-transaction")
+            ? "rollback"
+            : "unexpected";
+        switch (action) {
+          case "status":
+            events.push(`status:${state}`);
+            return { status: 0, stdout: `${state}\n` };
+          case "rollback":
+            events.push("rollback");
+            state = "none";
+            return { status: 0 };
+          default:
+            throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
+        }
+      }
+      default:
+        throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
     }
-    if (args[0] === "run" && args.includes("--shared-state-transaction-status")) {
-      events.push(`status:${state}`);
-      return { status: 0, stdout: `${state}\n` };
-    }
-    if (args[0] === "run" && args.includes("--rollback-shared-state-transaction")) {
-      events.push("rollback");
-      state = "none";
-      return { status: 0 };
-    }
-    throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
   });
   return {
     commands,
