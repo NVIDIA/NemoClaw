@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { serializedHostLocalInferenceReceipt } from "./helpers/host-local-inference-receipt";
 
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
 // HOME must be set before loading registry (it reads HOME at require time),
@@ -962,7 +963,7 @@ describe("registry", () => {
   });
 
   it("round-trips a canonical host-local inference receipt without rewriting it", () => {
-    const receipt = `${JSON.stringify({ schemaVersion: 1, providerId: "mxc" })}\n`;
+    const receipt = serializedHostLocalInferenceReceipt();
     registry.registerSandbox({
       name: "host-local",
       hostLocalInferenceReceipt: receipt,

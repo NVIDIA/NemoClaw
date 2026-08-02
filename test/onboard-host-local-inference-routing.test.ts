@@ -171,6 +171,7 @@ describe("setupInference host-local runtime integration", () => {
           runtimeId: "mxc-runtime:vllm",
           name: "nemoclaw-vllm",
           imageRef: MANAGED_IMAGE,
+          probeImageRef: PROBE_IMAGE,
           specSha256: "d".repeat(64),
           gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
         },

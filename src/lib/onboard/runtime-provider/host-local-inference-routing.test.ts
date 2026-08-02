@@ -40,6 +40,7 @@ function receipt(service: "ollama" | "nim" | "vllm"): HostLocalInferenceReceipt 
             runtimeId: `mxc-runtime:${service}`,
             name: `nemoclaw-${service}`,
             imageRef: MANAGED_IMAGE,
+            probeImageRef: PROBE_IMAGE,
             specSha256: "e".repeat(64),
             gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
           },
