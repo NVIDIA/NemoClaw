@@ -385,6 +385,51 @@ describe("native runtime activation qualification", () => {
     ).toThrow(/digest does not match its receipt/u);
   });
 
+  it("accepts the complete matrix from one protected job and rejects an unused binding", () => {
+    const evidence = completeEvidence();
+    const materialized = qualificationFixture();
+    const sharedProtectedRun = structuredClone(evidence[0]!.protectedRun);
+    for (const entry of evidence) {
+      entry.protectedRun = structuredClone(sharedProtectedRun);
+    }
+    const sharedBinding = {
+      protectedRun: structuredClone(sharedProtectedRun),
+      artifactRoot: materialized.artifactRoot,
+    };
+    const unusedBinding = {
+      protectedRun: { ...sharedProtectedRun, jobId: 9999 },
+      artifactRoot: materialized.artifactRoot,
+    };
+    try {
+      writeEvidenceArtifacts(materialized.artifactRoot, evidence);
+      const reporter = createNativeRuntimeQualificationReporterRecord(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        evidence,
+        [sharedBinding],
+      );
+      const verified = verifyNativeRuntimeQualificationReporterArtifacts(
+        PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+        reporter,
+      );
+
+      expect(() =>
+        assertVerifiedNativeRuntimeQualificationEvidence(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          verified,
+        ),
+      ).not.toThrow();
+      expect(() =>
+        createNativeRuntimeQualificationReporterRecord(
+          PODMAN_NATIVE_ACTIVATION_QUALIFICATION,
+          evidence,
+          [sharedBinding, unusedBinding],
+        ),
+      ).toThrow(/unused protected-run binding/u);
+    } finally {
+      materialized.cleanup();
+    }
+  });
+
   it("binds receipts to independent run metadata and snapshots them before verification", () => {
     const evidence = completeEvidence();
     const materialized = qualificationFixture();
