@@ -52,13 +52,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
-import {
-  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} from "./connect-autopair-budget";
+import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
@@ -89,6 +83,8 @@ import {
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
+
+export { runConnectAutoPairApprovalPass };
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -876,24 +872,6 @@ async function ensureSandboxInferenceRouteOrExit(
     process.exit(1);
   }
   return result.sandbox;
-}
-
-// Connect/probe/finalization budget for the shared auto-pair approval pass
-// (#4504). The bounded single-request budget, timeout rationale, and invariant
-// live in the dependency-free ./connect-autopair-budget leaf so tests assert the
-// real values without importing this heavy module. The doctor recovery surface
-// (#4616) keeps the wider default budget in ./auto-pair-approval.
-const CONNECT_AUTO_PAIR_BUDGET = {
-  maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} as const;
-
-// Thin wrapper so the connect/probe/finalization surfaces share one budget
-// without each caller restating it. Best-effort; never throws (#4263/#4504).
-export function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
 }
 
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {

@@ -211,6 +211,6 @@ Use this order:
 7. Pin the published digest in the final Dockerfile.
 8. Rebuild and inspect the final image.
 9. Push the digest commit.
-10. Run exact-head CI, review, and E2E.
+10. Run CI, review, and E2E on the head commit.
 
 Repeat steps 3 through 9 when a base-image input changes.
