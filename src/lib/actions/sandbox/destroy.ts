@@ -94,6 +94,8 @@ export type CleanupSandboxServicesDeps = {
   unloadOllamaModels?: () => void;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
+  stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
+  googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
 type ShieldsTimerNeutralizeResult = {
@@ -170,6 +172,43 @@ export function cleanupSandboxServices(
       return runtime.runOpenshell(args, opts);
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
+  const stopGooglechatWebhookTunnel =
+    deps.stopGooglechatWebhookTunnel ??
+    ((name: string) => {
+      const lifecycle =
+        require("../../messaging/channels/googlechat/tunnel/lifecycle") as typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
+      const services = require("../../tunnel/services") as Parameters<
+        typeof lifecycle.stopGooglechatWebhookTunnel
+      >[1]["services"];
+      const webhookProxy =
+        require("../../messaging/channels/googlechat/tunnel/proxy") as Parameters<
+          typeof lifecycle.stopGooglechatWebhookTunnel
+        >[1]["webhookProxy"];
+      return lifecycle.stopGooglechatWebhookTunnel(name, { services, webhookProxy });
+    });
+  const googlechatWebhookTunnelPidDir =
+    deps.googlechatWebhookTunnelPidDir ??
+    ((servicePidDir: string) => {
+      const lifecycle =
+        require("../../messaging/channels/googlechat/tunnel/lifecycle") as typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
+      return lifecycle.googlechatWebhookTunnelPidDir(servicePidDir);
+    });
+
+  const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
+  try {
+    stopGooglechatWebhookTunnel(validatedSandboxName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`  ${YW}⚠${R} Failed to stop Google Chat webhook tunnel: ${message}`);
+    console.warn(
+      `  ${YW}⚠${R} Keeping ${googlechatServicesPidDir} so a repeated destroy can stop the` +
+        " orphaned cloudflared and webhook-proxy processes recorded there.",
+    );
+    throw new Error(
+      "Refusing to finish sandbox cleanup while its public Google Chat webhook endpoint may still be running. Retry destroy after fixing the tunnel-stop failure.",
+      { cause: error },
+    );
+  }
 
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
@@ -192,6 +231,14 @@ export function cleanupSandboxServices(
     });
   } catch {
     // PID directory may not exist — ignore.
+  }
+  try {
+    rmSync(googlechatServicesPidDir, {
+      recursive: true,
+      force: true,
+    });
+  } catch {
+    // Dedicated Google Chat service directory may not exist — ignore.
   }
 
   // Delete every per-sandbox messaging and search provider created during
