@@ -2141,15 +2141,7 @@ function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): E
   }
   if (
     check.status === "in_progress" &&
-    (title === CONTROL_PLANE_AUTHORIZATION_TITLE || title === FORK_E2E_AUTHORIZATION_TITLE)
-  ) {
-    return new Error(
-      `PR gate is not ready for maintainer approval: coordination is waiting for a different approval route. Recheck the live PR fork status and exact revision. ${expected}`,
-    );
-  }
-  if (
-    check.status === "in_progress" &&
-    title !== undefined &&
+    typeof title === "string" &&
     (title.startsWith(AUTHORIZED_EXECUTION_TITLE_PREFIX) || RUNNING_E2E_TITLE_PATTERN.test(title))
   ) {
     return new Error(
