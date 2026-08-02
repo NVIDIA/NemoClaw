@@ -3,6 +3,7 @@
 
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
@@ -448,7 +449,7 @@ describe("selection", () => {
 describe("registerCreatedSandbox", () => {
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
-    const hostLocalInferenceReceipt = `${JSON.stringify({ schemaVersion: 1, providerId: "docker" })}\n`;
+    const hostLocalInferenceReceipt = serializedHostLocalInferenceReceipt("docker");
     const registry = requireDist("../state/registry.js");
     const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "demo",
