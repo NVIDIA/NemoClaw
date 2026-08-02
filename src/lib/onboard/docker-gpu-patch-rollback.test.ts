@@ -9,6 +9,14 @@ import {
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch";
 
+// The recreate path probes sandbox DNS through a real `docker run` when these
+// stay unstubbed, which makes the rollback assertions depend on a live Docker
+// daemon and registry reachability.
+const offlineDnsDeps = {
+  detectSandboxFallbackDns: () => null,
+  probeContainerDns: () => ({ ok: true }),
+};
+
 function inspectFixture(): DockerContainerInspect {
   return {
     Id: "old-container-id",
@@ -88,6 +96,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           runCaptureOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
           errorPhaseDebouncePolls: 1,
         },
       ),
@@ -141,6 +150,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           runCaptureOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
         },
       ),
     ).toThrow(/Could not start GPU-enabled sandbox container/);
@@ -187,6 +197,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           dockerRm: vi.fn(() => ({ status: 0 })),
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
         },
       ),
     ).toThrow(/Could not move original sandbox container aside/);
@@ -229,6 +240,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           runCaptureOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
         },
       );
     } catch (error) {
@@ -274,6 +286,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           runCaptureOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
         },
       );
     } catch (error) {
@@ -326,6 +339,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           runCaptureOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
           errorPhaseDebouncePolls: 1,
         },
       ),
@@ -365,6 +379,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
           runCaptureOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
+          ...offlineDnsDeps,
           errorPhaseDebouncePolls: 1,
         },
       ),

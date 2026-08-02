@@ -1,0 +1,284 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { ManagedImageSelectionPolicy } from "../workload/source";
+
+export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
+
+export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
+export type RuntimeProviderLifecycleAction = "start" | "stop";
+export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
+export type RuntimeProviderMutationOperation =
+  | "registration"
+  | "start"
+  | "stop"
+  | "inference-set"
+  | "rebuild"
+  | "provider-cleanup"
+  | "destroy"
+  | "workload-cleanup";
+export type RuntimeProviderContainerEngineOperation =
+  | "host-doctor"
+  | "gateway-inspection"
+  | "sandbox-lifecycle"
+  | "workload-cleanup";
+
+export interface RuntimeProviderIdentity {
+  readonly contractVersion: typeof RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION;
+  readonly id: string;
+  readonly displayName: string;
+}
+
+export interface RuntimeProviderBoundSurface {
+  readonly providerId: string;
+  readonly supported: boolean;
+}
+
+export interface RuntimeProviderUnsupportedSurface extends RuntimeProviderBoundSurface {
+  readonly supported: false;
+  readonly reason: string;
+}
+
+export type RuntimeProviderSupportedSurface<T extends object> = Readonly<
+  RuntimeProviderBoundSurface & {
+    readonly supported: true;
+  } & T
+>;
+
+export interface RuntimeProviderPlanDefinition {
+  readonly gatewayLauncher: RuntimeProviderGatewayLauncher;
+}
+
+export interface RuntimeProviderNormalizedCapabilities {
+  readonly hostLocalInference: boolean;
+  readonly directLifecycle: boolean;
+  readonly legacyGatewayContainerInspection: boolean;
+  readonly workloadImageCleanup: boolean;
+}
+
+export type RuntimeProviderManagedImageSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+  readonly startupProfileContractVersions: readonly number[];
+  readonly capabilityContractVersions: readonly number[];
+};
+
+export interface RuntimeProviderWorkloadProfile {
+  readonly support: RuntimeProviderManagedImageSupport | null;
+  readonly hostArchitectures: readonly string[];
+  readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
+  readonly legacyDockerfileBuilds: boolean;
+}
+
+export type RuntimeProviderDoctorCheck = {
+  readonly group: "Host";
+  readonly label: string;
+  readonly status: "ok" | "warn" | "fail" | "info";
+  readonly detail: string;
+  readonly hint?: string;
+};
+
+export type RuntimeProviderCommandCapture = {
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: Error;
+};
+
+export interface RuntimeProviderLifecycleInput {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly log: (message: string) => void;
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+}
+
+export type RuntimeProviderLifecycleResult = {
+  readonly exitCode: number;
+  readonly message?: string;
+};
+
+export type RuntimeProviderLifecycleStopOutcome = RuntimeProviderLifecycleResult & {
+  readonly state?: "already-stopped" | "stopped";
+};
+
+export interface RuntimeProviderLifecycleStopHooks {
+  readonly beforeStop: () => void;
+}
+
+export type RuntimeProviderProviderDetachResult = {
+  readonly detached: string[];
+  readonly failures: Array<{ readonly name: string; readonly output: string }>;
+};
+
+export interface RuntimeProviderCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+}
+
+export type RuntimeProviderWorkloadCleanupPlan =
+  | {
+      readonly action: "retain";
+      readonly reason: "no-owned-image" | "shared-image";
+    }
+  | {
+      readonly action: "remove";
+      readonly engineDisplayName: string;
+      readonly reference: string;
+    }
+  | {
+      readonly action: "block";
+      readonly reason: "authority-unproven";
+    };
+
+export type RuntimeProviderWorkloadCleanupResult =
+  | {
+      readonly status: "skipped";
+      readonly reason: "no-owned-image" | "shared-image" | "authority-unproven";
+    }
+  | {
+      readonly status: "removed";
+      readonly engineDisplayName: string;
+      readonly reference: string;
+    }
+  | {
+      readonly status: "failed";
+      readonly engineDisplayName: string;
+      readonly reference: string;
+    };
+
+export interface RuntimeProviderCleanupOperations {
+  readonly detachProviders: () => RuntimeProviderProviderDetachResult;
+}
+
+/**
+ * Provider-neutral, bounded state that later snapshot work may persist.
+ * Provider handles remain opaque strings; acceleration is normalized so no
+ * action module needs a Docker-, CDI-, or device-specific DTO.
+ */
+export interface RuntimeProviderRuntimeReceipt {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly runtime: {
+    readonly kind: string;
+    readonly handle: string;
+  };
+  readonly acceleration:
+    | {
+        readonly kind: "none";
+      }
+    | {
+        readonly kind: "gpu";
+        readonly vendor: string;
+        readonly devices: readonly string[];
+      };
+}
+
+export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurface<{
+  inspectHost(): RuntimeProviderDoctorCheck;
+  preflightLifecycle(
+    action: RuntimeProviderLifecycleAction,
+    input: RuntimeProviderLifecycleInput,
+  ): RuntimeProviderLifecycleResult | null;
+}>;
+
+export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
+  readonly launcher: RuntimeProviderGatewayLauncher;
+  readonly inspectLegacyContainer: boolean;
+}>;
+
+export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
+  readonly profile: RuntimeProviderWorkloadProfile;
+  acceptsReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean;
+}>;
+
+export type RuntimeProviderLifecycleSurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly channelStopTransport: RuntimeProviderChannelStopTransport;
+      start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
+      verifyStarted(
+        input: RuntimeProviderLifecycleInput,
+        verifyGateway: (sandboxName: string) => Promise<void>,
+      ): Promise<void>;
+      stop(
+        input: RuntimeProviderLifecycleInput,
+        hooks: RuntimeProviderLifecycleStopHooks,
+      ): RuntimeProviderLifecycleStopOutcome;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderMutationAuthoritySurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly operations: readonly RuntimeProviderMutationOperation[];
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderBootstrapSurface =
+  | RuntimeProviderSupportedSurface<{
+      prepare(sandbox: SandboxEntry): unknown;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderSnapshotSurface =
+  | RuntimeProviderSupportedSurface<{
+      capture(sandbox: SandboxEntry): RuntimeProviderRuntimeReceipt;
+      restore(sandbox: SandboxEntry, receipt: RuntimeProviderRuntimeReceipt): void;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderRecoverySurface =
+  | RuntimeProviderSupportedSurface<{
+      recover(sandbox: SandboxEntry): RuntimeProviderLifecycleResult;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderCleanupSurface =
+  | RuntimeProviderSupportedSurface<{
+      prepareDestroy(
+        input: RuntimeProviderCleanupInput,
+        operations: RuntimeProviderCleanupOperations,
+      ): RuntimeProviderProviderDetachResult;
+      /**
+       * Produce a side-effect-free cleanup plan before any destructive
+       * sandbox action. Providers must revalidate the same authority inside
+       * removeOwnedWorkload before mutating their runtime.
+       */
+      planOwnedWorkloadCleanup(
+        input: RuntimeProviderCleanupInput,
+      ): RuntimeProviderWorkloadCleanupPlan;
+      removeOwnedWorkload(input: RuntimeProviderCleanupInput): RuntimeProviderWorkloadCleanupResult;
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+export type RuntimeProviderContainerEngineSurface =
+  | RuntimeProviderSupportedSurface<{
+      readonly identities: readonly {
+        readonly operation: RuntimeProviderContainerEngineOperation;
+        readonly engineId: string;
+        readonly displayName: string;
+      }[];
+    }>
+  | RuntimeProviderUnsupportedSurface;
+
+/**
+ * The sole registration unit for a runtime provider. Every surface is present
+ * and bound to the same opaque identity; future work extends this object
+ * instead of creating another independently populated registry.
+ */
+export interface RuntimeProviderBundle {
+  readonly identity: RuntimeProviderIdentity;
+  readonly plan: RuntimeProviderSupportedSurface<RuntimeProviderPlanDefinition>;
+  readonly capabilities: RuntimeProviderSupportedSurface<RuntimeProviderNormalizedCapabilities>;
+  readonly preflightDoctor: RuntimeProviderPreflightDoctorSurface;
+  readonly gateway: RuntimeProviderGatewaySurface;
+  readonly workload: RuntimeProviderWorkloadSurface;
+  readonly lifecycle: RuntimeProviderLifecycleSurface;
+  readonly mutationAuthority: RuntimeProviderMutationAuthoritySurface;
+  readonly bootstrap: RuntimeProviderBootstrapSurface;
+  readonly snapshot: RuntimeProviderSnapshotSurface;
+  readonly recovery: RuntimeProviderRecoverySurface;
+  readonly cleanup: RuntimeProviderCleanupSurface;
+  readonly containerEngine: RuntimeProviderContainerEngineSurface;
+}
+
+export type RuntimeProviderBundleRegistry = Readonly<Record<string, RuntimeProviderBundle>>;
