@@ -3266,6 +3266,12 @@ def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
 
 _hash_synthesized = False
 
+# Set True when a lock transition re-seals a perms-only drift on an already-locked
+# config (an in-sandbox reconciler re-permissioned a canonical file after the
+# lock: #4663 / #7985). Surfaced in the result JSON so the host can report the
+# self-heal instead of leaving it invisible.
+_resealed_drift = False
+
 
 def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identity) -> None:
     digest = hashlib.sha256(config_data).hexdigest()
@@ -3426,6 +3432,7 @@ def _transition(
     *,
     quarantine_untrusted: bool = False,
 ) -> None:
+    global _resealed_drift
     if action == "lock":
         if _has_clamped_locked_dir_posture(opened, identity):
             pair = _snapshot_pair(opened)
@@ -3435,8 +3442,27 @@ def _transition(
             # A restart journal may still need rootfs-authenticated cleanup.
             _settle_pending_transaction_for_lock(opened, identity)
             pair = _snapshot_pair(opened)
-            _verify_locked_files(opened, pair, identity)
-            return
+            try:
+                _verify_locked_files(opened, pair, identity)
+                return
+            except GuardError as verify_error:
+                if verify_error.code != "config-not-locked":
+                    raise
+                # Locked dir, but a canonical file drifted perms-only (e.g. an
+                # in-sandbox reconciler re-permissioned .config-hash after the
+                # lock: #4663 / #7985). Re-seal below instead of failing closed.
+                # Safe: the dir is root-owned (content cannot be swapped), and
+                # content drift already failed above in _snapshot_pair's hash check.
+                # Source: the writer is the upstream OpenClaw in-sandbox gateway/
+                # doctor perm-normalizer, which NemoClaw does not own — so the
+                # correct fix is this host-authenticated relock re-seal, not a
+                # change to that writer, which this repo cannot make. Removal
+                # condition: delete this path once the lock is durably immutable on
+                # every platform (chattr +i, unavailable on overlayfs today) or the
+                # upstream reconciler stops re-permissioning an already-locked
+                # config; either fully closes the #4663 relock settle-window race
+                # that this branch only narrows.
+                _resealed_drift = True
         freeze_started = False
         try:
             freeze_started = True
@@ -4273,6 +4299,7 @@ def main(argv: list[str] | None = None) -> int:
                     "chattrApplied": False,
                     **({"configSha256": new_digest} if new_digest is not None else {}),
                     **({"hashSynthesized": True} if _hash_synthesized else {}),
+                    **({"resealedDrift": True} if _resealed_drift else {}),
                     **({"recovery": recovery} if recovery is not None else {}),
                     **(
                         {"originalLocked": original_locked}
