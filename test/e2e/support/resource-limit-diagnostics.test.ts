@@ -113,4 +113,10 @@ describe("resource-limit security diagnostics", () => {
     expect(summary.match(/^login_nproc_soft=/gmu)).toHaveLength(2);
     expect(summary).toContain("resource_limit_protocol_error=1\n");
   });
+
+  it("rejects an incomplete marker frame", () => {
+    const summary = filterResourceLimitOutput(RESOURCE_LIMIT_CONNECT_BEGIN_MARKER);
+
+    expect(summary).toContain("resource_limit_protocol_error=1\n");
+  });
 });
