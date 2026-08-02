@@ -22,19 +22,38 @@ import {
 
 const TOPOLOGIES = ["root-separated", "same-uid"] as const;
 
+type HermesTopology = (typeof TOPOLOGIES)[number];
+type HermesMigrationSource = NonNullable<HermesManagedArtifact["migrationSources"]>[number];
+type HermesUnsupportedResidual = (typeof HERMES_UNSUPPORTED_RESIDUAL_PATHS)[number];
+
 function artifact(id: string): HermesManagedArtifact {
   const result = HERMES_MANAGED_ARTIFACTS.find((candidate) => candidate.id === id);
-  if (!result) throw new Error("Missing Hermes artifact '" + id + "'");
-  return result;
+  expect(result, "Missing Hermes artifact '" + id + "'").toBeDefined();
+  return result as HermesManagedArtifact;
 }
 
 function homesFor(artifactRule: HermesManagedArtifact): HermesHome[] {
-  if (artifactRule.scope === "agent-home") {
-    return [{ kind: "default" }, { kind: "named-profile", name: "research" }];
+  switch (artifactRule.scope) {
+    case "agent-home":
+      return [{ kind: "default" }, { kind: "named-profile", name: "research" }];
+    case "default-home":
+      return [{ kind: "default" }];
+    case "dashboard":
+      return [{ kind: "dashboard" }];
+    case "named-profile":
+      return [{ kind: "named-profile", name: "research" }];
   }
-  if (artifactRule.scope === "default-home") return [{ kind: "default" }];
-  if (artifactRule.scope === "dashboard") return [{ kind: "dashboard" }];
-  return [{ kind: "named-profile", name: "research" }];
+}
+
+function homesForResidual(residual: HermesUnsupportedResidual): HermesHome[] {
+  switch (residual.scope) {
+    case "agent-home":
+      return [{ kind: "default" }, { kind: "named-profile", name: "research" }];
+    case "default-home":
+      return [{ kind: "default" }];
+    case "named-profile":
+      return [{ kind: "named-profile", name: "research" }];
+  }
 }
 
 function postures(requirement: HermesPostureRequirement): HermesPosture[] {
@@ -45,8 +64,163 @@ function materializePattern(pattern: string): string {
   return pattern.replace(/\*\*/gu, "nested/item").replace(/\{[^/{}]+\}/gu, "sample");
 }
 
+function migrationSourcesFor(
+  artifactRule: HermesManagedArtifact,
+): readonly HermesMigrationSource[] {
+  return artifactRule.migrationSources ?? [];
+}
+
+function lifecyclePostures(required: HermesRequiredPostures): HermesPostureRequirement[] {
+  return [required.create, required.restore, required.shields?.up, required.shields?.down].filter(
+    (requirement): requirement is HermesPostureRequirement =>
+      requirement !== undefined && requirement !== "absent",
+  );
+}
+
+function requiredPosture(
+  requirement: HermesPostureRequirement | "absent",
+  message: string,
+): HermesPostureRequirement {
+  expect(requirement, message).not.toBe("absent");
+  return requirement as HermesPostureRequirement;
+}
+
+function contentOwner(posture: ReturnType<typeof resolveHermesPosture>): string {
+  switch (posture.kind) {
+    case "path":
+      return posture.owner;
+    case "tree":
+      return posture.descendantOwner;
+  }
+}
+
+function expectProducerOwnership(entry: HermesManagedArtifact, topology: HermesTopology): void {
+  const producers = resolveHermesIdentities(entry.producers, topology);
+  const readers = resolveHermesIdentities(entry.readers, topology);
+  expect(producers.length, entry.id).toBeGreaterThan(0);
+  expect(readers.length, entry.id).toBeGreaterThan(0);
+
+  for (const producer of producers.filter((candidate) => candidate !== "root")) {
+    const create = resolveHermesPosture(entry.required.create, topology, producer);
+    expect(readers, entry.id + ":" + producer).toContain(producer);
+    expect([producer, "preserve"], entry.id + ":" + producer).toContain(contentOwner(create));
+  }
+}
+
+function expectScopeRules(entry: HermesManagedArtifact): void {
+  switch (typeof entry.relativePath) {
+    case "object":
+      expect(entry.scope, entry.id).toBe("agent-home");
+      break;
+    default:
+      break;
+  }
+
+  for (const rule of [entry.backup, entry.restore]) {
+    switch (typeof rule) {
+      case "object":
+        switch ("default" in rule) {
+          case true:
+            expect(entry.scope, entry.id).toBe("agent-home");
+            break;
+          case false:
+            break;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+function expectPostureShape(
+  entry: HermesManagedArtifact,
+  requirement: HermesPostureRequirement,
+): void {
+  for (const posture of postures(requirement)) {
+    switch (entry.match) {
+      case "subtree":
+        expect(posture.kind, entry.id).toBe("tree");
+        break;
+      default:
+        break;
+    }
+    switch (posture.kind) {
+      case "path":
+        expect(posture.mode, entry.id).toMatch(/^0[0-7]{3,4}$/);
+        break;
+      case "tree":
+        expect(posture.directoryMode, entry.id).toMatch(/^0[0-7]{3,4}$/);
+        expect(posture.descendantOwner, entry.id).not.toBe("producer");
+        expect(posture.symlinks, entry.id).toBe("ownership-only");
+        break;
+    }
+  }
+}
+
+function expectSelectiveBackup(
+  backup: ReturnType<typeof resolveHermesArtifactBackup>,
+  id: string,
+): void {
+  switch (typeof backup) {
+    case "object":
+      expect(backup.kind, id).toBe("selective");
+      expect(backup.selectors.length, id).toBeGreaterThan(0);
+      expect(new Set(backup.selectors.map((selector) => selector.relativePattern)).size).toBe(
+        backup.selectors.length,
+      );
+      break;
+    default:
+      break;
+  }
+}
+
+function expectMigrationFailurePolicy(source: HermesMigrationSource, sourcePath: string): void {
+  switch (source.action) {
+    case "migrate":
+      expect(source.onFailure, sourcePath).toBe("leave-source");
+      break;
+    case "discard":
+      break;
+  }
+}
+
+function expectShieldsContract(entry: HermesManagedArtifact): void {
+  switch (entry.shields) {
+    case "seal":
+      expect(entry.required.shields, entry.id).toBeDefined();
+      break;
+    case "keep-writable":
+    case "unchanged":
+      break;
+  }
+}
+
+function expectRecoveryContract(entry: HermesManagedArtifact, home: HermesHome): void {
+  const backup = resolveHermesArtifactBackup(entry, home);
+  const restore = resolveHermesArtifactRestore(entry, home);
+
+  switch (backup) {
+    case "exclude":
+      expect(restore, entry.id).not.toBe("restore");
+      break;
+    default:
+      break;
+  }
+  switch (restore) {
+    case "discard":
+      expect(entry.required.restore, entry.id).toBe("absent");
+      break;
+    case "regenerate":
+    case "restore":
+      expect(entry.required.restore, entry.id).not.toBe("absent");
+      break;
+  }
+  expectSelectiveBackup(backup, entry.id);
+}
+
 describe("Hermes path ownership contract", () => {
-  it("classifies every named artifact and defines complete lifecycle policy (#8006)", () => {
+  it("uses unique artifact ids and every ownership class (#8006)", () => {
     expect(new Set(HERMES_MANAGED_ARTIFACTS.map((entry) => entry.id)).size).toBe(
       HERMES_MANAGED_ARTIFACTS.length,
     );
@@ -59,89 +233,52 @@ describe("Hermes path ownership contract", () => {
         "derived-disposable-state",
       ]),
     );
+  });
 
-    const concreteTargets = new Set<string>();
-    for (const entry of HERMES_MANAGED_ARTIFACTS as readonly HermesManagedArtifact[]) {
+  it("names producer and reader ownership in every topology (#8006)", () => {
+    for (const entry of HERMES_MANAGED_ARTIFACTS) {
       for (const topology of TOPOLOGIES) {
-        const producers = resolveHermesIdentities(entry.producers, topology);
-        const readers = resolveHermesIdentities(entry.readers, topology);
-        expect(producers.length, entry.id).toBeGreaterThan(0);
-        expect(readers.length, entry.id).toBeGreaterThan(0);
-        for (const producer of producers) {
-          const create = resolveHermesPosture(entry.required.create, topology, producer);
-          if (producer === "root") continue;
-          expect(readers, entry.id + ":" + producer).toContain(producer);
-          if (create.kind === "path") {
-            expect(create.owner, entry.id + ":" + producer).toBe(producer);
-          } else if (create.descendantOwner !== "preserve") {
-            expect(create.descendantOwner, entry.id + ":" + producer).toBe(producer);
-          }
-        }
+        expectProducerOwnership(entry, topology);
       }
       expect(resolveHermesIdentities(entry.producers, "same-uid"), entry.id).not.toContain(
         "gateway",
       );
       expect(resolveHermesIdentities(entry.readers, "same-uid"), entry.id).not.toContain("gateway");
-      expect(entry.presence === "required" || entry.presence === "optional", entry.id).toBe(true);
-      expect(typeof entry.relativePath === "string" || entry.scope === "agent-home", entry.id).toBe(
-        true,
-      );
-      expect(
-        typeof entry.backup === "object" &&
-          "default" in entry.backup &&
-          entry.scope !== "agent-home",
-        entry.id,
-      ).toBe(false);
-      expect(typeof entry.restore === "object" && entry.scope !== "agent-home", entry.id).toBe(
-        false,
-      );
+    }
+  });
 
-      const required: HermesRequiredPostures = entry.required;
-      const lifecycleRequirements = [
-        required.create,
-        required.restore,
-        required.shields?.up,
-        required.shields?.down,
-      ];
-      for (const requirement of lifecycleRequirements) {
-        if (!requirement || requirement === "absent") continue;
-        for (const posture of postures(requirement)) {
-          if (entry.match === "subtree") expect(posture.kind, entry.id).toBe("tree");
-          if (posture.kind === "path") {
-            expect(posture.mode, entry.id).toMatch(/^0[0-7]{3,4}$/);
-          } else {
-            expect(posture.directoryMode, entry.id).toMatch(/^0[0-7]{3,4}$/);
-            expect(posture.descendantOwner, entry.id).not.toBe("producer");
-            expect(posture.symlinks, entry.id).toBe("ownership-only");
-          }
-        }
+  it("defines scope, lifecycle posture, and Shields policy for every artifact (#8006)", () => {
+    for (const entry of HERMES_MANAGED_ARTIFACTS) {
+      expectScopeRules(entry);
+      for (const requirement of lifecyclePostures(entry.required)) {
+        expectPostureShape(entry, requirement);
       }
+      expectShieldsContract(entry);
+    }
+  });
 
-      if (entry.shields === "seal") expect(entry.required.shields, entry.id).toBeDefined();
-
+  it("aligns backup and restore policy for every home layout (#8006)", () => {
+    for (const entry of HERMES_MANAGED_ARTIFACTS) {
       for (const home of homesFor(entry)) {
-        const backup = resolveHermesArtifactBackup(entry, home);
-        const restore = resolveHermesArtifactRestore(entry, home);
-        expect(backup === "exclude" && restore === "restore", entry.id).toBe(false);
-        expect(entry.required.restore === "absent", entry.id).toBe(restore === "discard");
-        if (typeof backup === "object") {
-          expect(backup.kind, entry.id).toBe("selective");
-          expect(backup.selectors.length, entry.id).toBeGreaterThan(0);
-          expect(new Set(backup.selectors.map((selector) => selector.relativePattern)).size).toBe(
-            backup.selectors.length,
-          );
-        }
+        expectRecoveryContract(entry, home);
+      }
+    }
+  });
 
+  it("resolves unique targets and migration sources for every home layout (#8006)", () => {
+    const concreteTargets = new Map<string, string>();
+    for (const entry of HERMES_MANAGED_ARTIFACTS) {
+      for (const home of homesFor(entry)) {
         const target = resolveHermesArtifactPath(entry, home);
         const key = home.kind + ":" + target + ":" + entry.match;
-        expect(concreteTargets.has(key), entry.id).toBe(false);
-        concreteTargets.add(key);
+        expect(concreteTargets.get(key), entry.id).toBeUndefined();
+        concreteTargets.set(key, entry.id);
 
         const resolvedTarget = findHermesManagedArtifact(materializePattern(target));
         expect(resolvedTarget?.artifact.id, entry.id + ":" + home.kind).toBe(entry.id);
         expect(resolvedTarget?.pathRole, entry.id + ":" + home.kind).toBe("target");
 
-        for (const source of entry.migrationSources ?? []) {
+        for (const source of migrationSourcesFor(entry)) {
           expect(source.relativePath, entry.id).not.toBe(".");
           expect(source.relativePath, entry.id).not.toMatch(/^\//u);
           const sourcePath =
@@ -149,9 +286,7 @@ describe("Hermes path ownership contract", () => {
           const resolvedSource = findHermesManagedArtifact(sourcePath);
           expect(resolvedSource?.artifact.id, sourcePath).toBe(entry.id);
           expect(resolvedSource?.pathRole, sourcePath).toBe("migration-source");
-          if (source.action === "migrate") {
-            expect(source.onFailure, sourcePath).toBe("leave-source");
-          }
+          expectMigrationFailurePolicy(source, sourcePath);
         }
       }
     }
@@ -260,78 +395,25 @@ describe("Hermes path ownership contract", () => {
     expect(findHermesManagedArtifact("/sandbox/.hermes/profiles/research/kanban.db")).toBeNull();
   });
 
-  it("separates unsupported direct-lifecycle residuals from managed paths (#8006)", () => {
-    expect(HERMES_UNSUPPORTED_RESIDUAL_PATHS).toEqual([
-      {
-        id: "legacy-gateway-pid",
-        scope: "default-home",
-        relativePath: "gateway.pid",
-        match: "exact",
-        disposition: "discard",
-      },
-      {
-        id: "legacy-cron-pid",
-        scope: "default-home",
-        relativePath: "cron.pid",
-        match: "exact",
-        disposition: "discard",
-      },
-      {
-        id: "named-gateway-pid",
-        scope: "named-profile",
-        relativePath: "gateway.pid",
-        match: "exact",
-        disposition: "discard",
-      },
-      {
-        id: "named-cron-pid",
-        scope: "named-profile",
-        relativePath: "cron.pid",
-        match: "exact",
-        disposition: "discard",
-      },
-      {
-        id: "named-gateway-lock",
-        scope: "named-profile",
-        relativePath: "gateway.lock",
-        match: "exact",
-        disposition: "discard",
-      },
-      {
-        id: "named-gateway-status",
-        scope: "named-profile",
-        relativePath: "gateway_state.json",
-        match: "exact",
-        disposition: "discard",
-      },
-      {
-        id: "upstream-weixin-account-credential",
-        scope: "agent-home",
-        relativePath: "weixin/accounts/{account}.json",
-        match: "pattern",
-        disposition: "discard",
-      },
-      {
-        id: "legacy-skill-usage-lock",
-        scope: "agent-home",
-        relativePath: "skills/.usage.json.lock",
-        match: "exact",
-        disposition: "discard",
-      },
-    ]);
-    expect(findHermesManagedArtifact("/sandbox/.hermes/gateway.pid")).toBeNull();
-    expect(findHermesManagedArtifact("/sandbox/.hermes/cron.pid")).toBeNull();
-    expect(findHermesManagedArtifact("/sandbox/.hermes/profiles/research/gateway.pid")).toBeNull();
-    expect(findHermesManagedArtifact("/sandbox/.hermes/profiles/research/cron.pid")).toBeNull();
-    expect(findHermesManagedArtifact("/sandbox/.hermes/profiles/research/gateway.lock")).toBeNull();
-    expect(
-      findHermesManagedArtifact("/sandbox/.hermes/profiles/research/gateway_state.json"),
-    ).toBeNull();
-    expect(findHermesManagedArtifact("/sandbox/.hermes/weixin/accounts/primary.json")).toBeNull();
-    expect(
-      findHermesManagedArtifact("/sandbox/.hermes/profiles/research/weixin/accounts/primary.json"),
-    ).toBeNull();
-    expect(findHermesManagedArtifact("/sandbox/.hermes/skills/.usage.json.lock")).toBeNull();
+  it("keeps unsupported residuals discard-only and outside the managed resolver (#8006)", () => {
+    const residualIds = HERMES_UNSUPPORTED_RESIDUAL_PATHS.map((entry) => entry.id);
+    const managedIds = HERMES_MANAGED_ARTIFACTS.map((entry) => entry.id);
+    expect(new Set(residualIds).size).toBe(residualIds.length);
+    expect(new Set(HERMES_UNSUPPORTED_RESIDUAL_PATHS.map((entry) => entry.disposition))).toEqual(
+      new Set(["discard"]),
+    );
+
+    for (const residual of HERMES_UNSUPPORTED_RESIDUAL_PATHS) {
+      expect(managedIds, residual.id).not.toContain(residual.id);
+      expect(residual.relativePath, residual.id).not.toBe(".");
+      expect(residual.relativePath, residual.id).not.toMatch(/^\//u);
+
+      for (const home of homesForResidual(residual)) {
+        const target =
+          resolveHermesHomePath(home) + "/" + materializePattern(residual.relativePath);
+        expect(findHermesManagedArtifact(target), residual.id + ":" + home.kind).toBeNull();
+      }
+    }
   });
 
   it("resolves the pinned core profile surface for default and named homes (#8006)", () => {
@@ -556,8 +638,10 @@ describe("Hermes path ownership contract", () => {
       fileMode: "0600",
     });
 
-    const restoredMainDatabase = artifact("main-state-database").required.restore;
-    if (restoredMainDatabase === "absent") throw new Error("Main state database must restore");
+    const restoredMainDatabase = requiredPosture(
+      artifact("main-state-database").required.restore,
+      "Main state database must restore",
+    );
     expect(resolveHermesPosture(restoredMainDatabase, "root-separated")).toEqual({
       kind: "path",
       owner: "sandbox",

@@ -275,7 +275,7 @@ export const HERMES_CONTRACT_GAPS = [
       "pinned Hermes WhatsApp bridge Baileys multi-file authentication state and NemoClaw snapshot/rebuild restore",
     migration: "privileged-transition",
     failure: "retain-source",
-    limitation: "same-uid topology cannot isolate gateway session credentials from sandbox code",
+    limitation: "same-UID topology cannot isolate gateway session credentials from sandbox code",
   },
 ] as const satisfies readonly HermesContractGap[];
 
@@ -3596,9 +3596,20 @@ function validateHermesRelativePattern(pattern: string): void {
   }
 }
 
+const VALIDATED_HERMES_RELATIVE_PATTERNS = new Set<string>();
+const HERMES_PATTERN_SEGMENT_MATCHERS = new Map<string, RegExp | null>();
+
 function matchesPatternSegment(patternSegment: string, candidateSegment: string): boolean {
+  const cached = HERMES_PATTERN_SEGMENT_MATCHERS.get(patternSegment);
+  if (cached !== undefined) {
+    return cached === null ? patternSegment === candidateSegment : cached.test(candidateSegment);
+  }
+
   const placeholders = [...patternSegment.matchAll(/\{[^{}]+\}/gu)];
-  if (placeholders.length === 0) return patternSegment === candidateSegment;
+  if (placeholders.length === 0) {
+    HERMES_PATTERN_SEGMENT_MATCHERS.set(patternSegment, null);
+    return patternSegment === candidateSegment;
+  }
 
   let expression = "^";
   let cursor = 0;
@@ -3609,11 +3620,16 @@ function matchesPatternSegment(patternSegment: string, candidateSegment: string)
     cursor = index + placeholder[0].length;
   }
   expression += patternSegment.slice(cursor).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "$";
-  return new RegExp(expression, "u").test(candidateSegment);
+  const matcher = new RegExp(expression, "u");
+  HERMES_PATTERN_SEGMENT_MATCHERS.set(patternSegment, matcher);
+  return matcher.test(candidateSegment);
 }
 
 function matchesHermesRelativePattern(pattern: string, candidate: string): boolean {
-  validateHermesRelativePattern(pattern);
+  if (!VALIDATED_HERMES_RELATIVE_PATTERNS.has(pattern)) {
+    validateHermesRelativePattern(pattern);
+    VALIDATED_HERMES_RELATIVE_PATTERNS.add(pattern);
+  }
   const patternSegments = pattern.split("/");
   const candidateSegments = candidate.split("/");
   const memo = new Map<string, boolean>();

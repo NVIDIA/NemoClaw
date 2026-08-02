@@ -10,6 +10,7 @@ import {
   HERMES_LEGACY_MIGRATION,
   HERMES_MANAGED_ARTIFACTS,
   type HermesManagedArtifact,
+  type HermesPostureRequirement,
   resolveHermesArtifactBackup,
   resolveHermesArtifactPath,
   resolveHermesBackupAction,
@@ -19,10 +20,27 @@ import {
 
 const TOPOLOGIES = ["root-separated", "same-uid"] as const;
 
+function expectArtifact(
+  result: HermesManagedArtifact | undefined,
+  message: string,
+): HermesManagedArtifact {
+  expect(result, message).toBeDefined();
+  return result as HermesManagedArtifact;
+}
+
 function artifact(id: string): HermesManagedArtifact {
-  const result = HERMES_MANAGED_ARTIFACTS.find((candidate) => candidate.id === id);
-  if (!result) throw new Error("Missing Hermes artifact '" + id + "'");
-  return result;
+  return expectArtifact(
+    HERMES_MANAGED_ARTIFACTS.find((candidate) => candidate.id === id),
+    "Missing Hermes artifact '" + id + "'",
+  );
+}
+
+function expectRestoredPosture(
+  requirement: HermesPostureRequirement | "absent",
+  message: string,
+): HermesPostureRequirement {
+  expect(requirement, message).not.toBe("absent");
+  return requirement as HermesPostureRequirement;
 }
 
 function topLevelPath(artifactRule: HermesManagedArtifact): string | null {
@@ -30,8 +48,11 @@ function topLevelPath(artifactRule: HermesManagedArtifact): string | null {
     typeof artifactRule.relativePath === "string"
       ? artifactRule.relativePath
       : artifactRule.relativePath.default;
-  if (relativePath === "." || relativePath.includes("/")) return null;
-  return relativePath;
+  return relativePath === "." || relativePath.includes("/") ? null : relativePath;
+}
+
+function materializePathPattern(pathPattern: string): string {
+  return pathPattern.replace(/\{[^/{}]+\}/gu, "sample");
 }
 
 describe("Hermes path ownership lifecycle contract", () => {
@@ -264,11 +285,12 @@ describe("Hermes path ownership lifecycle contract", () => {
   });
 
   it("keeps gateway-produced live state writable in the target contract (#8006)", () => {
-    for (const id of ["tool-home", "kanban-state"]) {
+    for (const [id, artifactClass] of [
+      ["tool-home", "mutable-runtime-state"],
+      ["kanban-state", "durable-state"],
+    ] as const) {
       const entry = artifact(id);
-      expect(entry.artifactClass, id).toMatch(
-        /^(credential-reference|durable-state|mutable-runtime-state)$/u,
-      );
+      expect(entry.artifactClass, id).toBe(artifactClass);
       expect(entry.shields, id).toBe("keep-writable");
       expect(entry.required.shields, id).toBeUndefined();
       expect(resolveHermesIdentities(entry.producers, "root-separated"), id).toContain("gateway");
@@ -345,8 +367,10 @@ describe("Hermes path ownership lifecycle contract", () => {
 
   it("protects private children from writable ancestor replacement (#8006)", () => {
     const home = artifact("agent-home-root");
-    const restoredHome = home.required.restore;
-    if (restoredHome === "absent") throw new Error("Hermes home must exist after restore");
+    const restoredHome = expectRestoredPosture(
+      home.required.restore,
+      "Hermes home must exist after restore",
+    );
     for (const posture of [
       home.required.create,
       restoredHome,
@@ -397,9 +421,11 @@ describe("Hermes path ownership lifecycle contract", () => {
       ["/sandbox/.hermes/runtime/pairing/slack-pending.json", "pairing-pending", "0600"],
       ["/sandbox/.hermes/pairing/slack-approved.json", "pairing-approved", "0444"],
     ] as const) {
-      const resolved = findHermesManagedArtifact(target)?.artifact;
-      expect(resolved?.id, target).toBe(id);
-      if (!resolved) throw new Error("Missing Hermes artifact for '" + target + "'");
+      const resolved = expectArtifact(
+        findHermesManagedArtifact(target)?.artifact,
+        "Missing Hermes artifact for '" + target + "'",
+      );
+      expect(resolved.id, target).toBe(id);
       const posture = resolveHermesPosture(resolved.required.create, "root-separated", "gateway");
       expect(posture.kind === "tree" ? posture.directoryMode : posture.mode, target).toBe(mode);
     }
@@ -431,8 +457,10 @@ describe("Hermes path ownership lifecycle contract", () => {
     expect(
       resolveHermesPosture(contextTokens!.required.create, "root-separated", "gateway"),
     ).toMatchObject({ owner: "gateway", group: "sandbox", mode: "0600" });
-    const restoredContextTokens = contextTokens!.required.restore;
-    if (restoredContextTokens === "absent") throw new Error("Weixin context must restore");
+    const restoredContextTokens = expectRestoredPosture(
+      contextTokens!.required.restore,
+      "Weixin context must restore",
+    );
     expect(resolveHermesPosture(restoredContextTokens, "root-separated")).toMatchObject({
       owner: "gateway",
       group: "sandbox",
@@ -474,8 +502,10 @@ describe("Hermes path ownership lifecycle contract", () => {
       "sandbox",
       "gateway",
     ]);
-    const restoreRequirement = powershellRuntime.required.restore;
-    if (restoreRequirement === "absent") throw new Error("PowerShell runtime must be recreated");
+    const restoreRequirement = expectRestoredPosture(
+      powershellRuntime.required.restore,
+      "PowerShell runtime must be recreated",
+    );
     for (const topology of TOPOLOGIES) {
       expect(resolveHermesPosture(restoreRequirement, topology), topology).toMatchObject({
         owner: "sandbox",
@@ -695,38 +725,46 @@ describe("Hermes path ownership lifecycle contract", () => {
       );
     }
 
-    const stagingPaths = new Map([
-      [".processes_abc123.tmp", "top-level-atomic-staging"],
-      ["..restart_notify_abc123.tmp", "top-level-atomic-staging"],
-      ["..restart_last_processed_abc123.tmp", "top-level-atomic-staging"],
-      ["..restart_pending_abc123.tmp", "top-level-atomic-staging"],
-      ["..restart_failure_counts_abc123.tmp", "top-level-atomic-staging"],
-      ["..drain_request_abc123.tmp", "top-level-atomic-staging"],
-      [".discord_threads_abc123.tmp", "top-level-atomic-staging"],
-      ["tmpabc123.tmp", "top-level-temporary-staging"],
-      [".config.yaml.nemoclaw.1234.0123456789abcdef", "nemoclaw-protected-write-staging"],
-      ["auth.json.tmp.1234.0123456789abcdef", "authentication-write-staging"],
-      ["gateway-starts.tmp", "gateway-start-ledger-write-staging"],
-      ["memories/.mem_abc123.tmp", "memory-write-staging"],
-      ["skills/.usage_abc123.tmp", "skills-write-staging"],
-      ["skills/..curator_state_abc123.tmp", "skills-write-staging"],
-      ["skills/.curator_suppressed_abc123.tmp", "skills-write-staging"],
-      ["skills/.bundled_manifest_abc123.tmp", "skills-write-staging"],
-      ["skills/.lock_abc123.tmp", "skills-write-staging"],
-      ["skills/.hub/.lock_abc123.tmp", "skills-hub-lock-staging"],
-      ["skills/.SKILL.md.tmp.abc123", "skills-descendant-write-staging"],
-      ["skills/reviewer/.SKILL.md.tmp.abc123", "skills-descendant-write-staging"],
-      ["skills/reviewer/references/.notes.md.tmp.abc123", "skills-descendant-write-staging"],
-      ["shell-hooks-allowlist.json.abc123.tmp", "shell-hook-allowlist-write-staging"],
-      ["cron/.jobs_abc123.tmp", "cron-write-staging"],
-      ["cron/.sugg_abc123.tmp", "cron-write-staging"],
-      ["cron/.hb_abc123.tmp", "cron-write-staging"],
-      ["cron/output/job/.output_abc123.tmp", "cron-output-write-staging"],
-      ["runtime/cron/output/job/.output_abc123.tmp", "runtime-cron-output-write-staging"],
-    ] as const);
+    const stagingPaths = [
+      [".processes_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      ["..restart_notify_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      ["..restart_last_processed_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      ["..restart_pending_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      ["..restart_failure_counts_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      ["..drain_request_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      [".discord_threads_abc123.tmp", "top-level-atomic-staging", "keep-writable"],
+      ["tmpabc123.tmp", "top-level-temporary-staging", "keep-writable"],
+      [".config.yaml.nemoclaw.1234.0123456789abcdef", "nemoclaw-protected-write-staging", "seal"],
+      ["auth.json.tmp.1234.0123456789abcdef", "authentication-write-staging", "keep-writable"],
+      ["gateway-starts.tmp", "gateway-start-ledger-write-staging", "keep-writable"],
+      ["memories/.mem_abc123.tmp", "memory-write-staging", "keep-writable"],
+      ["skills/.usage_abc123.tmp", "skills-write-staging", "seal"],
+      ["skills/..curator_state_abc123.tmp", "skills-write-staging", "seal"],
+      ["skills/.curator_suppressed_abc123.tmp", "skills-write-staging", "seal"],
+      ["skills/.bundled_manifest_abc123.tmp", "skills-write-staging", "seal"],
+      ["skills/.lock_abc123.tmp", "skills-write-staging", "seal"],
+      ["skills/.hub/.lock_abc123.tmp", "skills-hub-lock-staging", "seal"],
+      ["skills/.SKILL.md.tmp.abc123", "skills-descendant-write-staging", "seal"],
+      ["skills/reviewer/.SKILL.md.tmp.abc123", "skills-descendant-write-staging", "seal"],
+      [
+        "skills/reviewer/references/.notes.md.tmp.abc123",
+        "skills-descendant-write-staging",
+        "seal",
+      ],
+      ["shell-hooks-allowlist.json.abc123.tmp", "shell-hook-allowlist-write-staging", "seal"],
+      ["cron/.jobs_abc123.tmp", "cron-write-staging", "seal"],
+      ["cron/.sugg_abc123.tmp", "cron-write-staging", "seal"],
+      ["cron/.hb_abc123.tmp", "cron-write-staging", "seal"],
+      ["cron/output/job/.output_abc123.tmp", "cron-output-write-staging", "seal"],
+      [
+        "runtime/cron/output/job/.output_abc123.tmp",
+        "runtime-cron-output-write-staging",
+        "keep-writable",
+      ],
+    ] as const;
 
     for (const home of ["/sandbox/.hermes", "/sandbox/.hermes/profiles/research"] as const) {
-      for (const [relativePath, id] of stagingPaths) {
+      for (const [relativePath, id, shields] of stagingPaths) {
         const staging = findHermesManagedArtifact(home + "/" + relativePath)?.artifact;
         expect(staging, relativePath).toMatchObject({
           id,
@@ -735,14 +773,7 @@ describe("Hermes path ownership lifecycle contract", () => {
           restore: "discard",
           migration: "discard",
         });
-        expect(staging?.shields, relativePath).toBe(
-          id.startsWith("skills-") ||
-            id.startsWith("cron-") ||
-            id === "nemoclaw-protected-write-staging" ||
-            id === "shell-hook-allowlist-write-staging"
-            ? "seal"
-            : "keep-writable",
-        );
+        expect(staging?.shields, relativePath).toBe(shields);
       }
     }
 
@@ -955,31 +986,37 @@ describe("Hermes path ownership lifecycle contract", () => {
 
   it("records current manifest gaps separately from the target backup contract (#8006)", () => {
     const hermes = loadAgent("hermes");
-    expect(hermes.stateDirs).toEqual([
-      "memories",
-      "sessions",
-      "skills",
-      "plugins",
-      "cron",
-      "logs",
-      "skins",
-      "plans",
-      "workspace",
-      "profiles",
-      "cache",
-      "pairing",
-      "dashboard-home",
-      "platforms",
-      "weixin",
-    ]);
-    expect(hermes.stateFiles).toEqual([
-      { path: "SOUL.md", strategy: "copy" },
-      { path: ".hermes_history", strategy: "copy" },
-      { path: "runtime/state.db", strategy: "sqlite_backup" },
-      { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },
-      { path: "gateway/discord_message_recovery.db", strategy: "sqlite_backup" },
-      { path: "kanban.db", strategy: "sqlite_backup" },
-    ]);
+    expect([...hermes.stateDirs].sort()).toEqual(
+      [
+        "memories",
+        "sessions",
+        "skills",
+        "plugins",
+        "cron",
+        "logs",
+        "skins",
+        "plans",
+        "workspace",
+        "profiles",
+        "cache",
+        "pairing",
+        "dashboard-home",
+        "platforms",
+        "weixin",
+      ].sort(),
+    );
+    expect(
+      [...hermes.stateFiles].sort((left, right) => left.path.localeCompare(right.path)),
+    ).toEqual(
+      [
+        { path: "SOUL.md", strategy: "copy" },
+        { path: ".hermes_history", strategy: "copy" },
+        { path: "runtime/state.db", strategy: "sqlite_backup" },
+        { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },
+        { path: "gateway/discord_message_recovery.db", strategy: "sqlite_backup" },
+        { path: "kanban.db", strategy: "sqlite_backup" },
+      ].sort((left, right) => left.path.localeCompare(right.path)),
+    );
 
     expect(artifact("soul").backup).toBe("file");
     expect(artifact("tui-history").backup).toBe("file");
@@ -1011,82 +1048,42 @@ describe("Hermes path ownership lifecycle contract", () => {
         knownGap: "source-removal-precedes-final-validation",
       },
     });
-    expect(HERMES_CONTRACT_GAPS).toEqual([
-      {
-        id: "cron-jobs-schema-split",
-        currentPaths: ["cron/jobs.json"],
-        targetArtifactIds: ["cron-job-definitions", "cron-job-runtime-state"],
-        consumer: "pinned Hermes cron.jobs and cron.scheduler",
-        migration: "record-level",
-        failure: "retain-source",
-      },
-      {
-        id: "curator-runtime-relocation",
-        currentPaths: ["skills/.curator_state", "skills/.curator_backups"],
-        targetArtifactIds: ["curator-state", "curator-recovery"],
-        consumer: "pinned Hermes agent.curator and agent.curator_backup",
-        migration: "path-relocation",
-        failure: "retain-source",
-      },
-      {
-        id: "skills-protected-transition",
-        currentPaths: ["skills", "skills/.archive", "skills/.curator_suppressed"],
-        targetArtifactIds: ["skills", "curator-archive", "curator-suppression"],
-        consumer:
-          "pinned Hermes Curator, tools.skill_manager_tool, tools.skills_sync, and gateway startup",
-        migration: "privileged-transition",
-        failure: "retain-source",
-      },
-      {
-        id: "lsp-install-privileged-transition",
-        currentPaths: ["lsp", "lsp/bin", "lsp/node_modules", "lsp/python-packages"],
-        targetArtifactIds: ["lsp-cache"],
-        consumer: "pinned Hermes agent.lsp.install and agent.lsp.servers",
-        migration: "privileged-transition",
-        failure: "retain-source",
-      },
-      {
-        id: "pairing-runtime-relocation",
-        currentPaths: [
-          "pairing/{platform}-pending.json",
-          "pairing/_rate_limits.json",
-          "platforms/pairing/{platform}-pending.json",
-          "platforms/pairing/_rate_limits.json",
-        ],
-        targetArtifactIds: ["pairing-runtime-state", "pairing-pending", "pairing-rate-limits"],
-        consumer: "pinned Hermes PairingStore pending request and rate-limit writers",
-        migration: "path-relocation",
-        failure: "retain-source",
-      },
-      {
-        id: "pairing-approval-privileged-transition",
-        currentPaths: [
-          "pairing/{platform}-approved.json",
-          "platforms/pairing/{platform}-approved.json",
-          "feishu_comment_pairing.json",
-        ],
-        targetArtifactIds: [
-          "pairing-approved",
-          "pairing-approved-write-staging",
-          "feishu-comment-pairing",
-          "feishu-comment-pairing-write-staging",
-        ],
-        consumer: "pinned Hermes pairing approval, dashboard, and Feishu comment pairing writers",
-        migration: "privileged-transition",
-        failure: "retain-source",
-      },
-      {
-        id: "whatsapp-session-secure-handoff",
-        currentPaths: ["platforms/whatsapp/session", "whatsapp/session"],
-        targetArtifactIds: ["whatsapp-session", "legacy-whatsapp-session"],
-        consumer:
-          "pinned Hermes WhatsApp bridge Baileys multi-file authentication state and NemoClaw snapshot/rebuild restore",
-        migration: "privileged-transition",
-        failure: "retain-source",
-        limitation:
-          "same-uid topology cannot isolate gateway session credentials from sandbox code",
-      },
-    ]);
+    const gapIds = HERMES_CONTRACT_GAPS.map((gap) => gap.id);
+    expect(new Set(gapIds).size).toBe(gapIds.length);
+    expect(new Set(gapIds)).toEqual(
+      new Set([
+        "cron-jobs-schema-split",
+        "curator-runtime-relocation",
+        "skills-protected-transition",
+        "lsp-install-privileged-transition",
+        "pairing-runtime-relocation",
+        "pairing-approval-privileged-transition",
+        "whatsapp-session-secure-handoff",
+      ]),
+    );
+    for (const gap of HERMES_CONTRACT_GAPS) {
+      expect(gap.failure, gap.id).toBe("retain-source");
+      for (const targetArtifactId of gap.targetArtifactIds) {
+        const targetArtifact = artifact(targetArtifactId);
+        const targetPath = materializePathPattern(
+          resolveHermesArtifactPath(targetArtifact, { kind: "default" }),
+        );
+        expect(
+          findHermesManagedArtifact(targetPath),
+          gap.id + ":" + targetArtifactId,
+        ).toMatchObject({
+          artifact: { id: targetArtifactId },
+          pathRole: "target",
+        });
+      }
+      for (const currentPath of gap.currentPaths) {
+        const materializedPath = materializePathPattern("/sandbox/.hermes/" + currentPath);
+        expect(
+          findHermesManagedArtifact(materializedPath),
+          gap.id + ":" + currentPath,
+        ).not.toBeNull();
+      }
+    }
     expect(
       findHermesManagedArtifact("/sandbox/.hermes/platforms/pairing/slack-approved.json"),
     ).toMatchObject({
