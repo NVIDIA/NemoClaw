@@ -15,7 +15,7 @@
 // caught earlier by _snapshot_pair's hash check and still fails closed.
 //
 // The guard needs euid 0 and the fixed /sandbox/.openclaw path, so it cannot run
-// for real here. This drives _transition through a python harness that replaces
+// for real here. This drives _transition through a Python harness that replaces
 // every filesystem helper with a recording stub, asserting which branch runs.
 
 import { spawnSync } from "node:child_process";
@@ -141,7 +141,7 @@ describe("openclaw-config-guard lock re-seal on perms-only drift (#7985)", () =>
     expect(runScenario("content-drift-fails-closed")).toBe("OK");
   });
 
-  it("leaves a clean locked pair verify-only", () => {
+  it("leaves an unmodified locked pair verify-only", () => {
     expect(runScenario("clean-verify-only")).toBe("OK");
   });
 });

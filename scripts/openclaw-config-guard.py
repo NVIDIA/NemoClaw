@@ -3450,11 +3450,11 @@ def _transition(
                     raise
                 # Locked dir, but a canonical file drifted perms-only (e.g. an
                 # in-sandbox reconciler re-permissioned .config-hash after the
-                # lock: #4663 / #7985). Re-seal below instead of failing closed.
-                # Safe: the dir is root-owned (content cannot be swapped), and
-                # content drift already failed above in _snapshot_pair's hash check.
+                # lock: #4663 / #7985). Re-seal below instead of failing closed:
+                # the dir is root-owned (content cannot be swapped), and content
+                # drift already failed above in _snapshot_pair's hash check.
                 # Source: the writer is the upstream OpenClaw in-sandbox gateway/
-                # doctor perm-normalizer, which NemoClaw does not own — so the
+                # doctor perm-normalizer, which NemoClaw does not own, so the
                 # correct fix is this host-authenticated relock re-seal, not a
                 # change to that writer, which this repo cannot make. Removal
                 # condition: delete this path once the lock is durably immutable on
