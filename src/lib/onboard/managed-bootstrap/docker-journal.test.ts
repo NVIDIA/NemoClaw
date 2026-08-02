@@ -16,19 +16,17 @@ import {
   type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
   DockerManagedBootstrapLegacyRecordRequiresAgentError,
+  normalizeDockerManagedBootstrapJournal,
   parseDockerManagedBootstrapFinalizationRecord,
   parseDockerManagedBootstrapJournal,
   serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 const roots: string[] = [];
 const IDENTITY = "1".repeat(64);
 const OTHER_IDENTITY = "0".repeat(64);
-
-function reverseKeys<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).reverse()) as T;
-}
 
 const journal = Object.freeze({
   schemaVersion: DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
@@ -198,6 +196,17 @@ afterEach(() => {
 });
 
 describe("Docker managed bootstrap journal", () => {
+  it("rejects comma-joined keys as a different schema", () => {
+    const { agent: _agent, backupName: _backupName, ...withoutSeparateKeys } = journal;
+
+    expect(() =>
+      normalizeDockerManagedBootstrapJournal({
+        ...withoutSeparateKeys,
+        "agent,backupName": "hermes",
+      }),
+    ).toThrow("journal schema is invalid");
+  });
+
   it("publishes private canonical state through only monotonic phases", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
@@ -444,15 +453,33 @@ describe("Docker managed bootstrap journal", () => {
 
   it("upgrades legacy finalization only with exact immutable transaction context", () => {
     const serialized = `${JSON.stringify(legacyFinalizationV1())}\n`;
-    expect(() => parseDockerManagedBootstrapFinalizationRecord(serialized)).toThrowError(
+    let missingContextFailure: unknown;
+    try {
+      parseDockerManagedBootstrapFinalizationRecord(serialized);
+    } catch (error) {
+      missingContextFailure = error;
+    }
+    expect(missingContextFailure).toBeInstanceOf(
       DockerManagedBootstrapLegacyRecordRequiresAgentError,
     );
-    expect(() =>
+    expect(missingContextFailure).toMatchObject({ reason: "missing-context" });
+
+    let contextMismatchFailure: unknown;
+    try {
       parseDockerManagedBootstrapFinalizationRecord(serialized, {
         ...finalizationContext,
         planFingerprint: "0".repeat(64),
-      }),
-    ).toThrowError(DockerManagedBootstrapLegacyRecordRequiresAgentError);
+      });
+    } catch (error) {
+      contextMismatchFailure = error;
+    }
+    expect(contextMismatchFailure).toBeInstanceOf(
+      DockerManagedBootstrapLegacyRecordRequiresAgentError,
+    );
+    expect(contextMismatchFailure).toMatchObject({
+      message: expect.stringContaining("supplied durable context does not match this record"),
+      reason: "context-mismatch",
+    });
     expect(parseDockerManagedBootstrapFinalizationRecord(serialized, finalizationContext)).toEqual(
       finalization,
     );
