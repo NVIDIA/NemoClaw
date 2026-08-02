@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 11 as const;
+export const RISK_PLAN_VERSION = 12 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -27,6 +27,32 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
 ] as const;
 const MANAGED_IMAGE_MULTIARCH_ACTIVATION =
   "ci/protected-managed-image-multiarch-activation-v1.json";
+const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
+  MANAGED_IMAGE_MULTIARCH_ACTIVATION,
+  ".dockerignore",
+  ".github/workflows/managed-images.yaml",
+  "Dockerfile",
+  "ci/npm-audit-exceptions.json",
+  "src/lib/core/json-types.ts",
+  "src/lib/core/ports.ts",
+  "src/lib/onboard/managed-bootstrap/envelope.ts",
+  "src/lib/security/credential-hash.ts",
+  "src/lib/state/paths.ts",
+  "src/lib/state/state-root.ts",
+  "src/lib/tool-disclosure.ts",
+  "tsconfig.runtime-preloads.json",
+]);
+const MANAGED_IMAGE_MULTIARCH_CHILD_CREDENTIALS =
+  /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]+[.]json$/u;
+const MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES = [
+  "agents/",
+  "nemoclaw/",
+  "nemoclaw-blueprint/",
+  "scripts/",
+  "src/lib/messaging/",
+  "src/lib/onboard/managed-startup/",
+  "tools/mcp-tool-discovery-runtime/",
+] as const;
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -352,12 +378,14 @@ export const RISK_RULES: readonly RiskRule[] = [
       "amd64 and arm64 shards emit exact head, base, platform, cohort, base, image, and direct-start evidence before cleanup",
       "the isolated registry is removed before a shard can publish passing risk evidence",
     ],
-    // Bootstrap contract: this first trusted-controller slice recognizes only
-    // the activation marker. The follow-on candidate adds that marker and
-    // broadens the runtime paths after this job exists on trusted main, which
-    // lets the follow-on prove its own exact head without loading PR-authored
-    // workflow structure into the controller.
-    matches: (file) => file === MANAGED_IMAGE_MULTIARCH_ACTIVATION,
+    // Keep this source boundary synchronized with the managed-image workflow's
+    // path filter. The preceding trusted-controller slice intentionally matched
+    // only the activation marker; after that lane lands, this candidate can
+    // select and prove its own exact head before broadening future qualification.
+    matches: (file) =>
+      MANAGED_IMAGE_MULTIARCH_INPUTS.has(file) ||
+      MANAGED_IMAGE_MULTIARCH_CHILD_CREDENTIALS.test(file) ||
+      MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
   },
   {
     id: "sandbox-boundary",
