@@ -107,6 +107,10 @@ describe("Hermes 0.19.0 dependency review", () => {
       function: "_coalesce_session_name_args",
       boundary_set: "_SUBCOMMANDS",
     });
+    expect(Object.keys(cliAdapter.translations).sort()).toEqual([
+      "provider_model_composition",
+      "resumed_oneshot",
+    ]);
     expect(
       (
         Object.values(cliAdapter.translations) as Array<{

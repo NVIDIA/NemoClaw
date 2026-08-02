@@ -195,7 +195,7 @@ def validate(contract_path: Path, hermes_binary: str) -> None:
 
     translations = contract.get("translations")
     if not isinstance(translations, dict) or set(translations) != {
-        "provider_model",
+        "provider_model_composition",
         "resumed_oneshot",
     }:
         _fail("Hermes CLI adapter must declare the two managed translations")

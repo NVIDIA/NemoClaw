@@ -99,6 +99,8 @@ The adapter owns the resumed one-shot forms that require translation, including 
 session names before the one-shot option.
 Test bare, quoted, and unquoted forms plus global profile selectors.
 Provider and model composition accepts a session name as one argument.
+The `provider_model_composition` key names this managed translation, not the
+`NEMOCLAW_PROVIDER_MODEL` environment value.
 The adapter rejects an unquoted multi-word session plus provider and model flags before Hermes
 runs because a later positional can be an upstream command. Quote the session name to make it one
 argument.

@@ -132,7 +132,7 @@
       "source_fix_constraint": "The affected session persistence implementation belongs to Hermes. The durable source fix must land in Hermes before NemoClaw removes this translation.",
       "removal_condition": "Hermes appends top-level resumed and continued one-shot turns to the selected or most recent session."
     },
-    "provider_model": {
+    "provider_model_composition": {
       "issue": 7361,
       "forms": [
         "PROVIDER_OPTION := --provider PROVIDER | --provider=PROVIDER",

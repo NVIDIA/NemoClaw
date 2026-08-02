@@ -359,7 +359,7 @@ def _load_cli_adapter(path: str) -> dict:
         raise _CliAdapterError("Hermes CLI adapter is missing a managed translation option")
     translations = adapter.get("translations")
     if not isinstance(translations, dict) or set(translations) != {
-        "provider_model",
+        "provider_model_composition",
         "resumed_oneshot",
     }:
         raise _CliAdapterError("Hermes CLI adapter has invalid translation metadata")
@@ -550,7 +550,7 @@ def _merged_model(provider: str, model: str) -> str:
     return model if model.casefold().startswith(prefix.casefold()) else f"{provider}/{model}"
 
 
-def _provider_model_values(parsed: dict) -> tuple[dict, dict, str] | None:
+def _provider_model_composition(parsed: dict) -> tuple[dict, dict, str] | None:
     providers = _occurrences(parsed, "provider")
     models = _occurrences(parsed, "model")
     if len(providers) != 1 or len(models) != 1:
@@ -564,7 +564,7 @@ def _provider_model_values(parsed: dict) -> tuple[dict, dict, str] | None:
 
 def _translate_resumed_oneshot(
     parsed: dict,
-    provider_model: tuple[dict, dict, str] | None,
+    composition: tuple[dict, dict, str] | None,
 ) -> list[str] | None:
     oneshots = _occurrences(parsed, "oneshot")
     resumes = _occurrences(parsed, "resume")
@@ -591,9 +591,9 @@ def _translate_resumed_oneshot(
     if session["value"] is not None:
         translated.append(session["value"])
 
-    provider_occurrence = provider_model[0] if provider_model else None
-    model_occurrence = provider_model[1] if provider_model else None
-    merged_model = provider_model[2] if provider_model else None
+    provider_occurrence = composition[0] if composition else None
+    model_occurrence = composition[1] if composition else None
+    merged_model = composition[2] if composition else None
     excluded = {"continue", "oneshot", "profile", "resume", "usage_file"}
     for occurrence in parsed["occurrences"]:
         if occurrence["id"] in excluded or occurrence is provider_occurrence:
@@ -615,8 +615,10 @@ class _AmbiguousProviderModelSession(Exception):
     """Signal provider/model flags after an unquoted multi-word session name."""
 
 
-def _merge_provider_model(parsed: dict, provider_model: tuple[dict, dict, str]) -> list[str]:
-    provider, model, merged_model = provider_model
+def _apply_provider_model_composition(
+    parsed: dict, composition: tuple[dict, dict, str]
+) -> list[str]:
+    provider, model, merged_model = composition
     skip = set(range(provider["start"], provider["end"]))
     result: list[str] = []
     for index, arg in enumerate(parsed["argv"]):
@@ -635,12 +637,12 @@ def _adapt_cli_argv(argv: list[str], adapter: dict) -> tuple[str, list[str]]:
     parsed = _parse_managed_invocation(argv, adapter)
     if parsed is None:
         return "passthrough", argv
-    provider_model = _provider_model_values(parsed)
-    translated = _translate_resumed_oneshot(parsed, provider_model)
+    composition = _provider_model_composition(parsed)
+    translated = _translate_resumed_oneshot(parsed, composition)
     if translated is not None:
         return "translated", translated
-    if provider_model is not None:
-        return "translated", _merge_provider_model(parsed, provider_model)
+    if composition is not None:
+        return "translated", _apply_provider_model_composition(parsed, composition)
     return "passthrough", argv
 
 
