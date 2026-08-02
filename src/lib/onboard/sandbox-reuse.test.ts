@@ -225,6 +225,32 @@ describe("createSandboxReuseHelpers", () => {
     );
   });
 
+  it("observes a resumed replacement on the gateway its journal records (#7734)", () => {
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get" ? "Name: alpha\nId: openshell-source-id\nState: Ready\n" : "alpha Ready\n",
+    );
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell,
+      runOpenshell: vi.fn(),
+      getSandboxStateFromOutputs: vi.fn(() => "ready"),
+      note: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+    });
+
+    helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090");
+
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
+      { ignoreError: true },
+    );
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "list", "-g", "nemoclaw-9090"],
+      { ignoreError: true },
+    );
+  });
+
   it("preserves an unknown reuse state but rejects it for recreate recovery", () => {
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell: vi.fn(() => ""),

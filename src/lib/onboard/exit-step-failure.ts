@@ -6,7 +6,11 @@ import { printOnboardResumeHint } from "./resume-hint";
 
 export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
-  finalizeIncompleteOnboardStep(stepName: string, message?: string | null): Session | null;
+  finalizeIncompleteOnboardStep(
+    stepName: string,
+    message?: string | null,
+    interrupted?: boolean,
+  ): Session | null;
 }
 
 export interface OnboardExitFailureProcessLike {
@@ -22,6 +26,7 @@ type OnboardInterruptSignal = "SIGINT" | "SIGTERM";
 export function markLastStartedStepFailed(
   deps: ExitStepFailureSessionDeps,
   message: string,
+  interrupted = false,
 ): Session | null {
   // Repairs the invalid state where onboard/rebuild exits nonzero after a step
   // starts but before normal completion handlers can run. Routes through the
@@ -31,7 +36,7 @@ export function markLastStartedStepFailed(
   // Covered by exit-step-failure, rebuild-flow, and onboard-exit-handler tests.
   const failedStep = deps.loadSession()?.lastStepStarted;
   if (!failedStep) return null;
-  return deps.finalizeIncompleteOnboardStep(failedStep, message);
+  return deps.finalizeIncompleteOnboardStep(failedStep, message, interrupted);
 }
 
 export function registerIncompleteOnboardExitFailureHandler(
@@ -47,7 +52,9 @@ export function registerIncompleteOnboardExitFailureHandler(
     // their own recovery guidance (#6003). When an explicit cancel has already
     // cleared the session (or no step started), this is null and stays silent;
     // printOnboardResumeHint also self-dedupes against tailored hints.
-    if (markLastStartedStepFailed(deps, message)) printOnboardResumeHint();
+    const interrupted = markLastStartedStepFailed(deps, message, true);
+    if (!interrupted) return;
+    printOnboardResumeHint();
   };
 
   processLike.once("exit", (code) => {

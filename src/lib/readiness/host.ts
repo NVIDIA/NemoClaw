@@ -80,7 +80,7 @@ export interface CollectHostObservationsOptions {
 
 export interface CreateHostReadinessReportOptions {
   nemoclawVersion: string;
-  sourceRevision?: string;
+  sourceRevision: string;
   now?: () => Date;
   maxObservationAgeMs?: number;
 }
@@ -461,7 +461,7 @@ export function projectHostReadiness(
     mutated: false,
     provenance: {
       nemoclawVersion: options.nemoclawVersion,
-      ...(options.sourceRevision ? { sourceRevision: options.sourceRevision } : {}),
+      sourceRevision: options.sourceRevision,
       observedAt: snapshot.observedAt,
     },
     observations,

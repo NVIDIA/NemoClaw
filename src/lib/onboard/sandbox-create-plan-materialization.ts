@@ -13,6 +13,20 @@ import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 type PrepareInitialSandboxCreatePolicy =
   typeof import("./initial-policy").prepareInitialSandboxCreatePolicy;
 
+const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
+  type: "tmpfs",
+  target: "/run/nemoclaw-dcode-mcp",
+  // Docker applies nosuid and nodev to tmpfs mounts by default and rejects
+  // both when they are repeated in structured MountTmpfsOptions.
+  options: ["noexec"],
+  size_bytes: 1_048_576,
+  mode: 0o1777,
+} as const;
+const DCODE_MCP_SNAPSHOT_TMPFS_CONFIG = JSON.stringify({
+  docker: { mounts: [DCODE_MCP_SNAPSHOT_TMPFS_MOUNT] },
+  podman: { mounts: [DCODE_MCP_SNAPSHOT_TMPFS_MOUNT] },
+});
+
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
@@ -154,6 +168,9 @@ export function materializeSandboxCreatePlan({
     intent.sandboxName,
     "--policy",
     initialSandboxPolicy.policyPath,
+    ...(intent.policy.options.agentName === "langchain-deepagents-code"
+      ? ["--driver-config-json", DCODE_MCP_SNAPSHOT_TMPFS_CONFIG]
+      : []),
     ...intent.gpuCreateArgs,
     ...intent.resourceCreateArgs,
   ];

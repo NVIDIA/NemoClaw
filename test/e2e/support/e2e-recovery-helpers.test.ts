@@ -195,6 +195,17 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBe(1234);
     });
 
+    it("returns the recorded PID and process start identity together", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "1234 987654 987654 S\n" });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.resolveGatewayIdentity(fakeInstance())).resolves.toEqual({
+        pid: 1234,
+        startIdentity: "987654",
+      });
+    });
+
     it("returns null when the PID probe fails despite valid-looking output", async () => {
       const runner = new ScriptedRunner();
       runner.queue({ exitCode: 1, stdout: "1234 987654 987654 S\n" });
@@ -248,7 +259,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         pollIntervalSeconds: 1,
       });
       await vi.runAllTimersAsync();
-      await expect(observation).resolves.toBe(100);
+      await expect(observation).resolves.toEqual({ pid: 100, startIdentity: "111" });
     });
 
     it("throws when the PID changes (crash-loop)", async () => {
@@ -261,7 +272,22 @@ describe("GatewayClient recovery helpers (#2701)", () => {
           durationSeconds: 2,
           pollIntervalSeconds: 1,
         }),
-      ).rejects.toThrow(/PID changed 100→201.*crash-loop/);
+      ).rejects.toThrow(/identity changed 100:111→201:222.*crash-loop/);
+      await vi.runAllTimersAsync();
+      await observation;
+    });
+
+    it("throws when a numeric PID is reused by a different process identity", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "100 111 111 S\n" }, { stdout: "100 222 222 S\n" });
+      const gateway = buildGateway(runner);
+
+      const observation = expect(
+        gateway.expectPidStable(fakeInstance(), {
+          durationSeconds: 2,
+          pollIntervalSeconds: 1,
+        }),
+      ).rejects.toThrow(/identity changed 100:111→100:222.*crash-loop/);
       await vi.runAllTimersAsync();
       await observation;
     });

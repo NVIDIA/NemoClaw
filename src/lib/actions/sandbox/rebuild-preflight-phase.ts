@@ -43,6 +43,7 @@ import {
   expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
   isSingleAgentRebuildSupported,
+  type RebuildRoutePreflightReceipt,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
@@ -66,6 +67,7 @@ export interface RebuildPreflightPhaseResult {
   recoveryManifest: RebuildManifest | null;
   dcodePreflight: DcodeRebuildOrchestrator;
   preparedImage: PreparedRebuildImage | null;
+  routePreflightReceipt: RebuildRoutePreflightReceipt;
   releaseOnboardLock: () => void;
   log: RebuildLog;
   bail: RebuildBail;

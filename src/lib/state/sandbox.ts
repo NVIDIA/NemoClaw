@@ -21,6 +21,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -42,7 +43,7 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -620,52 +621,44 @@ function computeBlueprintDigest(): string | null {
   return null;
 }
 
-/**
- * Walk a local directory and sanitize any JSON config files found.
- * Also removes files that match CREDENTIAL_SENSITIVE_BASENAMES.
- */
-function sanitizeBackupDirectory(dirPath: string): void {
-  if (!existsSync(dirPath)) return;
+export interface BackupSanitizationOperations {
+  sanitizeDirectory: (backupPath: string) => void;
+  removeBackup: (backupPath: string) => void;
+  backupExists: (backupPath: string) => boolean;
+}
 
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile()) {
-        if (isSensitiveFile(entry.name)) {
-          try {
-            require("node:fs").unlinkSync(fullPath);
-          } catch {
-            /* best effort */
-          }
-        } else if (entry.name.endsWith(".json")) {
-          sanitizeConfigFile(fullPath);
-        } else if (entry.name === ".env" || entry.name.endsWith(".env")) {
-          // Strip credential lines from .env files (KEY=value format).
-          // Hermes stores API keys in .env alongside config.yaml.
-          try {
-            const envContent = readFileSync(fullPath, "utf-8");
-            const filtered = envContent
-              .split("\n")
-              .map((line) => {
-                const key = line.split("=")[0]?.trim().toUpperCase() || "";
-                if (/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/.test(key)) {
-                  return `${line.split("=")[0]}=[STRIPPED_BY_MIGRATION]`;
-                }
-                return line;
-              })
-              .join("\n");
-            writeFileSync(fullPath, filtered);
-            chmodSync(fullPath, 0o600);
-          } catch {
-            /* best effort */
-          }
-        }
-      }
+const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
+  sanitizeDirectory: sanitizeSnapshotDirectory,
+  removeBackup: (backupPath) => rmSync(backupPath, { recursive: true, force: true }),
+  backupExists: existsSync,
+};
+
+/** @visibleForTesting */
+export function sanitizeBackupDirectory(
+  dirPath: string,
+  overrides: Partial<BackupSanitizationOperations> = {},
+): void {
+  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
+
+  try {
+    operations.sanitizeDirectory(dirPath);
+  } catch (error) {
+    try {
+      operations.removeBackup(dirPath);
+    } catch (cleanupError) {
+      throw new Error("Credential sanitization failed and backup cleanup failed", {
+        cause: cleanupError,
+      });
     }
-  };
-  walk(dirPath);
+    if (operations.backupExists(dirPath)) {
+      throw new Error("Credential sanitization failed and the incomplete backup remains", {
+        cause: error,
+      });
+    }
+    throw new Error("Credential sanitization failed; removed the incomplete backup", {
+      cause: error,
+    });
+  }
 }
 
 // ── Logging ────────────────────────────────────────────────────────
@@ -1787,11 +1780,44 @@ function restoreSandboxStateInternal(
 
 // ── Manifest ───────────────────────────────────────────────────────
 
-function writeManifest(backupPath: string, manifest: RebuildManifest): void {
+type ManifestPublishOps = {
+  write(filePath: string, contents: string, options: { mode: number; flag: "wx" }): void;
+  rename(source: string, destination: string): void;
+  remove(filePath: string, options: { force: true }): void;
+};
+
+const manifestPublishOps: ManifestPublishOps = {
+  write: (filePath, contents, options) => writeFileSync(filePath, contents, options),
+  rename: (source, destination) => renameSync(source, destination),
+  remove: (filePath, options) => rmSync(filePath, options),
+};
+
+function writeManifest(
+  backupPath: string,
+  manifest: RebuildManifest,
+  ops: ManifestPublishOps = manifestPublishOps,
+): void {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  chmodSync(manifestPath, 0o600);
+  const tempPath = path.join(backupPath, `.rebuild-manifest.json.tmp.${String(process.pid)}`);
+  let published = false;
+  try {
+    // A snapshot becomes recoverable only after its complete, private manifest
+    // is atomically renamed into place.
+    ops.write(tempPath, JSON.stringify(manifest, null, 2), { mode: 0o600, flag: "wx" });
+    ops.rename(tempPath, manifestPath);
+    published = true;
+  } finally {
+    if (!published) {
+      try {
+        ops.remove(tempPath, { force: true });
+      } catch {
+        // Preserve the publish failure; a same-directory temp file is never a snapshot.
+      }
+    }
+  }
 }
+
+export const __test = { writeManifest };
 
 function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
@@ -1837,6 +1863,32 @@ function readManifest(backupPath: string): RebuildManifest | null {
 export type RebuildRecoveryManifestValidation =
   | { ok: true; manifest: RebuildManifest }
   | { ok: false; reason: string };
+
+/**
+ * Remove one completed rebuild backup without allowing a caller-controlled
+ * path to escape the sandbox's timestamped backup directory.
+ */
+export function removeSandboxStateBackup(sandboxName: string, backupPath: string): boolean {
+  const rebuildBackupsRoot = path.resolve(REBUILD_BACKUPS_DIR);
+  const sandboxBackupRoot = path.resolve(rebuildBackupsRoot, sandboxName);
+  const candidateBackupPath = path.resolve(backupPath);
+
+  if (
+    sandboxBackupRoot === rebuildBackupsRoot ||
+    !isWithinRoot(sandboxBackupRoot, rebuildBackupsRoot) ||
+    normalizeHostPath(path.dirname(candidateBackupPath)) !== normalizeHostPath(sandboxBackupRoot)
+  ) {
+    return false;
+  }
+
+  try {
+    rejectSymlinksOnPath(candidateBackupPath);
+    rmSync(candidateBackupPath, { recursive: true, force: true });
+    return !existsSync(candidateBackupPath);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Re-read and validate a prepared rebuild backup before a destructive recovery.

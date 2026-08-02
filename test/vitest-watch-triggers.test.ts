@@ -48,6 +48,9 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "Dockerfile",
+  "agents/hermes/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
@@ -83,6 +86,13 @@ describe("Vitest opaque-input watch triggers", () => {
   });
 
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
+    expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
       "src/lib/onboard/initial-policy.test.ts",
