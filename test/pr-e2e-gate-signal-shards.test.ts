@@ -8,7 +8,7 @@ import {
   PR_E2E_TYPED_TARGET_IDS,
   riskPlanRequiredJobIds,
 } from "../tools/advisors/risk-plan.mts";
-import { expectedSignalShards } from "../tools/e2e/pr-e2e-gate.mts";
+import { expandPrGateJobSelections, expectedSignalShards } from "../tools/e2e/pr-e2e-gate.mts";
 
 const HEAD_SHA = "a".repeat(40);
 const DCODE_TARGET = PR_E2E_TYPED_TARGET_IDS[0];
@@ -50,5 +50,23 @@ describe("PR E2E signal shard policy", () => {
     expect(Object.keys(broadShards)).toHaveLength(13);
     expect(Object.values(broadShards).flat()).toHaveLength(15);
     expect(() => expectedSignalShards(["not-a-workflow-job"])).toThrow(/does not define/u);
+  });
+
+  it("expects the credential window evidence coupled to an MCP bridge selection", () => {
+    expect(expandPrGateJobSelections(["mcp-bridge"])).toEqual([
+      "mcp-bridge",
+      "openshell-credential-generation-window",
+    ]);
+    expect(
+      expandPrGateJobSelections(["mcp-bridge", "openshell-credential-generation-window"]),
+    ).toEqual(["mcp-bridge", "openshell-credential-generation-window"]);
+    expect(expectedSignalShards(["mcp-bridge"])).toEqual({
+      "mcp-bridge": ["openclaw", "hermes", "deepagents"],
+      "openshell-credential-generation-window": ["default"],
+    });
+    expect(expectedSignalShards(["mcp-bridge", "openshell-credential-generation-window"])).toEqual({
+      "mcp-bridge": ["openclaw", "hermes", "deepagents"],
+      "openshell-credential-generation-window": ["default"],
+    });
   });
 });

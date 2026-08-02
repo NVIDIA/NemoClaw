@@ -21,6 +21,7 @@ import {
   type ManagedStartupAgent,
   type ManagedStartupAgentConfig,
   type ManagedStartupProfile,
+  serializeManagedStartupProfile,
 } from "./managed-startup/profile";
 
 function sha256(bytes: string | Buffer): string {
@@ -211,7 +212,7 @@ describe("managed startup application", () => {
     expect(fs.existsSync(path.join(stateDirectory, "committed.json"))).toBe(false);
     expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(true);
     expect(fs.readFileSync(prepared.profilePath, "utf8")).toBe(
-      JSON.stringify(JSON.parse(fs.readFileSync(prepared.profilePath, "utf8"))),
+      serializeManagedStartupProfile(profileFor(agent)),
     );
     expect(fs.readFileSync(prepared.corporateCaPath as string)).toEqual(Buffer.from(PEM));
 
@@ -348,7 +349,21 @@ describe("managed startup application", () => {
         },
         { ...runtime, rootUid: runtime.rootUid + 1 },
       ),
-    ).toThrow(/root:root/u);
+    ).toThrow(/trusted identity|root:root/u);
+  });
+
+  it("allows a trusted sticky root but rejects a replaceable writable ancestor", () => {
+    const stickyRoot = path.join(fixtureRoot, "sticky-root");
+    fs.mkdirSync(stickyRoot, { mode: 0o700 });
+    fs.chmodSync(stickyRoot, 0o1777);
+    stateDirectory = path.join(stickyRoot, "trusted-state");
+    expect(() => prepare("openclaw")).not.toThrow();
+
+    const replaceable = path.join(fixtureRoot, "replaceable");
+    fs.mkdirSync(replaceable, { mode: 0o700 });
+    fs.chmodSync(replaceable, 0o777);
+    stateDirectory = path.join(replaceable, "untrusted-state");
+    expect(() => prepare("openclaw")).toThrow(/replaceable group- or world-writable ancestor/u);
   });
 
   it("rejects hardlinked generation files before commit", () => {

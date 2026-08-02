@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 9 as const;
+export const RISK_PLAN_VERSION = 10 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -20,6 +20,11 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
 ]);
+const MANAGED_STARTUP_E2E_JOB_IDS = [
+  "device-auth-health",
+  "issue-4462-scope-upgrade-approval",
+  "openclaw-inference-switch",
+] as const;
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -155,6 +160,22 @@ export function focusedPrE2eTargetsForChangedFiles(
         ]
       : []),
   ];
+}
+
+export function focusedPrE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+): TrustedFocusedE2eJob[] {
+  const matchedFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (file.startsWith("src/lib/onboard/managed-startup/") ||
+          file === "src/lib/onboard/sandbox-create-launch.ts" ||
+          file === "scripts/lib/entrypoint-env-wrapper.sh") &&
+        isRuntimeRelevant(file),
+    ),
+  );
+  if (matchedFiles.length === 0) return [];
+  return MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles }));
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
@@ -393,7 +414,10 @@ export function buildRiskPlan(options: {
 }): RiskPlan {
   const changedFiles = stableUnique(options.changedFiles);
   const runtimeFiles = changedFiles.filter(isRuntimeRelevant);
-  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
+  const focusedE2eJobs = normalizeFocusedE2eJobs(
+    [...focusedPrE2eJobsForChangedFiles(changedFiles), ...(options.focusedE2eJobs ?? [])],
+    changedFiles,
+  );
   const focusedLiveFiles = new Set(focusedE2eJobs.flatMap((selection) => selection.matchedFiles));
   const staticFamilies: RiskPlanFamily[] = RISK_RULES.flatMap((rule) => {
     const matchedFiles = runtimeFiles.filter(

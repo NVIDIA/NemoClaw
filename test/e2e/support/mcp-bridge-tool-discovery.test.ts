@@ -9,7 +9,10 @@ import {
   type StartedHttpServer,
   startCompatibleMock,
 } from "../live/mcp-bridge-servers.ts";
-import { hasSuccessfulAuthenticatedMcpDiscovery } from "../live/mcp-bridge-tool-discovery.ts";
+import {
+  hasSuccessfulAuthenticatedMcpDiscovery,
+  shouldRetryMcpToolDiscoveryTransportFailure,
+} from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
 const EXPECTED_RESULT_TOKEN = "expected-result";
@@ -175,6 +178,41 @@ describe("authenticated MCP rediscovery evidence", () => {
     Object.assign(requests[failedRequestIndex], response);
 
     expect(hasSuccessfulAuthenticatedMcpDiscovery(requests, EXPECTED_SECRET)).toBe(false);
+  });
+});
+
+describe("authenticated MCP tool discovery transport retry", () => {
+  it("retries one generic transport failure before any request reaches the fixture", () => {
+    expect(
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        { ok: false, detail: "MCP tool discovery request failed" },
+        [],
+        1,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["the fixture received a request", [request("initialize")], 1],
+    ["the retry budget is exhausted", [], 2],
+  ])("does not retry when %s", (_case, requests, attempt) => {
+    expect(
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        { ok: false, detail: "MCP tool discovery request failed" },
+        requests as FakeMcpRequest[],
+        attempt as number,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not retry a classified product or endpoint failure", () => {
+    expect(
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        { ok: false, detail: "MCP endpoint returned an invalid tool-list response" },
+        [],
+        1,
+      ),
+    ).toBe(false);
   });
 });
 

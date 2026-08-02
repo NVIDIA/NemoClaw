@@ -41,6 +41,8 @@ import {
   type GatewayRestartResult,
   gatewayIntegrityRepairLines,
   isGatewayIntegrityRepairLayer,
+  type ManagedGatewayControlCompletion,
+  parseManagedGatewayControlCompletion,
   printGatewayRestartFailure,
   type RestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
@@ -71,6 +73,7 @@ export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
   GatewayRestartResult,
+  ManagedGatewayControlCompletion,
   RestartSandboxGatewayOptions,
 } from "./gateway-restart";
 
@@ -367,11 +370,13 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
 }
 
 function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean {
-  return !!(
-    result &&
-    result.status === 0 &&
-    (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
-  );
+  if (!result || result.status !== 0) return false;
+  if (parseManagedGatewayControlCompletion(result)) return true;
+  // A structured controller response must satisfy the exact authenticated
+  // completion shape above. Only output without a protocol record may use the
+  // legacy/custom marker compatibility path.
+  if (result.stdout.split(/\r?\n/).some((line) => line.startsWith("v1 "))) return false;
+  return result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING");
 }
 
 // Source contract: scripts/gateway-control.sh and its installed managed helper
@@ -499,7 +504,8 @@ export async function isSandboxGatewayRunningForStatus(
  * commit or roll back after the managed health gate.
  */
 type SandboxProcessRecovery =
-  | { kind: "managed" | "custom" }
+  | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
+  | { kind: "custom" }
   | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
 
 function recoverSandboxProcesses(
@@ -542,6 +548,8 @@ function recoverSandboxProcesses(
     let execResult: SandboxCommandResult | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       execResult = requestGatewaySupervisorAction(sandboxName, "recover");
+      const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
+      if (managedControlCompletion) return { kind: "managed", managedControlCompletion };
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
 
       // PID 1 may replace the gateway between the host's stopped observation
@@ -563,6 +571,23 @@ function recoverSandboxProcesses(
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
             ),
+          restartRestoredManagedGateway: (containerId) => {
+            const restarted = parseManagedGatewayControlCompletion(
+              requestPinnedGatewaySupervisorAction(sandboxName, "restart", 210000, containerId),
+            );
+            if (restarted?.disposition !== "ok") return false;
+            return waitForRecoveredSandboxGateway(sandboxName, {
+              quiet,
+              initialManagedHealthPassed: true,
+              requireManagedProbe: true,
+              timeoutSeconds: gatewayRecoveryTimeoutSeconds(agent),
+              managedProbeImpl: (name) =>
+                confirmRecoveredSandboxGatewayManaged(name, {
+                  requestGatewaySupervisorActionImpl: (name, action) =>
+                    requestPinnedGatewaySupervisorAction(name, action, 210000, containerId),
+                }),
+            });
+          },
         },
       });
       if (relaunch) return { kind: "relaunched", relaunch };
@@ -784,8 +809,8 @@ const GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS = 120;
 /**
  * Wait until OpenShell has re-registered a directly recreated sandbox as
  * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
- * proving control-plane readiness, not authorizing the already completed
- * replacement-container recovery.
+ * proving the control-plane readiness that gates state restoration and the
+ * replacement-container commit.
  */
 function waitForRecreatedSandboxOpenShellReadyResult(
   sandboxName: string,
@@ -1312,6 +1337,12 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     },
   });
   if (recovery !== null) {
+    const withManagedControlCompletion = <T extends { recovered: true }>(
+      result: T,
+    ): T | (T & { managedControlCompletion: ManagedGatewayControlCompletion }) =>
+      recovery.kind === "managed" && recovery.managedControlCompletion
+        ? { ...result, managedControlCompletion: recovery.managedControlCompletion }
+        : result;
     const relaunch = recovery.kind === "relaunched" ? recovery.relaunch : null;
     const requestManagedProbe = relaunch
       ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
@@ -1410,6 +1441,49 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
+    // State restore crosses the OpenShell SSH boundary. Prove the replacement
+    // is both identity-pinned and registered before asking finalize(true) to
+    // mutate it; otherwise a slow control-plane handoff can make a healthy
+    // replacement look like a failed restore and trigger rollback.
+    const readinessFailureDetail = relaunch
+      ? (() => {
+          const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
+            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
+            timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
+          };
+          const readiness =
+            waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
+              ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
+              : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
+                ? ({ ready: true } as const)
+                : ({ failure: "openshell-readiness-failure", ready: false } as const);
+          return readiness.ready
+            ? null
+            : recreatedSandboxOpenShellReadinessFailureDetail(
+                readiness.failure,
+                "openshellError" in readiness ? readiness.openshellError : undefined,
+                readiness.failure === "managed-health-definitive-failure"
+                  ? (relaunchedManagedHealthFailureDetail ?? undefined)
+                  : undefined,
+              );
+        })()
+      : null;
+    if (readinessFailureDetail) {
+      try {
+        relaunch?.finalize(false);
+      } catch {
+        // The readiness error remains authoritative. The detail below directs
+        // the operator to the failed replacement without trusting it.
+      }
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail: readinessFailureDetail,
+      };
+    }
     if (relaunch) {
       try {
         const completion = relaunch.finalize(true);
@@ -1456,39 +1530,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         }
       }
     }
-    const readinessFailureDetail = relaunch
-      ? (() => {
-          const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
-            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
-            timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
-          };
-          const readiness =
-            waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
-              ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
-              : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
-                ? ({ ready: true } as const)
-                : ({ failure: "openshell-readiness-failure", ready: false } as const);
-          return readiness.ready
-            ? null
-            : recreatedSandboxOpenShellReadinessFailureDetail(
-                readiness.failure,
-                "openshellError" in readiness ? readiness.openshellError : undefined,
-                readiness.failure === "managed-health-definitive-failure"
-                  ? (relaunchedManagedHealthFailureDetail ?? undefined)
-                  : undefined,
-              );
-        })()
-      : null;
-    if (readinessFailureDetail) {
-      return {
-        checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail: readinessFailureDetail,
-      };
-    }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = ensureSandboxPortForward(sandboxName, {
@@ -1497,7 +1538,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       isWsl: isWslOverride,
     });
     if (!forwardRecovered && relaunchedIdentityRejected) {
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
@@ -1505,7 +1546,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
           "the primary dashboard/API host forward could not be re-established",
-      };
+      });
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
@@ -1530,7 +1571,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
     }
     if (!forwardRecovered) {
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
@@ -1538,25 +1579,25 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
           "the primary dashboard/API host forward could not be re-established",
-      };
+      });
     }
     if (auxiliaryFailureDetail !== null) {
       if (!quiet) console.error(`  ${auxiliaryFailureDetail}.`);
-      return {
+      return withManagedControlCompletion({
         checked: true,
         wasRunning: false,
         recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
-      };
+      });
     }
-    return {
+    return withManagedControlCompletion({
       checked: true,
       wasRunning: false,
       recovered: true,
       forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
-    };
+    });
   }
   if (!quiet) {
     console.error(`  Could not restart ${recoveryDisplayName} gateway automatically.`);

@@ -123,7 +123,7 @@ function defaultRestoreGatewayPairingDeps(): RestoreGatewayPairingDeps {
   const warmup: typeof import("./auto-pair-warmup") = require("./auto-pair-warmup");
   return {
     restartRestoredSandboxGateway,
-    warmupScopeUpgrade: warmup.runSandboxScopeWarmupRun,
+    warmupScopeUpgrade: warmup.runRestoredSandboxScopeWarmupRun,
     approveRestoredClonePairing,
     verifyGatewayPairing: (sandboxName) =>
       verifyRestoredSandboxGatewayPairing(sandboxName, WARMUP_SESSION_ID_PREFIX),
@@ -134,16 +134,27 @@ export async function establishRestoredSandboxGatewayPairing(
   targetSandbox: string,
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
-  // Deliberately do not retry this authorization sequence internally. A fixed
-  // failure lets the caller retry the restore command as a new bounded attempt.
   try {
     deps.restartRestoredSandboxGateway(targetSandbox);
     deps.warmupScopeUpgrade(targetSandbox);
-    const approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
-    // Publish the clone's approved pairing transition before the one ordinary
+    let approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
+    // Publish the clone's approved pairing transition before an ordinary
     // authenticated verifier. The verifier alone decides success.
     deps.restartRestoredSandboxGateway(targetSandbox);
-    const verification = deps.verifyGatewayPairing(targetSandbox);
+    let verification = deps.verifyGatewayPairing(targetSandbox);
+    if (
+      !verification.ok &&
+      approvalReceipt === "list-pending-unavailable" &&
+      verification.failureLayer === "scope-upgrade-pending"
+    ) {
+      // The first approval pass could not call the canonical approve command
+      // because no clone-local pending file existed. The ordinary verifier then
+      // published the exact scope-upgrade request. Approve that request once,
+      // restart once, and keep the next ordinary verifier as the success gate.
+      approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
+      deps.restartRestoredSandboxGateway(targetSandbox);
+      verification = deps.verifyGatewayPairing(targetSandbox);
+    }
     if (!verification.ok) {
       throw new RestoreGatewayPairingClassifiedError(
         `the authenticated gateway verification run failed (${verification.failureLayer}; approval=${approvalReceipt})`,

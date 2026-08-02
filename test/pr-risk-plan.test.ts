@@ -27,7 +27,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(9);
+    expect(first.version).toBe(10);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -82,6 +82,39 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(["token-rotation"]);
     expect(result.families.map((family) => family.id)).toEqual(["focused-e2e"]);
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
+  });
+
+  it("selects startup and auth E2E for managed startup delivery changes (#8016)", () => {
+    const changedFiles = [
+      "scripts/lib/entrypoint-env-wrapper.sh",
+      "src/lib/onboard/managed-startup/agent-environment.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
+    ];
+    const result = plan(...changedFiles);
+    const adjacentOnboardChange = plan("src/lib/onboard/provider-selection.ts");
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: changedFiles,
+        requiredJobs: [
+          "device-auth-health",
+          "issue-4462-scope-upgrade-approval",
+          "openclaw-inference-switch",
+        ],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([
+        "device-auth-health",
+        "issue-4462-scope-upgrade-approval",
+        "openclaw-inference-switch",
+      ]),
+    );
+    expect(riskPlanRequiredJobIds(adjacentOnboardChange)).toEqual([
+      "onboard-repair",
+      "onboard-resume",
+    ]);
   });
 
   it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {

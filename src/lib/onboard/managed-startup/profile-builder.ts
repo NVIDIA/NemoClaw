@@ -46,6 +46,16 @@ const MAX_PROFILE_TUNING_INTEGER = 1_000_000_000;
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL = {
+  http: { upper: "HTTP_PROXY", lower: "http_proxy" },
+  https: { upper: "HTTPS_PROXY", lower: "https_proxy" },
+} as const;
+export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.upper,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.upper,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.lower,
+  MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.lower,
+] as const;
 
 /**
  * These digests deliberately bind the builder to every classified stock
@@ -56,7 +66,7 @@ const STANDARD_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
-  "langchain-deepagents-code": "780ec15dd97efaea5b75614d657a4baf93cba4c7933e50f78fb72814cb427c85",
+  "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -263,6 +273,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+function normalizeExtraAgentList(value: unknown, field: string): ManagedStartupJsonObject[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    fail(`${field} must be an object list`);
+  }
+  const normalized: ManagedStartupJsonObject[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || !isPlainObject(descriptor.value)) {
+      fail(`${field}[${String(index)}] must be an object`);
+    }
+    if (
+      Object.hasOwn(descriptor.value, "__proto__") ||
+      Object.hasOwn(descriptor.value, "prototype") ||
+      Object.hasOwn(descriptor.value, "constructor")
+    ) {
+      fail(`${field}[${String(index)}] contains an unsafe prototype field`);
+    }
+    normalized.push(descriptor.value as ManagedStartupJsonObject);
+  }
+  return normalized;
+}
+
 function normalizeExtraAgentsCandidate(value: unknown): ManagedStartupExtraAgents {
   const emptyDefaults = { subagents: {} };
   if (value === null || value === undefined) {
@@ -270,7 +302,7 @@ function normalizeExtraAgentsCandidate(value: unknown): ManagedStartupExtraAgent
   }
   if (Array.isArray(value)) {
     return {
-      agents: value as ManagedStartupJsonObject[],
+      agents: normalizeExtraAgentList(value, "NEMOCLAW_EXTRA_AGENTS_JSON"),
       defaults: emptyDefaults,
       main: {},
     };
@@ -289,14 +321,12 @@ function normalizeExtraAgentsCandidate(value: unknown): ManagedStartupExtraAgent
   const agents = value.agents ?? [];
   const defaults = value.defaults ?? emptyDefaults;
   const main = value.main ?? {};
-  if (!Array.isArray(agents) || !agents.every((agent) => isPlainObject(agent))) {
-    fail("NEMOCLAW_EXTRA_AGENTS_JSON.agents must be an object list");
-  }
+  const normalizedAgents = normalizeExtraAgentList(agents, "NEMOCLAW_EXTRA_AGENTS_JSON.agents");
   if (!isPlainObject(defaults) || !isPlainObject(main)) {
     fail("NEMOCLAW_EXTRA_AGENTS_JSON defaults and main must be objects");
   }
   return {
-    agents: agents as ManagedStartupJsonObject[],
+    agents: normalizedAgents,
     defaults: defaults as ManagedStartupJsonObject,
     main: main as ManagedStartupJsonObject,
   };
@@ -396,8 +426,16 @@ function resolveHostProxy(
   _agent: ManagedStartupAgent,
   environment: NodeJS.ProcessEnv,
 ): Pick<ManagedStartupProfile["proxy"], "hostHttpUrl" | "hostHttpsUrl" | "hostNoProxy"> {
-  const hostHttpUrl = resolveAliasedEnvironmentValue(environment, "HTTP_PROXY", "http_proxy");
-  const hostHttpsUrl = resolveAliasedEnvironmentValue(environment, "HTTPS_PROXY", "https_proxy");
+  const hostHttpUrl = resolveAliasedEnvironmentValue(
+    environment,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.upper,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.http.lower,
+  );
+  const hostHttpsUrl = resolveAliasedEnvironmentValue(
+    environment,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.upper,
+    MANAGED_STARTUP_HOST_PROXY_URL_INPUTS_BY_PROTOCOL.https.lower,
+  );
   const noProxy = resolveAliasedEnvironmentValue(environment, "NO_PROXY", "no_proxy");
   if (hostHttpUrl === null && hostHttpsUrl === null) {
     if (noProxy !== null) {
@@ -481,6 +519,9 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
     return;
   }
   if (input.agent === "hermes") {
+    if (input.inference.compatibility !== null) {
+      fail("Hermes does not support inference compatibility");
+    }
     if (
       input.inference.upstreamEndpointUrl !== null ||
       input.dcodeAutoApprovalMode !== null ||
@@ -498,6 +539,9 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
   }
   if (input.messagingPlan !== null) {
     fail("langchain-deepagents-code messagingPlan must be null");
+  }
+  if (input.inference.compatibility !== null) {
+    fail("langchain-deepagents-code does not support inference compatibility");
   }
   if (
     input.dcodeAutoApprovalMode !== "disabled" &&
@@ -757,6 +801,14 @@ function assertEnvironmentConsistency(
         config.observabilityEnabled,
       );
     }
+    const dcodeReasoningEffort = presentEnvironmentValue(environment, "NEMOCLAW_REASONING_EFFORT");
+    if (dcodeReasoningEffort !== null) {
+      assertEquivalent(
+        "NEMOCLAW_REASONING_EFFORT",
+        dcodeReasoningEffort.toLowerCase(),
+        profile.tuning.reasoningEffort,
+      );
+    }
   }
 
   const messaging = parseEnvironmentJson(environment, "NEMOCLAW_MESSAGING_PLAN_B64");
@@ -870,7 +922,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       contextWindow: null,
       maxTokens: null,
       reasoning: null,
-      reasoningEffort: null,
+      reasoningEffort: parseReasoningEffort(input.environment),
     };
   }
 

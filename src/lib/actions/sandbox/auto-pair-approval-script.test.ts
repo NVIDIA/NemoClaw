@@ -37,7 +37,10 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     });
 
     expect(ordinary).not.toContain("local_identity_public_key");
-    expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+    expect(ordinary).toContain("approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)");
+    expect(ordinary).toContain("approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)");
+    expect(ordinary).not.toContain("approve_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'");
+    expect(ordinary).not.toContain("approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'");
     expect(ordinary).not.toContain("load_clone_local_pending");
     expect(ordinary).not.toContain("open_clone_state_root");
     expect(ordinary).not.toContain("pass_fds=");
@@ -45,7 +48,16 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(ordinary).not.toContain("OPENCLAW_NO_RESPAWN");
     expect(restoredClone).toContain("local_identity_public_key");
     expect(restoredClone).toContain(
+      "approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)",
+    );
+    expect(restoredClone).toContain(
       "approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)",
+    );
+    expect(restoredClone).not.toContain(
+      "approve_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'",
+    );
+    expect(restoredClone).toContain(
+      "approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'",
     );
     expect(restoredClone).not.toContain("'devices', 'list', '--json'");
     expect(restoredClone).toContain("'pending.json'");
@@ -55,10 +67,10 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
     expect(restoredClone).toContain("sync_approved_clone_device_auth");
     expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
+    expect(restoredClone).toContain("getattr(os, 'O_PATH', os.O_RDONLY)");
     expect(restoredClone).toContain("dir_fd=clone_state_dir_fd");
     expect(restoredClone).toContain("clone_devices_dir_fd,");
     expect(restoredClone).toContain("clone_identity_dir_fd,");
-    expect(restoredClone).toContain("metadata.st_nlink != 1");
     expect(restoredClone).toContain("pass_fds=approval_pass_fds");
     expect(restoredClone).toContain("approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'");
     expect(restoredClone).toContain("approve_env['OPENCLAW_NO_RESPAWN'] = '1'");
@@ -101,6 +113,14 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     for (const receipt of [
       "approved-one",
       "list-failed",
+      "list-state-path-invalid",
+      "list-platform-unsupported",
+      "list-state-root-failed",
+      "list-devices-directory-failed",
+      "list-pending-unsafe",
+      "list-pending-unstable",
+      "list-pending-invalid-shape",
+      "list-pending-unavailable",
       "list-timeout",
       "list-exec-failed",
       "list-scope-upgrade-pending",

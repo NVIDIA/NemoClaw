@@ -90,9 +90,11 @@ const CALL_OMIT_IDENTITY_TARGET = [
   "function shouldOmitDeviceIdentityForGatewayCall(params) {",
   "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
 ].join("\n");
+const CALL_OMIT_IDENTITY_LEGACY_FORCE_LINE = `\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return false; // ${CALL_FORCE_IDENTITY_MARKER} (#4462)`;
+const CALL_OMIT_IDENTITY_MODE_LINE = `\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1" || process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1") return false; // ${CALL_FORCE_IDENTITY_MARKER} (#4462)`;
 const CALL_OMIT_IDENTITY_REPLACEMENT = [
   "function shouldOmitDeviceIdentityForGatewayCall(params) {",
-  `\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return false; // ${CALL_FORCE_IDENTITY_MARKER} (#4462)`,
+  CALL_OMIT_IDENTITY_MODE_LINE,
   "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
 ].join("\n");
 const CALL_STORED_IDENTITY_TARGET =
@@ -114,9 +116,13 @@ const CALL_IDENTITY_RESOLVER_TARGET = [
   "\t}",
   "}",
 ].join("\n");
+const CALL_IDENTITY_RESOLVER_LEGACY_FORCE_LINE =
+  '\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") {';
+const CALL_IDENTITY_RESOLVER_MODE_LINE =
+  '\tif (process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1") {';
 const CALL_IDENTITY_RESOLVER_REPLACEMENT = [
   "function resolveDeviceIdentityForGatewayCall() {",
-  '\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") {',
+  CALL_IDENTITY_RESOLVER_MODE_LINE,
   "\t\tconst nemoclawExpectedDeviceId = normalizeOptionalString(process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID);",
   '\t\tif (!nemoclawExpectedDeviceId) throw new Error("forced pairing expected device identity is unavailable");',
   "\t\tlet nemoclawDeviceIdentity;",
@@ -155,6 +161,10 @@ const DEVICE_IDENTITY_LOAD_TARGET = [
   "function loadOrCreateDeviceIdentity(filePath = resolveDefaultIdentityPath()) {",
   "\ttry {",
 ].join("\n");
+const DEVICE_IDENTITY_LOAD_LEGACY_FORCE_LINE =
+  '\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return loadNemoClawForcedDeviceIdentity();';
+const DEVICE_IDENTITY_LOAD_MODE_LINE =
+  '\tif (process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1") return loadNemoClawForcedDeviceIdentity();';
 const DEVICE_IDENTITY_LOAD_REPLACEMENT = [
   "function resolveNemoClawCanonicalIdentityDescriptor() {",
   "\tconst nemoclawRawDescriptor = process.env.NEMOCLAW_OPENCLAW_IDENTITY_FD;",
@@ -187,7 +197,7 @@ const DEVICE_IDENTITY_LOAD_REPLACEMENT = [
   `\treturn nemoclawNormalizedIdentity.identity; // ${DEVICE_IDENTITY_FD_MARKER} (#4462)`,
   "}",
   "function loadOrCreateDeviceIdentity(filePath) {",
-  '\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return loadNemoClawForcedDeviceIdentity();',
+  DEVICE_IDENTITY_LOAD_MODE_LINE,
   "\tif (filePath === void 0) filePath = resolveDefaultIdentityPath();",
   "\ttry {",
 ].join("\n");
@@ -488,7 +498,7 @@ const CLI_CONTEXT_TARGET = [
 ].join("\n");
 const CLI_CONTEXT_REPLACEMENT = [
   "async function resolveApprovePairingGatewayContext(opts, requestId) {",
-  '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";',
+  '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1";',
   "\tlet nemoclawLocalStoredAuthCandidate = false;",
   "\tlet nemoclawLocalPairedTokenContext = null;",
   "\tlet nemoclawLocalPairedToken;",
@@ -1100,6 +1110,18 @@ const FILE_SPECS: FileSpec[] = [
     },
     patch(source, file) {
       if (source.includes(DEVICE_IDENTITY_FD_MARKER)) {
+        if (source.includes(DEVICE_IDENTITY_LOAD_LEGACY_FORCE_LINE)) {
+          const result = replaceExactlyOnce(
+            source,
+            DEVICE_IDENTITY_LOAD_LEGACY_FORCE_LINE,
+            DEVICE_IDENTITY_LOAD_MODE_LINE,
+            "restored-clone device-identity mode target",
+            file,
+          );
+          return result.error
+            ? { source, status: "no-match", error: result.error }
+            : { source: result.source, status: "would-apply" };
+        }
         return { source, status: "already-applied" };
       }
       const result = replaceExactlyOnce(
@@ -1135,7 +1157,17 @@ const FILE_SPECS: FileSpec[] = [
     patch(source, file) {
       let result: ReplacementResult = { source };
       let changed = false;
-      if (!result.source.includes(CALL_FORCE_IDENTITY_MARKER)) {
+      if (result.source.includes(CALL_OMIT_IDENTITY_LEGACY_FORCE_LINE)) {
+        result = replaceExactlyOnce(
+          result.source,
+          CALL_OMIT_IDENTITY_LEGACY_FORCE_LINE,
+          CALL_OMIT_IDENTITY_MODE_LINE,
+          "restored-clone gateway call device-identity mode target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      } else if (!result.source.includes(CALL_FORCE_IDENTITY_MARKER)) {
         result = replaceExactlyOnce(
           result.source,
           CALL_OMIT_IDENTITY_TARGET,
@@ -1157,7 +1189,20 @@ const FILE_SPECS: FileSpec[] = [
         if (result.error) return { source, status: "no-match", error: result.error };
         changed = true;
       }
-      if (!result.source.includes(CALL_EXPECTED_IDENTITY_MARKER)) {
+      if (
+        result.source.includes(CALL_EXPECTED_IDENTITY_MARKER) &&
+        result.source.includes(CALL_IDENTITY_RESOLVER_LEGACY_FORCE_LINE)
+      ) {
+        result = replaceExactlyOnce(
+          result.source,
+          CALL_IDENTITY_RESOLVER_LEGACY_FORCE_LINE,
+          CALL_IDENTITY_RESOLVER_MODE_LINE,
+          "restored-clone gateway call expected identity mode target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      } else if (!result.source.includes(CALL_EXPECTED_IDENTITY_MARKER)) {
         result = replaceExactlyOnce(
           result.source,
           CALL_IDENTITY_RESOLVER_TARGET,
@@ -1200,6 +1245,20 @@ const FILE_SPECS: FileSpec[] = [
       );
       if (appliedMarkerCounts.some((count) => count > 0)) {
         if (appliedMarkerCounts.every((count) => count === 1)) {
+          const legacyModeLine =
+            '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";';
+          if (source.includes(legacyModeLine)) {
+            const result = replaceExactlyOnce(
+              source,
+              legacyModeLine,
+              '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1";',
+              "restored-clone paired-token mode target",
+              file,
+            );
+            return result.error
+              ? { source, status: "no-match", error: result.error }
+              : { source: result.source, status: "would-apply" };
+          }
           return { source, status: "already-applied" };
         }
         return {
