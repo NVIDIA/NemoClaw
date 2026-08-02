@@ -3040,6 +3040,14 @@ export function createDockerManagedBootstrapAdapter(
       ) {
         throw new Error("Managed bootstrap Docker replacement identities do not match.");
       }
+      if (
+        snapshot.image.repository !== handle.plan.image.repository ||
+        snapshot.image.manifestDigest !== handle.plan.image.manifestDigest
+      ) {
+        throw new Error(
+          "Managed bootstrap Docker replacement snapshot image does not match its plan.",
+        );
+      }
       const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
       const normalizedOriginal = normalizeDockerManagedBootstrapLaunchSpec(parsed.inspect);
       if (normalizedOriginal.hash !== snapshot.specHash) {

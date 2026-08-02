@@ -475,6 +475,14 @@ describe("Docker managed bootstrap journal", () => {
     );
     expect(readPinnedPrivateFile(target).text).toBe(serialized);
 
+    expect(() =>
+      store.recordFinalization(finalization, {
+        ...finalizationContext,
+        agent: "openclaw",
+      }),
+    ).toThrow("does not match supplied durable context");
+    expect(readPinnedPrivateFile(target).text).toBe(serialized);
+
     store.recordFinalization(finalization, finalizationContext);
     expect(store.loadFinalization(IDENTITY)).toEqual(finalization);
     expect(readPinnedPrivateFile(target).text).toBe(
@@ -490,6 +498,26 @@ describe("Docker managed bootstrap journal", () => {
         finalizationContext,
       ),
     ).toThrow("does not match supplied durable context");
+  });
+
+  it("does not create a finalization before validating durable context", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    expect(store.listUnfinished()).toEqual([]);
+    const target = path.join(
+      root,
+      DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY,
+      `${IDENTITY}.json.finalized`,
+    );
+
+    expect(() =>
+      store.recordFinalization(finalization, {
+        ...finalizationContext,
+        agent: "openclaw",
+      }),
+    ).toThrow("does not match supplied durable context");
+    expect(fs.existsSync(target)).toBe(false);
   });
 
   it("rejects current journal and finalization records stored under another identity", () => {

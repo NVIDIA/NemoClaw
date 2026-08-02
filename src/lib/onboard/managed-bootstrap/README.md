@@ -74,8 +74,8 @@ work completes exact restore and cleanup; and shared-state-committed work
 completes exact backup cleanup and commit. Recovery persists an identity-bound
 finalization receipt before removing the active journal, is idempotent across
 another interruption, and returns normalized, provider-owned receipts in stable
-identity order. Mutable OpenShell names are read only to detect ownership reuse,
-and unsafe name-only deletion returns a typed retention error. Multi-process
+identity order. The code reads mutable OpenShell names only to detect ownership
+reuse, and unsafe name-only deletion returns a typed retention error. Multi-process
 lease/arbitration remains an explicit production-activation gate. Activation
 must also inject the selected gateway's canonical state root.
 

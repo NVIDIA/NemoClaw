@@ -807,6 +807,19 @@ function matchesFinalizationContext(
   );
 }
 
+function assertFinalizationMatchesContext(
+  record: DockerManagedBootstrapFinalizationRecord,
+  context: DockerManagedBootstrapFinalizationContext,
+): void {
+  const normalizedContext = normalizeFinalizationContext(context);
+  if (
+    record.agent !== normalizedContext.agent ||
+    !matchesFinalizationContext(record, normalizedContext)
+  ) {
+    fail("finalization record does not match supplied durable context");
+  }
+}
+
 function upgradeLegacyFinalization(
   legacy: DockerManagedBootstrapFinalizationWithoutAgent,
   context: DockerManagedBootstrapFinalizationContext | undefined,
@@ -929,15 +942,7 @@ function parseDockerManagedBootstrapFinalizationRecordWithContext(
   if (serializeDockerManagedBootstrapFinalizationRecord(record) !== text) {
     fail("serialized finalization record is not canonical");
   }
-  if (context) {
-    const normalizedContext = normalizeFinalizationContext(context);
-    if (
-      record.agent !== normalizedContext.agent ||
-      !matchesFinalizationContext(record, normalizedContext)
-    ) {
-      fail("finalization record does not match supplied durable context");
-    }
-  }
+  if (context) assertFinalizationMatchesContext(record, context);
   return { record, upgradedLegacy: false };
 }
 
@@ -1273,6 +1278,7 @@ export function createFileDockerManagedBootstrapJournalStore(
       context?: DockerManagedBootstrapFinalizationContext,
     ) {
       const normalized = normalizeDockerManagedBootstrapFinalizationRecord(record);
+      if (context) assertFinalizationMatchesContext(normalized, context);
       assertDirectory(directory);
       const target = finalizationPath(journalPath(directory, normalized.bootstrapIdentity));
       const serialized = serializeDockerManagedBootstrapFinalizationRecord(normalized);
