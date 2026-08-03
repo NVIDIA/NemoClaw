@@ -22,6 +22,7 @@ import {
   requireExpectedPromptAssetRoutes,
   resolvePromptAssetRevision,
 } from "./helpers/starter-prompt-asset-contract";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,8 @@ const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "st
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
 const promptAssetRevision = "bf46e62f901825f19e570c17f8c870a0eae04fbc";
+// When the revision is absent, the test can run one 120-second fetch and eleven 10-second Git commands.
+const PROMPT_ASSET_TEST_TIMEOUT_MS = 240_000;
 
 type PromptAsset = {
   path: string;
@@ -719,21 +722,25 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
   });
 
-  it("keeps local prompt assets byte-aligned with their pinned revision blobs (#6990)", () => {
-    resolvePromptAssetRevision(promptAssetRevision, runGit);
-    for (const asset of Object.values(promptAssets)) {
-      const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
-      const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
-      const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
+  it(
+    "keeps local prompt assets byte-aligned with their pinned revision blobs (#6990)",
+    testTimeoutOptions(PROMPT_ASSET_TEST_TIMEOUT_MS),
+    () => {
+      resolvePromptAssetRevision(promptAssetRevision, runGit);
+      for (const asset of Object.values(promptAssets)) {
+        const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
+        const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
+        const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
 
-      expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
-      expect(
-        localBytes.equals(pinnedBytes),
-        `${asset.path} does not byte-match its Git blob at ${promptAssetRevision}; commit the asset content, then repin every platform URL, promptAssetRevision, and digest to that content commit`,
-      ).toBe(true);
-      expect(pinnedSha256, `${asset.path} has a stale pinned SHA-256`).toBe(asset.pinnedSha256);
-    }
-  });
+        expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(
+          localBytes.equals(pinnedBytes),
+          `${asset.path} does not byte-match its Git blob at ${promptAssetRevision}; commit the asset content, then repin every platform URL, promptAssetRevision, and digest to that content commit`,
+        ).toBe(true);
+        expect(pinnedSha256, `${asset.path} has a stale pinned SHA-256`).toBe(asset.pinnedSha256);
+      }
+    },
+  );
 
   it("fails closed when the immutable prompt asset revision or blobs cannot be resolved (#6990)", () => {
     expect(() => resolvePromptAssetRevision("main", () => fail("git must not run"))).toThrow(
