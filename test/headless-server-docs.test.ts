@@ -132,8 +132,10 @@ describe("headless server deployment guide contracts", () => {
     expect(guide).not.toContain("## Launch NemoClaw from Brev");
     expect(guide).not.toContain("## Configure Your Agent");
     expect(guide).not.toContain("brev.nvidia.com/launchable");
-    expect(overview).toContain("| Headless server deployment |");
-    expect(overview).not.toContain("| Remote GPU deployment |");
+    expect(overview).toContain(
+      '<Card title="Deploy to a Headless Server" href="../deployment/deploy-to-headless-server">',
+    );
+    expect(overview).not.toMatch(/\| Remote GPU deployment \|/i);
     expect(commands).toContain("### Deprecated Brev Deployment");
     expect(commands).not.toContain("onboard --remote");
     expect(commands).not.toContain("For a remote Brev instance");

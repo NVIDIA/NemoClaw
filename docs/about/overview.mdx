@@ -1,7 +1,7 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "NVIDIA NemoClaw Overview"
+title: "NVIDIA NemoClaw Documentation"
 sidebar-title: "Overview"
 description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely inside OpenShell."
 description-agent: "Explains NemoClaw benefits, use cases, core capabilities, and product scope. Use when users ask what NemoClaw is or what the project provides."
@@ -22,13 +22,85 @@ NVIDIA NemoClaw is an open-source reference stack for running AI coding agents m
 
 </AgentOnly>
 
-NemoClaw provides onboarding, lifecycle management, and agent operations for supported agent runtimes in OpenShell sandboxes.
-It combines a host CLI, a versioned blueprint, and an agent-specific integration layer.
+NemoClaw provides onboarding, lifecycle management, and agent operations through a host CLI, versioned blueprint, and agent-specific integration layer.
 The OpenShell gateway coordinates sandbox lifecycle, managed inference, credentials, and policy enforcement.
 
-The primary tested platforms are Linux and DGX Spark.
-NemoClaw also documents platform limitations for macOS, Windows Subsystem for Linux (WSL), DGX Station, and headless Linux servers.
-Refer to [Platform Support](../reference/platform-support) for current agent, platform, provider, integration, and deployment-path status.
+## Skip Ahead
+
+Use these pages to evaluate NemoClaw or begin an agent-specific workflow.
+
+<Cards>
+
+<Card title="Get Started" href="../get-started/quickstart">
+
+Install NemoClaw and onboard the selected agent runtime.
+</Card>
+
+<Card title="Platform Support" href="../reference/platform-support">
+
+Check current agent, platform, provider, integration, and deployment-path status.
+</Card>
+
+<Card title="Architecture Overview" href="how-it-works">
+
+Understand how the host CLI, blueprint, OpenShell gateway, and sandbox work together.
+</Card>
+
+<Card title="Troubleshooting" href="../reference/troubleshooting">
+
+Diagnose common install, onboarding, sandbox, inference, and integration problems.
+</Card>
+
+</Cards>
+
+## Use Cases
+
+Use NemoClaw when you need a supported agent runtime with managed inference, network policy, and lifecycle operations.
+
+<Cards>
+
+<Card title="Evaluate Agents with Explicit Boundaries" href="../security/best-practices">
+
+Test agent behavior with defined filesystem and network boundaries before you add more access.
+</Card>
+
+<Card title="Connect Managed MCP Servers" href="../manage-sandboxes/mcp-servers/about-managed-mcp-servers">
+
+Connect authenticated Model Context Protocol (MCP) servers without storing raw service credentials in agent configuration.
+</Card>
+
+<Card title="Deploy to a Headless Server" href="../deployment/deploy-to-headless-server">
+
+Run a sandboxed agent on a remote Linux server through SSH.
+</Card>
+
+</Cards>
+
+<AgentOnly variant="openclaw,hermes">
+
+<Cards>
+
+<Card title="Run an Always-On Messaging Agent" href="../manage-sandboxes/messaging-channels/choose-messaging-channels">
+
+Connect a supported messaging channel with channel-specific credentials, policy, and lifecycle management.
+</Card>
+
+</Cards>
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+<Cards>
+
+<Card title="Run a Terminal Coding Agent" href="../get-started/quickstart">
+
+Run `dcode` interactively or through its headless JSON workflow with OpenShell-managed inference credentials.
+</Card>
+
+</Cards>
+
+</AgentOnly>
 
 ## Benefits
 
@@ -49,32 +121,6 @@ NemoClaw provides these controls and lifecycle tools to reduce those risks.
 
 Host-configured messaging credentials also use OpenShell credential delivery.
 QR-paired sessions such as WhatsApp store mutable session credentials in the sandbox and preserve them according to the agent manifest.
-
-</AgentOnly>
-
-## Use Cases
-
-Use NemoClaw when you need a supported agent runtime with managed inference, network policy, and lifecycle operations.
-
-| Use Case | Description |
-|---|---|
-| Controlled agent evaluation | Test agent behavior with explicit filesystem and network boundaries before you add more access. |
-| Managed tool access | Connect authenticated MCP servers without storing raw service credentials in agent configuration. |
-| Headless server deployment | Run a sandboxed agent on a remote Linux server through SSH. Refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server). |
-
-<AgentOnly variant="openclaw,hermes">
-
-| Use Case | Description |
-|---|---|
-| Always-on messaging agent | Connect a supported messaging channel to an agent with channel-specific credentials, policy, and lifecycle management. |
-
-</AgentOnly>
-
-<AgentOnly variant="deepagents">
-
-| Use Case | Description |
-|---|---|
-| Terminal coding agent | Run `dcode` inside an OpenShell sandbox with OpenShell-managed inference credentials and a managed terminal workflow. |
 
 </AgentOnly>
 
@@ -112,38 +158,36 @@ NemoClaw groups its supported capabilities around running, connecting, controlli
 
 NemoClaw is an early-preview reference stack for a trusted operator on one host.
 It is not a hosted NemoClaw service, a multi-tenant enterprise control plane, or an enterprise identity system.
+The primary tested platforms are Linux and DGX Spark.
+NemoClaw also documents platform limitations for macOS, Windows Subsystem for Linux (WSL), DGX Station, and headless Linux servers.
+Refer to [Platform Support](../reference/platform-support) for current agent, platform, provider, integration, and deployment-path status.
 Refer to [Enterprise Readiness](../reference/enterprise-readiness) for supported, manual, platform-owned, roadmap-only, and out-of-scope capabilities.
 
-## Learn More
+## Related Topics
 
-Use these topics to evaluate NemoClaw, understand its architecture, or start an agent-specific workflow.
+Use these topics to examine managed services, host readiness, and the ecosystem NemoClaw forms with OpenShell and the selected agent runtime.
 
-- Read [Platform Support](../reference/platform-support) before you repeat an agent, platform, provider, integration, or deployment claim.
-- Read [Architecture Overview](how-it-works) to understand the host CLI, integration layer, blueprint, OpenShell gateway, and sandbox lifecycle.
 - Read [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) for the managed MCP security and lifecycle boundary.
 - Read [System Readiness](../reference/system-readiness) to inspect a host before onboarding without changing host state.
 - Read [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills) to give an AI coding agent the NemoClaw Markdown documentation entry points.
 
 <AgentOnly variant="openclaw">
 
-- Read [Ecosystem](ecosystem) to understand how your agent, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- Follow [Quickstart with OpenClaw](../get-started/quickstart) to install NemoClaw and run your first OpenClaw sandbox.
+- Read [Ecosystem](ecosystem) to understand the ecosystem NemoClaw forms with OpenShell and OpenClaw, and when to use NemoClaw versus OpenShell.
 - Read [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before you enable a messaging channel.
 - Read [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- Read [Ecosystem](ecosystem) to understand how Hermes, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- Follow [Quickstart with Hermes](../get-started/quickstart) to install NemoClaw and run your first Hermes sandbox with `$$nemoclaw`.
+- Read [Ecosystem](ecosystem) to understand the ecosystem NemoClaw forms with OpenShell and Hermes, and when to use NemoClaw versus OpenShell.
 - Read [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before you enable a messaging channel.
 - Read [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-- Read [Ecosystem](ecosystem) to understand how Deep Agents, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- Follow [Quickstart with Deep Agents](../get-started/quickstart) to install NemoClaw and run your first Deep Agents sandbox with `$$nemoclaw`.
+- Read [Ecosystem](ecosystem) to understand the ecosystem NemoClaw forms with OpenShell and Deep Agents Code, and when to use NemoClaw versus OpenShell.
 - Read [Understand Deep Agents Trace Export](../monitoring/understand-deepagents-trace-export) before you enable managed trace export.
 - Read [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) to check the inference providers that NemoClaw supports and how inference routing works.
 

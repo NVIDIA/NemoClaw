@@ -18,7 +18,7 @@
   "statuses": {
     "tested": "Validated by CI or QA. Safe to claim and to demo.",
     "caveated": "Works on the listed setup with documented caveats. Caveats must be cited whenever this row is claimed.",
-    "experimental": "Available behind `NEMOCLAW_EXPERIMENTAL=1` or an equivalent opt-in flag. Do not claim in launch-facing material without the opt-in mentioned.",
+    "experimental": "Available only after an explicit experimental opt-in, such as `NEMOCLAW_EXPERIMENTAL=1` or selecting an integration that the CLI labels experimental. Do not claim in launch-facing material without the opt-in mentioned.",
     "deferred": "Planned but not yet validated. Roadmap-only. Do not claim as supported.",
     "unsupported": "Explicitly out of scope. Not validated and not planned. Documented to set expectations and prevent drift.",
     "hermes only": "Available only when onboarding the Hermes agent."
@@ -170,7 +170,7 @@
       "name": "LangChain Deep Agents Code",
       "status": "tested",
       "default": false,
-      "notes": "Terminal-oriented coding agent runtime with no in-sandbox gateway or dashboard, built on the Deep Agents SDK. Its manifest is `agents/langchain-deepagents-code/manifest.yaml`, and its binary is `dcode`. Onboard with `nemo-deepagents onboard` or `nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed agent runtime: unmanaged sandbox, Model Context Protocol (MCP) server, and shell overrides are rejected, and credential-bearing proxy URLs are dropped from persisted shell environment values. Inference routes through OpenShell's `inference.local` endpoint through the Deep Agents Code OpenAI-compatible provider. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
+      "notes": "Terminal-oriented coding agent runtime with no in-sandbox gateway or dashboard, built on the Deep Agents SDK. Its manifest is `agents/langchain-deepagents-code/manifest.yaml`, and its binary is `dcode`. Onboard with the dedicated `nemo-deepagents onboard` command or the generic `nemoclaw onboard --agent langchain-deepagents-code` command, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed agent runtime: unmanaged sandbox, Model Context Protocol (MCP) server, and shell overrides are rejected, and credential-bearing proxy URLs are dropped from persisted shell environment values. Inference routes through OpenShell's `inference.local` endpoint through the Deep Agents Code OpenAI-compatible provider. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
     }
   ],
 
@@ -334,7 +334,7 @@
     {
       "name": "Google Chat",
       "status": "experimental",
-      "notes": "Available only for OpenClaw through the channel manifest contract. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries."
+      "notes": "Available only for OpenClaw through the channel manifest contract. The messaging picker labels Google Chat experimental, and NemoClaw enables it only after you explicitly select or add the channel. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries."
     }
   ],
 

@@ -1,7 +1,7 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "NemoClaw Architecture"
+title: "Architecture Overview for NVIDIA NemoClaw"
 sidebar-title: "Architecture Overview"
 description: "Learn how NemoClaw combines a host CLI, agent integration layer, versioned blueprint, and OpenShell gateway to operate supported agents."
 description-agent: "Describes NemoClaw components, functional layers, lifecycle data flow, service interactions, external integrations, and protection layers. Use for architecture and sandbox-lifecycle questions."
@@ -9,13 +9,8 @@ keywords: ["how nemoclaw works", "nemoclaw sandbox lifecycle blueprint", "nemocl
 content:
   type: "concept"
 ---
-This page explains how NemoClaw runs supported agent runtimes inside OpenShell sandboxes.
-It covers the host CLI, OpenShell gateway, agent integration layer, lifecycle state, managed Model Context Protocol (MCP) servers, and protection layers.
-NemoClaw packages these components as a repeatable setup, but it does not replace OpenShell or the selected agent runtime.
-
-## High-Level Architecture Diagram
-
-NemoClaw keeps operator control on the host while OpenShell enforces the sandbox boundary.
+NemoClaw runs supported agent runtimes inside OpenShell sandboxes through a host CLI, versioned blueprint, agent integration layer, and OpenShell gateway.
+The design keeps operator control on the host while OpenShell enforces the sandbox boundary.
 The OpenShell gateway coordinates sandbox lifecycle, credentials, network policy, inference routes, and approved integration traffic.
 
 ```mermaid
@@ -49,7 +44,9 @@ flowchart LR
     classDef integrations fill:#fce6d7,stroke:#c77e55,color:#1a1a1a,stroke-width:2px
 ```
 
-The diagram has the following components:
+## Components
+
+The following table describes the components in the architecture diagram.
 
 | Component | Role in the flow |
 |-------|------------------|
@@ -63,10 +60,6 @@ The diagram has the following components:
 | Managed state and artifacts | Preserve registry records, workspace files, policy records, logs, and manifest-declared snapshot content across supported lifecycle operations. |
 
 For repository layout, file paths, and deeper diagrams, refer to [Architecture](../reference/architecture).
-
-## Functional Layers
-
-NemoClaw separates host orchestration, OpenShell management, and sandbox execution into explicit functional layers.
 
 ### Architecture Principles
 
@@ -215,7 +208,7 @@ Refer to [Understand Deep Agents Trace Export](../monitoring/understand-deepagen
 
 Refer to [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) for the managed MCP security and lifecycle design.
 
-## Learn More
+## Related Topics
 
 Use these topics to continue from the architecture overview into agent-specific setup, detailed reference material, or policy configuration.
 
