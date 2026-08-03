@@ -349,11 +349,12 @@ export function fixture(options: DockerFixtureOptions = {}) {
           break;
         case "exec":
           switch (true) {
-            case args.includes("--commit-shared-state-transaction"):
+            case args.includes("--commit-shared-state-transaction"): {
               const result = options.sharedStateCommitResult ?? ok();
               sharedState = result.status === 0 ? "committed" : sharedState;
               events.push("shared:commit");
               return result;
+            }
             case args.includes("--clear-shared-state-commit-receipt"):
               sharedState = "none";
               events.push("shared:clear");
