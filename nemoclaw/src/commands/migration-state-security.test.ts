@@ -201,7 +201,12 @@ describe("migration-state prepared config fail-closed boundaries", () => {
       persist: false,
     });
 
-    expectSnapshotFailure(home, logger, bundle, "Failed canonical decoding of copied OpenClaw config");
+    expectSnapshotFailure(
+      home,
+      logger,
+      bundle,
+      "Failed canonical decoding of copied OpenClaw config",
+    );
     expect(decode).toHaveBeenCalledTimes(2);
   });
 

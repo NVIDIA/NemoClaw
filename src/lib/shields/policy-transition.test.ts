@@ -183,9 +183,16 @@ describe("shields config lock without a shipped config hash", () => {
   }
 
   function rejectConfigLock(failure: Error): SandboxCommandHandler {
-    return (args, command) => {
-      if (pythonCommandKey(command) === LOCK_COMMAND_KEY) throw failure;
-      return runPythonFixtureCommand(args, command);
+    const exactHandlers = new Map(exactPythonFixtureHandlers);
+    exactHandlers.set(LOCK_COMMAND_KEY, () => {
+      throw failure;
+    });
+    return (_args, command) => {
+      const handler =
+        exactHandlers.get(pythonCommandKey(command)) ??
+        leadingPythonFixtureHandlers.get(String(command[4])) ??
+        unsupportedCommand;
+      return handler(command);
     };
   }
 
@@ -304,6 +311,28 @@ describe("shields config lock without a shipped config hash", () => {
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
     const dockerExec = requireSource("../adapters/docker/exec.js");
     const stateDirLock = requireSource("./state-dir-lock.js");
+    const stateDirGuardCommandHandlers = new Map<string, () => void>([
+      ["test", () => undefined],
+      [
+        "preflight",
+        () => {
+          stateDirGuardActions.push("preflight");
+        },
+      ],
+      [
+        "lock",
+        () => {
+          stateDirGuardActions.push("lock");
+          entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+        },
+      ],
+      [
+        "unlock",
+        () => {
+          stateDirGuardActions.push("unlock");
+        },
+      ],
+    ]);
 
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
@@ -322,12 +351,10 @@ describe("shields config lock without a shipped config hash", () => {
       const action = (["preflight", "lock", "unlock"] as const).find((candidate) =>
         command.includes(candidate),
       );
-      if (command[0] !== "test" && action === undefined) return unsupportedCommand(command);
-
-      if (action !== undefined) stateDirGuardActions.push(action);
-      if (action === "lock") {
-        entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
-      }
+      const handler =
+        stateDirGuardCommandHandlers.get(String(action ?? command[0])) ??
+        (() => unsupportedCommand(command));
+      handler();
 
       return {
         status: 0,
@@ -348,10 +375,7 @@ describe("shields config lock without a shipped config hash", () => {
     });
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
-    restoreStateDirLockPostureSpy = vi.spyOn(
-      stateDirLock,
-      "restoreStateDirLockPosture",
-    );
+    restoreStateDirLockPostureSpy = vi.spyOn(stateDirLock, "restoreStateDirLockPosture");
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);

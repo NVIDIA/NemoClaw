@@ -736,7 +736,9 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
       JSON.stringify(sanitizedConfig, null, 2),
     )
   ) {
-    throw new Error(`Failed descriptor-bound installation of prepared OpenClaw config: ${configPath}`);
+    throw new Error(
+      `Failed descriptor-bound installation of prepared OpenClaw config: ${configPath}`,
+    );
   }
 
   // SECURITY: Strip all credentials from the bundle before it enters the sandbox.
