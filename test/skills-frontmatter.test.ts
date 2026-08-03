@@ -108,8 +108,11 @@ describe("repo skill markdown files", () => {
       path.join(skillsRoot, "_shared", "implementation-discovery.md"),
       "utf8",
     );
-    expect(discovery).toContain("before implementation");
+    expect(discovery.split("\n").length).toBeLessThan(35);
+    expect(discovery).toContain("Before implementation");
     expect(discovery).toContain("nemoclaw-maintainer-security-code-review");
+    expect(discovery).not.toContain("rg --files");
+    expect(discovery).not.toContain("Follow imports and call sites");
   });
 
   it("links fallback validation to current contributor requirements", () => {
