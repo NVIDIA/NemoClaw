@@ -280,7 +280,20 @@ export function runPrReviewAdvisorAnalysis(
   if (code !== 0) {
     const reason = `analyze.mts exited with status ${code}`;
     if (!fileExists(path.join(input.outDir, "pr-review-advisor-final-result.json"))) {
-      writeBootstrapResult(input, reason, true, { mkdir, writeFile, runGit });
+      try {
+        const writeMissingFile = (file: string, text: string): void => {
+          if (!fileExists(file)) writeFile(file, text);
+        };
+        writeBootstrapResult(input, reason, true, {
+          mkdir,
+          writeFile: writeMissingFile,
+          runGit,
+        });
+      } catch (error) {
+        console.error(
+          `Could not complete missing PR review advisor failure artifacts: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
     throw new RunAnalysisError(reason);
   }

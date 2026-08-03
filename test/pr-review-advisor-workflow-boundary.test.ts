@@ -928,6 +928,36 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
+  it("preserves partial artifacts while completing an early analysis failure", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-failure-"));
+    const input = advisorAnalysisInput({ outDir: path.join(tmp, "artifacts") });
+    const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
+    const resultPath = path.join(input.outDir, "pr-review-advisor-result.json");
+    const partialResult = '{"failed":true,"partial":true}\n';
+
+    try {
+      fs.mkdirSync(input.outDir, { recursive: true });
+      fs.writeFileSync(resultPath, partialResult);
+
+      expect(() =>
+        runPrReviewAdvisorAnalysis(input, {
+          fileExists: (file) => file === analyzePath || fs.existsSync(file),
+          readText: supportedAdvisorReadText(input),
+          runGit: () => HEAD_SHA,
+          runNode: () => 17,
+        }),
+      ).toThrow("analyze.mts exited with status 17");
+
+      expect(fs.readFileSync(resultPath, "utf8")).toBe(partialResult);
+      expect(fs.existsSync(path.join(input.outDir, "pr-review-advisor-final-result.json"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(input.outDir, "pr-review-advisor-summary.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("runs analyze in unavailable-result mode when the trusted checkout lacks model support", () => {
     const appendedEnv: Array<[string, string]> = [];
     const runCalls: Array<{
