@@ -196,7 +196,7 @@ exit "$status"`,
   progress.phase("confirm nvmap and NVIDIA Docker runtime");
   const hostNvmap = await hostShell(
     host,
-    "ls -l /dev/nvmap && stat -c 'gid=%g group=%G' /dev/nvmap",
+    "ls -l /dev/nvmap && stat -c 'gid=%g group=%G mode=%a' /dev/nvmap",
     "phase-0-host-nvmap",
   );
   expect(hostNvmap.exitCode, resultText(hostNvmap)).toBe(0);
@@ -264,7 +264,7 @@ exit "$status"`,
   expect(sandboxId.exitCode, resultText(sandboxId)).toBe(0);
   expectGroupMembership(resultText(sandboxId), hostNvmapGid);
 
-  // A6: /dev/nvmap must be mounted/present inside the sandbox.
+  // A6: /dev/nvmap must be present and read-write for the sandbox user.
   const sandboxNvmap = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript("ls -l /dev/nvmap"),
@@ -272,6 +272,13 @@ exit "$status"`,
   );
   expect(sandboxNvmap.exitCode, resultText(sandboxNvmap)).toBe(0);
   expect(resultText(sandboxNvmap)).toContain("/dev/nvmap");
+
+  const sandboxNvmapAccess = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript("test -r /dev/nvmap && test -w /dev/nvmap"),
+    { artifactName: "phase-3-sandbox-nvmap-access", env: env(), timeoutMs: 60_000 },
+  );
+  expect(sandboxNvmapAccess.exitCode, resultText(sandboxNvmapAccess)).toBe(0);
 
   // A7: authoritative CUDA usability proof must succeed, not reproduce
   // NvRmMemInitNvmap permission denial / cuInit(0)=999 from #4231.

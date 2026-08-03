@@ -65,7 +65,9 @@ export function jetsonGpuProofRemediationLines(): string[] {
   return [
     "Jetson/Tegra CUDA proof did not pass. CUDA needs access to the Tegra device",
     "nodes; confirm the sandbox propagates them and the agent user's groups:",
-    "  ls -l /dev/nvmap /dev/nvhost-* (must be readable by the sandbox)",
+    "  ls -l /dev/nvmap /dev/nvhost-* (nvmap must grant the sandbox group read-write access)",
+    "  warning: chmod grants every member of the nvmap owning group write access",
+    "  sudo chmod g+rw /dev/nvmap (host remediation until udev recreates the device)",
     "  add the host video/render groups via --group-add when recreating",
     "Then recreate the sandbox, or force CPU behavior with NEMOCLAW_SANDBOX_GPU=0.",
   ];

@@ -92,13 +92,15 @@ export function detectTegraDeviceGroupGids(
     const gid = access?.gid ?? null;
     const groupAccessBits = access === null ? 0 : (access.mode >> 3) & READ_WRITE_PERMISSION_BITS;
     const otherAccessBits = access === null ? 0 : access.mode & READ_WRITE_PERMISSION_BITS;
-    const groupAddsAccess = (groupAccessBits & ~otherAccessBits) !== 0;
+    const groupAddsReadWriteAccess =
+      groupAccessBits === READ_WRITE_PERMISSION_BITS &&
+      otherAccessBits !== READ_WRITE_PERMISSION_BITS;
     if (
       gid !== null &&
       Number.isSafeInteger(gid) &&
       gid > 0 &&
       gid <= MAX_DOCKER_SUPPLEMENTARY_GID &&
-      groupAddsAccess
+      groupAddsReadWriteAccess
     ) {
       gids.add(String(gid));
     }

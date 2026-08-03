@@ -7,6 +7,10 @@ set -euo pipefail
 SUDO=()
 ((EUID != 0)) && SUDO=(sudo)
 
+NVMAP_DEVICE="/dev/nvmap"
+NVMAP_UDEV_RULE="/etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules"
+NVMAP_UDEV_RULE_CONTENT='KERNEL=="nvmap", MODE="0660"'
+
 info() {
   printf "[INFO]  %s\n" "$*"
 }
@@ -54,6 +58,32 @@ apply_br_netfilter_setup() {
   # Persist across reboots
   echo "br_netfilter" | "${SUDO[@]}" tee /etc/modules-load.d/nemoclaw.conf >/dev/null
   echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
+}
+
+configure_nvmap_group_access() {
+  local device_state device_type verified_state verified_permissions
+
+  if ! device_state="$(LC_ALL=C stat -c '%F|%A' "$NVMAP_DEVICE" 2>/dev/null)"; then
+    warn "JetPack 6 host setup could not find $NVMAP_DEVICE. Non-root sandbox CUDA can fail until this device exists."
+    return 0
+  fi
+
+  device_type="${device_state%%|*}"
+  [[ "$device_type" == "character special file" ]] \
+    || error "$NVMAP_DEVICE must be a character device before NemoClaw changes its group permissions."
+
+  warn "JetPack 6 host setup grants every member of the existing $NVMAP_DEVICE owning group write access and persists mode 0660 when udev recreates the device."
+  printf '%s\n' "$NVMAP_UDEV_RULE_CONTENT" | "${SUDO[@]}" tee "$NVMAP_UDEV_RULE" >/dev/null
+  "${SUDO[@]}" udevadm control --reload-rules
+  "${SUDO[@]}" chmod g+rw "$NVMAP_DEVICE"
+
+  verified_state="$(LC_ALL=C stat -c '%F|%A' "$NVMAP_DEVICE" 2>/dev/null)" \
+    || error "Could not verify $NVMAP_DEVICE after granting group read-write access."
+  IFS='|' read -r device_type verified_permissions <<<"$verified_state"
+  [[ "$device_type" == "character special file" && "${verified_permissions:4:2}" == "rw" ]] \
+    || error "$NVMAP_DEVICE does not grant its owning group read-write access after host setup."
+
+  info "$NVMAP_DEVICE grants its owning group read-write access. The udev rule $NVMAP_UDEV_RULE preserves this mode after reboot."
 }
 
 warn_host_setup_skipped() {
@@ -188,6 +218,7 @@ except Exception:
     os.unlink(tmp)
     raise
 PYEOF
+      configure_nvmap_group_access
       ;;
     jp7-r38)
       # JP7 R38 does not need iptables or Docker daemon.json changes.

@@ -35,6 +35,8 @@ describe("detectTegraDeviceGroupGids", () => {
       { gid: 0, mode: 0o660 },
       { gid: 2_147_483_648, mode: 0o660 },
       { gid: 44, mode: 0o600 },
+      { gid: 44, mode: 0o440 },
+      { gid: 44, mode: 0o620 },
       { gid: 104, mode: 0o666 },
     ];
     let index = 0;
@@ -43,6 +45,15 @@ describe("detectTegraDeviceGroupGids", () => {
       detectTegraDeviceGroupGids({
         statDeviceAccess: () => access[index++] ?? null,
         listDevicePaths: () => access.map((_, accessIndex) => `/dev/device${accessIndex}`),
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not treat a read-only nvmap group as CUDA access (#7610)", () => {
+    expect(
+      detectTegraDeviceGroupGids({
+        statDeviceAccess: () => ({ gid: 44, mode: 0o440 }),
+        listDevicePaths: () => ["/dev/nvmap"],
       }),
     ).toEqual([]);
   });

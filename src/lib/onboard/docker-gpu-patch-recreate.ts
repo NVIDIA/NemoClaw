@@ -273,7 +273,7 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       } else {
         console.warn(
-          "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",
+          "  ⚠ Could not resolve a read-write group for Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and grants its owning group read-write access on the host.",
         );
       }
     }
