@@ -137,6 +137,7 @@ It rejects remote endpoints and relative socket paths before service startup.
 ### Onboarding reports `invalid_docker_host`
 
 The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
+NemoClaw does not use the standalone gateway fallback when this validation fails.
 Remove the override to use Docker's default local socket:
 
 ```bash
@@ -931,14 +932,26 @@ Follow these steps to reconnect.
    brew services restart openshell
    ```
 
-   If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
-   Onboarding does not use the standalone fallback while Homebrew is present.
+   During onboarding, NemoClaw uses the standalone fallback when the `openshell` formula is missing.
+   If the installed service fails inspection, startup, or its health check, NemoClaw prints this log command:
+
+   ```bash
+   tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"
+   ```
+
+   Rerun the NemoClaw installer to restore the managed service for later onboarding runs.
 
    On Linux package installs, inspect and restart the upstream service.
 
    ```bash
    systemctl --user status openshell-gateway
    systemctl --user restart openshell-gateway
+   ```
+
+   If the service fails inspection, startup, or its health check, NemoClaw prints this log command:
+
+   ```bash
+   journalctl --user --unit openshell-gateway --no-pager --lines=200
    ```
 
    On Linux tarball installs, inspect and restart the marked NemoClaw service.
@@ -948,8 +961,23 @@ Follow these steps to reconnect.
    systemctl --user restart nemoclaw-openshell-gateway
    ```
 
+   If the service fails inspection, startup, or its health check, NemoClaw prints this log command:
+
+   ```bash
+   journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200
+   ```
+
    The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
    It starts with your user session; NemoClaw does not enable lingering.
+   If a managed service fails inspection, startup, or its health check, NemoClaw attempts the standalone fallback on either platform.
+   The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
+   The fallback does not bypass managed-service trust validation or unsafe environment configuration.
+   These conditions remain hard failures:
+
+   - Homebrew formula identity query, metadata, or official-tap validation errors
+   - Foreign or symlinked systemd units, or an untrusted systemd executable identity
+   - An invalid `DOCKER_HOST` or a symlinked service environment file
+
    Without Homebrew on macOS, or without a reachable systemd user manager on Linux, continue with the standalone recovery step below.
 
 1. Check sandbox state.
