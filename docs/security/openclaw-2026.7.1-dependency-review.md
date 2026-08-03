@@ -112,7 +112,9 @@ Its exact results are:
 Registry signature checks completed within the successful audit.
 The critical `tar` finding that blocked the previous pin and the high Jaeger,
 `brace-expansion`, `fast-uri`, `undici`, and `ip-address` findings are gone.
-The lower-severity findings remain visible below the configured `high`
+All three post-remediation boundaries report `0` high and `0` critical
+findings.
+Lower-severity findings remain visible below the configured `high`
 threshold.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
