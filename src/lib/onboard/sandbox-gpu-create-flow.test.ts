@@ -84,6 +84,10 @@ const DEFAULT_RUNTIME_SNAPSHOT = {
   imageId: IMAGE_ID,
   bookkeepingImageRef: "openshell/sandbox-from:test",
   stateError: "",
+  deviceRequests: null,
+  devices: null,
+  runtime: "runc",
+  nvidiaVisibleDevices: null,
   nativeGpuAttachmentState: "absent" as const,
   containerId: "container-a",
 };

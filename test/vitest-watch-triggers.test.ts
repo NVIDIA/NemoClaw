@@ -64,6 +64,7 @@ const OPAQUE_INPUTS = [
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
+  ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
@@ -130,6 +131,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/approve-maintainer-pr-workflow-runs.yaml")).toEqual([
+      "test/maintainer-pr-workflow-approval.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-e2e-gate.yaml")).toEqual([
       "test/pr-e2e-gate-workflow.test.ts",

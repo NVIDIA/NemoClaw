@@ -23,13 +23,14 @@ import {
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
+import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
 import {
-  type InvalidatedOnboardStateResultRecorder,
-  runLiveOnboardFlowSlice,
-} from "./live-flow-slice";
-import type { OnboardStateResult } from "./result";
+  type OnboardPrerequisiteRepairEventRecorder,
+  runOnboardPrerequisiteRepair,
+} from "./prerequisite-repair";
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
-import type { OnboardSequencePhase } from "./sequence-runner";
+import { runOnboardSequenceWithRunner, type OnboardSequencePhase } from "./sequence-runner";
+import type { OnboardMachineState } from "./types";
 
 export interface EndpointProvenanceOptions {
   endpointSource?: InferenceEndpointSource | null;
@@ -261,30 +262,91 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   runtime: OnboardMachineRunnerRuntime;
   phases: CoreOnboardFlowPhases<Context>;
   resume: boolean;
-  recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
+  recordRepairEvent: OnboardPrerequisiteRepairEventRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Exact provider-selection entry is runner-owned for fresh and resumed flows.
-  // Recompute only when a durable snapshot is already downstream even though
-  // provider/sandbox repair and backstop checks must still re-run. Those
-  // ahead-state snapshots can come from legacy/test step mutation that
-  // explicitly opts into `updateMachine === true` or from repaired-resume replay
-  // of persisted sessions. Recomputed transition results are explicitly applied
-  // or invalidated by runLiveOnboardFlowSlice, so stale phase output cannot
-  // update context or silently advance state. The tolerated downstream family
-  // includes inference, sandbox branch states, and the final slice handoff
-  // states. Remove this fallback once those checks are strict FSM recovery states
-  // and legacy machine step mutation is gone.
-  return runLiveOnboardFlowSlice({
+  const durableEntry = await options.runtime.session();
+  const state = durableEntry.machine.state;
+  const allowedStates: readonly OnboardMachineState[] = options.resume
+    ? [
+        "provider_selection",
+        "inference",
+        "sandbox",
+        "openclaw",
+        "agent_setup",
+        "policies",
+        "finalizing",
+        "post_verify",
+      ]
+    : ["provider_selection", "inference", "sandbox", "openclaw", "agent_setup"];
+  if (!allowedStates.includes(state)) {
+    throw new UnexpectedLiveOnboardFlowSliceStateError(
+      state,
+      ["provider_selection", "inference", "sandbox"],
+      allowedStates.filter(
+        (candidate) =>
+          candidate !== "provider_selection" &&
+          candidate !== "inference" &&
+          candidate !== "sandbox",
+      ),
+    );
+  }
+  if (state === "provider_selection") {
+    return runCoreOnboardFlowSequence({
+      context: options.context,
+      runtime: options.runtime,
+      phases: [options.phases.providerInference, options.phases.sandbox],
+    });
+  }
+
+  const providerRepair = await runOnboardPrerequisiteRepair({
     context: options.context,
+    durableEntryState: state,
+    phase: options.phases.providerInference,
+    expectedFinalStates: ["sandbox"],
+    repair: "core-flow-prerequisite",
     runtime: options.runtime,
-    phases: [options.phases.providerInference, options.phases.sandbox],
-    runWhenState: ["provider_selection"],
-    compatibilityWhenState: options.resume
-      ? ["inference", "sandbox", "openclaw", "agent_setup", "policies", "finalizing", "post_verify"]
-      : ["inference", "sandbox", "openclaw", "agent_setup"],
-    runSlice: runCoreOnboardFlowSequence,
-    recordStateResult: options.recordStateResult,
-    recordInvalidatedStateResult: options.recordInvalidatedStateResult,
+    recordRepairEvent: options.recordRepairEvent,
   });
+  if (state === "inference") {
+    const inferenceResult = [...providerRepair.results]
+      .reverse()
+      .find((result) => result.type === "transition" && result.metadata?.state === "inference");
+    if (!inferenceResult) {
+      throw new Error("Core onboarding inference repair returned no inference result");
+    }
+    const inferencePhase: OnboardSequencePhase<Context> = {
+      state: "inference",
+      run: () => ({ context: providerRepair.context, result: inferenceResult }),
+    };
+    return runOnboardSequenceWithRunner({
+      context: providerRepair.context,
+      runtime: options.runtime,
+      phases: [inferencePhase, options.phases.sandbox],
+      stopStates: ["openclaw", "agent_setup"],
+    });
+  }
+  if (state === "sandbox") {
+    return runOnboardSequenceWithRunner({
+      context: providerRepair.context,
+      runtime: options.runtime,
+      phases: [options.phases.sandbox],
+      stopStates: ["openclaw", "agent_setup"],
+    });
+  }
+
+  const sandboxRepair = await runOnboardPrerequisiteRepair({
+    context: providerRepair.context,
+    durableEntryState: state,
+    phase: options.phases.sandbox,
+    expectedFinalStates: ["openclaw", "agent_setup"],
+    repair: "core-flow-prerequisite",
+    runtime: options.runtime,
+    recordRepairEvent: options.recordRepairEvent,
+  });
+  if ((state === "openclaw" || state === "agent_setup") && sandboxRepair.finalState !== state) {
+    throw new Error(
+      `Core onboarding prerequisite repair selected '${sandboxRepair.finalState}' for durable entry '${state}'`,
+    );
+  }
+  return { context: sandboxRepair.context, session: await options.runtime.session() };
 }
