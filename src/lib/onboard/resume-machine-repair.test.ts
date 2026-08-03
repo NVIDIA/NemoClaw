@@ -49,7 +49,7 @@ function cloneSession(session: Session): Session {
 }
 
 /**
- * Creates a memory-backed runtime boundary with step-status mutations.
+ * Creates a memory-backed runtime boundary that persists safe session updates.
  */
 function createBoundaryHarness(initial: Session) {
   let session = cloneSession(initial);
