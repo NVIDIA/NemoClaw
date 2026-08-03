@@ -113,21 +113,7 @@ function compile(sources: readonly ServingCatalogSource[], registries = REGISTRI
 }
 
 function requireValidationFailure(run: () => void, expectedMessage: string): void {
-  try {
-    run();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    if (!message.includes(expectedMessage)) {
-      throw new Error(
-        `Expected validation error containing "${expectedMessage}", received "${message}".`,
-      );
-    }
-
-    return;
-  }
-
-  throw new Error("Expected serving catalog validation to fail.");
+  expect(run).toThrow(expectedMessage);
 }
 
 describe("managed inference serving catalog compiler", () => {
