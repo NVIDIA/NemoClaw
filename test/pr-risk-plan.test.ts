@@ -136,20 +136,21 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
-  it("selects Hermes MCP and channel lifecycle E2E for CLI adapter routing changes (#8011)", () => {
-    const changedFiles = [
-      "agents/hermes/hermes-cli-adapter-v1.json",
-      "agents/hermes/hermes-wrapper.py",
-      "agents/hermes/validate-cli-adapter.py",
-    ];
-    const result = plan(...changedFiles);
+  it.each([
+    "agents/hermes/hermes-cli-adapter-v1.json",
+    "agents/hermes/hermes-wrapper.py",
+    "agents/hermes/validate-cli-adapter.py",
+  ])("selects Hermes MCP and channel lifecycle E2E for %s (#8011)", (changedFile) => {
+    const result = plan(changedFile);
 
-    expect(result.families).toContainEqual(
+    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
+    expect(focusedFamily).toEqual(
       expect.objectContaining({
-        id: "focused-e2e",
-        matchedFiles: changedFiles,
-        requiredJobs: expect.arrayContaining(["channels-stop-start", "mcp-bridge"]),
+        matchedFiles: [changedFile],
       }),
+    );
+    expect(focusedFamily?.requiredJobs).toEqual(
+      expect.arrayContaining(["channels-stop-start", "mcp-bridge"]),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
       expect.arrayContaining([
@@ -166,13 +167,13 @@ describe("deterministic PR risk plan", () => {
   )("selects every Hermes managed-policy live E2E job for %s (#8008)", (changedFile) => {
     const result = plan(changedFile);
 
-    expect(result.families).toContainEqual(
+    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
+    expect(focusedFamily).toEqual(
       expect.objectContaining({
-        id: "focused-e2e",
         matchedFiles: [changedFile],
-        requiredJobs: expect.arrayContaining(HERMES_MANAGED_POLICY_JOBS),
       }),
     );
+    expect(focusedFamily?.requiredJobs).toEqual(expect.arrayContaining(HERMES_MANAGED_POLICY_JOBS));
     expect(riskPlanRequiredJobIds(result)).toEqual(
       expect.arrayContaining(HERMES_MANAGED_POLICY_JOBS),
     );
@@ -182,7 +183,33 @@ describe("deterministic PR risk plan", () => {
     const result = plan("agents/hermes/runtime-version.py");
 
     expect(result.families).not.toContainEqual(expect.objectContaining({ id: "focused-e2e" }));
-    expect(riskPlanRequiredJobIds(result)).toEqual(["full-e2e", "hermes-e2e", "security-posture"]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "full-e2e",
+      "hermes-e2e",
+      "hermes-inference-switch",
+      "security-posture",
+    ]);
+  });
+
+  it("combines CLI adapter and managed-policy E2E for the Hermes wrapper (#8011)", () => {
+    const result = plan("agents/hermes/hermes-wrapper.py");
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: ["agents/hermes/hermes-wrapper.py"],
+        requiredJobs: [
+          "bedrock-runtime-compatible-anthropic",
+          "channels-stop-start",
+          "dashboard-remote-bind",
+          "hermes-e2e",
+          "hermes-inference-switch",
+          "hermes-shields-config",
+          "mcp-bridge",
+          "security-posture",
+        ],
+      }),
+    );
   });
   it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {
     const changedFiles = ["test/e2e/support/workflow-plan.test.ts"];
