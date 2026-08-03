@@ -1459,13 +1459,21 @@ function discoverOtherGatewayEnvironments(
         unidentified = true;
         continue;
       }
-      // A per-port directory whose gateway OpenShell no longer knows is an
-      // orphan; dismiss it only when the live set positively lacks it.
       const port = Number(entry.name);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         unidentified = true;
         continue;
       }
+      // A directory named for the gateway being uninstalled is that gateway's
+      // own state, never a sibling. Path identity alone does not catch it: for
+      // the default port `selectedRoot` is the shared root, so
+      // `<shared>/gateways/<DEFAULT_GATEWAY_PORT>` never equals it and the
+      // selected gateway counts itself as a sibling, scoping cleanup to
+      // preserve resources nothing else owns (#7987). Match on port identity
+      // like every other sibling filter here and like `listGatewayStateRoots`.
+      if (port === GATEWAY_PORT) continue;
+      // A per-port directory whose gateway OpenShell no longer knows is an
+      // orphan; dismiss it only when the live set positively lacks it.
       const live = liveGatewayNames();
       if (live === null) {
         unidentified = true;

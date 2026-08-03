@@ -17,7 +17,7 @@ vi.mock("./process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
 }));
 
-vi.mock("../../actions/global", () => ({
+vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
