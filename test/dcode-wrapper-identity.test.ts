@@ -184,6 +184,21 @@ describe.skipIf(!canRun)(
       });
     });
 
+    it("returns exit code 2 when .env contains a raw OpenAI API key (#8137)", () => {
+      withTempDir((dir) => {
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
+        fs.writeFileSync(fixture.envFile, "OPENAI_API_KEY=sk-live-XXXXXXXXXXXXX\n", "utf8");
+
+        const run = runBashWrapper(fixture, ["-n", "Reply with PING."], {});
+
+        expect(run.status).toBe(2);
+        expect(run.launched).toBe(false);
+        expect(run.stderr).toContain("refusing to start");
+        expect(run.stderr).toContain("OPENAI_API_KEY");
+        expect(run.stderr).not.toContain("sk-live-XXXXXXXXXXXXX");
+      });
+    });
+
     it("ignores traversal-shaped agent preferences", () => {
       withTempDir((dir) => {
         const config = SAMPLE_CONFIG.replace('default = "backend-dev"', 'default = ".."');
