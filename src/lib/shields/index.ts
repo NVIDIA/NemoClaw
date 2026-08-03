@@ -804,22 +804,23 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
 function resolvePersistedAutoRestoreTarget(
   sandboxName: string,
   marker: { agentName?: string; configPath?: string; configDir?: string },
+  resolveConfig: (sandboxName: string) => AgentConfigTarget = resolveAgentConfig,
 ): AgentConfigTarget | undefined {
-  if (!marker.agentName || !marker.configPath || !marker.configDir) return undefined;
+  if (!marker.configPath || !marker.configDir) return undefined;
 
   const persistedTarget: AgentConfigTarget = {
-    agentName: marker.agentName,
+    ...(marker.agentName ? { agentName: marker.agentName } : {}),
     configPath: marker.configPath,
     configDir: marker.configDir,
     sensitiveFiles: [
       configHashPath(marker.configDir),
-      ...(marker.agentName === "hermes" ? [`${marker.configDir}/.env`] : []),
+      ...(marker.agentName === "hermes" ? [`${marker.configDir.replace(/\/+$/, "")}/.env`] : []),
     ],
   };
 
   try {
-    const resolved = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-    return resolved.agentName === marker.agentName &&
+    const resolved = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
+    return (!marker.agentName || resolved.agentName === marker.agentName) &&
       resolved.configPath === marker.configPath &&
       resolved.configDir === marker.configDir
       ? resolved
@@ -2383,8 +2384,10 @@ function lockAgentConfigUnderMutationLock(
           rollbackIssues.push(
             ...restoreStateDirLockPosture(stateDirLockExec(sandboxName), target.configDir, true),
           );
-        } catch {
-          rollbackIssues.push("state-directory rollback failed: command failed");
+        } catch (rollbackError) {
+          rollbackIssues.push(
+            `state-directory rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          );
         }
         try {
           rollbackIssues.push(
@@ -2394,8 +2397,10 @@ function lockAgentConfigUnderMutationLock(
               assertLegacyLayout: assertNoLegacyStateLayout,
             }).issues,
           );
-        } catch {
-          rollbackIssues.push("locked rollback verification failed: command failed");
+        } catch (rollbackError) {
+          rollbackIssues.push(
+            `locked rollback verification failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          );
         }
       }
       if (rollbackIssues.length > 0) {
@@ -3620,6 +3625,7 @@ export {
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
+  resolvePersistedAutoRestoreTarget,
   shieldsDown,
   shieldsStatus,
   shieldsUp,

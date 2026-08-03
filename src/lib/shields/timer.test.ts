@@ -11,6 +11,7 @@ import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock";
 const shieldsIndexMock = vi.hoisted(() => ({
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
+  resolvePersistedAutoRestoreTarget: vi.fn() as unknown,
 }));
 
 const PROCESS_TOKEN = "a".repeat(32);
@@ -34,19 +35,14 @@ vi.mock("../policy", () => ({
   ]),
 }));
 
-vi.mock("../sandbox/agent-config", () => ({
-  DEFAULT_AGENT_CONFIG: Symbol("DEFAULT_AGENT_CONFIG"),
-  resolveAgentConfig: vi.fn(() => ({
-    configPath: "/sandbox/.openclaw/openclaw.json",
-    configDir: "/sandbox/.openclaw",
-  })),
-}));
-
 vi.mock("./index", () => ({
   get lockAgentConfig() {
     return shieldsIndexMock.lockAgentConfig;
   },
   prepareAutoRestoreTransitionTakeover: shieldsIndexMock.prepareAutoRestoreTransitionTakeover,
+  get resolvePersistedAutoRestoreTarget() {
+    return shieldsIndexMock.resolvePersistedAutoRestoreTarget;
+  },
 }));
 
 describe("shields timer authorization", () => {
@@ -56,6 +52,25 @@ describe("shields timer authorization", () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
     shieldsIndexMock.lockAgentConfig = vi.fn();
+    shieldsIndexMock.resolvePersistedAutoRestoreTarget = vi.fn(
+      (
+        _sandboxName: string,
+        marker: { agentName?: string; configPath?: string; configDir?: string },
+      ) =>
+        marker.configPath && marker.configDir
+          ? {
+              ...(marker.agentName ? { agentName: marker.agentName } : {}),
+              configPath: marker.configPath,
+              configDir: marker.configDir,
+              sensitiveFiles: [
+                `${marker.configDir.replace(/\/+$/, "")}/.config-hash`,
+                ...(marker.agentName === "hermes"
+                  ? [`${marker.configDir.replace(/\/+$/, "")}/.env`]
+                  : []),
+              ],
+            }
+          : undefined,
+    );
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -599,13 +614,6 @@ describe("shields timer authorization", () => {
       chattrApplied: true,
       fileHashes: sealedHashes,
     }));
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
@@ -636,24 +644,7 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 
-  it.each([
-    [
-      "throws",
-      () => {
-        throw new Error("registry unavailable");
-      },
-    ],
-    [
-      "returns the default OpenClaw target",
-      () => ({
-        agentName: "openclaw",
-        configPath: "/sandbox/.openclaw/openclaw.json",
-        configDir: "/sandbox/.openclaw",
-        configFile: "openclaw.json",
-        format: "json" as const,
-      }),
-    ],
-  ])("preserves the Deep Agents lock protocol when config resolution %s (#7977)", async (_scenario, resolveTarget) => {
+  it("preserves the Deep Agents lock protocol through shared target resolution (#7977)", async () => {
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
 
@@ -679,10 +670,6 @@ describe("shields timer authorization", () => {
       }),
     );
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(
-      resolveTarget,
-    );
     const lockMock = vi.fn(() => ({
       chattrApplied: false,
       fileHashes: {
@@ -716,6 +703,10 @@ describe("shields timer authorization", () => {
       sensitiveFiles: [sensitiveHashPath],
     };
 
+    expect(shieldsIndexMock.resolvePersistedAutoRestoreTarget).toHaveBeenCalledWith(
+      sandboxName,
+      args,
+    );
     expect(exitCode).toBe(0);
     expect(lockMock).toHaveBeenCalledTimes(2);
     expect(lockMock).toHaveBeenNthCalledWith(1, sandboxName, fallbackTarget, false, false);
@@ -749,13 +740,6 @@ describe("shields timer authorization", () => {
       }),
     );
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [],
-    });
     shieldsIndexMock.lockAgentConfig = undefined;
 
     const timer = await import("./timer");
@@ -847,13 +831,6 @@ describe("shields timer authorization", () => {
     };
     const lockMock = vi.fn(() => ({ chattrApplied: true, fileHashes: sealedHashes }));
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
@@ -920,13 +897,6 @@ describe("shields timer authorization", () => {
         );
       });
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 

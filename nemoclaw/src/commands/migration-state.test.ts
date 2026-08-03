@@ -120,9 +120,9 @@ vi.mock("../shared/snapshot-sanitizer-boundary.cjs", () => {
       content: string,
     ) => {
       const targetPath = `${root.canonicalPath}/${targetName}`;
-      if (store.has(targetPath)) return false;
-      addFile(targetPath, content);
-      return true;
+      const existing = store.get(targetPath);
+      store.set(targetPath, existing ?? { type: "file", content });
+      return existing === undefined;
     },
     scanDescriptorSnapshot: (
       root: { canonicalPath: string },
@@ -130,22 +130,22 @@ vi.mock("../shared/snapshot-sanitizer-boundary.cjs", () => {
       target: string,
     ) => {
       const entry = store.get(`${root.canonicalPath}/${target}`);
-      if (entry?.type !== "file") return null;
-      return {
-        root: identity,
-        directories: {},
-        files: [
-          {
-            path: target,
-            metadata: identity,
-            content: Buffer.from(entry.content ?? "", "utf-8").toString("base64"),
-          },
-        ],
-      };
+      return entry?.type === "file"
+        ? {
+            root: identity,
+            directories: {},
+            files: [
+              {
+                path: target,
+                metadata: identity,
+                content: Buffer.from(entry.content ?? "", "utf-8").toString("base64"),
+              },
+            ],
+          }
+        : null;
     },
   };
 });
-
 // Mock tar to avoid real archive creation
 vi.mock("tar", () => ({
   create: vi.fn(async () => {}),

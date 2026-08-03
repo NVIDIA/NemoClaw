@@ -100,8 +100,11 @@ describe("shields config lock without a shipped config hash", () => {
   const CONFIG_DIR = "/sandbox/.deepagents";
   const CONFIG_PATH = `${CONFIG_DIR}/config.toml`;
   const HASH_PATH = `${CONFIG_DIR}/.config-hash`;
+  const LOCK_COMMAND_KEY = [CONFIG_DIR, CONFIG_PATH].join("\0");
+  const TIMER_PROCESS_KEY = ["number", "4242", "number", "0"].join("\0");
 
   type SandboxEntry = { mode: string; owner: string };
+  type SandboxCommandHandler = (args: string[], command: string[]) => string;
 
   let homeDir: string;
   let shields: typeof import("./index.js");
@@ -113,7 +116,7 @@ describe("shields config lock without a shipped config hash", () => {
   let restoreStateDirLockPostureSpy: MockInstance;
   let resolveAgentConfigSpy: MockInstance;
   let errorSpy: MockInstance;
-  let commandHandlers: Map<string, (args: string[], command: string[]) => string>;
+  let commandHandlers: Map<string, SandboxCommandHandler>;
 
   function target() {
     return {
@@ -138,6 +141,84 @@ describe("shields config lock without a shipped config hash", () => {
     throw new Error(`unsupported sandbox command in fixture: ${command.join(" ")}`);
   }
 
+  function pythonCommandKey(command: string[]): string {
+    return command.slice(4, 6).join("\0");
+  }
+
+  function runConfigLock(command: string[]): string {
+    const hashCreated = !entries.has(HASH_PATH);
+    lockCalls.push(command);
+    entries.set("/sandbox", { mode: "1775", owner: "root:sandbox" });
+    entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+    entries.set(CONFIG_PATH, { mode: "444", owner: "root:root" });
+    entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
+    return hashCreated ? "hash-created" : "hash-existing";
+  }
+
+  function runConfigUnlock(command: string[]): string {
+    unlockCalls.push(command);
+    entries.set("/sandbox", { mode: "755", owner: "sandbox:sandbox" });
+    entries.set(CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" });
+    for (const pathname of command.slice(9)) {
+      entries.set(pathname, { mode: "660", owner: "sandbox:sandbox" });
+      immutablePaths.delete(pathname);
+    }
+    return "";
+  }
+
+  const exactPythonFixtureHandlers = new Map<string, (command: string[]) => string>([
+    [LOCK_COMMAND_KEY, runConfigLock],
+  ]);
+  const leadingPythonFixtureHandlers = new Map<string, (command: string[]) => string>([
+    ["660", runConfigUnlock],
+  ]);
+
+  function runPythonFixtureCommand(_args: string[], command: string[]): string {
+    const handler =
+      exactPythonFixtureHandlers.get(pythonCommandKey(command)) ??
+      leadingPythonFixtureHandlers.get(String(command[4])) ??
+      unsupportedCommand;
+    return handler(command);
+  }
+
+  function rejectConfigLock(failure: Error): SandboxCommandHandler {
+    return (_args, command) => {
+      const selectedFailure =
+        pythonCommandKey(command) === LOCK_COMMAND_KEY ? failure : unsupportedCommand(command);
+      throw selectedFailure;
+    };
+  }
+
+  function reportTimerProcessMissing(): never {
+    const error = new Error("timer is gone") as NodeJS.ErrnoException;
+    error.code = "ESRCH";
+    throw error;
+  }
+
+  function reportTimerProcessRunning(): true {
+    return true;
+  }
+
+  const timerProcessHandlers = new Map<string, () => true>([
+    [TIMER_PROCESS_KEY, reportTimerProcessMissing],
+  ]);
+
+  function reportMissingTimerProcess(pid: number, signal?: string | number): true {
+    const key = [typeof pid, String(pid), typeof signal, String(signal)].join("\0");
+    const behavior = timerProcessHandlers.get(key) ?? reportTimerProcessRunning;
+    return behavior();
+  }
+
+  function makePathImmutable(pathname: string): void {
+    immutablePaths.add(pathname);
+  }
+
+  function ignoreChattrOperation(_pathname: string): void {}
+
+  const chattrOperationHandlers = new Map<string, (pathname: string) => void>([
+    ["+i", makePathImmutable],
+  ]);
+
   function runSandboxCommand(cmd: string[]): string {
     const [head, ...rest] = cmd;
     const handler = commandHandlers.get(head) ?? unsupportedCommand(cmd);
@@ -155,32 +236,8 @@ describe("shields config lock without a shipped config hash", () => {
       [CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" }],
       [CONFIG_PATH, { mode: "660", owner: "sandbox:sandbox" }],
     ]);
-    commandHandlers = new Map<string, (args: string[], command: string[]) => string>([
-      [
-        "python3",
-        (_args, command) => {
-          if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) {
-            const hashCreated = !entries.has(HASH_PATH);
-            lockCalls.push(command);
-            entries.set("/sandbox", { mode: "1775", owner: "root:sandbox" });
-            entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
-            entries.set(CONFIG_PATH, { mode: "444", owner: "root:root" });
-            entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
-            return hashCreated ? "hash-created" : "hash-existing";
-          }
-          if (command[4] === "660") {
-            unlockCalls.push(command);
-            entries.set("/sandbox", { mode: "755", owner: "sandbox:sandbox" });
-            entries.set(CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" });
-            for (const pathname of command.slice(9)) {
-              entries.set(pathname, { mode: "660", owner: "sandbox:sandbox" });
-              immutablePaths.delete(pathname);
-            }
-            return "";
-          }
-          return unsupportedCommand(command);
-        },
-      ],
+    commandHandlers = new Map<string, SandboxCommandHandler>([
+      ["python3", runPythonFixtureCommand],
       [
         "chmod",
         ([mode, pathname]) => {
@@ -206,7 +263,8 @@ describe("shields config lock without a shipped config hash", () => {
         ([operation], command) => {
           const pathname = String(command.at(-1));
           requireEntry(pathname, "chattr");
-          if (operation === "+i") immutablePaths.add(pathname);
+          const applyOperation = chattrOperationHandlers.get(operation) ?? ignoreChattrOperation;
+          applyOperation(pathname);
           return "";
         },
       ],
@@ -304,20 +362,18 @@ describe("shields config lock without a shipped config hash", () => {
       "  CRITICAL: Deep Agents config lock transaction could not restore its original posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. rollback failed",
     ],
   ] as const)("maps the anchored %s child protocol to exact bounded guidance (#7995)", (status, expectedGuidance) => {
-    commandHandlers.set("python3", (_args, command) => {
-      if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) {
-        const stderr =
-          status === "sandbox-parent"
-            ? Buffer.from(lockFailure(status), "utf8")
-            : lockFailure(status);
-        throw sandboxCommandFailure(
+    const stderr =
+      status === "sandbox-parent" ? Buffer.from(lockFailure(status), "utf8") : lockFailure(status);
+    commandHandlers.set(
+      "python3",
+      rejectConfigLock(
+        sandboxCommandFailure(
           stderr,
           `hostile argv marker ${lockFailure("incomplete")}`,
           lockFailure("config-root"),
-        );
-      }
-      return unsupportedCommand(command);
-    });
+        ),
+      ),
+    );
 
     expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
       DEEP_AGENTS_LOCK_GENERIC_ERROR,
@@ -327,12 +383,10 @@ describe("shields config lock without a shipped config hash", () => {
   });
 
   it("accepts transaction-failed without inventing a containment or rollback claim (#7995)", () => {
-    commandHandlers.set("python3", (_args, command) => {
-      if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) {
-        throw sandboxCommandFailure(lockFailure("transaction-failed"));
-      }
-      return unsupportedCommand(command);
-    });
+    commandHandlers.set(
+      "python3",
+      rejectConfigLock(sandboxCommandFailure(lockFailure("transaction-failed"))),
+    );
 
     expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
       DEEP_AGENTS_LOCK_GENERIC_ERROR,
@@ -358,10 +412,7 @@ describe("shields config lock without a shipped config hash", () => {
 
     for (const failure of failures) {
       errorSpy.mockClear();
-      commandHandlers.set("python3", (_args, command) => {
-        if (command[4] === CONFIG_DIR && command[5] === CONFIG_PATH) throw failure;
-        return unsupportedCommand(command);
-      });
+      commandHandlers.set("python3", rejectConfigLock(failure));
 
       let caught: unknown;
       try {
@@ -461,14 +512,7 @@ describe("shields config lock without a shipped config hash", () => {
       }),
       { mode: 0o600 },
     );
-    vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
-      if (pid === 4242 && signal === 0) {
-        const error = new Error("timer is gone") as NodeJS.ErrnoException;
-        error.code = "ESRCH";
-        throw error;
-      }
-      return true;
-    });
+    vi.spyOn(process, "kill").mockImplementation(reportMissingTimerProcess);
     resolveAgentConfigSpy.mockImplementation(resolveTarget);
 
     const posture = shields.getShieldsPosture(sandboxName, true);

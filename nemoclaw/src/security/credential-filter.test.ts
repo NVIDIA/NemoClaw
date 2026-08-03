@@ -99,7 +99,7 @@ describe("plugin credential-filter", () => {
     expect(valueLooksLikeSecret("nvcf-abcdefghij")).toBe(true);
     expect(valueLooksLikeSecret("GITHUB_TOKEN=opaque-secret-value-123")).toBe(true);
     expect(valueLooksLikeSecret("apiKey=opaque-secret-value-123")).toBe(true);
-    expect(valueLooksLikeSecret("apiKey=opaque-secret-value-123")).toBe(true);
+    expect(valueLooksLikeSecret("KEY=opaque-secret-value-123")).toBe(true);
     expect(valueLooksLikeSecret("not-a-secret")).toBe(false);
   });
 

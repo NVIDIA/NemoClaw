@@ -1,7 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +31,7 @@ import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapsh
 const roots: string[] = [];
 
 const LARGE_INSTALL_CONTENT = "x".repeat(15 * 1024 * 1024);
+const SHELL_WAIT_ATTEMPTS = 10_000;
 
 function makeRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-sanitizer-failure-"));
@@ -29,6 +41,17 @@ function makeRoot(): string {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function boundedShellWait(condition: string, pauseCommand = "sleep 0.001"): string[] {
+  return [
+    "    wait_attempt=0",
+    `    while ${condition}; do`,
+    "      wait_attempt=$((wait_attempt + 1))",
+    `      [ "$wait_attempt" -lt ${String(SHELL_WAIT_ATTEMPTS)} ] || exit 1`,
+    `      ${pauseCommand}`,
+    "    done",
+  ];
 }
 
 function writePythonWrapper(lines: readonly string[]): string {
@@ -94,6 +117,17 @@ describe("migration snapshot sanitizer fallbacks", () => {
     ).toBe(false);
   });
 
+  it("rejects nested install targets before creating any entry", () => {
+    const rootPath = makeRoot();
+    const root = inspectDescriptorSnapshotRoot(rootPath);
+    expect(root).not.toBeNull();
+
+    expect(
+      installDescriptorSnapshotFile(root as NonNullable<typeof root>, "nested/openclaw.json", "{}"),
+    ).toBe(false);
+    expect(() => statSync(path.join(rootPath, "nested", "openclaw.json"))).toThrow();
+  });
+
   it.runIf(process.platform !== "win32")(
     "rejects a destination swap before exclusive config installation",
     () => {
@@ -102,26 +136,43 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const outsideConfig = path.join(outsideRoot, "outside.json");
       const original = JSON.stringify({ mustRemain: true });
       writeFileSync(outsideConfig, original, { mode: 0o640 });
-      const originalMode = statSync(outsideConfig).mode & 0o777;
-      const root = inspectDescriptorSnapshotRoot(rootPath);
-      expect(root).not.toBeNull();
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then ln -s ${shellQuote(outsideConfig)} ${shellQuote(
-          path.join(rootPath, "openclaw.json"),
-        )}; fi`,
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      const outsideConfigFd = openSync(outsideConfig, "r");
+      try {
+        const originalIdentity = fstatSync(outsideConfigFd);
+        const originalMode = originalIdentity.mode & 0o777;
+        const root = inspectDescriptorSnapshotRoot(rootPath);
+        expect(root).not.toBeNull();
+        const python = requireTrustedPython();
+        writePythonWrapper([
+          `if [ "\${4-}" = install ]; then ln -s ${shellQuote(outsideConfig)} ${shellQuote(
+            path.join(rootPath, "openclaw.json"),
+          )}; fi`,
+          `exec ${shellQuote(python)} "$@"`,
+        ]);
 
-      expect(
-        installDescriptorSnapshotFile(
-          root as NonNullable<typeof root>,
-          "openclaw.json",
-          JSON.stringify({ installed: true }),
-        ),
-      ).toBe(false);
-      expect(readFileSync(outsideConfig, "utf-8")).toBe(original);
-      expect(statSync(outsideConfig).mode & 0o777).toBe(originalMode);
+        expect(
+          installDescriptorSnapshotFile(
+            root as NonNullable<typeof root>,
+            "openclaw.json",
+            JSON.stringify({ installed: true }),
+          ),
+        ).toBe(false);
+        expect(readFileSync(outsideConfigFd, "utf-8")).toBe(original);
+        expect(fstatSync(outsideConfigFd).mode & 0o777).toBe(originalMode);
+        const reopenedOutsideConfigFd = openSync(
+          outsideConfig,
+          fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+        );
+        try {
+          const reopenedIdentity = fstatSync(reopenedOutsideConfigFd);
+          expect(reopenedIdentity.dev).toBe(originalIdentity.dev);
+          expect(reopenedIdentity.ino).toBe(originalIdentity.ino);
+        } finally {
+          closeSync(reopenedOutsideConfigFd);
+        }
+      } finally {
+        closeSync(outsideConfigFd);
+      }
     },
   );
 
@@ -137,7 +188,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
       writePythonWrapper([
         `if [ "\${4-}" = install ]; then`,
         "  (",
-        `    while [ ! -s ${shellQuote(targetPath)} ]; do :; done`,
+        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
         `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
         "  ) &",
         "fi",
@@ -168,9 +219,12 @@ describe("migration snapshot sanitizer fallbacks", () => {
       writePythonWrapper([
         `if [ "\${4-}" = install ]; then`,
         "  (",
-        `    while [ ! -s ${shellQuote(targetPath)} ]; do :; done`,
+        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
         `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        `    while [ "$(wc -c < ${shellQuote(aliasPath)})" -lt ${LARGE_INSTALL_CONTENT.length} ]; do :; done`,
+        ...boundedShellWait(
+          `[ "$(wc -c < ${shellQuote(aliasPath)})" -lt ${String(LARGE_INSTALL_CONTENT.length)} ]`,
+          "sleep 0.001",
+        ),
         `    printf M | dd of=${shellQuote(aliasPath)} bs=1 count=1 conv=notrunc 2>/dev/null`,
         `    rm ${shellQuote(aliasPath)}`,
         "  ) &",

@@ -421,6 +421,21 @@ describe("buildDeepAgentsConfigLockCommand", () => {
       stderr: String(result.stderr ?? "").trim(),
     };
   }
+  type FileObservation = { body: Buffer; inode: number; mode: number };
+
+  function observeFile(pathname: string): FileObservation {
+    const fd = fs.openSync(pathname, "r");
+    try {
+      const stat = fs.fstatSync(fd);
+      return {
+        body: fs.readFileSync(fd),
+        inode: stat.ino,
+        mode: stat.mode & 0o7777,
+      };
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
 
   function injectedScript(source: string, body: string): string {
     const encoded = Buffer.from(source, "utf-8").toString("base64");
@@ -463,47 +478,134 @@ os.replace = raced_replace
     fs.closeSync(retainedFd);
 
     expect(outcome).toEqual({ status: 0, stdout: "hash-created", stderr: "" });
-    const config = fs.readFileSync(configPath);
-    const record = fs.readFileSync(recordPath, "utf-8");
-    expect(fs.statSync(configPath).ino).not.toBe(oldInode);
-    expect(config.toString("utf-8")).toBe(CONFIG_BODY);
-    expect(record).toBe(`${createHash("sha256").update(config).digest("hex")}  config.toml\n`);
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o444);
-    expect(fs.statSync(recordPath).mode & 0o777).toBe(0o444);
+    const config = observeFile(configPath);
+    const record = observeFile(recordPath);
+    expect(config.inode).not.toBe(oldInode);
+    expect(config.body.toString("utf-8")).toBe(CONFIG_BODY);
+    expect(record.body.toString("utf-8")).toBe(
+      `${createHash("sha256").update(config.body).digest("hex")}  config.toml\n`,
+    );
+    expect(config.mode).toBe(0o444);
+    expect(record.mode).toBe(0o444);
   });
 
+  type FixtureVerification = () => void;
+
+  function prepareMissingConfigRoot(configDir: string): FixtureVerification {
+    return () => {
+      expect(fs.existsSync(configDir)).toBe(false);
+    };
+  }
+
+  function prepareSymlinkConfigRoot(configDir: string): FixtureVerification {
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-root-target-"));
+    fixtures.push(outsideRoot);
+    const externalPath = path.join(outsideRoot, "outside-config");
+    const externalBody = "outside config root\n";
+    fs.writeFileSync(externalPath, externalBody, { mode: 0o640 });
+    fs.chmodSync(externalPath, 0o640);
+    const initialExternal = observeFile(externalPath);
+    fs.symlinkSync(externalPath, configDir);
+
+    return () => {
+      const external = observeFile(externalPath);
+      expect(fs.lstatSync(configDir).isSymbolicLink()).toBe(true);
+      expect(external.body.toString("utf-8")).toBe(externalBody);
+      expect(external.inode).toBe(initialExternal.inode);
+      expect(external.mode).toBe(initialExternal.mode);
+    };
+  }
+
+  function prepareNonDirectoryConfigRoot(configDir: string): FixtureVerification {
+    const invalidRootBody = "sandbox-owned invalid config root\n";
+    fs.writeFileSync(configDir, invalidRootBody, { mode: 0o660 });
+    fs.chmodSync(configDir, 0o660);
+    const initialInvalidRoot = observeFile(configDir);
+
+    return () => {
+      const invalidRoot = observeFile(configDir);
+      expect(invalidRoot.body.toString("utf-8")).toBe(invalidRootBody);
+      expect(invalidRoot.inode).toBe(initialInvalidRoot.inode);
+      expect(invalidRoot.mode).toBe(initialInvalidRoot.mode);
+    };
+  }
+
+  function prepareLinkedRecord(
+    recordPath: string,
+    parentDir: string,
+    recordKind: "symlink" | "hardlink",
+    linkRecord: (outsidePath: string, recordPath: string) => void,
+  ): FixtureVerification {
+    const outsidePath = path.join(parentDir, `outside-${recordKind}`);
+    const outsideBody = `outside ${recordKind}\n`;
+    fs.writeFileSync(outsidePath, outsideBody, { mode: 0o640 });
+    fs.chmodSync(outsidePath, 0o640);
+    const initialOutside = observeFile(outsidePath);
+    linkRecord(outsidePath, recordPath);
+
+    return () => {
+      const outside = observeFile(outsidePath);
+      expect(outside.body.toString("utf-8")).toBe(outsideBody);
+      expect(outside.inode).toBe(initialOutside.inode);
+      expect(outside.mode).toBe(initialOutside.mode);
+    };
+  }
+
+  function prepareSymlinkRecord(recordPath: string, parentDir: string): FixtureVerification {
+    return prepareLinkedRecord(recordPath, parentDir, "symlink", (outsidePath, pathname) =>
+      fs.symlinkSync(outsidePath, pathname),
+    );
+  }
+
+  function prepareHardlinkRecord(recordPath: string, parentDir: string): FixtureVerification {
+    return prepareLinkedRecord(recordPath, parentDir, "hardlink", (outsidePath, pathname) =>
+      fs.linkSync(outsidePath, pathname),
+    );
+  }
+
+  function noFixtureVerification(): void {}
+
+  function prepareNonregularRecord(recordPath: string, _parentDir: string): FixtureVerification {
+    fs.mkdirSync(recordPath);
+    return noFixtureVerification;
+  }
+
+  function prepareOversizedRecord(recordPath: string, _parentDir: string): FixtureVerification {
+    fs.writeFileSync(recordPath, Buffer.alloc(1025, "a"), { mode: 0o660 });
+    return noFixtureVerification;
+  }
+
+  function expectCanonicalRecordPosture(
+    configDir: string,
+    recordPath: string,
+    _parentDir: string,
+  ): void {
+    const record = observeFile(recordPath);
+    expect(record.body.toString("utf-8")).toBe(EXPECTED_RECORD);
+    expect(record.mode).toBe(0o444);
+    expectFailClosedPosture(configDir);
+  }
+
+  function expectNonregularRecordPosture(
+    configDir: string,
+    recordPath: string,
+    parentDir: string,
+  ): void {
+    expect(fs.lstatSync(recordPath).isDirectory()).toBe(true);
+    expect(fs.statSync(configDir).mode & 0o7777).toBe(0o500);
+    expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o700);
+  }
+
   it.each([
-    "missing",
-    "symlink",
-    "non-directory",
-  ] as const)("contains a %s config root before it can be pinned (#7977)", async (rootKind) => {
+    ["missing", prepareMissingConfigRoot],
+    ["symlink", prepareSymlinkConfigRoot],
+    ["non-directory", prepareNonDirectoryConfigRoot],
+  ] as const)("contains a %s config root before it can be pinned (#7977)", async (_rootKind, prepareRoot) => {
     const configDir = makeConfigDir();
     const parentDir = path.dirname(configDir);
     fs.rmSync(configDir, { recursive: true, force: true });
     fs.chmodSync(parentDir, 0o1775);
-
-    let externalPath: string | undefined;
-    let externalBody: string | undefined;
-    let externalMode: number | undefined;
-    let invalidRootBody: string | undefined;
-    let invalidRootMode: number | undefined;
-    if (rootKind === "symlink") {
-      const outsideRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-deepagents-root-target-"),
-      );
-      fixtures.push(outsideRoot);
-      externalPath = path.join(outsideRoot, "outside-config");
-      externalBody = "outside config root\n";
-      fs.writeFileSync(externalPath, externalBody, { mode: 0o640 });
-      fs.chmodSync(externalPath, 0o640);
-      externalMode = fs.statSync(externalPath).mode & 0o7777;
-      fs.symlinkSync(externalPath, configDir);
-    } else if (rootKind === "non-directory") {
-      invalidRootBody = "sandbox-owned invalid config root\n";
-      fs.writeFileSync(configDir, invalidRootBody, { mode: 0o660 });
-      fs.chmodSync(configDir, 0o660);
-      invalidRootMode = fs.statSync(configDir).mode & 0o7777;
-    }
+    const verifyRoot = prepareRoot(configDir);
 
     const command = await lockCommand(configDir, true);
     command.push("--test-protect-parent");
@@ -516,16 +618,7 @@ os.replace = raced_replace
       expect(parentStat.mode & 0o7777).toBe(0o700);
       expect(parentStat.uid).toBe(EFFECTIVE_UID);
       expect(parentStat.gid).toBe(EFFECTIVE_GID);
-      if (rootKind === "missing") {
-        expect(fs.existsSync(configDir)).toBe(false);
-      } else if (rootKind === "symlink") {
-        expect(fs.lstatSync(configDir).isSymbolicLink()).toBe(true);
-        expect(fs.readFileSync(externalPath!, "utf-8")).toBe(externalBody);
-        expect(fs.statSync(externalPath!).mode & 0o7777).toBe(externalMode);
-      } else {
-        expect(fs.readFileSync(configDir, "utf-8")).toBe(invalidRootBody);
-        expect(fs.statSync(configDir).mode & 0o7777).toBe(invalidRootMode);
-      }
+      verifyRoot();
     } finally {
       fs.chmodSync(parentDir, 0o700);
     }
@@ -630,18 +723,24 @@ os.fchmod = failed_parent_posture
         stdout: "",
         stderr: lockFailure("config-root"),
       });
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(recordPath).ino).not.toBe(oldRecordInode);
+      const installedConfig = observeFile(configPath);
+      const installedRecord = observeFile(recordPath);
+      expect(installedConfig.inode).not.toBe(oldConfigInode);
+      expect(installedRecord.inode).not.toBe(oldRecordInode);
 
       fs.writeSync(retainedConfigFd, "retained-config-write", 0, "utf8");
       fs.fsyncSync(retainedConfigFd);
       fs.writeSync(retainedRecordFd, "retained-record-write", 0, "utf8");
       fs.fsyncSync(retainedRecordFd);
 
-      expect(fs.readFileSync(configPath, "utf-8")).toBe(CONFIG_BODY);
-      expect(fs.readFileSync(recordPath, "utf-8")).toBe(EXPECTED_RECORD);
-      expect(fs.statSync(configPath).mode & 0o7777).toBe(0o444);
-      expect(fs.statSync(recordPath).mode & 0o7777).toBe(0o444);
+      const config = observeFile(configPath);
+      const record = observeFile(recordPath);
+      expect(config.body.toString("utf-8")).toBe(CONFIG_BODY);
+      expect(record.body.toString("utf-8")).toBe(EXPECTED_RECORD);
+      expect(config.inode).toBe(installedConfig.inode);
+      expect(record.inode).toBe(installedRecord.inode);
+      expect(config.mode).toBe(0o444);
+      expect(record.mode).toBe(0o444);
       expectFailClosedPosture(configDir);
     } finally {
       fs.closeSync(retainedConfigFd);
@@ -651,41 +750,21 @@ os.fchmod = failed_parent_posture
   });
 
   it.each([
-    "symlink",
-    "hardlink",
-    "nonregular",
-    "oversize",
-  ] as const)("claims config-root for a %s record only after installing a fresh canonical pair (#7995)", async (recordKind) => {
+    ["symlink", "config-root", prepareSymlinkRecord, expectCanonicalRecordPosture],
+    ["hardlink", "config-root", prepareHardlinkRecord, expectCanonicalRecordPosture],
+    ["nonregular", "sandbox-parent", prepareNonregularRecord, expectNonregularRecordPosture],
+    ["oversize", "config-root", prepareOversizedRecord, expectCanonicalRecordPosture],
+  ] as const)("claims config-root for a %s record only after installing a fresh canonical pair (#7995)", async (_recordKind, expectedStatus, prepareRecord, verifyRecordPosture) => {
     const configDir = makeConfigDir();
     const parentDir = path.dirname(configDir);
     const recordPath = hashRecordPath(configDir);
     const configPath = path.join(configDir, "config.toml");
-    const oldConfigInode = fs.statSync(configPath).ino;
-    let outsidePath: string | undefined;
-    let outsideBody: string | undefined;
-    let outsideMode: number | undefined;
-
-    if (recordKind === "symlink" || recordKind === "hardlink") {
-      outsidePath = path.join(parentDir, `outside-${recordKind}`);
-      outsideBody = `outside ${recordKind}\n`;
-      fs.writeFileSync(outsidePath, outsideBody, { mode: 0o640 });
-      fs.chmodSync(outsidePath, 0o640);
-      outsideMode = fs.statSync(outsidePath).mode & 0o7777;
-      if (recordKind === "symlink") {
-        fs.symlinkSync(outsidePath, recordPath);
-      } else {
-        fs.linkSync(outsidePath, recordPath);
-      }
-    } else if (recordKind === "nonregular") {
-      fs.mkdirSync(recordPath);
-    } else {
-      fs.writeFileSync(recordPath, Buffer.alloc(1025, "a"), { mode: 0o660 });
-    }
+    const oldConfig = observeFile(configPath);
+    const verifyFixture = prepareRecord(recordPath, parentDir);
     const command = await lockCommand(configDir, true);
     command.push("--test-protect-parent");
 
     const outcome = runLock(command);
-    const expectedStatus = recordKind === "nonregular" ? "sandbox-parent" : "config-root";
 
     try {
       expect(outcome).toEqual({
@@ -693,22 +772,12 @@ os.fchmod = failed_parent_posture
         stdout: "",
         stderr: lockFailure(expectedStatus),
       });
-      expect(fs.readFileSync(configPath, "utf-8")).toBe(CONFIG_BODY);
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(configPath).mode & 0o7777).toBe(0o444);
-      if (expectedStatus === "config-root") {
-        expect(fs.readFileSync(recordPath, "utf-8")).toBe(EXPECTED_RECORD);
-        expect(fs.statSync(recordPath).mode & 0o7777).toBe(0o444);
-        expectFailClosedPosture(configDir);
-      } else {
-        expect(fs.lstatSync(recordPath).isDirectory()).toBe(true);
-        expect(fs.statSync(configDir).mode & 0o7777).toBe(0o500);
-        expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o700);
-      }
-      if (outsidePath && outsideBody !== undefined && outsideMode !== undefined) {
-        expect(fs.readFileSync(outsidePath, "utf-8")).toBe(outsideBody);
-        expect(fs.statSync(outsidePath).mode & 0o7777).toBe(outsideMode);
-      }
+      const config = observeFile(configPath);
+      expect(config.body.toString("utf-8")).toBe(CONFIG_BODY);
+      expect(config.inode).not.toBe(oldConfig.inode);
+      expect(config.mode).toBe(0o444);
+      verifyRecordPosture(configDir, recordPath, parentDir);
+      verifyFixture();
     } finally {
       restoreFixtureAccess(configDir);
     }
@@ -717,7 +786,7 @@ os.fchmod = failed_parent_posture
   it("contains a staging-body failure after freezing mutable state (#7977)", async () => {
     const configDir = makeConfigDir();
     const configPath = path.join(configDir, "config.toml");
-    const oldConfigInode = fs.statSync(configPath).ino;
+    const oldConfig = observeFile(configPath);
     const command = await lockCommand(configDir, true);
     command.push("--test-protect-parent");
     const { DEEP_AGENTS_CONFIG_LOCK_NOFOLLOW_SCRIPT } = await loadSeal();
@@ -739,11 +808,13 @@ os.write = failed_write
 
     try {
       expect(outcome).toEqual({ status: 1, stdout: "", stderr: lockFailure("config-root") });
-      expect(fs.readFileSync(configPath, "utf-8")).toBe(CONFIG_BODY);
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(configPath).mode & 0o7777).toBe(0o444);
-      expect(fs.readFileSync(hashRecordPath(configDir), "utf-8")).toBe(EXPECTED_RECORD);
-      expect(fs.statSync(hashRecordPath(configDir)).mode & 0o7777).toBe(0o444);
+      const config = observeFile(configPath);
+      const record = observeFile(hashRecordPath(configDir));
+      expect(config.body.toString("utf-8")).toBe(CONFIG_BODY);
+      expect(config.inode).not.toBe(oldConfig.inode);
+      expect(config.mode).toBe(0o444);
+      expect(record.body.toString("utf-8")).toBe(EXPECTED_RECORD);
+      expect(record.mode).toBe(0o444);
       expect(fs.readdirSync(configDir).filter((name) => name.includes(".nemoclaw."))).toEqual([]);
       expectFailClosedPosture(configDir);
     } finally {
@@ -755,8 +826,7 @@ os.write = failed_write
     const configDir = makeConfigDir();
     const parentDir = path.dirname(configDir);
     const configPath = path.join(configDir, "config.toml");
-    const oldConfigInode = fs.statSync(configPath).ino;
-    const oldConfigMode = fs.statSync(configPath).mode & 0o7777;
+    const oldConfig = observeFile(configPath);
     const command = await lockCommand(configDir, true);
     command.push("--test-protect-parent");
     const { DEEP_AGENTS_CONFIG_LOCK_NOFOLLOW_SCRIPT } = await loadSeal();
@@ -777,9 +847,10 @@ os.write = failed_write
         stdout: "",
         stderr: lockFailure("sandbox-parent"),
       });
-      expect(fs.readFileSync(configPath, "utf-8")).toBe(CONFIG_BODY);
-      expect(fs.statSync(configPath).ino).toBe(oldConfigInode);
-      expect(fs.statSync(configPath).mode & 0o7777).toBe(oldConfigMode);
+      const config = observeFile(configPath);
+      expect(config.body.toString("utf-8")).toBe(CONFIG_BODY);
+      expect(config.inode).toBe(oldConfig.inode);
+      expect(config.mode).toBe(oldConfig.mode);
       expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
       expect(fs.statSync(configDir).mode & 0o7777).toBe(0o500);
       expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o700);
@@ -791,8 +862,7 @@ os.write = failed_write
   it("restores both original paths when the record cutover fails (#7977)", async () => {
     const configDir = makeConfigDir();
     const configPath = path.join(configDir, "config.toml");
-    const oldInode = fs.statSync(configPath).ino;
-    const oldMode = fs.statSync(configPath).mode & 0o777;
+    const oldConfig = observeFile(configPath);
     const command = await lockCommand(configDir);
     const { DEEP_AGENTS_CONFIG_LOCK_NOFOLLOW_SCRIPT } = await loadSeal();
     command[3] = injectedScript(
@@ -811,10 +881,11 @@ os.replace = failed_record_replace
 
     expect(outcome.status).toBe(1);
     expect(outcome.stderr).toBe(lockFailure("transaction-failed"));
-    expect(fs.readFileSync(configPath, "utf-8")).toBe(CONFIG_BODY);
+    const config = observeFile(configPath);
+    expect(config.body.toString("utf-8")).toBe(CONFIG_BODY);
     expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
-    expect(fs.statSync(configPath).ino).not.toBe(oldInode);
-    expect(fs.statSync(configPath).mode & 0o777).toBe(oldMode);
+    expect(config.inode).not.toBe(oldConfig.inode);
+    expect(config.mode).toBe(oldConfig.mode);
     expect(fs.readdirSync(configDir).filter((name) => name.includes(".nemoclaw."))).toEqual([]);
   });
 
@@ -844,9 +915,9 @@ os.replace = failed_replace
 
     const outcome = runLock(command);
 
-    expect(outcome.status).toBe(1);
-    expect(outcome.stderr).toBe(lockFailure("rollback-failed"));
     try {
+      expect(outcome.status).toBe(1);
+      expect(outcome.stderr).toBe(lockFailure("rollback-failed"));
       const configDirStat = fs.statSync(configDir);
       const parentDirStat = fs.statSync(parentDir);
       expect(configDirStat.mode & 0o7777).toBe(0o500);

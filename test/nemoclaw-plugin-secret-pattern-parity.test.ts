@@ -11,6 +11,7 @@ function fingerprint(patterns: readonly RegExp[]): string[] {
 
 describe("NemoClaw plugin secret-pattern parity", () => {
   it("matches every canonical context pattern source and flag", () => {
+    expect(CONTEXT_PATTERNS.length).toBeGreaterThan(0);
     expect(fingerprint(CONTEXT_SECRET_PATTERNS)).toEqual(fingerprint(CONTEXT_PATTERNS));
   });
 });

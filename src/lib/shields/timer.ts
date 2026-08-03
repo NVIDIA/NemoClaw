@@ -13,7 +13,6 @@ import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
-import { resolveAgentConfig } from "../sandbox/agent-config";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
@@ -324,50 +323,17 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
           // lockAgentConfig runs each operation independently and verifies the
           // on-disk state — it throws if verification fails.
           //
-          // NC-2227-03: Resolve the full agent config target (including sensitive
-          // files like .config-hash, .env) so the timer re-locks the same scope
-          // that interactive `shields up` uses. Fall back to the bare configPath/
-          // configDir from argv if resolution fails (e.g., registry unavailable).
+          // NC-2227-03: Reuse resolved registry metadata only when configPath,
+          // configDir, and the optional agentName match the timer arguments.
+          // Otherwise the persisted paths remain the recovery authority. This
+          // keeps older markers without agentName pinned by path while preserving
+          // the full sensitive-file set whenever the registry still describes the
+          // same target.
           let lockVerified = true;
           let lockedChattr: boolean | null = null;
           let lockedHashes: { [path: string]: string } | null = null;
           if (args.configPath) {
-            let lockTarget: {
-              agentName?: string;
-              configPath: string;
-              configDir: string;
-              sensitiveFiles?: string[];
-            } | null = null;
-            const persistedLockTarget = args.configDir
-              ? {
-                  ...(args.agentName ? { agentName: args.agentName } : {}),
-                  configPath: args.configPath,
-                  configDir: args.configDir,
-                  sensitiveFiles: [
-                    `${args.configDir}/.config-hash`,
-                    ...(args.agentName === "hermes" ? [`${args.configDir}/.env`] : []),
-                  ],
-                }
-              : null;
-            try {
-              // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
-              // carries the OpenClaw sensitiveFiles (.config-hash) that
-              // shields-up locks and that the content seal hashes. Dropping
-              // them here would persist a partial fileHashes map and the next
-              // `shields status` would flag the missing entries as drift.
-              const resolved = resolveAgentConfig(args.sandboxName);
-              lockTarget =
-                resolved.configPath === args.configPath &&
-                resolved.configDir === args.configDir &&
-                (!args.agentName || resolved.agentName === args.agentName)
-                  ? resolved
-                  : persistedLockTarget;
-            } catch {
-              // Resolver itself threw (registry unavailable). Fall back to
-              // argv-supplied paths, but still infer sensitiveFiles from
-              // configDir so the locked set matches what shields-up uses.
-              lockTarget = persistedLockTarget;
-            }
+            const lockTarget = shields.resolvePersistedAutoRestoreTarget(args.sandboxName, args);
             if (!lockTarget) {
               lockVerified = false;
               appendAudit({
