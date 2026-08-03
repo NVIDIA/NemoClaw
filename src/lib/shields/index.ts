@@ -2157,9 +2157,10 @@ function lockAgentConfigUnderMutationLock(
   let chattrSucceeded = target.agentName === "hermes" && !legacyHermesProtocol ? false : true;
 
   // Agents without a descriptor-sealed top-level transaction retain the
-  // historical validate-before-mutate ordering. OpenClaw and current Hermes
-  // must revoke writes to their canonical config first: otherwise an agent can
-  // plant one invalid nested entry and veto the auto-restore deadline forever.
+  // historical validate-before-mutate ordering. OpenClaw, sealed Hermes, and
+  // Deep Agents must revoke writes to their canonical config first. Otherwise,
+  // an agent can plant one invalid nested entry and prevent the deadline from
+  // restoring Shields up.
   if (
     !openClawProtocol &&
     !deepAgentsProtocol &&
